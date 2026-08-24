@@ -21,20 +21,46 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import io
+import logging
 import os
 import threading
+import time
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NamedTuple
 
 import pygit2
 from pydantic import BaseModel
-from pygit2.enums import RepositoryOpenFlag, SortMode
+from pygit2.enums import DeltaStatus, RepositoryOpenFlag, SortMode
 from ruamel.yaml import YAML
+
+_LOG = logging.getLogger(__name__)
 
 _BRANCH = "refs/heads/main"
 _ORIGIN = "origin"
 _TRACKING = "refs/remotes/origin/main"
+# The newest commit this process has POSITIVELY confirmed the remote holds as
+# part of our lineage — seeded the moment the store opens (a bare clone's tip
+# came FROM the remote, so the remote demonstrably held it) and moved only by a
+# successful push after that. Seeded at open because production boots into a
+# fresh clone every time, and a guard armed only by the first push is off for
+# exactly that window. Not the tracking ref: a fetch moves that to whatever the
+# remote says today, and the whole point of this one is to notice when what the
+# remote says today no longer contains what we saw it hold — the force-push
+# guard (docs/deferred-push.md, recovery step 2).
+_PUSHED = "refs/openproj/pushed"
+# The recovery's scratch name for the rebased tip. A push refspec needs a ref on
+# the local side, and the tip must reach the remote BEFORE refs/heads/main moves
+# — so it cannot be main that names it.
+_LANDING = "refs/openproj/landing"
+# One local ref per parked commit, `refs/openproj/stranded-<sha>`. It is the
+# push source for the branch of the same name on the remote, and it is deleted
+# the moment that push is confirmed — so the glob over this prefix counts
+# exactly the parked commits this container would still lose, the same
+# philosophy as `unpushed`. On Cloud Run every local ref dies with the
+# instance; the durable record of a parked commit is the remote branch, never
+# this.
+_STRANDED = "refs/openproj/stranded-"
 _BOT = pygit2.Signature("openproj-bot", "openproj-bot@example.invalid")
 # The writer's flock, named here rather than in two places: `openproj demo`
 # builds a plan repository out of a directory that may have had a `Store` opened
@@ -51,9 +77,11 @@ class WriteResult(BaseModel):
     commit: str | None
     outcome: Literal["committed", "retried", "merged", "conflict"]
     conflict: str | None = None
-    # Whether the commit reached the remote. On an ephemeral filesystem an
-    # unpushed commit is a lost commit, so a caller that reports success without
-    # looking at this is how a team finds out on Monday that Friday is gone.
+    # Whether the commit has reached the remote — always False on a fresh write
+    # now that the push has left the request path (docs/deferred-push.md); the
+    # background pusher lands it and announces the landing itself. The meaning
+    # is unchanged on purpose: on an ephemeral filesystem an unpushed commit is
+    # a lost commit, and nothing may claim the remote holds one before it does.
     pushed: bool = False
 
 
@@ -72,17 +100,56 @@ class Condition(BaseModel):
     # successful push. None when no remote is configured, or before anything has
     # fetched or pushed.
     remote: str | None
-    # Local and remote have both moved and neither contains the other — the exact
-    # comparison `_absorb_remote` makes before it raises, so the flag and the
-    # raise cannot disagree about the same repository.
+    # The tracking ref no longer contains `refs/openproj/pushed` — the remote
+    # LOST a commit this process positively confirmed it held. Not
+    # both-sides-moved: with the push off the request path that is the ordinary
+    # recoverable race, and a flag that goes red on every hand-push is a flag
+    # people learn to ignore (docs/deferred-push.md, "Health").
     diverged: bool
     # Commits on local `main` that `remote` does not hold: what this container
     # loses if it is replaced. `pushed: false` tells one caller about one write;
     # this is the same fact for the whole store, and the number a monitor watches.
     unpushed: int
-    # The sentence, when there is one to say. Built by `_diverged_message`, so it
-    # is the same wording a caller gets from `StoreDiverged` itself.
+    # Seconds since the oldest of those commits was written; None when nothing
+    # is waiting. `unpushed` alone stopped meaning "at risk" the day saves
+    # stopped pushing — it is briefly non-zero after EVERY save — so the alarm
+    # is "non-zero and not draining", and this is the number that says so.
+    oldest_unpushed_age: float | None
+    # Parked commits whose branch has not yet been confirmed on the remote —
+    # the glob over `refs/openproj/stranded-*`, see the note at `_STRANDED`.
+    parked: int
+    # The sentence, when there is one to say. Built by `_forked_message`, the
+    # same wording for the same condition wherever it is met.
     refusal: str | None
+
+
+class SyncOutcome(NamedTuple):
+    """One pass of the background pusher, and everything a page needs to hear.
+
+    Announced whole rather than as an event per commit, because confirmation
+    cannot be "my sha is on main": recovery re-mints shas, so a client waiting
+    to see its own answered sha on the branch would wait forever after any
+    rejection (docs/deferred-push.md). One outcome names the tip that landed,
+    every sha that changed name on the way, and every sha that could not land
+    and where it went instead.
+    """
+
+    # The tip local main and the remote share after this pass — the "everything
+    # up to X has landed" a page's mark-clearing needs. None when the pass did
+    # not finish: unreachable, diverged, or nothing to do.
+    landed: str | None
+    # Original sha -> re-minted sha, for commits the recovery had to re-commit
+    # onto what the remote actually held. Empty on the quiet day: the original
+    # commits go up unchanged, so a client's answered sha is the sha that lands.
+    remapped: dict[str, str]
+    # (original sha, branch name) for commits that could not be replayed and
+    # were parked on a branch on the remote instead of being dropped.
+    parked: list[tuple[str, str]]
+    # Which day it was. "idle": nothing to send. "landed": the backlog is on the
+    # remote. "unreachable": the network failed, the backlog is intact, try
+    # later. "diverged": the remote lost a commit we confirmed it held — a
+    # genuine fork, never resolved automatically.
+    state: Literal["idle", "landed", "unreachable", "diverged"]
 
 
 class NotAPlanRepository(RuntimeError):
@@ -95,27 +162,99 @@ class StoreLocked(RuntimeError):
 
 
 class StoreDiverged(RuntimeError):
-    """Local and remote have both moved and neither contains the other.
+    """The store will not write onto, or push over, a fork it cannot resolve.
 
-    Never resolved automatically: every automatic answer discards somebody's
-    commits, and a tracker that silently drops a commit is worse than one that
-    stops and says so.
+    Raised by the manual `push()` when both histories moved and neither
+    contains the other, and by the write gate (`_refuse_forked`) while the
+    force-push guard is parked. Never resolved automatically: every automatic
+    answer discards somebody's commits, and a tracker that silently drops a
+    commit is worse than one that stops and says so.
     """
 
 
 def _diverged_message(local: str, remote: str) -> str:
-    """The one wording for the one condition that stops every write.
+    """The wording for `push`'s both-sides-moved refusal.
 
-    It was written out twice — in `push` and in `_absorb_remote` — and is now
-    read a third time by `Store.condition`, which has no exception to take it
-    from. Three copies of a sentence is three chances for the one a person
-    actually reads to be the stale one, and this file's own rule is that an
-    invariant written twice is guarded once.
+    It was written out twice — in `push` and in `_absorb_remote`, which the
+    deferred push has since deleted. `Store.condition` used to read it too; its
+    `refusal` now describes the force-push guard instead (`_forked_message`),
+    because both-sides-moved stopped being the condition that wedges a store the
+    day the recovery learned to replay through it.
     """
     return (
         f"local {local[:7]} and remote {remote[:7]} have both moved; "
         "refusing to guess which commits to discard"
     )
+
+
+def _forked_message(confirmed: str, remote: str) -> str:
+    """The one wording for the one condition that stops the pusher for good.
+
+    Not `_diverged_message`: that sentence describes both-sides-moved, which the
+    recovery now resolves on its own. This one is the force-push guard — the
+    remote no longer contains a commit this process confirmed it held — and
+    naming the lost commit is what makes a runbook writable from it.
+    """
+    return (
+        f"the remote at {remote[:7]} no longer contains {confirmed[:7]}, which it "
+        "was seen to hold; somebody rewrote history — refusing to replay onto it"
+    )
+
+
+def _forked(repo: pygit2.Repository) -> str | None:
+    """The force-push guard's verdict off two local refs: the refusal sentence
+    when the remote no longer contains what this process confirmed it held,
+    None otherwise. No network, ever — callers hold `_writing` or answer health.
+
+    One reading because it has two consumers that must not disagree about the
+    same repository: `condition`, which turns it into the red flag and its
+    `refusal`, and the write gate, which turns it into the 503 a save gets. Not
+    both-sides-moved: that is the ordinary race the recovery replays through,
+    and a verdict that went red on every hand-push would be ignored by the day
+    it mattered. Absent refs answer False honestly — no tracking ref is a store
+    that never spoke to its remote, and no guard ref means nothing was ever
+    positively confirmed (no remote, or a branch unborn when the store opened).
+    """
+    reference = repo.references.get(_TRACKING)
+    remote = str(reference.target) if reference else None
+    held = repo.references.get(_PUSHED)
+    confirmed = str(held.target) if held else None
+    if (
+        remote is None
+        or confirmed is None
+        or remote == confirmed
+        or repo.descendant_of(remote, confirmed)
+    ):
+        return None
+    return _forked_message(confirmed, remote)
+
+
+def _stranded_refspec(sha: str) -> str:
+    """Local parked ref to the remote branch of the same commit, for one push."""
+    return f"{_STRANDED}{sha}:refs/heads/openproj/stranded-{sha}"
+
+
+def _stranded_shas(repo: pygit2.Repository) -> list[str]:
+    """Every parked commit whose branch is not yet confirmed on the remote."""
+    return [
+        name.removeprefix(_STRANDED)
+        for name in repo.listall_references()
+        if name.startswith(_STRANDED)
+    ]
+
+
+def _blob_at(repo: pygit2.Repository, commit: str, path: str) -> pygit2.Oid | None:
+    """The id of the bytes at this path, or None — `Store.read` without the
+    decode, because the replay's fast paths compare ids and never look inside."""
+    node = repo[commit].tree
+    for part in path.split("/"):
+        if node.type_str != "tree":
+            return None
+        try:
+            node = node / part
+        except KeyError:
+            return None
+    return node.id if node.type_str == "blob" else None
 
 
 def _split(text: str) -> tuple[str, str]:
@@ -301,25 +440,14 @@ def _deleted(path: str) -> str:
 class _Rejected(Exception):
     """The remote refused the push because it had moved.
 
-    Its own type and not a bare `Exception`, because `_finish` deliberately
-    swallows everything else a push can fail with — an unreachable remote is a
-    commit that is real and local and reported as unpushed, which is not this. A
-    rejection means somebody else's commit is on the remote and ours is not a
-    descendant of it, and that is recoverable by rewinding and trying again.
+    Its own type and not a bare `Exception`, because the two ways a push fails
+    want opposite answers. An unreachable remote is a commit that is real and
+    local and still in the backlog, worth sending unchanged when the network
+    comes back. A rejection means somebody else's commit is on the remote and
+    ours is not a descendant of it — recoverable only by replaying the backlog
+    onto what actually landed (docs/deferred-push.md), which is the pusher's
+    job and never the request's.
     """
-
-
-def _lost_the_race(paths: list[str]) -> str:
-    """What a write is answered with after three attempts have all been outrun.
-
-    Not "the remote is broken" and not silence: the plan is being written to
-    faster than one save can land, which is a real thing to be told and a
-    different thing from a merge conflict. Nothing was committed.
-    """
-    return (
-        f"{', '.join(paths)} — the plan moved three times while this was being "
-        "saved.\n  Nothing was written. Reload and try again."
-    )
 
 
 def _changed_under_delete(path: str) -> str:
@@ -366,6 +494,50 @@ def _merge(path: str, base: str, mine: str, theirs: str) -> tuple[str | None, st
         )
         return None, report
     return f"---\n{front}---\n{body}", None
+
+
+def _verdict(
+    path: str, was: str | None, mine: str | None, stored: str | None
+) -> tuple[str | None, str | None]:
+    """One path's fate against the tip: (resolved_text, conflict_sentence).
+
+    `was` is the file at the caller's base, `mine` what the caller wants it to
+    say — None to remove it — and `stored` what the tip holds now. At most one
+    side of the answer is not None; a resolved text of None with no conflict
+    means the proposal stands exactly as proposed, which for a removal is the
+    drop going ahead.
+
+    Extracted from `_attempt`'s loop so the deferred-push replay can re-drive a
+    commit's per-path delta through the SAME decision a save makes. Two copies
+    of this ladder would let write-time and replay-time conflict semantics
+    drift apart, and an invariant written twice will be guarded once. What does
+    NOT live here is the write path's wording around the result — the outcome
+    labels, the already-gone courtesy, the fresh-base fast path — because the
+    replay has nobody to say any of it to.
+    """
+    if was == stored:
+        # Somebody edited a different file. Nobody needs to hear.
+        return mine, None
+    # A removal has no third text to fall back on. `_merge` exists because two
+    # edits to one file can often both be kept; a delete and an edit cannot.
+    # Refused rather than merged, and refused rather than quietly winning: the
+    # edit would otherwise be committed and then thrown away without anybody
+    # reading it.
+    if mine is None:
+        return None, _changed_under_delete(path)
+    # Deleted under us, and it must not come back. `_merge` is handed
+    # `stored or ""`, so a deletion arrives looking exactly like an empty
+    # frontmatter: every key nobody touched reads as "only they moved it" and
+    # drops, the one key this write touched reads as "only we moved it" and
+    # stays. A drag onto a record somebody had just deleted therefore recreated
+    # it as a file holding nothing but `parent:`, and answered 200. Parsing
+    # would not have caught it — every field here is optional by design.
+    if was is not None and stored is None:
+        return None, _deleted(path)
+    merged, conflict = _merge(path, was or "", mine, stored or "")
+    if conflict is not None:
+        return None, conflict
+    return merged, None
 
 
 def _tree_blobs(repo: pygit2.Repository, commit: str) -> dict[str, str]:
@@ -503,7 +675,9 @@ class Store:
     ) -> None:
         """`credentials` is anything with a `callbacks()` returning pygit2's, or
         None for a remote that needs none — a `file://` path, or no remote at all,
-        which is every test and every development run."""
+        which is every test and every development run. One that also has an
+        `offer_pull_request` — `GitHubApp` does — is how a parked branch becomes
+        a pull request; without it the branch simply goes unannounced."""
         self._path = Path(repo_path)
         # NO_SEARCH, because the default is to walk UP until it finds a
         # repository. Pointed at a directory that is not one — `--repo seed`, as
@@ -533,6 +707,17 @@ class Store:
             else:
                 self._repo.remotes.create(_ORIGIN, remote)
         self._writing = threading.Lock()
+        # The background pusher's poke, set by every commit. An Event and not a
+        # queue: the pusher reads the whole backlog from refs each time it runs,
+        # so a burst of saves coalesces into one wake and there is nothing to
+        # drain, replay or lose when wakes overlap.
+        self.dirty = threading.Event()
+        # Why each parked commit could not replay, by sha — the sentences that
+        # become its pull request's body once the branch is confirmed on the
+        # remote. In memory only, on purpose: the local stranded refs die with
+        # the instance anyway (see `_STRANDED`), and an offer for a branch a
+        # previous life parked falls back to pointing at that pass's log.
+        self._parked_reasons: dict[str, list[str]] = {}
         # An flock, not a flag: a second process must fail loudly rather than
         # interleave writes. Somebody will eventually try --workers 4.
         # "a+" rather than "w": opening for write truncates, and truncating would
@@ -571,8 +756,27 @@ class Store:
         # `create_app` against a fresh bare repo start from. `condition` treats
         # `None` as "no floor to count from", which is the truth — there are no
         # commits to be at risk.
-        born = pygit2.Repository(str(self._path)).references.get(_BRANCH)
+        opened = pygit2.Repository(str(self._path))
+        born = opened.references.get(_BRANCH)
         self._opened_at = str(born.target) if born else None
+        # The force-push guard is armed HERE, not by the first successful push.
+        # Armed only then, it was off in exactly the state every production
+        # instance boots into — `deploy/boot.py` clones the plan fresh onto an
+        # in-memory disk on every cold start — and in that window a force-pushed
+        # remote was silently healed: the backlog replayed onto the rewritten
+        # history, local main swapped onto it, and a commit the remote provably
+        # held gone from every main with health still green. The seed is sound
+        # by the same argument the `unpushed` floor makes above: a bare clone's
+        # tip came FROM the remote, so the remote demonstrably held it. The
+        # tracking ref, when it exists, is the same confirmation made later — a
+        # fetch or push moved it to what the remote said — so it wins over the
+        # older opening tip. An existing guard ref is a previous life's positive
+        # confirmation and is never overwritten by inference.
+        if remote and opened.references.get(_PUSHED) is None:
+            tracking = opened.references.get(_TRACKING)
+            confirmed = str(tracking.target) if tracking else self._opened_at
+            if confirmed is not None:
+                opened.references.create(_PUSHED, confirmed)
 
     # -- reading, always at an explicit commit ------------------------------
 
@@ -646,11 +850,13 @@ class Store:
 
         `known` is a previous answer. When its commit is an ancestor of head the
         walk covers only known..head, first touch wins, and untouched paths keep
-        their cached stamp. When it is NOT an ancestor — which is routine, not a
-        force-push story: the branch ref is published before the push, and a
-        lost race rewinds it (`_attempt`, the `set_target(before)` arm) — the
-        map is discarded and rebuilt from scratch. Retract-by-rebuild is the
-        whole correctness story: there is no retraction logic to get wrong, it
+        their cached stamp. When it is NOT an ancestor — which stays routine,
+        not a force-push story: a rejected push is recovered by replaying
+        local-only commits onto what the remote holds and swapping the branch
+        to the re-minted tip (docs/deferred-push.md), and the old tip is no
+        ancestor of the new one — the map is discarded and rebuilt from
+        scratch. Retract-by-rebuild is the whole correctness story: there is no
+        retraction logic to get wrong, it
         is affordable because a full walk is about a second at any size this
         plan will reach for years, and it is what stops a doomed commit's
         "edited just now" outliving the commit.
@@ -678,8 +884,10 @@ class Store:
     #
     # On Cloud Run the disk is ephemeral and the service scales to zero, so the
     # durable copy is the remote and a commit that has not reached it does not
-    # exist. Push happens inside the writer lock, which is what keeps local
-    # strictly ahead of the remote rather than divergent.
+    # exist. The push is the background pusher's job, off the request path:
+    # nothing inside `_writing` touches the network at all, because a save that
+    # waits for GitHub costs GitHub's latency — measured at ~1.5s of a ~2s
+    # request (docs/deferred-push.md).
 
     def _remote_head(self) -> str | None:
         repo = pygit2.Repository(str(self._path))
@@ -690,25 +898,25 @@ class Store:
         """Can this store write, and how much of it is only on this disk.
 
         **Two local refs and no network.** `refs/heads/main` against
-        `refs/remotes/origin/main` is the same comparison `_absorb_remote` makes
-        one line before it raises, so this is not a second opinion about the
-        wedge — it is that opinion, read from outside the lock. Adding a fetch
-        here would make the answer slow, make it fail when GitHub does, and make
-        it a different question every time somebody asked it.
+        `refs/remotes/origin/main` is the same comparison `push` makes before
+        it refuses, so this is not a second opinion about the wedge — it is
+        that opinion, read from outside the lock. Adding a fetch here would
+        make the answer slow, make it fail when GitHub does, and make it a
+        different question every time somebody asked it.
 
-        **It reports the condition as of the last write attempt, and that is the
-        right window.** The tracking ref only moves when something fetches or
-        pushes, so a fork that happened thirty seconds ago is invisible until
-        this process next tries to write. That is not a gap to close: "can this
-        service write" is answerable only by having tried, and the alternative is
-        a health route that goes red because somebody else's push is in flight.
+        **It reports the condition as of the last push or fetch, and that is
+        the right window.** The tracking ref only moves when something fetches
+        or pushes, so a fork that happened thirty seconds ago is invisible
+        until the pusher next tries to land the backlog. That is not a gap to
+        close: "can this service push" is answerable only by having tried, and
+        the alternative is a health route that goes red because somebody else's
+        push is in flight.
 
         **There is nothing to clear, which is the point.** This is a reading of
-        the world, not a memory of an event. It goes false the moment
-        `_absorb_remote`'s fetch teaches the process the histories forked, and
-        true again the moment a fetch or a push teaches it they no longer have —
-        which is exactly the moment a write would land, because the write asks
-        these same two refs. A recorded flag cleared by "a successful write"
+        the world, not a memory of an event. It goes false the moment a fetch
+        teaches the process the histories forked, and true again the moment a
+        fetch or a push teaches it they no longer have, because both answers
+        ask these same two refs. A recorded flag cleared by "a successful write"
         would have to decide what counts as one: `PUT /api/icon` answers 200 for
         an icon that is already set without ever reaching the store, and clearing
         on that would report health in the middle of a total outage. A flag never
@@ -721,6 +929,7 @@ class Store:
         health check that reports the push.
         """
         repo = pygit2.Repository(str(self._path))
+        parked = len(_stranded_shas(repo))
         born = repo.references.get(_BRANCH)
         if born is None:
             # A plan with no commits yet. `pygit2.init_repository` leaves
@@ -734,7 +943,15 @@ class Store:
             # nothing unpushed and nothing to have diverged. `head` is empty
             # rather than invented, which is the same answer `store.head()`
             # would give if it could.
-            return Condition(head="", remote=None, diverged=False, unpushed=0, refusal=None)
+            return Condition(
+                head="",
+                remote=None,
+                diverged=False,
+                unpushed=0,
+                oldest_unpushed_age=None,
+                parked=parked,
+                refusal=None,
+            )
         local = str(born.target)
         if not self._remote:
             # A laptop. There is no remote to be ahead of, behind or beside, so
@@ -742,29 +959,46 @@ class Store:
             # whole history, which is what "not known to be on the remote" would
             # otherwise mean here.
             return Condition(
-                head=local, remote=None, diverged=False, unpushed=0, refusal=None
+                head=local,
+                remote=None,
+                diverged=False,
+                unpushed=0,
+                oldest_unpushed_age=None,
+                parked=parked,
+                refusal=None,
             )
         reference = repo.references.get(_TRACKING)
         remote = str(reference.target) if reference else None
-        # Equality first: `descendant_of(x, x)` is false — a commit is not its own
-        # descendant — so a store level with the remote would otherwise read as a
-        # fork. `push` carries the same note for the same reason.
-        diverged = (
-            remote is not None
-            and remote != local
-            and not repo.descendant_of(local, remote)
-            and not repo.descendant_of(remote, local)
-        )
+        # `_forked`'s verdict — `refs/openproj/pushed`, seeded when the store
+        # opened and moved by each successful push, against the tracking ref.
+        # Shared with the write gate so this flag and the 503 a save gets
+        # cannot disagree; the seed matters because before it existed this read
+        # False for every fresh clone — the whole boot-to-first-push window in
+        # production — and health could not go red during precisely the window
+        # the guard was needed.
+        refusal = _forked(repo)
         walk = repo.walk(local, SortMode.NONE)
         floor = remote or self._opened_at
         if floor is not None:
             walk.hide(floor)
+        unpushed, oldest = 0, None
+        for commit in walk:
+            unpushed += 1
+            # The author's clock and not the committer's: the committer is
+            # `_BOT`, one Signature minted at import, so its time is the
+            # process's birth. The author Signature is minted per save, and the
+            # age of the WORK is what the alarm is about — a replayed commit
+            # keeps its author verbatim, so the age survives a re-mint too.
+            when = commit.author.time
+            oldest = when if oldest is None or when < oldest else oldest
         return Condition(
             head=local,
             remote=remote,
-            diverged=diverged,
-            unpushed=sum(1 for _ in walk),
-            refusal=_diverged_message(local, remote) if remote and diverged else None,
+            diverged=refusal is not None,
+            unpushed=unpushed,
+            oldest_unpushed_age=None if oldest is None else max(0.0, time.time() - oldest),
+            parked=parked,
+            refusal=refusal,
         )
 
     def fetch(self) -> str | None:
@@ -786,11 +1020,11 @@ class Store:
             return False
         self.fetch()
         # The tracking ref is fresh here, and only here, so this is the one place
-        # that can tell a genuine fork from a race. `_send` cannot: the write path
-        # calls it without fetching, where "local is not on top of the remote" is
-        # the ordinary consequence of having committed on a base that has since
-        # moved. Somebody force-pushed, or a second writer existed, is what this
-        # is about, and neither is recoverable by trying again.
+        # that can tell a genuine fork from a race. `_send` alone cannot: without
+        # a fresh fetch, "local is not on top of the remote" is the ordinary
+        # consequence of the remote having moved since this process last looked.
+        # Somebody force-pushed, or a second writer existed, is what this is
+        # about, and neither is recoverable by trying again.
         local, remote_head = self.head(), self._remote_head()
         # Equality first: `descendant_of(x, x)` is false — a commit is not its own
         # descendant — so a store with nothing to send looked exactly like a fork.
@@ -802,31 +1036,33 @@ class Store:
     def _send(self) -> bool:
         """Push what the tracking ref already says is ahead.
 
-        Split out of `push` because a write had just fetched, milliseconds
-        earlier and inside the same lock, and then fetched again on the way out:
-        one save cost THREE round trips to GitHub — fetch, fetch, push — where a
-        round trip is about 600 ms and is most of what a save costs at all.
+        Split out of `push` when the write path still pushed: a save had just
+        fetched, milliseconds earlier and inside the same lock, and then fetched
+        again on the way out — THREE round trips to GitHub at about 600 ms each.
+        The split survives the write path's departure because the pusher wants
+        exactly this half: push without fetching, and let the rejection be the
+        freshness question.
 
-        Divergence is still caught, and caught properly; it is just no longer
-        paid for on every write. If the remote moved inside that window the push
-        is rejected, and this fetches once and looks — so the fetch happens when
-        it is needed rather than in the hope that it will be.
+        Divergence is still caught, and caught properly; it is just not paid
+        for on every push. If the remote moved, the push is rejected, and this
+        fetches once and looks — so the fetch happens when it is needed rather
+        than in the hope that it will be.
         """
         local, remote_head = self.head(), self._remote_head()
         if remote_head == local:
             return False
         # Not a fork — a race, and the difference decides whether anything can be
         # done about it. Without a pre-fetch, "local is not on top of the remote"
-        # is the ORDINARY case: this process committed on a base that was current
-        # when it started and is not now. Raising `StoreDiverged` here called that
-        # unrecoverable, and it is the exact case the retry recovers from.
+        # is the ORDINARY case: somebody pushed to the plan by hand since this
+        # process last looked. Raising `StoreDiverged` here called that
+        # unrecoverable, and it is the exact case the pusher's replay recovers
+        # from (docs/deferred-push.md).
         #
         # A genuine fork — somebody force-pushed, or two writers existed — is
-        # still caught, one step later: the retry rewinds and calls
-        # `_absorb_remote`, which raises `StoreDiverged` when the two histories
-        # really cannot be reconciled. So the hard answer is given by the code
-        # that can tell, after fetching, rather than guessed here from a tracking
-        # ref that is stale by design.
+        # still caught where a fresh fetch exists to catch it: `push` checks
+        # before sending, and the recovery guards before replaying. So the hard
+        # answer is given by code that has fetched, rather than guessed here
+        # from a tracking ref that is stale by design.
         if remote_head is not None and not self._repo.descendant_of(local, remote_head):
             raise _Rejected(
                 f"the remote is at {remote_head[:7]} and this is not on top of it"
@@ -837,8 +1073,8 @@ class Store:
             )
         except Exception:
             # A refusal and an unreachable host arrive as the same class, and they
-            # want opposite answers: one is recoverable by rewinding and running
-            # the compare-and-swap again, the other is a commit that is real and
+            # want opposite answers: one is recoverable by replaying the backlog
+            # onto what actually landed, the other is a commit that is real and
             # local and simply has not landed.
             #
             # Told apart by ASKING GIT rather than by reading the message. The
@@ -863,6 +1099,388 @@ class Store:
             raise
         return True
 
+    def sync(self) -> SyncOutcome:
+        """The background pusher's one entry point: land local main on the remote.
+
+        Runs on the pusher's thread with no lock held and works on a FRESH
+        `pygit2.Repository`, never `self._repo` — pygit2 objects are not safe to
+        share between threads, and a fresh handle per cross-thread reader is
+        this file's own pattern.
+
+        The quiet day: local level with the tracking ref means nothing to say,
+        and local ahead means one push, sending the original commits under
+        their original shas — a client's answered sha is the sha that lands,
+        and sha instability exists only on the recovery path
+        (docs/deferred-push.md). No fetch first: the rejection IS the freshness
+        question, so a round trip to predict it would be the write path's old
+        pre-fetch moved into the pusher, paid on every pass whether or not
+        anybody else wrote. A rejected push goes to `_recover`; leftover parked
+        refs — a branch whose push failed on an earlier pass — ride along on
+        whatever push happens next, because re-sending a branch the remote
+        already holds is a no-op and NOT re-sending one it lost is a commit
+        gone for good.
+        """
+        quiet = SyncOutcome(landed=None, remapped={}, parked=[], state="idle")
+        if not self._remote:
+            return quiet
+        repo = pygit2.Repository(str(self._path))
+        born = repo.references.get(_BRANCH)
+        if born is None:
+            # An unborn branch has no commits to be at risk — the same answer
+            # `condition` gives for the same repository.
+            return quiet
+        local = str(born.target)
+        tracking = repo.references.get(_TRACKING)
+        level = tracking is not None and str(tracking.target) == local
+        leftovers = _stranded_shas(repo)
+        if level and not leftovers:
+            return quiet
+        refspecs = [_stranded_refspec(sha) for sha in leftovers]
+        if not level:
+            refspecs.append(f"{_BRANCH}:{_BRANCH}")
+        try:
+            # A success moves the tracking ref too, which is what lets
+            # `condition` answer `unpushed: 0` and the next pass answer "idle"
+            # without holding a conversation with the remote.
+            repo.remotes[_ORIGIN].push(refspecs, callbacks=self._callbacks())
+        except Exception:
+            # A refusal and an unreachable host arrive as the same class, and
+            # they want opposite answers — told apart by asking git, never by
+            # reading the message, for `_send`'s reason: `file://` and HTTPS
+            # word the refusal differently.
+            try:
+                repo.remotes[_ORIGIN].fetch(callbacks=self._callbacks())
+            except Exception:
+                # The backlog is real, local, and worth sending unchanged when
+                # the network comes back — nothing rewound, nothing re-minted,
+                # the pusher backs off and asks again.
+                return SyncOutcome(landed=None, remapped={}, parked=[], state="unreachable")
+            moved = repo.references.get(_TRACKING)
+            if (
+                moved is None
+                or str(moved.target) == local
+                or repo.descendant_of(local, str(moved.target))
+            ):
+                # The remote is reachable and NOT ahead, so the failure was not
+                # a rejection — a hiccup worth the same patient retry.
+                return SyncOutcome(landed=None, remapped={}, parked=[], state="unreachable")
+            return self._recover(repo, local, str(moved.target))
+        self._settle(repo, leftovers)
+        repo.references.create(_PUSHED, local, force=True)
+        return SyncOutcome(
+            landed=local,
+            remapped={},
+            parked=[(sha, f"openproj/stranded-{sha}") for sha in leftovers],
+            state="landed",
+        )
+
+    def _recover(self, repo: pygit2.Repository, local: str, remote_tip: str) -> SyncOutcome:
+        """The push was rejected: replay the backlog onto what the remote holds.
+
+        The seven steps of docs/deferred-push.md's "Recovery, when the push is
+        rejected", in order. Everything here runs WITHOUT `_writing` except the
+        swap at the end, and the swap does no network — the lock is never held
+        across a conversation with the remote.
+        """
+        nothing = SyncOutcome(landed=None, remapped={}, parked=[], state="unreachable")
+        # Step 2, the force-push guard, before anything is replayed. A remote
+        # that no longer contains what this process confirmed it held did not
+        # merely move — it LOST a commit, and replaying onto rewritten history
+        # would launder the rewrite into ordinary-looking commits. Genuine
+        # forks are a person's to resolve, never resolved automatically.
+        # `__init__` seeds the ref whenever a remote is configured, so absent
+        # here means the branch was unborn when the store opened: the remote
+        # never held any of our lineage, everything local is this process's own
+        # re-drivable work, and replaying it onto whatever the remote grew is
+        # the ordinary recovery, not a laundered rewrite.
+        confirmed = repo.references.get(_PUSHED)
+        if confirmed is not None:
+            held = str(confirmed.target)
+            if held != remote_tip and not repo.descendant_of(remote_tip, held):
+                return SyncOutcome(landed=None, remapped={}, parked=[], state="diverged")
+        # Steps 3-5: oldest first, each commit's own delta re-driven onto the
+        # growing tip. A parked commit never joins the tip, so the commits
+        # behind it replay against a tree that LACKS it — overlapping edits
+        # park in turn rather than silently reintroducing the refused change.
+        remapped: dict[str, str] = {}
+        parked: list[tuple[str, str]] = []
+        tip = remote_tip
+        for commit in self._local_only(repo, local, remote_tip):
+            advanced, refusals = self._replay_one(repo, commit, tip)
+            if refusals:
+                parked.append((str(commit.id), self._park(repo, commit, refusals)))
+                continue
+            if advanced != tip:
+                remapped[str(commit.id)] = advanced
+                tip = advanced
+        # Step 6: the rebased tip and every parked branch, in ONE push, BEFORE
+        # local main moves. The person's content is durable on GitHub before
+        # anything claims otherwise — a crash after this push loses nothing.
+        # `carrying` re-reads the refs rather than using this pass's parked
+        # list, so a branch stranded by an earlier failed pass rides along too.
+        carrying = _stranded_shas(repo)
+        refspecs = [_stranded_refspec(sha) for sha in carrying]
+        if tip != remote_tip:
+            repo.references.create(_LANDING, tip, force=True)
+            refspecs.append(f"{_LANDING}:{_BRANCH}")
+        if refspecs:
+            try:
+                self._land(repo, refspecs)
+            except Exception:
+                # Unreachable mid-recovery, or a hand-push won another race: the
+                # next pass simply recovers again, and it converges — replaying
+                # an already-applied delta is a no-op, and hand-pushes arrive at
+                # human rate. Local main was never touched, so nothing is lost.
+                return nothing
+        self._settle(repo, carrying)
+        repo.references.create(_PUSHED, tip, force=True)
+        if repo.references.get(_LANDING) is not None:
+            repo.references.delete(_LANDING)
+        durable = tip
+        # Step 7: only now take the lock, replay the stragglers — commits made
+        # while the recovery ran, pure local tree work — and move the branch.
+        # This is the arm the adversary attacked: a straggler that conflicts
+        # here parks exactly like the main loop's, because nothing may be
+        # dropped merely because it arrived late.
+        late: list[str] = []
+        with self._writing:
+            for straggler in self._local_only(repo, self.head(), local):
+                advanced, refusals = self._replay_one(repo, straggler, tip)
+                if refusals:
+                    parked.append((str(straggler.id), self._park(repo, straggler, refusals)))
+                    late.append(str(straggler.id))
+                    continue
+                if advanced != tip:
+                    remapped[str(straggler.id)] = advanced
+                    tip = advanced
+            # The swap. Not a rewind: every commit leaving main is re-minted on
+            # the new tip, convergent with it, or parked on a branch the remote
+            # holds — and the stragglers were replayed under this same lock, so
+            # nothing can have landed between the walk above and this move.
+            repo.references[_BRANCH].set_target(tip)
+        # Push again if the swap added anything — replayed stragglers ride on
+        # main now, parked ones on their branches. A failure here is the one
+        # place the outcome is mixed: the first batch IS durable, so `landed`
+        # says so, and "unreachable" is what sends the pusher back to retry the
+        # remainder, which the leftover-carrying above then heals.
+        refspecs = [_stranded_refspec(sha) for sha in late]
+        if tip != durable:
+            refspecs.append(f"{_BRANCH}:{_BRANCH}")
+        if refspecs:
+            try:
+                self._land(repo, refspecs)
+            except Exception:
+                return SyncOutcome(
+                    landed=durable, remapped=remapped, parked=parked, state="unreachable"
+                )
+            self._settle(repo, late)
+            repo.references.create(_PUSHED, tip, force=True)
+        return SyncOutcome(landed=tip, remapped=remapped, parked=parked, state="landed")
+
+    def _local_only(
+        self, repo: pygit2.Repository, tip: str, floor: str
+    ) -> list[pygit2.Commit]:
+        """The commits reachable from `tip` and not from `floor`, oldest first.
+
+        Oldest first because each replay's delta is against its own parent, so a
+        commit must find its predecessors' work already folded into the tip it
+        lands on — the same order the branch itself tells the story in.
+        """
+        walker = repo.walk(repo[tip].id, SortMode.TOPOLOGICAL | SortMode.REVERSE)
+        walker.hide(repo[floor].id)
+        return list(walker)
+
+    def _replay_one(
+        self, repo: pygit2.Repository, commit: pygit2.Commit, onto: str
+    ) -> tuple[str, list[str]]:
+        """Re-drive one commit's per-path delta onto `onto`: (tip, refusals).
+
+        The delta is the commit against ITS OWN PARENT, never its whole tree: a
+        whole tree carries every earlier commit's content with it, and if one of
+        those was just parked, replaying the tree would silently reintroduce the
+        refused edit under somebody else's sha.
+
+        Blob ids settle the cheap cases without decoding — identical means a
+        convergent edit and is skipped, unchanged-since-base takes ours, and
+        both are what let a binary asset replay at all. Everything else decodes
+        and goes through `_verdict`, the SAME ladder a save uses, so write-time
+        and replay-time conflict semantics cannot drift.
+
+        A non-empty refusal list means the WHOLE commit parks: `write_all` is
+        atomic — a conflict on any path writes nothing — and a partial replay
+        would be the half-done promotion arriving through yet another door. An
+        identical resulting tree mints nothing, because an empty commit on the
+        decision log says a decision was made when none was.
+        """
+        if commit.parents:
+            base_tree = commit.parents[0].tree
+        else:
+            base_tree = repo[repo.TreeBuilder().write()]
+        resolved: dict[str, pygit2.Oid | None] = {}
+        refusals: list[str] = []
+        for delta in base_tree.diff_to_tree(commit.tree).deltas:
+            path = delta.new_file.path or delta.old_file.path
+            was_oid = None if delta.status == DeltaStatus.ADDED else delta.old_file.id
+            mine_oid = None if delta.status == DeltaStatus.DELETED else delta.new_file.id
+            stored_oid = _blob_at(repo, onto, path)
+            if mine_oid == stored_oid:
+                # Convergent: the tip already says what this commit wanted —
+                # including a file both sides deleted. Nothing to mint.
+                continue
+            if was_oid == stored_oid:
+                # Untouched since our base: take ours, bytes for bytes.
+                resolved[path] = mine_oid
+                continue
+            try:
+                was = repo[was_oid].data.decode("utf-8") if was_oid is not None else None
+                mine = repo[mine_oid].data.decode("utf-8") if mine_oid is not None else None
+                stored = (
+                    repo[stored_oid].data.decode("utf-8") if stored_oid is not None else None
+                )
+            except UnicodeDecodeError:
+                # Three genuinely different byte states and at least one is not
+                # text: there is no line merge to run. Content-addressed assets
+                # cannot get here — same bytes are the same path — so this is a
+                # hand-committed binary, and it parks rather than crashing the
+                # pusher's thread.
+                refusals.append(
+                    f"{path} — changed on both sides and not text, so there is no merge to run."
+                )
+                continue
+            text, refusal = _verdict(path, was, mine, stored)
+            if refusal is not None:
+                refusals.append(refusal)
+                continue
+            resolved[path] = (
+                repo.create_blob(text.encode("utf-8")) if text is not None else None
+            )
+        if refusals or not resolved:
+            return onto, refusals
+        tree = repo[onto].tree.id
+        for path, blob in resolved.items():
+            root = repo[tree]
+            if blob is None:
+                tree = self._drop(repo, root, path.split("/"))
+            else:
+                tree = self._insert(repo, root, path.split("/"), blob)
+        if tree == repo[onto].tree.id:
+            return onto, []
+        # `ref=None`, so no branch moves until the swap. The original author
+        # signature verbatim — person, clock and all — the bot as committer,
+        # the message unchanged: `git log --format='%an'` stays a per-person
+        # audit trail across a re-mint (invariant 4).
+        minted = repo.create_commit(
+            None, commit.author, _BOT, commit.message, tree, [repo[onto].id]
+        )
+        return str(minted), []
+
+    def _park(self, repo: pygit2.Repository, commit: pygit2.Commit, refusals: list[str]) -> str:
+        """A commit that cannot replay goes to a branch, never away.
+
+        The conflict has no user attached — the 200 went out long ago — so the
+        original commit is named by a local `refs/openproj/stranded-<sha>` ref,
+        pushed to the branch of the same name on the remote, which cannot be
+        rejected because the ref does not exist there yet. The refusals are
+        logged for the operator now and become the pull request's body later;
+        the branch is the durability and the PR is only the visibility.
+        """
+        sha = str(commit.id)
+        repo.references.create(f"{_STRANDED}{sha}", sha, force=True)
+        # Kept by sha for the pull request's body: the offer happens only once
+        # the branch push is confirmed, and by then the sentences naming the
+        # disagreement exist nowhere else.
+        self._parked_reasons[sha] = refusals
+        _LOG.warning(
+            "parked %s on openproj/stranded-%s — it could not be replayed:\n%s",
+            sha[:7],
+            sha,
+            "\n".join(refusals),
+        )
+        return f"openproj/stranded-{sha}"
+
+    def _settle(self, repo: pygit2.Repository, shas: list[str]) -> None:
+        """These parked commits' branches are on the remote now: drop the local
+        refs, then offer each branch as a pull request.
+
+        Deleting is what keeps `condition().parked` honest — the count is "what
+        this container would still lose", and a branch the remote holds is not
+        that — and it is what lets `sync` know, without a conversation with the
+        remote, that a would-be-idle pass still has parked branches to send:
+        any ref under the prefix IS one.
+
+        The offer rides in the same function because it and the deletion are
+        one transition — "confirmed durable" — and a push path that settled in
+        one place and announced in another would eventually do only half.
+        Every caller is on the pusher's thread with `_writing` NOT held, which
+        is where a conversation with the network belongs.
+        """
+        for sha in shas:
+            name = f"{_STRANDED}{sha}"
+            if repo.references.get(name) is not None:
+                repo.references.delete(name)
+        self._offer_pull_requests(repo, shas)
+
+    def _offer_pull_requests(self, repo: pygit2.Repository, shas: list[str]) -> None:
+        """Best-effort visibility for branches that are already durable.
+
+        The credentials object may not know how to open one — None on a
+        laptop, a plain callbacks-only stub in a test — and that is silence,
+        not an error: a branch nobody can announce is still a branch. A
+        refusal from GitHub — the 403 of a revoked `pull_requests: write`, an
+        outage — is logged and swallowed, per branch so one failure does not
+        silence the next: the branch is the durability and the PR is only the
+        visibility (docs/deferred-push.md), and a pusher thread that dies over
+        an announcement stops landing everybody's commits.
+        """
+        offer = getattr(self._credentials, "offer_pull_request", None)
+        for sha in shas:
+            # Popped even when nobody can be told: a settled branch is never
+            # offered again, and a dict that only grows is a leak.
+            reasons = self._parked_reasons.pop(sha, None)
+            if offer is None:
+                continue
+            commit = repo[sha]
+            message = commit.message.strip()
+            summary = message.splitlines()[0] if message else sha[:7]
+            why = "\n".join(
+                reasons
+                or [
+                    "It could not be replayed onto what the remote holds; the exact "
+                    "refusals were logged by the pass that parked it."
+                ]
+            )
+            body = (
+                f"{commit.author.name}'s commit {sha} could not be replayed onto what "
+                "the remote holds, so it is parked here rather than lost.\n\n"
+                f"Why it could not be replayed:\n\n{why}\n\n"
+                "Merge this branch once the disagreement is resolved, or close it if "
+                "what the plan now says should stand."
+            )
+            try:
+                offer(
+                    branch=f"openproj/stranded-{sha}",
+                    title=f"Stranded: {summary}",
+                    body=body,
+                )
+            except Exception:
+                _LOG.warning(
+                    "could not open a pull request for openproj/stranded-%s — the commit "
+                    "is safe on that branch; only the announcement failed",
+                    sha,
+                    exc_info=True,
+                )
+
+    def _land(self, repo: pygit2.Repository, refspecs: list[str]) -> None:
+        """Everything a recovery sends, in one push.
+
+        The recovery's only conversation with the remote, and one call rather
+        than one per ref on purpose: the parked branches and the rebased tip
+        must be durable on GitHub together, BEFORE local main moves — a crash
+        between two pushes would leave an acknowledged commit reachable from no
+        ref the remote holds.
+        """
+        repo.remotes[_ORIGIN].push(refspecs, callbacks=self._callbacks())
+
     def _callbacks(self):
         """Credentials for the remote, minted per call.
 
@@ -875,6 +1493,34 @@ class Store:
 
     # -- writing ------------------------------------------------------------
 
+    def _refuse_forked(self) -> None:
+        """Every write refuses, in the guard's words, while the plan is forked.
+
+        Why refuse when the commit would be real and local: `sync()` parks on a
+        fork and only a person can move the remote, so every commit accepted
+        past the guard joins a backlog with no way off this disk — and on Cloud
+        Run the disk is memory, so the first idle recycle discards the lot,
+        each one accepted with a 200. No page reads /api/health; the save's own
+        answer is the one place the person is guaranteed to hear it, while
+        their text is still in their editor. The banner and the pile thresholds
+        are piece 4's escalation (docs/deferred-push.md, "Saying it on the
+        page"); this is the floor under it — a fork is never resolved
+        automatically, and never papered over either.
+
+        The poke before the raise is what un-wedges the store after a person
+        heals the remote: the verdict is read off the tracking ref, which only
+        a fetch moves, and a refusal makes no commit to poke with — so without
+        this, nothing would ever send the pusher back to look, and the refusal
+        would outlive the fork it reports until somebody restarted the
+        container, which is exactly the move `_wedged` warns costs the backlog.
+
+        Called with `_writing` held; reads two local refs and nothing else.
+        """
+        refusal = _forked(self._repo)
+        if refusal is not None:
+            self.dirty.set()
+            raise StoreDiverged(refusal)
+
     def put_asset(self, data: bytes, suffix: str, author: str) -> tuple[str, bool]:
         """Store bytes under a name derived from their content, and return it.
 
@@ -883,33 +1529,33 @@ class Store:
         base to compare against, nothing to merge, and no conflict that can exist
         — which is why this needs none of `write_all`'s compare-and-swap.
 
-        It needs the rest of it. This took no lock and never pushed, and both were
-        wrong in the same way: the commit existed only on this disk, so ONE image
-        upload followed by anybody pushing to the plan by hand left local and
-        remote genuinely forked — and from then on every write raised
-        `StoreDiverged` for the life of the container. Not the first write. All of
-        them, for ever, because nothing ever reconciled. The lock matters for a
-        second reason now that writes run on a threadpool: concurrent with a save,
-        libgit2 refuses the commit outright with "current tip is not the first
-        parent".
+        It needs the lock. This once took none, and concurrent with a save on
+        the threadpool libgit2 refuses the commit outright with "current tip is
+        not the first parent". The `_absorb_remote()` that used to open this
+        block went with the deferred push: it existed because an unpushed asset
+        commit had nothing else to reconcile it — one upload plus one hand-push
+        to the plan left the histories forked for the life of the container —
+        and the pusher now reconciles every commit, this one included. Nothing
+        inside `_writing` touches the network any more, anywhere in this file.
         """
         name = f"assets/{hashlib.sha256(data).hexdigest()[:16]}{suffix}"
         with self._writing:
-            if self._remote:
-                self._absorb_remote()
+            # Before the dedupe, not after: while the plan is forked no route
+            # may answer as though this service can take work, and the refusal
+            # for an upload has to be the same one a save gets.
+            self._refuse_forked()
             if self.read_asset(self.head(), name) is not None:
                 return name, False
             blob = self._repo.create_blob(data)
             parent = self.head()
-            tree = self._insert(self._tree(parent), name.split("/"), blob)
+            tree = self._insert(self._repo, self._tree(parent), name.split("/"), blob)
             who = pygit2.Signature(author, f"{author}@users.noreply.github.com")
             self._repo.create_commit(_BRANCH, who, _BOT, f"upload {name}", tree, [parent])
-            # Through `_finish`, so an upload reaches the remote like every other
-            # commit and an unreachable remote is reported rather than pretended
-            # away. The name and "it is new" are what the caller wants; whether it
-            # pushed is on the result `_finish` builds, which this discards — an
-            # asset nobody can see yet is a broken image on one page, not a lost
-            # record.
+            # Through `_finish`, so an upload pokes the pusher and joins the
+            # same backlog as every other commit. The name and "it is new" are
+            # what the caller wants; the result `_finish` builds is discarded —
+            # an upload the remote does not hold yet is a broken image on one
+            # page, not a lost record.
             self._finish(self.head(), "committed")
         return name, True
 
@@ -974,25 +1620,16 @@ class Store:
         came to disagree about which commit `stored` is read at.
         """
         with self._writing:
-            # NO FETCH BEFORE THE WRITE. It was here so that "current" already
-            # included whatever the remote had, and it cost a round trip on every
-            # save whether or not the remote had moved — measured at about 600 ms
-            # from a laptop, which was half of what a save cost at all.
-            #
-            # Optimistic instead: commit against local HEAD, push, and let the
-            # push be the question. GitHub refuses a non-fast-forward and libgit2
-            # raises `cannot push non-fastforwardable reference` — verified
-            # against the real remote over HTTPS, not over `file://`, because the
-            # two answer differently and only one of them is what runs in
-            # production. `_retry` then rewinds, fetches, and runs this same loop
-            # again against what actually landed.
-            #
-            # So the fetch happens when somebody else really did write, rather
-            # than in the hope that they might have. Conflict SEMANTICS are
-            # unchanged, because the retry re-runs this identical loop: what moves
-            # is the tail latency of a collision, to about 1.8 s — which was until
-            # today the price of every save, collision or not.
-            return self._attempt(files, base_commit, author, message, tries=3)
+            # NO NETWORK IN HERE. The pre-fetch went first — it cost a round
+            # trip on every save whether or not the remote had moved, about
+            # 600 ms from a laptop — and the push has now followed it out
+            # (docs/deferred-push.md): a save commits against local HEAD and
+            # answers, and the background pusher lands the branch on its own
+            # clock. Remote staleness is the pusher's problem; the
+            # compare-and-swap below keeps handling browser-side staleness — a
+            # `base_commit` older than HEAD — exactly as it always has.
+            self._refuse_forked()
+            return self._attempt(files, base_commit, author, message)
 
     def _attempt(
         self,
@@ -1000,137 +1637,71 @@ class Store:
         base_commit: str,
         author: str,
         message: str,
-        tries: int,
     ) -> WriteResult:
-        """One pass of the compare-and-swap, and the retry when the push loses.
+        """One pass of the compare-and-swap, against the local tip.
 
-        Called with `self._writing` already held, and it calls itself, so the lock
-        must stay non-reentrant-safe by never being taken again in here.
+        Called with `self._writing` already held, and nothing in here may take
+        it again — the lock is deliberately non-reentrant. The `_Rejected` retry
+        that used to live here — rewind to the head captured before the commit,
+        absorb the remote, run again — went with the push itself: a rewind was
+        sound only while the lock spanned both the commit and the push, and once
+        the push is deferred, `set_target(before)` would discard commits other
+        people made after the one being retried. Nothing rewinds
+        `refs/heads/main` any more; a rejected push is the pusher's to recover,
+        by replay (docs/deferred-push.md).
         """
-        if True:
-            current = self.head()
-            resolved: dict[str, str] = {}
-            outcomes: list[str] = []
-            conflicts: list[str] = []
-            for path, content in files.items():
-                # Asked before the fast paths below, because both of them are
-                # about a file that is still there. A removal of something
-                # already gone slipped through the `was == stored` path — both
-                # sides read `None`, which looks exactly like "somebody edited a
-                # different file" — and committed a tree identical to its parent:
-                # an empty commit, reported to the person who pressed Delete as
-                # the sha that deleted the record.
-                if content is None and self.read(current, path) is None:
-                    conflicts.append(_already_gone(path))
-                    continue
-                if current == base_commit:
-                    resolved[path] = content
-                    outcomes.append("committed")
-                    continue
-                was, stored = self.read(base_commit, path), self.read(current, path)
-                if was == stored:
-                    # Somebody edited a different file. Nobody needs to hear.
-                    resolved[path] = content
-                    outcomes.append("retried")
-                    continue
-                # Deleted under us, and it must not come back. `_merge` is handed
-                # `stored or ""`, so a deletion arrives looking exactly like an
-                # empty frontmatter: every key nobody touched reads as "only they
-                # moved it" and drops, the one key this write touched reads as
-                # "only we moved it" and stays. A drag onto a record somebody had
-                # just deleted therefore recreated it as a file holding nothing
-                # but `parent:`, and answered 200. Parsing would not have caught
-                # it — every field here is optional by design.
-                # A removal has no third text to fall back on. `_merge` exists
-                # because two edits to one file can often both be kept; a delete
-                # and an edit cannot. Refused rather than merged, and refused
-                # rather than quietly winning: the edit would otherwise be
-                # committed and then thrown away without anybody reading it.
-                if content is None:
-                    conflicts.append(_changed_under_delete(path))
-                    continue
-                if was is not None and stored is None:
-                    conflicts.append(_deleted(path))
-                    continue
-                merged, conflict = _merge(path, was or "", content, stored or "")
-                if conflict is not None:
-                    conflicts.append(conflict)
-                    continue
-                resolved[path] = merged
-                outcomes.append("merged")
-            if conflicts:
-                return WriteResult(
-                    commit=None, outcome="conflict", conflict="\n".join(conflicts)
-                )
-            # The most eventful thing that happened to any of them. A caller shown
-            # "committed" for a set in which one file had to be merged has been
-            # told the quiet half of what happened.
-            worst = max(outcomes, key=_OUTCOMES.index, default="committed")
-            before = self.head()
-            made = self._commit(resolved, author, message)
-            try:
-                return self._finish(made, worst)
-            except _Rejected:
-                # Somebody else landed a commit between this HEAD and this push.
-                # Rewind to where we started, take what they wrote, and run the
-                # whole loop again against it — which is the same three-way merge
-                # a pre-fetch would have done, arrived at from the other side.
-                if tries <= 1:
-                    # The same 409 they would have been given anyway. A remote
-                    # moving faster than three attempts is not a conflict this can
-                    # resolve by trying a fourth time.
-                    self._repo.references[_BRANCH].set_target(before)
-                    self._absorb_remote()
-                    return WriteResult(
-                        commit=None,
-                        outcome="conflict",
-                        conflict=_lost_the_race(sorted(files)),
-                    )
-                self._repo.references[_BRANCH].set_target(before)
-                self._absorb_remote()
-                return self._attempt(files, base_commit, author, message, tries - 1)
-
-    def _absorb_remote(self) -> None:
-        """Fast-forward onto anything the remote gained since the last write.
-
-        An unreachable remote is not a reason to refuse the write: the commit is
-        still made locally and reported as unpushed. Refusing would mean the
-        tracker stops working whenever GitHub does.
-        """
-        try:
-            self.fetch()
-        except StoreDiverged:
-            raise
-        except Exception:
-            return
-        local, remote_head = self.head(), self._remote_head()
-        if remote_head is None or remote_head == local:
-            return
-        if self._repo.descendant_of(remote_head, local):
-            self._repo.references[_BRANCH].set_target(remote_head)
-        elif not self._repo.descendant_of(local, remote_head):
-            raise StoreDiverged(_diverged_message(local, remote_head))
+        current = self.head()
+        resolved: dict[str, str] = {}
+        outcomes: list[str] = []
+        conflicts: list[str] = []
+        for path, content in files.items():
+            # Asked before the fast paths below, because both of them are
+            # about a file that is still there. A removal of something
+            # already gone slipped through the `was == stored` path — both
+            # sides read `None`, which looks exactly like "somebody edited a
+            # different file" — and committed a tree identical to its parent:
+            # an empty commit, reported to the person who pressed Delete as
+            # the sha that deleted the record.
+            if content is None and self.read(current, path) is None:
+                conflicts.append(_already_gone(path))
+                continue
+            if current == base_commit:
+                resolved[path] = content
+                outcomes.append("committed")
+                continue
+            was, stored = self.read(base_commit, path), self.read(current, path)
+            text, refusal = _verdict(path, was, content, stored)
+            if refusal is not None:
+                conflicts.append(refusal)
+                continue
+            resolved[path] = text
+            # The label repeats the ladder's first comparison rather than
+            # coming back with the verdict, because it is wording and not a
+            # guard: nothing is decided by it, and `_verdict`'s other
+            # caller, the replay, has no outcome to report to anybody.
+            outcomes.append("retried" if was == stored else "merged")
+        if conflicts:
+            return WriteResult(
+                commit=None, outcome="conflict", conflict="\n".join(conflicts)
+            )
+        # The most eventful thing that happened to any of them. A caller shown
+        # "committed" for a set in which one file had to be merged has been
+        # told the quiet half of what happened.
+        worst = max(outcomes, key=_OUTCOMES.index, default="committed")
+        made = self._commit(resolved, author, message)
+        return self._finish(made, worst)
 
     def _finish(self, commit: str, outcome: str) -> WriteResult:
-        """Commit made. Try to push, and never claim success for a commit that is
-        still only on this disk."""
-        pushed = False
-        if self._remote:
-            try:
-                pushed = self._send()
-            except (StoreDiverged, _Rejected):
-                # Both are answers about the plan rather than about the network,
-                # and the caller has something to do with each: a rejection is
-                # recoverable by rewinding and running the compare-and-swap again,
-                # and a genuine fork is not recoverable at all. Swallowing either
-                # into `pushed = False` would report a commit as merely unpushed
-                # when it is in fact about to be retried, or about to be lost.
-                raise
-            except Exception:
-                # The remote is unreachable. The commit is real and local; the
-                # caller is told it has not landed rather than told nothing.
-                pushed = False
-        return WriteResult(commit=commit, outcome=outcome, pushed=pushed)
+        """Commit made; answer now, and poke the pusher.
+
+        The push that lived here was ~1.5s of a ~2s save — GitHub's server-side
+        time, none of it ours to make faster (docs/deferred-push.md) — so the
+        request stops paying for it. `pushed=False` is the truth at this moment,
+        not pessimism: the commit is real, local, and in the pusher's backlog,
+        and nothing may say the remote holds it before the remote does.
+        """
+        self.dirty.set()
+        return WriteResult(commit=commit, outcome=outcome, pushed=False)
 
     def _commit(self, files: dict[str, str], author: str, message: str) -> str:
         parent = self.head()
@@ -1143,10 +1714,10 @@ class Store:
             # dropped the first file, and the commit still succeeds.
             root = self._repo[tree].peel(pygit2.Tree)
             if content is None:
-                tree = self._drop(root, path.split("/"))
+                tree = self._drop(self._repo, root, path.split("/"))
                 continue
             blob = self._repo.create_blob(content.encode("utf-8"))
-            tree = self._insert(root, path.split("/"), blob)
+            tree = self._insert(self._repo, root, path.split("/"), blob)
         # Author is the person, committer is the bot: `git log --format='%an'` is
         # then a per-person audit trail for free, while a future push credential
         # stays a bot that no human's departure invalidates.
@@ -1154,10 +1725,15 @@ class Store:
         oid = self._repo.create_commit(_BRANCH, who, _BOT, message, tree, [parent])
         return str(oid)
 
-    def _insert(self, tree, parts: list[str], blob) -> pygit2.Oid:
+    def _insert(self, repo: pygit2.Repository, tree, parts: list[str], blob) -> pygit2.Oid:
         """Rebuild the path's spine. TreeBuilder writes one tree, so nested paths
-        have to be walked and rewritten from the bottom up."""
-        builder = self._repo.TreeBuilder(tree) if tree is not None else self._repo.TreeBuilder()
+        have to be walked and rewritten from the bottom up.
+
+        `repo` is a parameter and not `self._repo` because the replay builds
+        trees on the pusher's own fresh handle (invariant: the pusher never
+        touches the shared one), while the write path passes the shared handle
+        it has always used."""
+        builder = repo.TreeBuilder(tree) if tree is not None else repo.TreeBuilder()
         name, rest = parts[0], parts[1:]
         if not rest:
             builder.insert(name, blob, pygit2.enums.FileMode.BLOB)
@@ -1166,11 +1742,11 @@ class Store:
             if tree is not None and name in [entry.name for entry in tree]:
                 entry = tree[name]
                 if entry.type_str == "tree":
-                    child = self._repo.get(entry.id)
-            builder.insert(name, self._insert(child, rest, blob), pygit2.enums.FileMode.TREE)
+                    child = repo.get(entry.id)
+            builder.insert(name, self._insert(repo, child, rest, blob), pygit2.enums.FileMode.TREE)
         return builder.write()
 
-    def _drop(self, tree, parts: list[str]) -> pygit2.Oid:
+    def _drop(self, repo: pygit2.Repository, tree, parts: list[str]) -> pygit2.Oid:
         """The same spine, rebuilt without this entry.
 
         Git has no empty directory: a tree with no entries is not something a
@@ -1180,17 +1756,17 @@ class Store:
         — which is also what `git rm` does, and what a plan with no tasks in it
         should look like.
         """
-        builder = self._repo.TreeBuilder(tree)
+        builder = repo.TreeBuilder(tree)
         name, rest = parts[0], parts[1:]
         if not rest:
             builder.remove(name)
             return builder.write()
         entry = tree[name] if name in [item.name for item in tree] else None
-        child = self._repo.get(entry.id) if entry is not None and entry.type_str == "tree" else None
+        child = repo.get(entry.id) if entry is not None and entry.type_str == "tree" else None
         if child is None:
             return builder.write()
-        inner = self._drop(child, rest)
-        if len(self._repo[inner]) == 0:
+        inner = self._drop(repo, child, rest)
+        if len(repo[inner]) == 0:
             builder.remove(name)
         else:
             builder.insert(name, inner, pygit2.enums.FileMode.TREE)

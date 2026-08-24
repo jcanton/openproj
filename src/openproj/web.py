@@ -100,7 +100,8 @@ from .model import (
     what_json_can_carry,
     why_it_will_not_read,
 )
-from .store import Condition, Store, StoreDiverged, StoreLocked
+from .pusher import Pusher
+from .store import Condition, Store, StoreDiverged, StoreLocked, SyncOutcome
 
 # What a write can fail with, as one name so the two callers of `store.write`
 # cannot disagree about it. `StoreLocked` and `StoreDiverged` are `RuntimeError`s
@@ -160,12 +161,12 @@ def _refusal(error: Exception) -> HTTPException:
         # 503, and the argument is worth writing down because the two codes that
         # come to mind first are both wrong.
         #
-        # 500 claims a bug in this service. There is none. `_absorb_remote`
-        # refuses to guess which commits to discard, and that refusal is the
-        # reason nobody's work has been destroyed — the code that ran is the code
-        # that was meant to run, and what is wedged is the repository it was
-        # pointed at. A 500 sends somebody to read this file, which is the one
-        # place the answer is not.
+        # 500 claims a bug in this service. There is none. The store's write
+        # gate refuses to commit onto a fork rather than guess which commits to
+        # discard, and that refusal is the reason nobody's work has been
+        # destroyed — the code that ran is the code that was meant to run, and
+        # what is wedged is the repository it was pointed at. A 500 sends
+        # somebody to read this file, which is the one place the answer is not.
         #
         # 409 is the one that reads right and is the one that must not be used.
         # It already means something to every page that writes: `refusal()` in
@@ -255,9 +256,9 @@ def _wedged(state: Condition) -> str:
 
     Beside `_refusal` because they are the two halves of one condition and have to
     stay legible against each other: that one answers the person who pressed Save,
-    this one answers `/api/health`. Both open on `_absorb_remote`'s own wording —
-    the sentence in the server log and in the room's `refused` frame — because
-    wording one outage three ways makes it look like three outages.
+    this one answers `/api/health`. Both open on the force-push guard's own
+    wording — the sentence in the server log and in the room's `refused` frame —
+    because wording one outage three ways makes it look like three outages.
 
     They differ in the half that follows, and deliberately. A person who pressed
     Save is told their save did not land and that trying again will not change
@@ -1304,16 +1305,53 @@ def create_app(
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI):
-        """Hand the writer lock back when this server stops.
+        """Start the pusher, and on the way out land the backlog and hand the
+        writer lock back.
 
-        It used to be released only by the process ending, which is true of every
-        deployment and of nothing else: two servers over one repository in one
-        process — a test that restarts one, a script that opens a second — met
-        `StoreLocked` from a server that had already shut down. Single-writer is
-        a correctness invariant and stays one; what changes is that stopping now
-        counts as stopping.
+        The lock used to be released only by the process ending, which is true
+        of every deployment and of nothing else: two servers over one repository
+        in one process — a test that restarts one, a script that opens a second
+        — met `StoreLocked` from a server that had already shut down.
+        Single-writer is a correctness invariant and stays one; what changes is
+        that stopping now counts as stopping.
+
+        The pusher closes BEFORE the store does, in that order because the
+        drain still writes refs under the flock the store is about to release —
+        and it exists at all because uvicorn runs lifespan shutdown only after
+        the in-flight requests finish, so by the time the drain runs nothing
+        can add to the backlog it is flushing. This is the window
+        `deploy/boot.py`'s execv fix (v0.19.2) opened: SIGTERM actually reaches
+        the server now, so this code runs on Cloud Run instead of being
+        SIGKILLed ten silent seconds later.
         """
+        loop = asyncio.get_running_loop()
+
+        def landed(outcome: SyncOutcome) -> None:
+            # On the loop, via the pusher's call_soon_threadsafe hop below, so
+            # the queues are touched from the one thread that owns them. Only a
+            # recovery is news to a page: it moves local main to a tip the page
+            # has never seen, so every open tab's `base_commit` just went
+            # stale. The quiet day lands the very shas the saves answered with,
+            # and each of those already announced itself at commit time.
+            if outcome.state == "landed" and (outcome.remapped or outcome.parked):
+                for queue in list(watchers):
+                    queue.put_nowait({"commit": outcome.landed, "changed": []})
+
+        def deliver(outcome: SyncOutcome) -> None:
+            # Called on the pusher's thread. `call_soon_threadsafe` is the one
+            # documented way onto a running loop from outside it; a loop mid-
+            # shutdown may refuse, and the announcement is visibility, never
+            # durability — the refs already carry everything it says.
+            try:
+                loop.call_soon_threadsafe(landed, outcome)
+            except RuntimeError:
+                pass
+
+        pusher = Pusher(store, deliver=deliver)
+        app.state.pusher = pusher
+        pusher.start()
         yield
+        pusher.close()
         store.close()
 
     app = FastAPI(title="openproj", lifespan=lifespan)
@@ -2102,10 +2140,10 @@ def create_app(
                 "unpushed": state.unpushed,
                 # Always present, `null` when there is nothing wrong: a key that
                 # appears only sometimes is a key a JSON path breaks on, and this
-                # is read by scripts. The wording is `_absorb_remote`'s own, so
-                # the operator reading a monitor and the person who pressed Save
-                # are told the same thing, plus what to do about it — which is the
-                # half a condition report is useless without.
+                # is read by scripts. The wording is the force-push guard's own,
+                # so the operator reading a monitor and the person whose save
+                # was refused are told the same thing, plus what to do about it
+                # — which is the half a condition report is useless without.
                 "detail": _wedged(state) if state.diverged else None,
             },
             status_code=503 if state.diverged else 200,

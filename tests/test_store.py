@@ -24,15 +24,19 @@ the same repository from a terminal, which is point five below and a thing that
 will happen in week one.
 """
 
+import json
 import subprocess
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import httpx
 import pygit2
 import pytest
 
+from openproj.github import GitHubApp
 from openproj.model import parse_person_text, parse_text
 from openproj.store import Store, StoreLocked, WriteResult, _merge_body
 
@@ -563,6 +567,127 @@ def test_no_conflict_marker_ever_reaches_the_caller_or_the_repository(store: Sto
     assert not [marker for marker in markers if marker in mine.conflict]
     stored = store.read(store.head(), PATH)
     assert not [marker for marker in markers if marker in stored]
+
+
+def test_every_per_path_verdict_keeps_its_outcome_and_its_exact_sentence(store: Store):
+    """The characterisation net under extracting the per-path ladder.
+
+    The deferred-push replay will re-drive commits through the same decision a
+    save makes, so the ladder is being moved out of `_attempt` into one shared
+    function — an invariant written twice will be guarded once. The move must
+    change nothing: this pins every verdict through the public API, refusal
+    sentences verbatim, because those sentences land in a textarea and a
+    reworded refusal is a behaviour change even when every branch still fires.
+    """
+    # A silent retry: somebody edited a DIFFERENT file. Nobody needs to hear.
+    stale = store.head()
+    store.write(
+        path=OTHER,
+        content=record(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
+        base_commit=stale,
+        author="bo",
+        message="task-c00002: status todo -> wip",
+    )
+    retried = store.write(
+        path=PATH,
+        content=record(priority="high"),
+        base_commit=stale,
+        author="ann",
+        message="task-c00001: priority 2 -> 1",
+    )
+    assert (retried.outcome, retried.conflict) == ("retried", None)
+
+    # A merge: two people moved different frontmatter keys of one file.
+    stale = store.head()
+    store.write(
+        path=PATH,
+        content=record(priority="high", status="in_progress"),
+        base_commit=stale,
+        author="bo",
+        message="task-c00001: status todo -> wip",
+    )
+    merged = store.write(
+        path=PATH,
+        content=record(priority="high", owner="cy"),
+        base_commit=stale,
+        author="ann",
+        message="task-c00001: owner ann -> cy",
+    )
+    assert (merged.outcome, merged.conflict) == ("merged", None)
+
+    # Deleted under an edit: refused, in `_deleted`'s exact words.
+    stale = store.head()
+    store.remove(PATH, base_commit=stale, author="bo", message="task-c00001: remove")
+    doomed = store.write(
+        path=PATH,
+        content=record(priority="low"),
+        base_commit=stale,
+        author="ann",
+        message="task-c00001: priority 1 -> 3",
+    )
+    assert (doomed.outcome, doomed.commit) == ("conflict", None)
+    assert doomed.conflict == (
+        f"{PATH} — somebody deleted this while you were editing it.\n"
+        "  Nothing was written. Restore it in git if it should not have gone, "
+        "or make the record again."
+    )
+
+    # Edited under a delete: refused, in `_changed_under_delete`'s exact words.
+    store.write(
+        path=PATH,
+        content=record(),
+        base_commit=store.head(),
+        author="ann",
+        message="task-c00001: recreate",
+    )
+    stale = store.head()
+    store.write(
+        path=PATH,
+        content=record(status="in_progress"),
+        base_commit=stale,
+        author="bo",
+        message="task-c00001: status todo -> wip",
+    )
+    refused = store.remove(PATH, base_commit=stale, author="ann", message="task-c00001: remove")
+    assert (refused.outcome, refused.commit) == ("conflict", None)
+    assert refused.conflict == (
+        f"{PATH} — somebody edited this while you were deleting it.\n"
+        "  Nothing was removed. Read what they wrote, then decide again."
+    )
+
+    # A delete of something already gone: refused, in `_already_gone`'s words.
+    stale = store.head()
+    store.remove(PATH, base_commit=stale, author="bo", message="task-c00001: remove")
+    gone = store.remove(PATH, base_commit=stale, author="ann", message="task-c00001: remove too")
+    assert (gone.outcome, gone.commit) == ("conflict", None)
+    assert gone.conflict == (
+        f"{PATH} — somebody deleted this first.\n"
+        "  Nothing was written, and the record is already out of the plan."
+    )
+
+    # And a removal outrun by an edit to a DIFFERENT file retries silently and
+    # still removes. Its resolved text is None with no refusal, which must keep
+    # meaning "drop the file" and never "nothing to do" — read as the latter,
+    # the delete would commit a tree identical to its parent and answer the
+    # person who pressed Delete with the sha of an empty commit.
+    store.write(
+        path=PATH,
+        content=record(),
+        base_commit=store.head(),
+        author="ann",
+        message="task-c00001: recreate",
+    )
+    stale = store.head()
+    store.write(
+        path=OTHER,
+        content=record(id="task-c00002", title="Downgrade numpy", owner="bo"),
+        base_commit=stale,
+        author="bo",
+        message="task-c00002: retitle",
+    )
+    dropped = store.remove(PATH, base_commit=stale, author="ann", message="task-c00001: remove")
+    assert (dropped.outcome, dropped.conflict) == ("retried", None)
+    assert store.read(store.head(), PATH) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -1192,3 +1317,114 @@ def test_the_identical_edit_made_twice_still_merges():
 
     assert conflicts == []
     assert merged == same
+
+
+# --------------------------------------------------------------------------- #
+# The parked branch says so on GitHub
+#
+# The git half of these stays real — a second bare repository, a real clone, a
+# real rejected push — because the park is a claim about a remote and `file://`
+# is a real git transport. Only api.github.com is a stub, because THAT claim is
+# about the request this store builds, and the request is visible at the httpx
+# transport without a socket.
+# --------------------------------------------------------------------------- #
+
+
+def parked_by_a_sync(tmp_path: Path, github) -> tuple:
+    """One real park — a local edit contradicted by a hand-push — with the
+    GitHub API answered by `github` at the transport.
+
+    The credential is a real `GitHubApp` whose token is preset and unexpired,
+    so nothing signs a JWT and nothing mints: the request under test is the
+    pull request, not the token that authorises it.
+    """
+    remote_path = tmp_path / "origin.git"
+    pygit2.init_repository(str(remote_path), bare=True, initial_head="main")
+    commit_directly(remote_path, SEED, "seed the corpus")
+    plan = tmp_path / "plan.git"
+    clone = pygit2.clone_repository(f"file://{remote_path}", str(plan), bare=True)
+    clone.remotes.delete("origin")
+    credentials = GitHubApp(
+        "app-id",
+        "installation-id",
+        "",  # never signs anything: the preset token below never expires here
+        repository="acme/plan",
+        transport=httpx.MockTransport(github),
+        _token="t0ken",
+        _expires=time.time() + 3600,
+    )
+    store = Store(plan, remote=f"file://{remote_path}", credentials=credentials)
+    try:
+        ours = store.write(
+            path=PATH,
+            content=record(owner="cy"),
+            base_commit=store.head(),
+            author="ann",
+            message="task-c00001: owner ann -> cy",
+        )
+        commit_directly(
+            remote_path,
+            {**SEED, PATH: record(owner="bo")},
+            "task-c00001: owner ann -> bo",
+        )
+        outcome = store.sync()
+    finally:
+        store.close()
+    return outcome, ours, remote_path
+
+
+def test_a_parked_branch_is_offered_as_a_pull_request(tmp_path: Path):
+    """A parked commit has no user attached — its 200 went out long ago — so
+    the pull request is how the stranding reaches a person at all. One POST to
+    the plan repository, from the stranded branch onto main, whose body names
+    the record and the disagreement: the refusal sentences the replay wrote
+    exist nowhere else, and a PR that does not carry them is a PR nobody can
+    act on.
+    """
+    requests: list[httpx.Request] = []
+
+    def github(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(201, json={"html_url": "https://github.com/acme/plan/pull/1"})
+
+    outcome, ours, _ = parked_by_a_sync(tmp_path, github)
+
+    branch = f"openproj/stranded-{ours.commit}"
+    assert outcome.parked == [(ours.commit, branch)]
+    assert len(requests) == 1, "one parked branch is one pull request"
+    (request,) = requests
+    assert request.method == "POST"
+    assert request.url == "https://api.github.com/repos/acme/plan/pulls"
+    # The installation token, not the App JWT: the PR is opened as the bot.
+    assert request.headers["Authorization"] == "Bearer t0ken"
+    asked = json.loads(request.content)
+    assert asked["head"] == branch
+    assert asked["base"] == "main"
+    # Which record, and why it could not be replayed — the refusal verbatim.
+    assert PATH in asked["body"]
+    assert "owner: stored 'bo' · yours 'cy'" in asked["body"]
+    assert "ann" in asked["body"], "whose work is stranded"
+
+
+def test_a_refused_pull_request_is_not_fatal(tmp_path: Path):
+    """The branch is the durability and the PR is only the visibility: a 403 —
+    `pull_requests: write` revoked, or any api.github.com outage — must not
+    take down the pusher's pass and must not unsay the park. By the time this
+    request is made the work is already safe on the remote branch; only the
+    announcement failed.
+    """
+    requests: list[httpx.Request] = []
+
+    def refused(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(403, json={"message": "Resource not accessible by integration"})
+
+    outcome, ours, remote_path = parked_by_a_sync(tmp_path, refused)  # must not raise
+
+    assert len(requests) == 1, "the offer was made, and its refusal swallowed"
+    branch = f"openproj/stranded-{ours.commit}"
+    assert outcome.state == "landed"
+    assert outcome.parked == [(ours.commit, branch)]
+    # Durable regardless: the branch on the REMOTE holds the original commit.
+    reference = pygit2.Repository(str(remote_path)).references.get(f"refs/heads/{branch}")
+    assert reference is not None and str(reference.target) == ours.commit
