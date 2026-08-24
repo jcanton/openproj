@@ -103,14 +103,16 @@ jobs:
   # The cut is in `.github/shards/<name>`, one path per line, and it is made from
   # `docs/probes/ci-durations-4core.txt` — this hardware's table, not either of
   # the 2-core ones, because the legs did not merely shrink when the cores
-  # doubled, they changed order. 501.3s of attributed rows across 42 files in a
-  # run whose five legs printed 538.5s of pytest; the 37s difference is
-  # collection and the sub-50ms tests no duration row shows, and it is charged
-  # per test rather than ignored — see the header in any shard file for why
-  # `rest` is what makes that term necessary. Predicted seconds per leg after the
-  # re-cut: editor 107.4, coedit 107.5, graph 107.3, views 107.2, rest 107.2.
-  # That balances to within 0.3%, against a measured spread of 89.7s to 120.4s
-  # on the cut it replaces.
+  # doubled, they changed order. And at `--durations-min=0`, because the 0.05
+  # threshold the older tables used hid 37s of the suite, almost none of it
+  # evenly: 16s of that was on the leg with 1103 tests. 532.3s of exact rows over
+  # 42 files. Per leg the cut is 106.4-106.5s, a spread of 0.1s, against
+  # 93.0-119.8s for the lists it replaces.
+  #
+  # **That is a 13s improvement in expectation and it is invisible in any single
+  # run.** Two runs of identical lists put one leg 23s apart. Quote a median over
+  # several runs or quote nothing, and do not spend an afternoon re-cutting: what
+  # bounds this gate is `tests/test_editor.py` at 101.6s, which is one file.
   #
   # FIVE, and five is still the ceiling on four cores — re-derived rather than
   # inherited. The break-even for a shard is `T/(K·(K−1)) > setup`; at T≈501s of
@@ -223,7 +225,7 @@ jobs:
       - run: |
           files=$(sed 's/#.*//' .github/shards/${{ matrix.shard }})
           [ -n "$files" ] || { echo "shard ${{ matrix.shard }} names no test files"; exit 1; }
-          uv run pytest -q --durations=0 --durations-min=0 $files
+          uv run pytest -q --durations=25 $files
 
   # The one required status check, and the reason it is a separate job.
   #

@@ -1,35 +1,37 @@
-# editor — 107.4s predicted, anchored on tests/test_editor.py (94.4s).
+# editor — 106.4s exact, anchored on tests/test_editor.py (101.6s).
 #
-# Measured seconds are per FILE, from docs/probes/ci-durations-4core.txt — the
-# 4-core public runner, run 32753487844. The two older tables in docs/probes/
-# were taken on the 2-core box a PRIVATE repository gets, and cutting from them
-# is what left this leg wrong: on 2 cores the leg order was editor 151.3 > views
-# 138.9 > graph 131.2 > rest 128.8 > coedit 125.6, and on 4 cores it is rest
-# 120.4 > views 119.6 > coedit 109.1 > editor 99.6 > graph 89.7. The Chrome-heavy
-# legs gained most from the extra cores and the plain-Python one gained least, so
-# the cut did not scale down — it inverted.
+# Seconds are per FILE and EXACT, from docs/probes/ci-durations-4core.txt — every
+# phase of every test on the 4-core public runner, run 32754826551. The older
+# tables in docs/probes/ were taken on the 2-core box a PRIVATE repository gets,
+# AND at `--durations-min=0.05`, and both halves of that were wrong for this cut:
+# the leg order inverted when the cores doubled, and the 50ms floor hid 37s of
+# the suite on exactly the leg that had 1103 tests. Modelling that hidden cost
+# was tried and the fit did not hold — see docs/probes/ci-speed.md § 0b. The
+# threshold is zero here, so there is nothing left to model.
 #
-# The cost model has a second term the old cut did not have, and `rest` is why it
-# exists: 1103 tests carried 16s of collection and sub-50ms work that no duration
-# row can see, against 3s for a leg of 79. So a leg is charged its attributed
-# seconds PLUS ~2.5s fixed PLUS ~12ms per test, fitted on the five legs of that
-# run. Cutting on attributed seconds alone underestimates exactly the leg that
-# holds two thirds of the suite.
+# The cut is what a longest-first pass makes of those numbers, and it lands at
+# 106.4-106.5s a leg: a 0.1s spread, against 93.0-119.8s on the cut it replaces.
+# `tests/test_editor.py` is 101.6s of the 106.4s it sits in, so this is 5s off
+# the floor and there is nothing further to win by moving files.
 #
-# THE FLOOR, and it is still the floor after the hardware changed: 105 tests, 53
-# of the suite's real-Chrome call sites, every one laying out a page carrying
-# 594 KB of inlined Ace. No file-level cut goes below 94.4s, and that is what
-# makes five the right number of shards rather than six. A perfect 5-way is
-# 100.3s of attributed cost and a perfect 6-way is 83.6s — but a 6-way cannot
-# reach 83.6s, it lands on this file at 94.4s, for the price of a whole extra
-# machine and a seventh billing rounding. Going below 94.4s means splitting the
-# file, and its natural seam is still `?editor=ace` against `?editor=plain`.
+# **Balance is not what to spend the next hour on.** Two runs of the SAME lists
+# put this leg 23s apart, so no re-cut is visible in one run and only a median
+# over several says anything. What would actually move the gate is the floor, and
+# the floor is one file.
 #
-# Everything under it is ballast, chosen by the table and by nothing else.
+# THE FLOOR. 105 tests, 53 of the suite's real-Chrome call sites, each a fresh
+# browser laying out a page carrying 594 KB of inlined Ace. 101.6s on its own, so
+# no arrangement of these lists puts a leg below it and the gate cannot go under
+# about 102s of pytest however many machines it is given. It is also the reason
+# `pytest-xdist` was measured and refused: `-n 2` on this leg is 27% SLOWER, not
+# faster, because the cost is process startup and two Chromes on four cores
+# contend. Going below 101.6s means splitting the file, and its natural seam is
+# still `?editor=ace` against `?editor=plain`.
 tests/test_editor.py
-tests/test_themes.py
+tests/test_writes.py
 tests/test_notes.py
 tests/test_issues.py
-tests/test_product.py
-tests/test_credential.py
-tests/test_store.py
+tests/test_harness.py
+tests/test_config.py
+tests/test_model.py
+tests/test_auth.py
