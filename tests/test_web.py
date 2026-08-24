@@ -1022,12 +1022,31 @@ def test_a_reader_is_offered_no_door_they_cannot_walk_through(repo_path: Path):
 
 
 def test_a_writer_is_offered_the_door(client: TestClient):
-    """The other half, so the gate cannot be satisfied by drawing nothing."""
-    for route in ("/", "/issues", "/notes", "/table"):
+    """The other half, so the gate cannot be satisfied by drawing nothing.
+
+    `/table` is not in this list any more, and its absence is the change rather
+    than a hole in it. That page had two doors to one act — a New record button
+    beside the heading and the `+` row at the foot of the table — and jcanton
+    took the button out on 2026-08-24 so the row is the only one. The row is
+    drawn by the page's own script (`adderHtml`), so there is no anchor in the
+    served markup for this route to look for, and asserting on its absence here
+    would only restate the sibling test above.
+
+    What the table's writer/reader split IS held by: `EDITABLE` and the write
+    furniture, which `render_table` gates on `may_write` and which
+    `tests/test_table.py` drives for both people. This test keeps the three
+    routes whose door really is a link.
+    """
+    for route in ("/", "/issues", "/notes"):
         page = client.get(route)
         assert re.search(r'<a class="button[^"]*" href="[^"]*new[^"]*"', page.text), (
             f"{route} does not offer a writer a create button"
         )
+    # And the table offers no such button to anybody now — the same regex the
+    # reader half uses, so the two cannot drift into asking different questions.
+    assert not re.search(
+        r'<a class="button[^"]*" href="[^"]*new[^"]*"', client.get("/table").text
+    ), "the table grew a second door back"
     assert client.get("/new?kind=task").status_code == 200
 
 
