@@ -1177,32 +1177,98 @@ const COEDIT = (() => {
   // long ago, on GitHub but not on main, and resolved by nothing in this room.
   const unlanded = new Set();
 
-  addEventListener('openproj:landed', event => {
-    const {landed, remapped, parked} = event.detail;
-    // Parked first, and the order is load-bearing: the clear pass below walks
-    // everything up to a named sha, so a recovery frame that parks one save
-    // and re-mints a later one would otherwise sweep the parked commit out as
-    // landed before anybody was told. Only shas THIS room saved: every record
-    // page hears every frame, and a stranger's stranded commit is the pile
-    // banner's news, not this document's.
+  // The parked half of both messengers — the frame listener and the poll's
+  // `settleSaves` below — because the verdict is the same (sha, branch) pairs
+  // on both, and a second copy would let the two drift into disagreeing about
+  // what parked means. Only shas THIS room saved: every record page hears
+  // every verdict, and a stranger's stranded commit is the pile banner's news,
+  // not this document's.
+  function strandSaves(parked) {
     for (const [sha, branch] of parked || []) {
       if (!unlanded.has(sha)) continue;
       unlanded.delete(sha);
       announce('saved here, but it could not land on GitHub’s main — the commit '
         + `is parked on ${branch}`);
     }
-    // Cleared by NAME — the landed tip, or the OLD half of the re-mint map,
-    // which is the only name this tab ever saw — and never by "my sha is on
-    // main": recovery re-mints shas, so a tab waiting for its own would wait
-    // forever after any rejection. A named sha confirms every save up to it.
-    for (const named of [landed, ...Object.keys(remapped || {})]) {
-      if (!unlanded.has(named)) continue;
-      for (const held of unlanded) {
-        unlanded.delete(held);
-        if (held === named) break;
-      }
+  }
+
+  // Cleared by NAME — the landed tip, or the OLD half of the re-mint map,
+  // which is the only name this tab ever saw — and never by "my sha is on
+  // main": recovery re-mints shas, so a tab waiting for its own would wait
+  // forever after any rejection. A named sha confirms every save up to it,
+  // because the watch list is in answer order, which is ancestry order.
+  function clearedThrough(named) {
+    if (!unlanded.has(named)) return;
+    for (const held of unlanded) {
+      unlanded.delete(held);
+      if (held === named) break;
     }
+  }
+
+  addEventListener('openproj:landed', event => {
+    const {landed, remapped, parked} = event.detail;
+    // Parked first, and the order is load-bearing: the clear pass walks
+    // everything up to a named sha, so a recovery frame that parks one save
+    // and re-mints a later one would otherwise sweep the parked commit out as
+    // landed before anybody was told.
+    strandSaves(parked);
+    for (const named of [landed, ...Object.keys(remapped || {})]) clearedThrough(named);
   });
+
+  // The poll fallback, and it is an invariant rather than a comfort
+  // (docs/deferred-push.md, "Confirmation cannot be 'my sha is on main'"):
+  // Cloud Run recycles the event stream every 300 seconds and it has NO
+  // replay, so the frame carrying a save's verdict can be gone for good — and
+  // the parked verdict is the one this room's whole watch list exists to
+  // deliver. It asks the route the table's marks already poll, because that
+  // payload carries the pusher's verdict — `landed`, `unpushed` and the
+  // parked (sha, branch) pairs — and a second source of truth could disagree
+  // with the first; the rows riding alongside are ignored. Unlike the table's
+  // poll this one needs no is-somebody-typing guard: it redraws nothing and
+  // writes nothing but the alarm.
+  const LANDING_POLL_MS = 10000;
+  let landingPoll = null;
+
+  function armLandingPoll() {
+    if (landingPoll !== null || !unlanded.size) return;
+    landingPoll = setTimeout(async () => {
+      landingPoll = null;
+      if (!unlanded.size) return;
+      // Which saves this read may settle: the ones that existed when it was
+      // ASKED. A save answering while the request is in the air is not in the
+      // payload's arithmetic, and clearing it off this answer would treat a
+      // commit as landed while it exists only on this instance.
+      const asked = new Set(unlanded);
+      // Guarded, because the fetch rejects in exactly the conditions this
+      // poll exists for — a laptop waking onto the tick, a moment offline, a
+      // server mid-restart — and an escaped rejection would skip the re-arm
+      // below and end polling for the life of the page.
+      try {
+        const response = await fetch('/api/table.json');
+        if (response.ok) {
+          const fresh = await response.json();
+          if (fresh) settleSaves(fresh, asked);
+        }
+      } catch (error) {}
+      armLandingPoll();
+    }, LANDING_POLL_MS);
+  }
+
+  // The poll half of the verdict; the frame half is the listener above.
+  // Parked FIRST, and off the payload by name, because a parked recovery
+  // leaves the pile honestly drained — the sha left main for a branch, so
+  // `unpushed` is 0 — and the drained-pile arm below would otherwise swallow
+  // the one save that had to become the alarm. Then the confirmed tip clears
+  // by name exactly as a frame's would, and `unpushed === 0` covers the tab
+  // whose own sha will never be spoken again — the tip moved past it or a
+  // recovery re-minted it, and either way a drained pile means the remote
+  // holds it.
+  function settleSaves(fresh, asked) {
+    strandSaves(fresh.parked);
+    if (typeof fresh.landed === 'string') clearedThrough(fresh.landed);
+    if (fresh.unpushed === 0)
+      for (const sha of asked) unlanded.delete(sha);
+  }
 
   function heard(message) {
     if (message.t === 'welcome') return welcomed(message);
@@ -1257,10 +1323,11 @@ const COEDIT = (() => {
       settle(message.commit);
       dirty();
       // A commit the answer admits is not on GitHub yet goes on the watch list
-      // above; the pusher's landed frame is what takes it off, one way or the
-      // other. Saying so HERE would be the wallpaper this replaced: in flight
-      // is the ordinary state of every save now, not the exception it was.
-      if (message.pushed === false) unlanded.add(message.commit);
+      // above; the pusher's verdict is what takes it off, one way or the
+      // other — by frame when this tab catches it, by the armed poll when it
+      // does not. Saying so HERE would be the wallpaper this replaced: in
+      // flight is the ordinary state of every save now, not the exception.
+      if (message.pushed === false) { unlanded.add(message.commit); armLandingPoll(); }
       const said = message.outcome === 'merged'
         ? 'saved, and somebody else’s change to this file was merged in'
         : 'saved';

@@ -6111,3 +6111,88 @@ def test_a_room_save_is_quiet_and_the_alarm_is_kept_for_a_parked_commit(client: 
     assert got["reloads"] == 0, (
         "nobody here pressed Save, so no frame above may tear the page down"
     )
+
+
+def test_a_stranded_save_raises_the_alarm_on_a_tab_that_missed_every_frame(client: TestClient):
+    """The alarm above travelled only on the live landed frame, and the spec
+    says in as many words that frames are dropped routinely: Cloud Run recycles
+    the event stream every 300 seconds and it has NO replay
+    (docs/deferred-push.md, "Confirmation cannot be 'my sha is on main'"). A
+    verdict only a frame can deliver is an alarm that fires only if the tab
+    happened to be listening at the right moment — and the parked save is
+    precisely the one state a person must hear about, because their 200 went
+    out long ago and nothing in the room resolves it.
+
+    While a save is unconfirmed the room polls the same route the table's marks
+    poll, `/api/table.json`, whose payload already carries the pusher's verdict
+    — `landed`, `unpushed` and the parked (sha, branch) pairs — so the editor
+    and the table cannot drift into disagreeing about what parked means. The
+    payload here is the exact shape a parked recovery leaves behind: the pile
+    honestly drained (`unpushed: 0` — the sha left main for a branch), with
+    only the parked pairs to say what happened, so a poll that read the pile's
+    arithmetic alone would clear the one save that had to become the alarm.
+    NO frame is delivered anywhere in this test.
+    """
+    import base64
+
+    from test_injection import run_js
+
+    from openproj import coedit
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = {
+        "t": "welcome",
+        "seed": room.seed,
+        "base": room.base,
+        "you": "ann",
+        "sv": base64.b64encode(room.state()).decode(),
+        "update": base64.b64encode(room.since(None)).decode(),
+    }
+    committed = "a" * 40
+    branch = f"openproj/stranded-{committed}"
+    saved = {"t": "saved", "commit": committed, "outcome": "committed", "pushed": False}
+    fresh = {"landed": "f" * 40, "unpushed": 0, "parked": [[committed, branch]]}
+    answer = run_js(
+        page,
+        "(async () => {"
+        "  flipEditing();"
+        "  __socket.opened();"
+        f" __socket.hear({json.dumps(welcome)});"
+        "  if (!COEDIT.live()) return 'the room never came up';"
+        f" __socket.hear({json.dumps(saved)});"
+        "  const armed = __pending();"
+        "  __tick();"
+        "  for (let i = 0; i < 50; i++) await Promise.resolve();"
+        "  const said = document.getElementById('state').textContent;"
+        "  return {armed, said, waiting: __pending(), reloads: __reloads()};"
+        "})()",
+        page=True,
+        socket=True,
+        replies=[{"status": 200, "json": fresh}],
+    )
+    assert not answer["errors"], answer["errors"]
+    got = answer["value"]
+    assert got != "the room never came up", got
+
+    assert got["armed"] >= 1, (
+        "no poll is armed while a save is unconfirmed — a tab that misses the "
+        "frame can never hear the verdict, and the stream drops frames by design"
+    )
+    assert any(call["url"] == "/api/table.json" for call in answer["calls"]), (
+        f"the poll did not ask the route that carries the verdict; asked: {answer['calls']!r}"
+    )
+    assert "could not land" in got["said"], (
+        f"the pusher parked this room's save, no frame arrived, and the page said "
+        f"{got['said']!r} — the alarm the poll exists to deliver never fired"
+    )
+    assert branch in got["said"], (
+        f"the alarm does not say where the commit went: {got['said']!r}"
+    )
+    assert got["waiting"] == 0, (
+        "nothing is unconfirmed any more, so nothing should keep polling"
+    )
+    assert got["reloads"] == 0, (
+        "nobody here pressed Save, so nothing above may tear the page down"
+    )
