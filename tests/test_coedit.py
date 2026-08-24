@@ -1134,7 +1134,10 @@ def refusal_of(client: TestClient, record_id: str = TASK, cookie: str | None = N
     """
     headers = {"cookie": cookie} if cookie else {}
     with client.websocket_connect(f"/api/coedit/{record_id}", headers=headers) as socket:
-        return socket.receive()
+        # Two things, in this order: the frame a page already open in somebody's
+        # browser can read, and the close code a page served after this deploy
+        # can. `_refuse_socket` says why both are sent.
+        return socket.receive_json(), socket.receive()
 
 
 def test_a_stranger_is_refused_the_socket_and_told_why(plan: Path):
@@ -1151,8 +1154,12 @@ def test_a_stranger_is_refused_the_socket_and_told_why(plan: Path):
     """
     app = create_app(plan, auth="github", secret=SECRET, client_id="x", client_secret="y")
     with TestClient(app) as signed_out:
-        closed = refusal_of(signed_out)
+        said, closed = refusal_of(signed_out)
 
+    assert said == {"t": "reload", "why": closed["reason"]}, (
+        "a tab whose page predates the close codes hears nothing at all, and its "
+        f"`onopen` has just reset its backoff to half a second: {said}"
+    )
     assert closed["type"] == "websocket.close", closed
     assert closed["code"] == 4401, "a signed-out socket is refused as a session, not as a fault"
     assert "sign in" in closed["reason"], closed["reason"]
@@ -1226,7 +1233,7 @@ def test_a_room_for_a_record_that_is_not_there_never_opens(client: TestClient):
     and reaches a different person: one has a tab open on something somebody
     deleted, the other has a session that timed out. Both used to be code 1006
     and silence."""
-    closed = refusal_of(
+    _, closed = refusal_of(
         client, "task-ffffff",
         cookie=f"{SESSION_COOKIE}="
         f"{sign_session(User(login='ann', member=True), SECRET)}",
