@@ -12,7 +12,6 @@ plan change never triggers an image build.
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -48,7 +47,23 @@ def main() -> int:
             remote, str(repo), bare=True, callbacks=app.callbacks() if app else None
         )
 
-    return subprocess.call(
+    # `execv` and not `subprocess.call`, and this is a signal-handling fix rather
+    # than a tidy-up. The Dockerfile's CMD makes this file PID 1; it installs no
+    # signal handler; Python leaves SIGTERM at SIG_DFL; and the kernel DISCARDS a
+    # default-disposition signal sent to PID 1. So Cloud Run's SIGTERM reached a
+    # process that ignored it, the server underneath never heard about the
+    # shutdown, and `Server.handle_exit` — which exists so the streams close
+    # themselves while uvicorn waits politely — had never once run in production.
+    # Neither had the co-editing room's flush, which commits what somebody has
+    # typed and not yet saved. Ten silent seconds, then SIGKILL.
+    #
+    # Replacing this process rather than forwarding the signal to a child: there
+    # is then no wrapper to keep in step, the server's exit status is the
+    # container's directly, and there is no window in which a signal arrives
+    # before the handler is installed. Everything above has already run — the
+    # clone is done — so there is nothing left for this process to do.
+    os.execv(
+        sys.executable,
         [
             sys.executable,
             "-m",
@@ -64,7 +79,7 @@ def main() -> int:
             "0.0.0.0",
             "--port",
             os.environ.get("PORT", "8080"),
-        ]
+        ],
     )
 
 
