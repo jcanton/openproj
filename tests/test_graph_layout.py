@@ -380,9 +380,20 @@ def test_the_two_key_rows_are_one_length_and_sit_on_the_drawing(
     # most recently: "still wonky: not aligned (make it a table with two rows
     # maybe?)". It is one grid now, so this is the claim — the nth key of one row
     # starts where the nth key of the other does.
-    assert len(got["columns"]) == 2 and len(got["columns"][0]) == len(got["columns"][1])
-    off = [abs(a - b) for a, b in zip(*got["columns"], strict=True)]
+    # Not equal LENGTHS: `thinking` reached every kind but an issue on 2026-08-24
+    # and the status row earned a sixth key, which jcanton accepted in advance —
+    # "the legend table in the graph page will earn one more cell for the status
+    # row, which is ok". So the shorter row's columns must be a PREFIX of the
+    # longer one's, which is the same claim about alignment and a stronger one
+    # about the grid: the rows share their columns rather than each computing
+    # their own and happening to agree.
+    assert len(got["columns"]) == 2
+    shorter, longer = sorted(got["columns"], key=len)
+    off = [abs(a - b) for a, b in zip(shorter, longer, strict=False)]
     assert max(off) <= 1, f"the two rows are staggered by {max(off)}px: {got['columns']}"
+    assert len(longer) - len(shorter) <= 1, (
+        f"the rows differ by {len(longer) - len(shorter)} keys, not one: {got['columns']}"
+    )
     # And the space between keys stays the width of a word, not of a hand — which
     # is the fault the equal-width version of this had.
     assert max(got["gaps"]) <= 40, f"{max(got['gaps'])}px between keys is too much air"
