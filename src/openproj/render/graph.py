@@ -121,13 +121,6 @@ _GRAPH = """
     of the way of a layout that runs left to right and top down, and it stops
     taking pointer events so it cannot swallow a click on a node beneath it. -#}
 <div class="keys">
-{#- The count, over the drawing with the keys. It was in a row of its own below
-    the filters, and taking the keys out of that row left it there alone — a
-    whole line of the tallest view on the site holding "31 of 31 shown", which is
-    the exact row `test_a_sentence_about_the_view_never_costs_the_view_a_row` was
-    written to prevent. It rides with the keys instead. -#}
-<div id="summary"><span id="shown" class="num">{{ total }}</span> of {{ total }} shown<span
-  id="context"></span></div>
 {#- Priority first, on the left, because that is the one nobody could see —
     jcanton, 2026-08-20, having noticed one project drawn with a thicker line and
     had to ask why. The encoding was already there and legible; the page simply
@@ -169,6 +162,19 @@ _GRAPH = """
   {% endfor %}
 </ul>
 </div>
+{#- The count, over the drawing with the keys. It was in a row of its own below
+    the filters, and taking the keys out of that row left it there alone — a
+    whole line of the tallest view on the site holding "31 of 31 shown", which is
+    the exact row `test_a_sentence_about_the_view_never_costs_the_view_a_row` was
+    written to prevent. It rides with the keys instead.
+
+    UNDER the legend, not over it — jcanton, 2026-08-24: "can you move it below
+    the legend instead please? this way the legend can move a little upwards
+    into the corner." The box's `top` is fixed, so which row is against the
+    corner is decided by document order alone; count first held the legend 32px
+    down from where the box starts. -#}
+<div id="summary"><span id="shown" class="num">{{ total }}</span> of {{ total }} shown<span
+  id="context"></span></div>
 </div>
 
   {#- `data-fills`: this is the box the shell measures the window into. A canvas
@@ -1408,7 +1414,27 @@ _GRAPH_STYLE = """
    priority moves it without an edit here. */
 .keys .legends .legend.shorter .legendname {
   grid-column: 1 / span {{ statuses|length - priorities|length + 1 }}; }
-.keys #summary { margin: 0; pointer-events: auto; font-size: 12px;
+/* The legend leads and the count hangs under it — jcanton, 2026-08-24: "move it
+   below the legend ... this way the legend can move a little upwards into the
+   corner." The shell gives `.legends` `margin: .75rem 0 0 auto` for the pages
+   that stack it under their controls; here that .75rem was the air between the
+   count and the legend, and with the legend now first it would hold the legend
+   12px off the corner the move is meant to reach. Zeroed at (0,2,0), which beats
+   the shell's bare `.legends` (0,1,0) on specificity — order never decides it,
+   although this sheet is inlined after the shell's anyway. The `auto` left
+   margin goes with it; `align-items: flex-end` on `.keys` already puts every
+   row on the right edge. */
+.keys .legends { margin: 0; }
+/* .15rem on top of the box's .1rem gap: measured at 1400x900, the gap alone put
+   the count 1.6px under the priority row where the legend's own rows keep 3.2px
+   between themselves — the count is a different kind of line and reads as part
+   of the priority row with LESS air than the rows keep. .25rem in all leaves the
+   legend rows the tighter pair, so the two rows stay one block and the count
+   stays a caption. The margin here is what keeps the shell's bare `#summary`
+   (`margin: .5rem 0 .25rem`, written for the pages where the count is a row of
+   its own) out of this box: `.keys #summary` is (1,1,0) over the shell's
+   (1,0,0), so this wins on specificity, not just on this sheet coming second. */
+.keys #summary { margin: .15rem 0 0; pointer-events: auto; font-size: 12px;
                  color: var(--muted); text-align: right; }
 
 .canvas { position: relative; }
