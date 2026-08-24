@@ -2215,7 +2215,22 @@ def create_app(
         hand-edited to `.inf` is a 500 in plain text on a route whose only
         readers are scripts.
         """
-        return JSONResponse(what_json_can_carry(render._payload(index_now()[1])))
+        payload = render._payload(index_now()[1])
+        # Two facts about the STORE, added here rather than in `_payload`
+        # because they are not the index's to know: this payload is also the
+        # table's poll fallback for its "saved here, not on GitHub yet" marks.
+        # The event stream has no replay — Cloud Run recycles it every 300s —
+        # so a tab that reconnected has missed the landed frame for good, and
+        # this is where it learns its saves are safe (docs/deferred-push.md,
+        # "Confirmation cannot be 'my sha is on main'"). `landed` is the
+        # confirmed tip by NAME; `unpushed` at zero says the whole pile has
+        # drained, which is the answer that survives the tip having moved past
+        # this tab's own shas. `condition()` reads two local refs — no network,
+        # no lock — so a poll costs what a page read costs.
+        state = store.condition()
+        payload["landed"] = state.remote
+        payload["unpushed"] = state.unpushed
+        return JSONResponse(what_json_can_carry(payload))
 
     # -- writing ------------------------------------------------------------
 

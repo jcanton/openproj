@@ -3782,11 +3782,20 @@ def test_the_route_the_table_re_reads_is_the_payload_it_was_drawn_from(
     JavaScript: a progress fraction counted out of a body, a blocker count, a
     project walked up the tree. A copy that only runs after a save is a copy
     nobody would ever look at again.
+
+    Two keys ride on the route and not on the page: `landed` and `unpushed` are
+    facts about the STORE at the moment it is asked — the poll fallback the
+    per-row marks clear by — and a rendered page cannot carry a moment. What
+    the page was drawn from stays byte-for-byte the route's shape.
     """
     fresh = client.get("/api/table.json")
 
     assert fresh.status_code == 200
-    assert fresh.json() == payload(page)
+    answered = fresh.json()
+    assert answered.pop("landed") is None and answered.pop("unpushed") == 0, (
+        "this client has no remote, so nothing is confirmed and nothing is waiting"
+    )
+    assert answered == payload(page)
 
 
 def test_the_count_says_how_many_rows_there_are_to_be_shown_of(page: str, client: TestClient):
@@ -4861,3 +4870,349 @@ def test_the_check_creates_the_row_on_one_press_with_the_editor_still_open(
         "the press landed but left behind what was still in the open editor"
     )
     assert got["draft"], "the row was created and the draft is gone"
+
+
+# --------------------------------------------------------------------------- #
+# 9. A row that has not reached GitHub says so
+#
+# Every write answers at once now and the push happens behind it
+# (docs/deferred-push.md, "Saying it on the page"): between the 200 and the
+# pusher's landing the commit exists only on the instance, whose filesystem on
+# Cloud Run is memory. The row the person is looking at wears a quiet mark for
+# that window, and the mark is cleared by NAME — the pusher's landed frame, or
+# the poll below — never by waiting to see its own sha on main, because
+# recovery re-mints shas and that sha may cease to exist while its content
+# lands anyway.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_saved_row_wears_the_mark_until_a_landing_names_its_commit(page: str):
+    """The quiet per-row mark: it appears the moment a save answers
+    `pushed: false`, and it clears when an `openproj:landed` frame names the
+    commit as the tip the pusher confirmed.
+
+    Written failing against a page that said nothing at all between the answer
+    and the landing — the whole deferred-push window, which on Cloud Run is the
+    window an instance teardown loses the commit in.
+    """
+    committed = "a" * 40
+    frame = {"t": "landed", "landed": committed, "remapped": {}, "parked": []}
+    answer = drive_table(
+        page,
+        "(async () => {"
+        f"  const cell = tbody.querySelector('td[data-record=\"{TASK}\"]"
+        '[data-field="priority"]\');'
+        f"  await saveCell(cell, 'high'); {SETTLE}"
+        f"  const mark = () => tbody.querySelector('tr[data-id=\"{TASK}\"] .unlanded');"
+        "  const worn = mark();"
+        "  const marked = !!worn;"
+        "  const said = worn ? worn.getAttribute('aria-label') : '';"
+        f"  dispatchEvent(new CustomEvent('openproj:landed', {{detail: {json.dumps(frame)}}}));"
+        f"  {SETTLE}"
+        "  return {marked, said, cleared: !mark()};"
+        "})()",
+        replies=[
+            {"status": 200, "json": {"outcome": "committed", "commit": committed,
+                                     "conflict": None, "pushed": False}},
+            {"status": 200, "json": {"problems": []}},
+        ],
+    )
+    got = answer["value"]
+
+    assert got["marked"] is True, "the saved row carries no mark at all"
+    assert "not on GitHub" in got["said"], (
+        f"the mark says {got['said']!r}, which does not name the state it marks"
+    )
+    assert got["cleared"] is True, "the landed frame named the commit and the mark stayed"
+
+
+def test_a_re_minted_commit_clears_its_mark_through_the_old_to_new_map(page: str):
+    """Recovery re-mints shas: the commit a save answered with may never reach
+    main, while its content lands under a new sha. The frame's `remapped` map
+    names the OLD sha — the only one this tab ever saw — and that name is a
+    clear like any landing, because the frame only goes out once the push that
+    carried the re-mint succeeded.
+    """
+    committed = "a" * 40
+    frame = {"t": "landed", "landed": "f" * 40,
+             "remapped": {committed: "e" * 40}, "parked": []}
+    answer = drive_table(
+        page,
+        "(async () => {"
+        f"  const cell = tbody.querySelector('td[data-record=\"{TASK}\"]"
+        '[data-field="priority"]\');'
+        f"  await saveCell(cell, 'high'); {SETTLE}"
+        f"  const mark = () => tbody.querySelector('tr[data-id=\"{TASK}\"] .unlanded');"
+        "  const marked = !!mark();"
+        f"  dispatchEvent(new CustomEvent('openproj:landed', {{detail: {json.dumps(frame)}}}));"
+        f"  {SETTLE}"
+        "  return {marked, cleared: !mark()};"
+        "})()",
+        replies=[
+            {"status": 200, "json": {"outcome": "committed", "commit": committed,
+                                     "conflict": None, "pushed": False}},
+            {"status": 200, "json": {"problems": []}},
+        ],
+    )
+
+    assert answer["value"]["marked"] is True
+    assert answer["value"]["cleared"] is True, (
+        "the map named the sha this tab saved and the mark stayed — a tab that "
+        "waits to see its own sha on main waits forever after any rejection"
+    )
+
+
+def test_a_parked_commit_turns_its_mark_into_a_problem_naming_the_branch(page: str):
+    """Parked is a problem, not a clear: the commit could not replay onto what
+    the remote holds, so it went to a branch instead of main, and the person
+    who made it was answered 200 long ago. The row is the one place they are
+    still looking, so it names the branch — and a later landing must not tidy
+    the problem away, because nothing on this page resolves a parked commit.
+
+    The frame below does both at once — parks this tab's FIRST save and lands
+    its SECOND — because that is what a recovery pass announces, and the order
+    the page handles it in is load-bearing: cleared as "everything up to the
+    landed sha" first, the parked sha would be silently swept out as landed.
+    """
+    committed = "a" * 40
+    second = "c" * 40
+    branch = f"openproj/stranded-{committed}"
+    parked = {"t": "landed", "landed": second, "remapped": {},
+              "parked": [[committed, branch]]}
+    later = {"t": "landed", "landed": "e" * 40, "remapped": {}, "parked": []}
+    answer = drive_table(
+        page,
+        "(async () => {"
+        f"  const cell = tbody.querySelector('td[data-record=\"{TASK}\"]"
+        '[data-field="priority"]\');'
+        f"  await saveCell(cell, 'high'); {SETTLE}"
+        f"  const other = tbody.querySelector('td[data-record=\"{OTHER}\"]"
+        '[data-field="priority"]\');'
+        f"  await saveCell(other, 'low'); {SETTLE}"
+        f"  const row = () => tbody.querySelector('tr[data-id=\"{TASK}\"]');"
+        f"  dispatchEvent(new CustomEvent('openproj:landed', {{detail: {json.dumps(parked)}}}));"
+        f"  {SETTLE}"
+        "  const worn = row().querySelector('.stranded');"
+        "  const problem = worn ? worn.getAttribute('aria-label') : '';"
+        "  const quiet = !!row().querySelector('.unlanded');"
+        f"  const otherQuiet = !!tbody.querySelector('tr[data-id=\"{OTHER}\"] .unlanded');"
+        "  const announced = document.getElementById('state').textContent;"
+        f"  dispatchEvent(new CustomEvent('openproj:landed', {{detail: {json.dumps(later)}}}));"
+        f"  {SETTLE}"
+        "  return {problem, quiet, otherQuiet, announced,"
+        "          kept: !!row().querySelector('.stranded')};"
+        "})()",
+        replies=[
+            {"status": 200, "json": {"outcome": "committed", "commit": committed,
+                                     "conflict": None, "pushed": False}},
+            {"status": 200, "json": {"problems": []}},
+            {"status": 200, "json": {"outcome": "committed", "commit": second,
+                                     "conflict": None, "pushed": False}},
+            {"status": 200, "json": {"problems": []}},
+        ],
+    )
+    got = answer["value"]
+
+    assert branch in got["problem"], (
+        f"the row says {got['problem']!r}, which does not name the branch the work went to"
+    )
+    assert got["quiet"] is False, "the quiet mark must escalate, not stand beside the problem"
+    assert got["otherQuiet"] is False, "the second save was named as landed and must clear"
+    assert branch in got["announced"], (
+        "a parked commit announced only visually has not announced itself"
+    )
+    assert got["kept"] is True, "a later landing tidied away a problem it did not resolve"
+
+
+def test_a_tab_that_missed_every_frame_still_clears_its_mark_by_polling(page: str):
+    """Cloud Run recycles the event stream every 300 seconds and it has NO
+    replay, so a mark that only a frame can clear sticks forever on any tab
+    that has been open a while — the poll fallback is invariant, not comfort.
+
+    While a mark is waiting the page re-reads `/api/table.json` on a timer.
+    The payload carries the confirmed tip and the size of the unpushed pile,
+    and a drained pile clears every mark that existed when the poll was asked —
+    here the tip is a commit this tab has NEVER heard of, which is exactly the
+    reconnect case: somebody else saved after us, the pusher landed everything,
+    and the frame that named our sha is gone for good. No frame is delivered
+    anywhere in this test.
+    """
+    committed = "a" * 40
+    fresh = {"rows": {TASK: {"id": TASK, "predicates": []}}, "problems": [],
+             "landed": "f" * 40, "unpushed": 0}
+    answer = drive_table(
+        page,
+        "(async () => {"
+        f"  const cell = tbody.querySelector('td[data-record=\"{TASK}\"]"
+        '[data-field="priority"]\');'
+        f"  await saveCell(cell, 'high'); {SETTLE}"
+        f"  const mark = () => tbody.querySelector('tr[data-id=\"{TASK}\"] .unlanded');"
+        "  const marked = !!mark();"
+        "  const pending = __pending();"
+        f"  __tick(); {SETTLE}"
+        "  return {marked, pending, cleared: !mark(), rearmed: __pending()};"
+        "})()",
+        replies=[
+            {"status": 200, "json": {"outcome": "committed", "commit": committed,
+                                     "conflict": None, "pushed": False}},
+            {"status": 200, "json": {"problems": []}},
+            {"status": 200, "json": fresh},
+        ],
+    )
+    got = answer["value"]
+
+    assert got["marked"] is True
+    assert got["pending"] >= 1, "no poll is armed, so a missed frame is a mark forever"
+    assert got["cleared"] is True, (
+        "the payload said the pile is drained and the mark stayed — the tab was "
+        "waiting for a frame that will never come again"
+    )
+    assert got["rearmed"] == 0, "nothing is waiting, so nothing should keep polling"
+
+
+def test_the_poll_waits_rather_than_redrawing_over_an_open_editor(page: str):
+    """The poll ends in a redraw, and `draw()` replaces the whole tbody — so a
+    poll firing while a cell editor is open would destroy the value being
+    typed, which exists nowhere else. It re-arms and waits instead: a mark can
+    stand ten seconds longer, a keystroke cannot come back.
+    """
+    answer = drive_table(
+        page,
+        "(async () => {"
+        f"  markSaved({{commit: '{'b' * 40}', pushed: false}}, '{TASK}');"
+        f"  const cell = tbody.querySelector('td[data-record=\"{TASK}\"]"
+        '[data-field="title"]\');'
+        "  openEditor(cell);"
+        f"  __tick(); {SETTLE}"
+        "  return {typing: !!tbody.querySelector('td input'),"
+        "          asked: __pending()};"
+        "})()",
+    )
+    got = answer["value"]
+
+    assert answer["calls"] == [], "the poll fetched over somebody's typing"
+    assert got["typing"] is True, "the open editor was destroyed by the poll's redraw"
+    assert got["asked"] >= 1, "and the poll must re-arm rather than give up"
+
+
+def test_a_save_answering_while_the_poll_is_in_the_air_keeps_its_mark(page: str):
+    """The drained-pile clear covers only the marks that existed when the poll
+    was ASKED: a payload built before a save committed says nothing about that
+    save, and clearing its mark off such an answer would show a commit as
+    landed while it exists only on this instance — the one thing no state on
+    this page may ever say.
+    """
+    fresh = {"rows": {TASK: {"id": TASK, "predicates": []}}, "problems": [],
+             "landed": "f" * 40, "unpushed": 0}
+    answer = drive_table(
+        page,
+        "(async () => {"
+        "  const polling = refreshRows();"
+        f"  markSaved({{commit: '{'b' * 40}', pushed: false}}, '{TASK}');"
+        f"  await polling; {SETTLE}"
+        "  draw();"
+        f"  return !!tbody.querySelector('tr[data-id=\"{TASK}\"] .unlanded');"
+        "})()",
+        replies=[{"status": 200, "json": fresh}],
+    )
+
+    assert answer["value"] is True, (
+        "a poll that was already in the air cleared a mark it knew nothing about"
+    )
+
+
+def test_the_tables_payload_says_what_the_remote_confirms(tmp_path: Path):
+    """`/api/table.json` carries the confirmed tip and the unpushed count, read
+    from the same two local refs `/api/health` reads — no network, no lock —
+    because this payload is what a reconnecting tab clears its marks from when
+    the frame that would have cleared them is gone for good.
+
+    Asked of a real store with a real `file://` remote, because `landed` is the
+    tracking ref the background pusher moves: canned replies prove the client
+    half, and only this proves the server ever sends the keys at all.
+    """
+    import time
+
+    origin = tmp_path / "origin.git"
+    pygit2.init_repository(str(origin), bare=True, initial_head="main")
+    commit_directly(origin, SEED, "seed the corpus")
+    plan = tmp_path / "plan.git"
+    clone = pygit2.clone_repository(f"file://{origin}", str(plan), bare=True)
+    clone.remotes.delete("origin")
+    with TestClient(
+        create_app(plan, auth="dev", secret=SECRET, remote=f"file://{origin}")
+    ) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        committed = save(client, TASK, {"priority": "high"}).json()["commit"]
+        # The pusher lands on its own thread; a `file://` push is quick but not
+        # instant. Poll the very route under test until it says so.
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            payload = client.get("/api/table.json").json()
+            if payload.get("landed") == committed:
+                break
+            time.sleep(0.05)
+
+    assert payload["landed"] == committed, (
+        "the payload never named the landed commit as the confirmed tip"
+    )
+    assert payload["unpushed"] == 0, "everything has landed, so nothing is at risk"
+
+
+# Both states of the landing mark, put on real rows and measured. The quiet ring
+# is a drawn box with no character in it — exactly the shape of thing this
+# repository has shipped twice at 0x0 under a green suite — so the only question
+# worth asking about it is how many pixels it came out, and whether it stayed
+# inside the frozen id cell instead of lapping into the title column beside it.
+_LANDING_MARKS = """
+markSaved({commit: 'a'.repeat(40), pushed: false}, '%(task)s');
+STRANDED.set('%(pitch)s', 'openproj/stranded-' + 'b'.repeat(40));
+draw();
+const box = node => {
+  const r = node.getBoundingClientRect();
+  return {w: Math.round(r.width), h: Math.round(r.height),
+          right: Math.round(r.right)};
+};
+const quiet = tbody.querySelector('tr[data-id="%(task)s"] .unlanded');
+const loud = tbody.querySelector('tr[data-id="%(pitch)s"] .stranded');
+const tall = row =>
+  Math.round(tbody.querySelector(`tr[data-id="${row}"]`).getBoundingClientRect().height);
+return {
+  quiet: quiet && box(quiet),
+  cell: quiet && box(quiet.closest('td')),
+  loud: loud && box(loud),
+  markedRow: tall('%(task)s'),
+  plainRow: tall('%(project)s'),
+};
+"""
+
+
+def test_both_landing_marks_are_pixels_a_browser_draws(page: str, tmp_path: Path):
+    """The ring and the parked glyph, measured in Chrome.
+
+    The draft row's check and cross shipped as two empty boxes because nothing
+    sized the drawing inside them, and the suite was green because it only ever
+    asked whether the markup was emitted. The quiet mark here is the same kind
+    of thing — a span with no character in it, sized only by its own rule — so
+    the claim that it exists is a claim about pixels and is asked of the pixels.
+    """
+    got = measured_in(
+        chrome(), page, tmp_path / "landing.html", 1460,
+        _LANDING_MARKS % {"task": TASK, "pitch": PITCH, "project": PROJECT},
+    )
+
+    assert got["quiet"], "the saved row draws no mark at all"
+    assert got["quiet"]["w"] >= 5 and got["quiet"]["h"] >= 5, (
+        f"the quiet mark laid out {got['quiet']['w']}x{got['quiet']['h']}, "
+        "which is the 0x0 control this repository has already shipped twice"
+    )
+    assert got["quiet"]["right"] <= got["cell"]["right"], (
+        "the mark overflows the frozen id cell and laps into the title column"
+    )
+    assert got["loud"] and got["loud"]["w"] >= 5 and got["loud"]["h"] >= 8, (
+        "the parked glyph is not painted"
+    )
+    assert got["markedRow"] <= got["plainRow"] + 2, (
+        f"the mark grew its row to {got['markedRow']}px against {got['plainRow']}px, "
+        "so a quiet mark reads as a different kind of row"
+    )

@@ -462,7 +462,8 @@ function shown(row, key) {
   // scrolled sideways. A row that can go nowhere gets none: a project is the top
   // of the tree, and the missing handle is that said without a sentence.
   if (key === 'id')
-    return (EDITABLE && movable(row) ? GRIP : '') + `<span class="eid">${esc(row.id)}</span>`;
+    return (EDITABLE && movable(row) ? GRIP : '')
+      + `<span class="eid">${esc(row.id)}</span>` + landingMark(row.id);
   // The same mark the graph and the timeline draw, in the chip the table already
   // had. The fill was the only channel here, and five fills on a luminance ladder
   // are separable but not nameable — the graph has said `»` for in-progress since
@@ -712,6 +713,36 @@ function prLink(ref) {
   const [repo, number] = ref.split('#');
   return `<a href="https://github.com/${esc(repo)}/pull/${esc(number)}"` +
     ` title="${esc(ref)}">#${esc(number)}</a>`;
+}
+
+// What the id cell says about whether this row's last save has reached GitHub.
+// In the id column because that pair is frozen: the mark is on screen however
+// far the table is scrolled sideways, beside the row's own name.
+//
+// Both states are the same drawn ring, not characters — `.rowgrip`'s argument:
+// a glyph outside the vendored latin subset is a tofu box on a machine without
+// a font that has it, and a drawing follows the theme instead. Hollow and
+// muted while the commit is real here and not yet inked on GitHub; FILLED in
+// the blocker colour once the pusher parks it on a branch, the branch named
+// where every problem puts its sentence. One device, escalating in place —
+// hollow against filled is a shape, so it survives colour-blindness — and
+// deliberately not a second `sev-mark`: a record with a validation problem
+// already wears ⚠ beside its id, and two identical glyphs meaning two
+// different things read as a stutter (seen in the screenshot, not guessed).
+function landingMark(id) {
+  const branch = STRANDED.get(id);
+  if (branch !== undefined) {
+    const said = `Saved here, but it could not land on GitHub's main — parked on ${branch}. `
+      + 'There is a pull request to resolve it.';
+    return ` <span class="stranded" role="img"` +
+      ` aria-label="${esc(said)}" title="${esc(said)}"></span>`;
+  }
+  for (const held of UNLANDED.values()) {
+    if (held !== id) continue;
+    const said = 'Saved here — not on GitHub yet.';
+    return ` <span class="unlanded" role="img" aria-label="${said}" title="${said}"></span>`;
+  }
+  return '';
 }
 
 function rowHtml(place) {
@@ -999,6 +1030,23 @@ addEventListener('openproj:filter', hideCardNow);
 // page that throws before a single row is drawn.
 let WRITING = null;
 
+// The commits this tab has saved that no landing has confirmed yet, commit sha
+// to row id, in the order their answers arrived — which is ancestry order,
+// because every save here goes out against the last answer. That order is what
+// lets a landing clear by name: a frame naming one of these shas as landed has
+// confirmed everything at or before it, and a mark must clear by name because
+// recovery re-mints shas — its own sha may never appear on main while its
+// content lands anyway (docs/deferred-push.md, "Confirmation cannot be 'my sha
+// is on main'").
+//
+// And the rows whose commit the pusher PARKED on a branch, row id to branch
+// name: not a clear, a problem — the content is on GitHub but not on main, and
+// nothing on this page resolves that. Both live out here for `WRITING`'s
+// reason: `landingMark` reads them on every draw, and on a rendered file they
+// simply stay empty.
+const UNLANDED = new Map();
+const STRANDED = new Map();
+
 {% if not editable %}
 // A rendered file has no server to save to, so the table is a table.
 const EDITABLE = null;
@@ -1190,6 +1238,7 @@ async function saveCell(cell, value, extra) {
     // the commit it just made.
     committed = answer.commit;
     BASE.value = answer.commit;
+    markSaved(answer, cell.dataset.record);
     Object.assign(DATA.rows[cell.dataset.record], sending);
     // A date the schedule is derived FROM has moved, so every date derived from
     // it on this row is now wrong on screen — and `start` and `end` are two
@@ -1708,6 +1757,7 @@ async function createDraft() {
     if (!response.ok) { refused(refusalLines(answer, response.status)); return; }
     committed = answer.commit;
     BASE.value = answer.commit;
+    markSaved(answer, answer.id);
     DRAFT = null;
     // Re-read rather than invented. A new row's dates, its size, what it blocks
     // and which project it counts against are all the server's arithmetic, and a
@@ -1929,6 +1979,7 @@ async function reparent(childId, parentId) {
     if (!response.ok) { announce(refusal(answer, response.status)); return; }
     committed = answer.commit;
     BASE.value = answer.commit;
+    markSaved(answer, childId);
     // The rows, re-read, and not `DATA.rows[childId].parent = parentId`.
     //
     // `parent` is the one field on this page that nothing on this page can work
@@ -1971,6 +2022,85 @@ async function reparent(childId, parentId) {
   }
 }
 
+// A write answered: remember its commit until a landing confirms it. Only when
+// the server itself said `pushed: false` — that key absent means a server from
+// before the push left the request path, and marking rows a server never
+// promised to confirm is a mark that cannot clear.
+function markSaved(answer, id) {
+  if (answer.pushed !== false || !answer.commit) return;
+  UNLANDED.set(answer.commit, id);
+  armLandingPoll();
+}
+
+// The poll fallback, and it is an invariant rather than a comfort: Cloud Run
+// recycles the event stream every 300 seconds and it has NO replay, so the
+// frame that would have cleared a mark can be gone for good, and a mark only a
+// frame can clear sticks forever on a tab that has been open a while. While
+// anything is waiting, the page re-asks `/api/table.json` — the same re-read
+// every create and every drop already does, so the rows it missed catch up in
+// the same breath. Ten seconds because the pusher lands an ordinary save in
+// about two: the frame wins the common case, and this fires for the tab that
+// missed one.
+const LANDING_POLL_MS = 10000;
+let landingPoll = null;
+
+function armLandingPoll() {
+  if (landingPoll !== null || !UNLANDED.size) return;
+  landingPoll = setTimeout(async () => {
+    landingPoll = null;
+    if (!UNLANDED.size) return;
+    // Never over somebody's typing: the redraw a refresh ends in replaces the
+    // whole tbody, and an open editor holds a value that exists nowhere else
+    // yet. The poll waits its ten seconds again rather than costing a key.
+    if (WRITING || CREATING || tbody.querySelector('td input, td select')
+        || !document.getElementById('askfor').hidden) { armLandingPoll(); return; }
+    if (await refreshRows()) draw();
+    armLandingPoll();
+  }, LANDING_POLL_MS);
+}
+
+// Everything at or before this sha has landed. The tab's own saves are in
+// UNLANDED in ancestry order — each went out against the last answer — so a
+// frame naming one of them as landed, or as re-minted onto the landed tip, has
+// confirmed every entry up to it. A sha this tab never saved clears nothing:
+// clearing on "a landing happened after my save" instead would race the sync
+// that read the branch tip just before the save committed, and show a commit
+// as landed while it is still only here.
+function clearedThrough(sha) {
+  if (!UNLANDED.has(sha)) return false;
+  for (const [held] of UNLANDED) {
+    UNLANDED.delete(held);
+    if (held === sha) break;
+  }
+  return true;
+}
+
+// The pusher's confirmation, rebroadcast by the shell off the page's one event
+// stream — see `broadcast` in web.py for the frame. Parked first, because a
+// parked sha must leave UNLANDED as a problem BEFORE the clear pass below can
+// walk past it: parked is on GitHub but not on main, and nothing on this page
+// resolves it, so no landing may tidy it away. Then every sha the frame names
+// — the tip it landed, and each OLD sha of the re-mint map, which is the only
+// name this tab ever saw for that commit — clears its mark and every mark
+// before it.
+addEventListener('openproj:landed', event => {
+  const {landed, remapped, parked} = event.detail;
+  let moved = false;
+  for (const [sha, branch] of parked || []) {
+    const id = UNLANDED.get(sha);
+    if (id === undefined) continue;
+    UNLANDED.delete(sha);
+    STRANDED.set(id, branch);
+    // Into the live region as well as onto the row: the person was answered
+    // 200 long ago, and a problem said only visually has not announced itself.
+    announce(`${id} could not land on GitHub's main — its save is parked on ${branch}`);
+    moved = true;
+  }
+  for (const sha of [landed, ...Object.keys(remapped || {})])
+    moved = clearedThrough(sha) || moved;
+  if (moved) draw();
+});
+
 // The plan as it is now, in the shape this page was built from.
 //
 // `/api/table.json` and not `/api/index.json`: the second answers with the plan
@@ -1980,6 +2110,11 @@ async function reparent(childId, parentId) {
 // rendered with, so the table after a write is built exactly like the table
 // before it.
 async function refreshRows() {
+  // Which marks this read may clear: the ones that existed when it was ASKED.
+  // A save that answers while the request is in the air is not in the
+  // payload's arithmetic, and clearing its mark off this answer would show a
+  // commit as landed while it exists only on this instance.
+  const asked = new Set(UNLANDED.keys());
   const response = await fetch('/api/table.json');
   if (!response.ok) return false;
   const fresh = await response.json();
@@ -1991,7 +2126,22 @@ async function refreshRows() {
   // showing. A row created here and left out of that list is a change to a row in
   // front of you that reads as news about somewhere else.
   window.SHOWING = Object.keys(DATA.rows);
+  settleMarks(fresh, asked);
   return true;
+}
+
+// The poll half of mark-clearing; the frame half is the `openproj:landed`
+// listener above. The payload's `landed` is the confirmed tip and clears by
+// name exactly as a frame's would; `unpushed === 0` says the whole pile has
+// drained, which covers the tab that reconnected — its own sha may never be
+// spoken again, because the tip moved past it or a recovery re-minted it, and
+// either way a drained pile means the remote holds it. Parked marks are
+// already out of UNLANDED and stay put: a poll clears saves the remote holds,
+// it does not resolve problems.
+function settleMarks(fresh, asked) {
+  if (typeof fresh.landed === 'string') clearedThrough(fresh.landed);
+  if (fresh.unpushed === 0)
+    for (const sha of asked) UNLANDED.delete(sha);
 }
 
 if (EDITABLE) {
@@ -3075,6 +3225,24 @@ td .sev-mark { margin-left: .25rem; }
    size of the ids a little further". Monospace holds it legible at that size in
    a way the sans face would not. */
 .eid { font-family: var(--font-mono); font-size: 11px; }
+/* "Saved here, not on GitHub yet": a ring beside the id — drawn, not typed,
+   for `.rowgrip`'s reason: a glyph outside the vendored latin subset is a tofu
+   box on a machine without it, and a border follows the theme. Hollow and
+   muted while the state is ordinary — the second or two a push takes — because
+   a colour from the status ladder or the severity pair would say something is
+   wrong when nothing is yet; filled in the blocker colour once the commit is
+   parked on a branch, so the mark escalates in place and hollow-against-filled
+   is a shape a colour-blind reader still has. Cascade: no rule in the shell or
+   this sheet matches a bare span inside the id cell, so these two classes at
+   (0,1,0) are the only declaration for every property here — verified with
+   tests/cascade.py against the served page. The one resolution inside the pair
+   is deliberate: `.stranded`'s colour ties `.unlanded, .stranded` at (0,1,0)
+   and wins on ORDER, so it must stay below the shared rule. */
+.unlanded, .stranded {
+  display: inline-block; width: 7px; height: 7px; margin-left: .3rem;
+  border: 1px solid var(--muted); border-radius: 50%; cursor: help;
+}
+.stranded { border-color: var(--sev-blocker); background: var(--sev-blocker); }
 /* And the column keeps a floor the smaller face took away. It is as wide as its
    widest id and nothing more — that is the fit — so a font a step smaller made
    it 114px, and the draft row lives in this column: three mark buttons and a
