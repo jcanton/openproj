@@ -1346,6 +1346,55 @@ def test_a_force_pushed_remote_is_a_fork_and_nothing_is_replayed_onto_it(
     assert after.unpushed == 2
 
 
+def test_the_force_push_guard_is_armed_before_the_first_push_ever_succeeds(
+    store: Store, repo_path: Path, remote_path: Path
+):
+    """The guard must not depend on this process having pushed. It used to:
+    `refs/openproj/pushed` was written only by a successful push, and
+    `deploy/boot.py` clones the plan fresh onto an in-memory disk on every cold
+    start — so every production instance booted into the one state where the
+    guard did nothing. In that window a force-pushed remote was silently HEALED:
+    the backlog replayed onto the rewritten history, local main swapped onto it,
+    health green, and a commit the remote provably held on main gone from every
+    main with nothing said anywhere. The clone's tip came FROM the remote, which
+    is positive confirmation the remote held it — the same argument the
+    `unpushed` floor already makes — so the store must open with the guard set
+    to that tip.
+    """
+    carried = store.head()  # the clone's tip: the remote demonstrably held this
+    ours = store.write(
+        path=PATH,
+        content=record(status="in_progress"),
+        base_commit=carried,
+        author="ann",
+        message="task-c00001: status todo -> wip",
+    )
+    # History rewritten under us before we ever pushed: remote main replaced by
+    # a new root that drops the very commit our clone was cut from.
+    rewritten = commit_directly(
+        remote_path,
+        {**tree_now(remote_path), "notes.md": "history rewritten\n"},
+        "history rewritten",
+        parents=[],
+        ref=None,
+    )
+    remote = pygit2.Repository(str(remote_path))
+    remote.references["refs/heads/main"].set_target(rewritten)
+
+    outcome = store.sync()
+
+    assert outcome.state == "diverged"
+    assert (outcome.landed, outcome.remapped, outcome.parked) == (None, {}, [])
+    assert head(repo_path) == ours.commit  # nothing rewound, nothing re-minted
+    assert contains(repo_path, carried)  # the dropped commit survives on our main
+    assert head(remote_path) == rewritten  # nothing replayed onto the fork
+    assert stranded_branch(remote_path, ours.commit) is None
+    after = store.condition()
+    assert after.diverged is True
+    assert after.refusal, "a runbook has to be writable from the condition"
+    assert after.unpushed == 2  # the commit the remote lost, and ours behind it
+
+
 def test_a_conflict_in_the_middle_of_a_batch_parks_alone_and_the_rest_land(
     store: Store, repo_path: Path, remote_path: Path
 ):

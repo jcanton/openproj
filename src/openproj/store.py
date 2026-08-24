@@ -40,11 +40,14 @@ _BRANCH = "refs/heads/main"
 _ORIGIN = "origin"
 _TRACKING = "refs/remotes/origin/main"
 # The newest commit this process has POSITIVELY confirmed the remote holds as
-# part of our lineage — moved only after a successful push. Not the tracking
-# ref: a fetch moves that to whatever the remote says today, and the whole point
-# of this one is to notice when what the remote says today no longer contains
-# what we saw it hold — the force-push guard (docs/deferred-push.md, recovery
-# step 2).
+# part of our lineage — seeded the moment the store opens (a bare clone's tip
+# came FROM the remote, so the remote demonstrably held it) and moved only by a
+# successful push after that. Seeded at open because production boots into a
+# fresh clone every time, and a guard armed only by the first push is off for
+# exactly that window. Not the tracking ref: a fetch moves that to whatever the
+# remote says today, and the whole point of this one is to notice when what the
+# remote says today no longer contains what we saw it hold — the force-push
+# guard (docs/deferred-push.md, recovery step 2).
 _PUSHED = "refs/openproj/pushed"
 # The recovery's scratch name for the rebased tip. A push refspec needs a ref on
 # the local side, and the tip must reach the remote BEFORE refs/heads/main moves
@@ -723,8 +726,27 @@ class Store:
         # `create_app` against a fresh bare repo start from. `condition` treats
         # `None` as "no floor to count from", which is the truth — there are no
         # commits to be at risk.
-        born = pygit2.Repository(str(self._path)).references.get(_BRANCH)
+        opened = pygit2.Repository(str(self._path))
+        born = opened.references.get(_BRANCH)
         self._opened_at = str(born.target) if born else None
+        # The force-push guard is armed HERE, not by the first successful push.
+        # Armed only then, it was off in exactly the state every production
+        # instance boots into — `deploy/boot.py` clones the plan fresh onto an
+        # in-memory disk on every cold start — and in that window a force-pushed
+        # remote was silently healed: the backlog replayed onto the rewritten
+        # history, local main swapped onto it, and a commit the remote provably
+        # held gone from every main with health still green. The seed is sound
+        # by the same argument the `unpushed` floor makes above: a bare clone's
+        # tip came FROM the remote, so the remote demonstrably held it. The
+        # tracking ref, when it exists, is the same confirmation made later — a
+        # fetch or push moved it to what the remote said — so it wins over the
+        # older opening tip. An existing guard ref is a previous life's positive
+        # confirmation and is never overwritten by inference.
+        if remote and opened.references.get(_PUSHED) is None:
+            tracking = opened.references.get(_TRACKING)
+            confirmed = str(tracking.target) if tracking else self._opened_at
+            if confirmed is not None:
+                opened.references.create(_PUSHED, confirmed)
 
     # -- reading, always at an explicit commit ------------------------------
 
@@ -920,9 +942,15 @@ class Store:
         # Not both-sides-moved: that is now the ordinary race the recovery
         # resolves, and it would go red on every hand-push. The wedge is the
         # remote no longer containing what this process CONFIRMED it held —
-        # `refs/openproj/pushed`, moved only after a successful push — which is
-        # the same comparison the recovery's force-push guard makes, so the flag
-        # and the refusal cannot disagree about the same repository.
+        # `refs/openproj/pushed`, seeded when the store opened and moved by each
+        # successful push — the same comparison the recovery's force-push guard
+        # makes, so the flag and the refusal cannot disagree about the same
+        # repository. Absent only when nothing was ever confirmed (no remote, or
+        # a branch unborn at open), which is the one state where False is the
+        # honest answer rather than a blind spot: before the seed existed, this
+        # read False for every fresh clone too — the whole boot-to-first-push
+        # window in production — and health could not go red during precisely
+        # the window the guard was needed.
         held = repo.references.get(_PUSHED)
         confirmed = str(held.target) if held else None
         diverged = (
@@ -1144,6 +1172,11 @@ class Store:
         # merely move — it LOST a commit, and replaying onto rewritten history
         # would launder the rewrite into ordinary-looking commits. Genuine
         # forks are a person's to resolve, never resolved automatically.
+        # `__init__` seeds the ref whenever a remote is configured, so absent
+        # here means the branch was unborn when the store opened: the remote
+        # never held any of our lineage, everything local is this process's own
+        # re-drivable work, and replaying it onto whatever the remote grew is
+        # the ordinary recovery, not a laundered rewrite.
         confirmed = repo.references.get(_PUSHED)
         if confirmed is not None:
             held = str(confirmed.target)
