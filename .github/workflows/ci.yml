@@ -3,9 +3,24 @@ name: CI
 # Pull requests before the merge, and `main` after it. Gating only the PR leaves
 # the branch everything is cut from unverified the moment two separately-green
 # PRs land and interact.
+#
+# EVERY pull request, and not only the ones based on `main`. The filter that used
+# to be here was `branches: [main]`, and what it did to a stacked PR is the worst
+# available failure: #92 was opened against the `thinking` branch, GitHub matched
+# no trigger, and `gh pr checks` answered "no checks reported" — which is the same
+# answer it gives while a run is still queuing. A branch built on an unmerged one
+# therefore sat un-gated and looked exactly like a branch waiting its turn.
+#
+# AGENTS.md already documents the sibling trap, where a `CONFLICTING` PR has no
+# `refs/pull/<n>/merge` for the workflow to check out, and says to ask
+# `gh pr view <n> --json mergeable` before asking anything else. That question
+# answers `MERGEABLE`/`CLEAN` here, so the documented check does not find this
+# one. Removing the filter is what makes the check trustworthy again.
+#
+# `push` stays pinned to `main`: a push run gates the branch everything is cut
+# from, and every other branch already reaches this workflow through its PR.
 on:
   pull_request:
-    branches: [main]
   push:
     branches: [main]
 

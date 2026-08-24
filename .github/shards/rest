@@ -34,6 +34,7 @@ tests/test_schedule.py
 tests/test_seats.py
 tests/test_status_gate.py
 tests/test_store.py
+tests/test_teaching.py
 tests/test_themes.py
 tests/test_validate.py
 tests/test_web.py

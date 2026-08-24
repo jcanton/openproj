@@ -367,6 +367,73 @@ def _human(value: object) -> str:
     return HUMAN.get(str(value), str(value))
 
 
+# What the word MEANS, beside the control, while somebody is setting it.
+#
+# Neither `LABELS` nor `HUMAN`, and the difference is who reads it and when.
+# Those two name a field and spell a value, and both are read on every view of
+# every page; these are teaching copy and are edit-only (`.teach`, in
+# `_DETAIL_STYLE`). Since the record page landed on preview, a read is roughly
+# nine views in ten, and teaching copy on all of them is how the one sentence in
+# this slot that is a FACT about the record — the derived-status lock, in
+# `_STATE_HINT` — stops being read.
+#
+# The test a line had to pass to be here: does it change what somebody does at
+# that moment? Most fields fail it. `title` and `tags` need nothing, `owner`
+# needs nothing, and help that is everywhere is help nobody reads. Five entries
+# across the two maps below, and the count is the design — a facts list that
+# doubles in height turns every hint into wallpaper.
+#
+# Paraphrase, never quotation. Shape Up is free to read online but the
+# reproduction terms are somebody's to check, and a lifted Basecamp paragraph
+# reads as an import beside this codebase's own voice — in the team's own words
+# the licence question never arises. The long form is `docs/shape-up.md`.
+FIELD_TEACH = {
+    "person_weeks": (
+        "Appetite is a budget, not an estimate: how much this is worth, "
+        "not how long it will take."
+    ),
+    # The circuit breaker, and the one Shape Up idea the scheduler most quietly
+    # assumes. A newcomer reading a derived end date otherwise expects a slip to
+    # push it out, which is the opposite of the rule the review meeting keeps.
+    "cycle": (
+        "A bet is for one cycle. Work that overruns is re-bet, "
+        "not extended by default."
+    ),
+}
+
+# The same thing keyed by status word rather than by field, because status is one
+# field whose control is six places to stand. Swapped as the ball moves rather
+# than rendered once — `attachHill` does it — so the sentence describes the stop
+# somebody is about to choose and not the one the record arrived at. A person
+# dragging onto `shelved` is deciding what shelved means; a sentence about where
+# they came from is help for the wrong decision.
+#
+# Three of the six carry copy. `ready`, `in_progress` and `done` are words a
+# person already owns before meeting this tool, and a hint that restates a word's
+# ordinary meaning is the one that teaches people to skim the ones that do not.
+#
+# Read only by the `record` ladder. An issue has no `thinking` at all, and a
+# note's `thinking` is a different idea — "still turning this over", not "written
+# down, nobody has started" — so one shared sentence would be false on one of
+# them. See `_LADDER_OF`.
+STATUS_TEACH = {
+    "thinking": (
+        "Somebody has written this down as possible work — nobody has started "
+        "shaping it yet."
+    ),
+    # The one line that measured three, in a column where every other lesson
+    # measured two. jcanton, 2026-08-24, choosing the shorter of two drafts after
+    # seeing it painted: "outlining a solution the appetite can hold" and "has bet
+    # ON IT yet" were the two clauses carrying the wrap, and neither was saying
+    # anything the shorter one does not.
+    "shaping": (
+        "Somebody is narrowing the problem to a solution that fits the appetite "
+        "— nobody has bet yet."
+    ),
+    "shelved": "A decision, not a failure: we looked, and we are not doing this.",
+}
+
+
 # Where "how long ago" stops being the useful answer and "when" begins.
 # docs/hackmd-observed.md reads the boundary off the pixels: one column runs
 # `17 hours ago` … `10 days ago` and then switches to `2026-07-08` (about 43
@@ -519,7 +586,9 @@ _PITCH_TEMPLATE = """## Problem
      itself is the Appetite field beside the body; this is the reasoning. -->
 
 ## Solution
-<!-- The core elements, in a form that is easy to understand immediately. -->
+<!-- The core elements, in a form that is easy to understand immediately.
+     Too vague and nobody can tell when it is done. Too concrete and you have
+     made the decisions the people building it should be making. -->
 
 ## Rabbit holes
 <!-- Details worth calling out now to avoid trouble later. -->

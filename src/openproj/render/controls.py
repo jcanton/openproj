@@ -2430,6 +2430,7 @@ for (const input of document.querySelectorAll('[data-suggest]')) attachSuggest(i
 _CONTROL = """
 {% if f.type == "priority" %}
 <select name="{{ f.name }}" id="{{ f.id }}" data-type="text" class="field"
+        {% if describedby %}aria-describedby="{{ describedby }}"{% endif %}
         {% if f.disabled %}disabled{% endif %}
         {% if f.gates %}data-required-at="{{ f.gates|join(' ') }}"{% endif %}>
   {#- The mark in front of the word, the same one the graph draws on a node and
@@ -2445,16 +2446,19 @@ _CONTROL = """
 </select>
 {% elif f.type == "bool" %}
 <input type="checkbox" name="{{ f.name }}" id="{{ f.id }}" data-type="bool" class="field"
+       {% if describedby %}aria-describedby="{{ describedby }}"{% endif %}
        {% if f.disabled %}disabled{% endif %}
        {% if f.value %}checked{% endif %}>
 {% elif f.type == "date" %}
 <input type="date" name="{{ f.name }}" id="{{ f.id }}" data-type="date" value="{{ f.text }}"
        class="field"
+       {% if describedby %}aria-describedby="{{ describedby }}"{% endif %}
        {% if f.disabled %}disabled{% endif %}
        {% if f.gates %}data-required-at="{{ f.gates|join(' ') }}"{% endif %}>
 {% else %}
 <input name="{{ f.name }}" id="{{ f.id }}" data-type="{{ f.type }}" value="{{ f.text }}"
        class="field" autocomplete="off"
+       {% if describedby %}aria-describedby="{{ describedby }}"{% endif %}
        {% if f.placeholder %}placeholder="{{ f.placeholder }}"{% endif %}
        {% if f.disabled %}disabled{% endif %}
        {% if f.list %}data-suggest="{{ f.list }}"{% endif %}
@@ -2593,7 +2597,11 @@ def _control_html(
                 describedby=describedby,
             ),
         )
-    return _fragment(_CONTROL, f=field, priorities=PRIORITIES)
+    # Every branch takes it, not only the two fields that carry one today:
+    # `aria-describedby` is a property of a control, and a template where
+    # three of four branches silently drop it is the copy that goes stale the
+    # day a fourth hint is written.
+    return _fragment(_CONTROL, f=field, priorities=PRIORITIES, describedby=describedby)
 
 
 def _pr_sort(ref: str) -> tuple[str, int]:
