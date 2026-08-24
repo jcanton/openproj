@@ -1165,6 +1165,45 @@ const COEDIT = (() => {
     send({t: 'update', u: b64(YJS.encodeStateAsUpdate(doc, raw(message.sv)))});
   }
 
+  // What the room has saved that GitHub has not confirmed, in answer order —
+  // which is ancestry order, each commit made against the last. Three states
+  // per save, never a boolean (docs/deferred-push.md, "Confirmation cannot be
+  // 'my sha is on main'"): the push happens behind the answer now, so
+  // `pushed: false` is EVERY save, and the warning that used to hang on it —
+  // "saved here, not yet pushed" — fired every time. A warning that always
+  // fires warns nobody, so in flight is the quiet 'saved', a landing clears in
+  // silence (a pile that is not draining is the shell banner's news), and the
+  // alarm is kept for the one save the pusher PARKED on a branch: answered 200
+  // long ago, on GitHub but not on main, and resolved by nothing in this room.
+  const unlanded = new Set();
+
+  addEventListener('openproj:landed', event => {
+    const {landed, remapped, parked} = event.detail;
+    // Parked first, and the order is load-bearing: the clear pass below walks
+    // everything up to a named sha, so a recovery frame that parks one save
+    // and re-mints a later one would otherwise sweep the parked commit out as
+    // landed before anybody was told. Only shas THIS room saved: every record
+    // page hears every frame, and a stranger's stranded commit is the pile
+    // banner's news, not this document's.
+    for (const [sha, branch] of parked || []) {
+      if (!unlanded.has(sha)) continue;
+      unlanded.delete(sha);
+      announce('saved here, but it could not land on GitHub’s main — the commit '
+        + `is parked on ${branch}`);
+    }
+    // Cleared by NAME — the landed tip, or the OLD half of the re-mint map,
+    // which is the only name this tab ever saw — and never by "my sha is on
+    // main": recovery re-mints shas, so a tab waiting for its own would wait
+    // forever after any rejection. A named sha confirms every save up to it.
+    for (const named of [landed, ...Object.keys(remapped || {})]) {
+      if (!unlanded.has(named)) continue;
+      for (const held of unlanded) {
+        unlanded.delete(held);
+        if (held === named) break;
+      }
+    }
+  });
+
   function heard(message) {
     if (message.t === 'welcome') return welcomed(message);
     if (message.t === 'update') {
@@ -1217,9 +1256,14 @@ const COEDIT = (() => {
       box.hidden = true;
       settle(message.commit);
       dirty();
+      // A commit the answer admits is not on GitHub yet goes on the watch list
+      // above; the pusher's landed frame is what takes it off, one way or the
+      // other. Saying so HERE would be the wallpaper this replaced: in flight
+      // is the ordinary state of every save now, not the exception it was.
+      if (message.pushed === false) unlanded.add(message.commit);
       const said = message.outcome === 'merged'
         ? 'saved, and somebody else’s change to this file was merged in'
-        : (message.pushed === false ? 'saved here, not yet pushed' : 'saved');
+        : 'saved';
       announce(said);
       // Everybody in the room, not only the tab that pressed the button: this
       // commit holds text that is already in every one of these editors, so the
