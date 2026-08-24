@@ -395,6 +395,14 @@ reports the PR `mergeable: CONFLICTING` — so the branch sits with nothing runn
 which is indistinguishable from a run that has not finished yet. If the answer has not arrived in
 five minutes, ask `gh pr view <n> --json mergeable` before you ask anything else.
 
+That question is the whole diagnostic again, and it was not for one night. `pull_request` carried a
+`branches: [main]` filter, so a PR opened against any other branch matched no trigger and got no run
+— with `gh pr checks` answering "no checks reported", the same words it uses while a run is queuing,
+on a PR that reports `MERGEABLE`/`CLEAN`. **Stacking is therefore a supported thing to do here**: a
+branch may be based on another branch's unmerged PR, its own PR gates the stack as it will actually
+land, and it needs no retargeting to be verified. The filter is gone; `push` stays pinned to `main`,
+which is the branch everything is cut from.
+
 Two habits that follow from it. Push before you are certain rather than after, since the answer
 costs you nothing and arrives in about three minutes — and while it runs, keep working on the next
 thing rather than watching it. And if you ever do have a process to stop, look at what you are
