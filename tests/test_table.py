@@ -61,6 +61,7 @@ import pygit2
 import pytest
 from browser import chrome, measured_in, pressed_in, screenshot
 from fastapi.testclient import TestClient
+from pages import elements
 from test_store import commit_directly
 from test_web import (
     ANN,
@@ -326,11 +327,28 @@ def test_the_page_carries_the_commit_it_was_rendered_at(page: str):
     )
 
 
-def test_the_table_offers_a_way_to_create_a_record(page: str, client: TestClient):
-    """Records are overwhelmingly born in the UI, so the UI has to be able to bear
-    them. Without this the only supported way to add a task is to write a file by
-    hand, which is the workflow this tool exists to replace."""
-    assert re.search(r'href="/new"', page), "the table needs a way to reach the create page"
+def test_the_table_creates_in_its_rows_and_carries_no_button_for_it(
+    page: str, client: TestClient
+):
+    """Records are overwhelmingly born in the UI, and on this page they are born
+    IN the table: the `+` row at its foot, which
+    `test_the_table_ends_in_a_row_that_makes_one` drives. The New record button
+    that doubled it is gone — jcanton, 2026-08-24 — and gone for the writer too,
+    which is why this asserts on the signed-in page rather than only on the
+    reader's.
+
+    Parsed, because the claim is about an element: two absence assertions in this
+    suite once found "their" answer in a CSS comment, and this page inlines a
+    stylesheet whose comments now name the button they are about.
+
+    `/new` keeps existing — the records views link it as Create record — so
+    losing the table's link must not orphan the form.
+    """
+    for el in elements(page):
+        assert not (el.tag == "a" and el.attrs.get("href", "").startswith("/new")), (
+            "the table still carries a link to the create form"
+        )
+        assert el.text.strip() != "New record"
     assert client.get("/new").status_code == 200
 
 
@@ -718,9 +736,17 @@ def test_a_served_table_for_a_reader_offers_no_editor_and_still_reads(
     assert 'id="askfor"' not in page
     assert "function attachSuggest" not in page
     assert 'id="base"' not in page and 'name="base_commit"' not in page
-    assert "New record" not in page and "double-click a cell" not in page
+    assert "New record" not in page
     assert "function adderHtml" not in body
     assert "/api/record" not in body
+    # And no lesson in a gesture this person cannot perform: the aside slot that
+    # carries the gestures beside the search box for a writer is not rendered at
+    # all here — `{% if aside %}` in `_FACETS`, not an empty div. Parsed, and the
+    # element asserted on, because "Double-click" alone is also in `rowHtml`'s
+    # cell titles, which ship to the reader and are gated at runtime instead.
+    parsed = elements(page)
+    assert not [el for el in parsed if "aside" in el.attrs.get("class", "").split()]
+    assert not [el for el in parsed if "Double-click a cell" in el.text]
 
     # And still a table: rows, sorting, filtering, links.
     a_record = sorted(index.plan)[0]
@@ -736,6 +762,37 @@ def test_a_served_table_for_a_reader_offers_no_editor_and_still_reads(
     # Searching for an id keeps at least that row and not the whole plan.
     assert a_record in got["filtered"]
     assert len(got["filtered"]) < got["rows"], "the filter filtered nothing"
+
+
+def test_the_gestures_ride_the_search_line_like_the_other_two_views(page: str):
+    """jcanton, 2026-08-24: the gestures sentence moved from the editbar to the
+    slot beside the search box — `aside` in `_facets_html`, the same slot the
+    graph's pan/zoom sentence and the timeline's window sentence ride in — "which
+    makes the table view more consistent with graph and timeline views".
+
+    This is the document half of the claim: one aside, inside the control bar,
+    saying both gestures, and the editbar no longer saying either. The pixel
+    half — that the slot shares the search box's LINE rather than merely its
+    markup — is `test_a_sentence_about_the_view_never_costs_the_view_a_row`
+    (test_render.py), which measures all three views in Chrome.
+    """
+    parsed = elements(page)
+    asides = [i for i, el in enumerate(parsed)
+              if "aside" in el.attrs.get("class", "").split()]
+    assert len(asides) == 1, "the view says nothing about itself, or says it twice"
+    aside = parsed[asides[0]]
+    assert "Double-click a cell, or press Enter on it, to edit it" in aside.text
+    assert "drag a row by the grip beside its id onto another to file it there" in aside.text
+
+    # In the bar, between the bar's opening and the rows the sentence teaches.
+    bar = next(i for i, el in enumerate(parsed) if el.attrs.get("id") == "controls")
+    rows = next(i for i, el in enumerate(parsed) if el.attrs.get("id") == "rows")
+    assert bar < asides[0] < rows, "the aside is not where the control bar draws it"
+
+    # And the editbar gave the sentence up rather than gaining a twin of it: what
+    # is left there is the live region and the count.
+    editbar = next(el for el in parsed if "editbar" in el.attrs.get("class", "").split())
+    assert "Double-click" not in editbar.text and "drag a row" not in editbar.text
 
 
 def test_editing_the_table_pulled_in_no_library(page: str):

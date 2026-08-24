@@ -3437,15 +3437,18 @@ def test_a_rendered_plan_offers_no_dead_control(rendered: Path, seed_index: Inde
     """A read-only export must not draw a control that cannot work.
 
     `links.new` is the empty string on a rendered file, so "New record" was a
-    button back to the page you were already on; the hint beside it promised an
-    editor with no server to save to; and every cycle card linked to a per-cycle
-    page that `render_static` does not write.
+    button back to the page you were already on (the button is gone from the
+    served table too now — jcanton, 2026-08-24 — so its absence here is doubly
+    held); the gestures hint promised an editor with no server to save to, and
+    since it moved beside the search box it stays a writer's sentence there; and
+    every cycle card linked to a per-cycle page that `render_static` does not
+    write.
     """
     table = read(rendered, "table.html")
     cycles = read(rendered, "cycles.html")
 
     assert "New record" not in table
-    assert "double-click a cell" not in table
+    assert "Double-click a cell" not in table
     assert '<a class="button" href="">' not in table
     for number in sorted(set(seed_index.plans) | set(seed_index.cycles)):
         assert f"<h2>Cycle {number}</h2>" in cycles, number
@@ -3862,10 +3865,12 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
     counts: the key's row where there is a key, and the page's own control row
     where there is not.
 
-    The table keeps its instruction where it is, and that is the pattern rather
-    than an exception to it: the rule is about rows, and "double-click a cell to
-    edit it" is already inline beside New record — the control it shares a subject
-    with — so it costs no row to move and no row to leave.
+    The table's instruction rode inline beside New record until 2026-08-24, when
+    the button went; a sentence is not worth the row it would then have owned, so
+    it moved to the aside like the other two views' — jcanton: "which makes the
+    table view more consistent with graph and timeline views". What the editbar
+    keeps is the count and the save's live region, still the far end of a row the
+    page has anyway rather than a row of their own.
 
     The heading is still first in the list and is now `.sr-only` — the seventh of
     the six rows going. It is `position: absolute`, so it is out of flow and the
@@ -3889,8 +3894,9 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
         # step further on the view where a row is worth the most.
         #
         # `div.commitbar` is a row and belongs here for the same reason
-        # `p.editbar` does on the table: this rule is about SENTENCES, and a row
-        # of controls is the thing a sentence was being asked to stop displacing.
+        # `p.editbar` does on the table: this rule is about SENTENCES, and the
+        # rows it still admits each carry something the page acts through — the
+        # commit button there, the count and the save's live region here.
         # It moved above the canvas on 2026-08-20 so that every page keeps the
         # control that commits it in one place, and it cost the drawing nothing —
         # `--room` went 595px to 607px at 1400x900, because up here its top margin
@@ -3903,8 +3909,17 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
 
     if view == "table":
         # No key to hang it on, so the count goes to the far end of the row the
-        # page's own controls stand in.
+        # page's own live region stands in.
         assert _shares_a_line(got["count"], got["editbar"])
+        # The gestures line rides with the search box, like the other two views.
+        assert got["aside"], "the view says nothing about itself"
+        assert _shares_a_line(got["aside"], got["search"]), (
+            f"the instruction is at {got['aside']} and the search box at {got['search']}"
+        )
+        assert got["aside"]["right"] < got["controlsRight"], (
+            f"the instruction ends at {got['aside']['right']} and the bar at "
+            f"{got['controlsRight']}: it is still pinned to the right edge"
+        )
     elif view == "graph":
         # Over the drawing, not above it. What matters is that neither the key
         # nor the count is in the flow between the controls and the canvas —

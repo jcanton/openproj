@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from markupsafe import Markup
+
 from ..index import Index
 from ..model import KINDS as KIND_LADDER
 from ..model import PARENT_KINDS, required_at, unread_fields
-from .controls import _FILTER_JS, _combobox_html, _facets_html
+from .controls import _FILTER_JS, _NO_ASIDE, _combobox_html, _facets_html
 from .env import _compiled
 from .rows import _row
 from .shell import STATIC, Links, _page, _titles
@@ -148,28 +150,38 @@ def _payload(index: Index) -> dict:
     }
 
 
+# The far end of the search box's line, like `_GRAPH_HINT` and the timeline's
+# window sentence — jcanton, 2026-08-24, "which makes the table view more
+# consistent with graph and timeline views". It lived inside the editbar beside
+# New record until that button went, and a sentence alone is not worth the row it
+# would then have owned (`_facets_html`'s docstring carries that argument).
+# Sentence case now that no button leads into it.
+#
+# Still three gestures in ONE line, because a page that teaches them one at a
+# time teaches the third to nobody: a drag has no name written on it anywhere,
+# and the grip beside an id is 8px of dotted rule. The `+` row at the bottom
+# says what it is by being a control.
+_TABLE_HINT = Markup(
+    '<p class="hint">Double-click a cell, or press Enter on it, to edit it · '
+    "drag a row by the grip beside its id onto another to file it there</p>"
+)
+
 _TABLE = """
 {#- Announced, not drawn: the lit nav item says this already. See `.sr-only`. -#}
 <h1 class="sr-only">Table</h1>
-{#- Both of these used to be on the rendered files too, where `links.new` is the
-    empty string — so the button was a link back to the page you were already on,
-    and the hint promised an editor that has no server to save to. A read-only
-    export must not offer a control that cannot work: the first time one of them
-    does nothing is the moment the rest of the page stops being believed. -#}
+{#- No New record button any more — jcanton, 2026-08-24: the `+` row at the foot
+    of the table is where a record is born from this page, and a button that
+    opened a second door to the same act was one control too many. The gestures
+    hint that stood beside it moved to the far end of the search box's line
+    (`_TABLE_HINT`, handed to `_facets_html` as `aside`), which is where the
+    graph and the timeline already say what a view has to say about itself. -#}
 {#- The count rides at the far end of this row rather than owning one below it,
     which is the same move the graph and the timeline make — there it is the key's
-    row, here it is the page's own controls, because the table has no key and this
-    is the last row it has to offer. The instruction beside New record was already
-    inline and already costs nothing, so it stays where it is: it belongs next to
-    the control it shares a subject with. -#}
-{#- Three gestures in one line, because a page that teaches them one at a time
-    teaches the third to nobody: a drag has no name written on it anywhere, and
-    the grip beside an id is 8px of dotted rule. The `+` row at the bottom says
-    what it is by being a control. -#}
-<p class="editbar">{% if editable %}<a class="button" href="{{ links.new }}">New record</a>
-   <span class="hint">double-click a cell, or press Enter on it, to edit it ·
-     drag a row by the grip beside its id onto another to file it there</span>
-   {% endif %}<span id="state" role="status"></span><span id="summary">
+    row, here it is the page's own row, because the table has no key. What is
+    left beside it is `#state`, the visible live region `announce` (shell)
+    prefers, empty until a save has something to say — so the row reads as the
+    count's until the moment it is also the save's. -#}
+<p class="editbar"><span id="state" role="status"></span><span id="summary">
   {#- Two numbers, because the count is of problems and the link filters
       records: "3 blocking problems" opening a table of 2 rows is the exact way
       a count stops being believed. The second number is the one the link keeps
@@ -2888,9 +2900,15 @@ frozenEdge();
 
 
 _TABLE_STYLE = _SCROLL_STYLE + """
-/* The far end of the edit bar. `margin-left: auto` and not `space-between`,
-   because on a rendered file the bar holds nothing else — the count stays at the
-   right rather than sliding to the left when the controls beside it are gone. */
+/* The far end of the edit bar. `margin-left: auto` and not `space-between`: the
+   bar's one other tenant is `#state`, empty until a save announces into it, and
+   the count has to hold the right edge whether or not the save has spoken —
+   `space-between` would slide it to the middle the moment `#state` said
+   "Saved". (Until 2026-08-24 the bar also held the create button and the
+   gestures hint; this rule is what kept the count in place on the pages that
+   never had them, and now every page is one of those. This comment ships inside
+   the page, which is why it does not quote either of them by name — two tests
+   hold their words out of the served bytes.) */
 .editbar #summary { margin: 0 0 0 auto; text-align: right; }
 /* The whole phrase, not the digit: "1 blocking problems" in danger red with the
    count black beside it read as two separate facts. And the colour has to mean
@@ -3522,6 +3540,20 @@ def render_table(
         p for p in index.problems
         if p.severity == "blocker" and p.record_id in index.plan
     ]
+    # "There is a server behind this page AND this person may write" — the
+    # first half alone shipped, standing in for the second, so a signed-out
+    # visitor got role="grid", the combobox, the draft row's `+`, and a 403
+    # for pressing Enter on what all of that offered. `docs/QUEUE.md`
+    # predicted this flag would have to split rather than narrow, because
+    # "the reader still needs to sort, filter, search and follow links" —
+    # measured against the template, that is not so: sorting (the `<thead>`
+    # buttons and `draw()`), `_FILTER_JS`, the hover card and the row links
+    # in `rowHtml` all live OUTSIDE the `{% if not editable %}` branch, and
+    # everything inside it is the write machinery (`refreshProblems` and
+    # `refreshRows` are reached only from save paths). The rendered-file
+    # export has exercised the read-only half since it existed; serving it
+    # to a reader is the same page.
+    editable = base_commit is not None and may_write
     body = _compiled(_TABLE).render(
         payload=payload,
         blockers=len(blocking),
@@ -3529,20 +3561,7 @@ def render_table(
         # three problems, so the count and the filter it links to were counting
         # different things and the table opened shorter than the number promised.
         blocked=len({p.record_id for p in blocking}),
-        # "There is a server behind this page AND this person may write" — the
-        # first half alone shipped, standing in for the second, so a signed-out
-        # visitor got role="grid", the combobox, the draft row's `+`, and a 403
-        # for pressing Enter on what all of that offered. `docs/QUEUE.md`
-        # predicted this flag would have to split rather than narrow, because
-        # "the reader still needs to sort, filter, search and follow links" —
-        # measured against the template, that is not so: sorting (the `<thead>`
-        # buttons and `draw()`), `_FILTER_JS`, the hover card and the row links
-        # in `rowHtml` all live OUTSIDE the `{% if not editable %}` branch, and
-        # everything inside it is the write machinery (`refreshProblems` and
-        # `refreshRows` are reached only from save paths). The rendered-file
-        # export has exercised the read-only half since it existed; serving it
-        # to a reader is the same page.
-        editable=base_commit is not None and may_write,
+        editable=editable,
         base_commit=base_commit or "",
         links=links,
         columns=_columns_for(index),
@@ -3553,7 +3572,16 @@ def render_table(
         # in the language the rest of this file's drawings are written in.
         marks=DRAFT_MARKS,
         why=_TABLE_WHY,
-        facets=_facets_html(index.facets, titles=_titles(index)),
+        # The gestures reach only somebody who can perform them. `editable` means
+        # the server is there AND this person may write; teach a signed-out
+        # reader double-click-to-edit and their reward is a 403 — the exact
+        # conflation the flag above was narrowed to remove. The graph's aside
+        # rides unconditionally because pan and zoom are everybody's.
+        facets=_facets_html(
+            index.facets,
+            aside=_TABLE_HINT if editable else _NO_ASIDE,
+            titles=_titles(index),
+        ),
         filters=_FILTER_JS,
         combobox=_combobox_html(index),
     )

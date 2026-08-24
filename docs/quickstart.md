@@ -80,7 +80,8 @@ inside it waits for.
 
 ## Writing one
 
-**New record**, then choose the kind. The body starts as the team's own template, with its guidance
+**Create record** on the records page — or the `+` row at the foot of the table — then choose the
+kind. The body starts as the team's own template, with its guidance
 in comments that never render: Problem, Appetite, Solution, Rabbit holes, No-gos, For later. It is
 the HackMD template you already write, so a pitch drafted in either place is the same document.
 
