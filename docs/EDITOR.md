@@ -902,4 +902,62 @@ not hold is a stack. The only question that can tell the two apart is `execComma
 pressed in Chrome, and `_MARKING` presses it on both shapes that write — `mark.insert` and the
 wrap tail. Seed two words, not one, or "one step back" and "everything gone" look the same.
 
+## The seat bands, built on both surfaces, 2026-08-24
+
+Appended rather than written over the paragraphs above that argued the other way, which is how the
+rest of this file is kept. Two things were reported together and they turned out to be one feature
+and one defect, not two of either.
+
+**"When two users are using the ace editor we don't see each other's highlighted line."** That was
+the feature this file already named as "what is not built, and is the first thing to add" — the band
+did not draw on the Ace path, `provides.seats` was false and `drawSeats` announced the refusal. The
+blocker written down was that the band's origin is the box's border box and the mirror's is its
+padding box, with nothing having measured the pairing in a browser.
+
+That blocker was dissolved rather than solved. Ace draws the band in its own marker layer, from its
+own screen rows, on the frame it draws the selection and the active line on, so the pairing never
+arises: a scroll, a fold, a rewrap and somebody else's keystroke each land the band without a line
+of this page's code subscribing to any of them. The `#seats` overlay route was costed and rejected —
+Ace's content inset, `SURFACE.scrolled()` because `BODY.scrollTop` is permanently 0 under Ace, Ace's
+`lineHeight`, the gutter inset and a `z-index` over `.acebox`, five hand-measured terms against
+zero.
+
+`provides.seats` went away rather than flipping to true. A boolean whose false arm has no second
+implementation to pick is not a capability but an absence, and it showed — that arm had grown an
+`announce` in the middle of a drawing loop, where `attachGutter`'s clean early return needs none.
+Both surfaces carry a `seats` member now, the shape `history` already had. `coordsAt` went with it,
+having had exactly one caller: the surfaces stopped answering *where an index is drawn* and started
+answering *draw these*, and Ace's answer to the first question was never a number this page could
+have put a `<div>` at.
+
+**"The other user's presence line was jumping up and down 2-3 lines while I was typing."** A
+separate defect, on the surface where bands already worked, and it had been shipped for as long as
+bands have existed. `seats` holds an absolute index and `drawSeats` repaints on every keystroke, so
+each keystroke painted the other person's band against an index it had just invalidated; the
+correction was a round trip away, so the band alternated between two rows once per character. It is
+2-3 lines and not 2-3 characters because a stale index walks back through characters, and three
+characters is three characters of prose or the whole of a blank line, a `- one` and another blank
+line. A shaping document is made of the second kind.
+
+The asymmetry in the report — "this didn't happen in the other user's view" — needs nothing else to
+explain it. A `who` comes back only when the *other* person's index changed, which happens only when
+you edit above them.
+
+Fixed in `text.observe` rather than in `typed` and `spliced`, because that is the one place that
+sees every change to the document, so a third person typing above the second one moves the second
+one's band too. On Ace it is stronger than a carried roster: a seat is an anchor, moved inside
+`applyDelta` in the same instruction that moves the caret and every fold, because that surface
+repaints on Ace's frames and those run before this page's subscribers do — measured, three
+characters walked a band up three rows before one line of our own code had run.
+
+**And one thing found on the way that is worth more than either.** The regression test guarding all
+of this — `test_a_seat_band_lands_on_the_right_line_at_a_width_that_wraps`, written for the
+fractional-width bug this file records at `render.py:8838` — swept `--measure` from 460 to 540 and
+never moved anything. Editing is full page, `article.record.full` overrides `width: var(--measure)`,
+and the box measured 800px at all eighty widths with a worst error of 0.00px. It passed for as long
+as it existed and would have passed through any regression it exists to catch. Both sweeps drive
+`.bodywrap` now and assert that the width actually varied. The lesson is the file's own: a test that
+cannot fail is a test that says nothing, and the guard that catches it is asserting that the
+question was asked, not only that the answer was right.
+
 🤖 Written by an agent on behalf of @jcanton

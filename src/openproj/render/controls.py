@@ -558,8 +558,18 @@ _COMBOBOX = r"""
 //   `coedit.byte_offset` is its server twin.
 //
 // The seven: `text`, `caret`, `setCaret`, `splice`, `onInput`, `onCaret`,
-// `coordsAt`. Three more are on the object and are NOT of that set, each for a
+// `seats`. Three more are on the object and are NOT of that set, each for a
 // reason given where it is defined: `apply`, `lineCoords` and `el`.
+//
+// The seventh used to be `coordsAt` — where the carets at these indexes are
+// drawn — and it existed for exactly one caller, the seat bands, back when the
+// page measured them itself and each surface only answered where a row was.
+// Ace's answer to "where is this index drawn" is a screen row inside a layer it
+// owns, which is not a number the page can put a `<div>` at; so the surfaces
+// stopped answering where and started answering DRAW THEM, and the caller went
+// with the answer. Nothing else ever asked, which is why it is gone rather than
+// kept for a second consumer that has not turned up in the life of this file the
+// question has existed.
 
 // Every programmatic edit to a textarea goes through here.
 //
@@ -660,9 +670,60 @@ function textareaSurface(area) {
     onInput(listener) { heard.input.push(listener); },
     onCaret(listener) { heard.caret.push(listener); },
 
-    // 7. Where the carets at these indexes are DRAWN — the top of each one's
-    // visual row, in the box's own scroll space. See `rowTops`.
-    coordsAt(indexes) { return rowTops(area, area.value, indexes); },
+    // 7. Where everybody ELSE in the room is: a translucent band on the row each
+    // of their carets is in, with the login on the right.
+    //
+    // **A member, and it used to be a `provides.seats` boolean.** The flag was
+    // false on Ace, and a boolean whose false arm has no other implementation to
+    // pick is not a capability — it is an absence, and it showed: the false arm
+    // grew an `announce` in the middle of `drawSeats`'s drawing loop, where
+    // `attachGutter`'s clean early return needs none. Now that both surfaces can
+    // draw, a flag beside this member would be a second spelling of what the
+    // member already says, and two spellings drift. `history` is the precedent —
+    // there the boolean picks between two real implementations of one contract —
+    // and a surface that genuinely cannot draw seats is handled the way
+    // `onSplice` is, by not being here.
+    //
+    // The mirror stays on this side of the boundary with `rowTops` and the rest
+    // of the measuring, and `#seats` is a layer only this surface writes to. The
+    // hue arrives already computed, so one rule colours both surfaces and the
+    // same person is the same colour in every window in the room.
+    seats: {
+      draw(others) {
+        const layer = document.getElementById('seats');
+        if (!layer) return;
+        // A box nothing is drawing has no rows to sit on. The roster arrives
+        // while the page is still in read mode, where this box is `display: none`
+        // and every measurement is zero — and a mirror given a width of zero
+        // wraps the whole document one character per row before answering with a
+        // number that means nothing. `openproj:editing` brings everyone back.
+        if (!area.getClientRects().length) { layer.replaceChildren(); return; }
+        const style = getComputedStyle(area);
+        const height = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4;
+        const tops = rowTops(area, area.value, others.map(seat => seat.at));
+        // The layer fills `.bodywrap`, whose top is the box's border box, while
+        // `rowTops` answers from its padding box. One border-width, on every band.
+        const origin = textTop(area, layer);
+        layer.replaceChildren(...others.map((seat, which) => {
+          const band = document.createElement('div');
+          band.className = 'seat';
+          band.style.top = (origin + tops[which] - area.scrollTop) + 'px';
+          band.style.height = height + 'px';
+          band.style.background = `hsl(${seat.hue} 70% 60% / .22)`;
+          const who = document.createElement('span');
+          who.className = 'seatname';
+          who.style.background = `hsl(${seat.hue} 70% 60% / .85)`;
+          // `textContent`, because this is a login off a socket.
+          who.textContent = seat.login;
+          band.appendChild(who);
+          return band;
+        }));
+      },
+      clear() {
+        const layer = document.getElementById('seats');
+        if (layer) layer.replaceChildren();
+      },
+    },
 
     // 8. Undo and redo, which on a `<textarea>` belong to the browser.
     // `execCommand` for the same reason `replaceRange` uses it: it is the one
@@ -703,17 +764,18 @@ function textareaSurface(area) {
     //
     // `gutter` — a textarea has no line numbers, so `attachGutter` draws them
     // through a mirror. Ace draws its own, and two gutters is one too many.
-    // `seats` — where somebody else's caret is, drawn as a band over the box.
-    // The mirror answers it here. Ace can answer it too, from screen rows, and
-    // that is NOT built in this stage: an untested band is a band one line off,
-    // and `static/VENDOR.md` already holds this feature to "a caret one line
-    // off is worse than no caret". `drawSeats` says so out loud instead.
+    // `seats` was the third entry here and is now a member above, because both
+    // surfaces answer it: Ace draws the band in its own marker layer, from its
+    // own screen rows, on the frame it draws the selection on. The note that
+    // stood here said an untested band is a band one line off, which was right;
+    // what changed is that it is measured now, at eighty widths, scrolled and
+    // folded, in `tests/test_seats.py`.
     // `history` — whether this surface's undo stack SURVIVES somebody else
     // typing. False, and that is a fact about textareas: a remote change reaches
     // the box as an assignment to `.value` (`splice` under `apply`, the one
     // place allowed to), which wipes the native stack. `historyOf` reads this to
     // decide whether the room's `Y.UndoManager` answers the buttons instead.
-    provides: {gutter: false, seats: true, history: false},
+    provides: {gutter: false, history: false},
     // Which of the two this IS, in the vocabulary the address and the preference
     // already use — and it exists for exactly one consumer, the switch beside the
     // three view segments, which has to say out loud which editor a person is
@@ -755,10 +817,10 @@ function textareaSurface(area) {
     // NOT one of the seven, and here rather than as a bare `lineTops(el)` at two
     // call sites so the mirror stays on this side of the boundary. Where every
     // logical LINE starts — the gutter's question on every keystroke, the scroll
-    // sync's on every resize. Separate from `coordsAt` because it is ONE layout
-    // of the document where `coordsAt` is one forced reflow per index: asking it
-    // as `coordsAt(lineStarts)` would turn the gutter's measured 6.5ms at 1,000
-    // lines into a thousand reflows.
+    // sync's on every resize. Separate from `rowTops`, which `seats` above uses,
+    // because it is ONE layout of the document where that is one forced reflow
+    // per index: asking it per line start would turn the gutter's measured 6.5ms
+    // at 1,000 lines into a thousand reflows.
     lineCoords() { return lineTops(area, area.value); },
   };
 }

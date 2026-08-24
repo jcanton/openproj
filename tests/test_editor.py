@@ -1071,7 +1071,7 @@ _THROUGH_THE_SURFACE = (
     "SURFACE.lineCoords()",                                      # the scroll sync
     "const now = SURFACE.text(), was = text.toString();",        # typed
     "const want = text.toString(), was = SURFACE.text();",       # reflect
-    "SURFACE.coordsAt(",                                         # drawSeats
+    "SURFACE.seats.draw(",                                       # drawSeats
     "const at = SURFACE.caret().from;",                          # sit
     "const mine = SURFACE.text() !== ORIGINAL_BODY;",            # welcomed
     "const draft = SURFACE.text();",                             # welcomed's report
@@ -1111,7 +1111,7 @@ def test_the_body_is_read_through_one_place_and_nothing_else(client: TestClient)
         assert "function textareaSurface(area)" in surface, path
         # Every one of the seven, by name, in the one place they are implemented.
         for method in ("text:", "caret:", "setCaret(", "splice(", "onInput(",
-                       "onCaret(", "coordsAt("):
+                       "onCaret(", "seats:"):
             assert method in surface, f"{method} is not in the surface on {path}"
         assert "let applying = false;" in surface, path
 
