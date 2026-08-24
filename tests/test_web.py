@@ -5124,12 +5124,13 @@ def test_the_shells_banner_gets_loud_when_the_pile_stops_draining(client: TestCl
     assert "12 saves" in got["stuck"]["said"], got["stuck"]["said"]
     assert "4 minutes" in got["stuck"]["said"], got["stuck"]["said"]
     assert "not on GitHub" in got["stuck"]["said"], got["stuck"]["said"]
-    # The parked ones are named separately — they are on GitHub, on branches,
-    # each with a pull request — because "stranded on this server" and "parked
-    # where a person can act" call for different acts.
+    # The parked ones are named separately, and named as stranded HERE:
+    # `Condition.parked` counts the local stranded refs `_settle` deletes on
+    # push confirmation, so a nonzero count is saves GitHub does not hold in
+    # any form yet — the branch and its pull request exist only after that.
     assert "2 saves" in got["parked"]["said"], got["parked"]["said"]
     assert "openproj/stranded" in got["parked"]["said"], got["parked"]["said"]
-    assert "pull request" in got["parked"]["said"], got["parked"]["said"]
+    assert "only on this server" in got["parked"]["said"], got["parked"]["said"]
     assert got["drained"]["hidden"] is True, "the pile drained and the banner stayed up"
 
 
@@ -5167,3 +5168,70 @@ def test_the_banner_reads_the_numbers_health_reports(client: TestClient):
     assert got["hidden"] is False, "a 503's body carries the numbers and was not read"
     assert "50 saves" in got["said"], got["said"]
     assert "11 minutes" in got["said"], got["said"]
+
+
+def test_the_banner_does_not_call_a_parked_save_safe_before_its_branch_is_pushed(
+    tmp_path: Path,
+):
+    """`Condition.parked` counts the local `refs/openproj/stranded-*` refs, and
+    `_settle` deletes each one the moment its branch push is confirmed on the
+    remote — so `parked > 0` names saves GitHub does not hold IN ANY FORM yet,
+    the ones this container would still lose. The banner read that number and
+    said the opposite: parked on branches in the plan repository, each with a
+    pull request to resolve it. That is the state AFTER the push lands, which
+    is exactly when the count drops to zero and the sentence disappears — so
+    the reassurance showed only while it was false, and a person reading it
+    stopped worrying at the one moment the work still dies with the server.
+
+    Asked of a real store in both states: a stranded ref the pusher has not
+    landed (parked: 1 — the banner must call the work stranded here), then the
+    ref deleted exactly as `_settle` does on confirmation (parked: 0 — nothing
+    left to warn about).
+    """
+    from test_injection import run_js
+
+    with draining_nowhere(tmp_path, [(None, "a save that cannot replay")]) as (
+        client,
+        plan,
+    ):
+        repo = pygit2.Repository(str(plan))
+        sha = str(repo.head.target)
+        # The state `_park` leaves and nothing has settled: the branch push is
+        # not confirmed, so this container is the commit's only holder.
+        repo.references.create(f"refs/openproj/stranded-{sha}", sha)
+        stranded_here = client.get("/api/health").json()
+        assert stranded_here["parked"] == 1
+        # And the state after `_settle`: the remote confirmed the branch, the
+        # ref is dropped, and the store honestly reports nothing at risk.
+        repo.references.delete(f"refs/openproj/stranded-{sha}")
+        confirmed = client.get("/api/health").json()
+        assert confirmed["parked"] == 0
+
+        answer = run_js(
+            client.get("/table").text,
+            "(() => {"
+            "  const look = () => ({hidden: pile.hidden, said: pile.textContent});"
+            f"  showPile({json.dumps(stranded_here)});"
+            "  const stranded = look();"
+            f"  showPile({json.dumps(confirmed)});"
+            "  const landed = look();"
+            "  return {stranded, landed};"
+            "})()",
+            page=True,
+        )
+
+    assert not [e for e in answer["errors"] if e.startswith("expression:")], answer["errors"]
+    got = answer["value"]
+    assert got["stranded"]["hidden"] is False, (
+        "a parked save is the loud case and the banner hid"
+    )
+    said = got["stranded"]["said"]
+    assert "only on this server" in said, said
+    assert "openproj/stranded" in said, said
+    # The old sentence's promise, verbatim: a pull request exists only once
+    # `_settle` has run — and `_settle` is also what removes this count.
+    assert "pull request" not in said, f"the banner called stranded work safe: {said!r}"
+    assert got["landed"]["hidden"] is True, (
+        "the branch is confirmed on the remote and the banner still cried: "
+        f"{got['landed']['said']!r}"
+    )

@@ -2478,10 +2478,18 @@ function showPile(health) {
     `${stranded} save${stranded === 1 ? ' is' : 's are'} on this server and `
     + `not on GitHub yet — the oldest has waited ${minutes} `
     + `minute${minutes === 1 ? '' : 's'}.`);
+  // `parked` counts the local refs/openproj/stranded-* refs, and store.py's
+  // `_settle` deletes each one THE MOMENT its branch push is confirmed on the
+  // remote — so a nonzero count is precisely the saves GitHub does not hold
+  // in any form yet, the ones a recycled container takes with it. The branch
+  // and its pull request describe the state AFTER that push lands, which is
+  // when this count is zero and the sentence is gone: this line once promised
+  // them here, calling the work safe at the one moment it was not.
   if (parked) said.push(
     `${parked} save${parked === 1 ? '' : 's'} could not land on GitHub's main `
-    + `and ${parked === 1 ? 'is' : 'are'} parked on openproj/stranded-* `
-    + 'branches in the plan repository — each has a pull request to resolve it.');
+    + `and ${parked === 1 ? 'is' : 'are'} still only on this server — headed `
+    + 'for openproj/stranded-* branches, but not on GitHub in any form until '
+    + 'that push is confirmed.');
   const sentence = said.join(' ');
   // Numbers and fixed words only, but through textContent all the same: one
   // escaping boundary, no exceptions to reason about. Re-set only on change —
