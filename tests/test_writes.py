@@ -29,7 +29,8 @@ from test_store import commit_directly
 from test_web import ANN, SECRET, SEED, TASK
 
 from openproj.auth import sign_session
-from openproj.web import SESSION_COOKIE, create_app
+from openproj.store import StoreDiverged
+from openproj.web import SESSION_COOKIE, _refusal, create_app
 
 # What a 409 carries. `_result` answers with `conflict` and no `detail` at all,
 # and this is the sentence three write paths threw away.
@@ -604,3 +605,89 @@ def test_a_refused_pick_leaves_the_list_open_with_the_reason_beside_it(pages):
     # moved the mark would be the page agreeing with a write that never landed.
     assert seen["selected"] == [""], "a refused pick moved the row marked as stored"
     assert seen["state"] == "'dragon' is not an icon"
+
+
+# --------------------------------------------------------------------------- #
+# C8: the plan has forked, and every page has to be able to say so
+#
+# The one refusal that is not about this request. `Store._absorb_remote` raises
+# `StoreDiverged` when local and remote have both moved and neither contains the
+# other, and refuses to guess which commits to discard; until `_refusal` was
+# written the seven HTTP write routes answered that with Starlette's default 500
+# — `Internal Server Error`, twenty-one bytes of `text/plain`, which `answerOf`
+# turns into `{}` and every page then prints as the bare word "refused". The
+# concurrency audit counted 26 of them in a row while `GET /` answered 200.
+#
+# So the server-side half is in `test_web.py` and this is the other half: what a
+# person is actually looking at when the answer arrives. The answer is built by
+# calling `_refusal` rather than typed out here, because a test that restates the
+# copy it is checking is a test that agrees with itself — and because the code
+# and the wording are exactly what is under test.
+# --------------------------------------------------------------------------- #
+
+
+# The two shas are what makes the sentence actionable, and `_absorb_remote`'s own
+# wording is what carries them.
+_FORK = StoreDiverged(
+    "local abc1234 and remote def5678 have both moved; "
+    "refusing to guess which commits to discard"
+)
+WEDGED = {"detail": _refusal(_FORK).detail}
+WEDGED_STATUS = _refusal(_FORK).status_code
+
+
+def test_a_forked_plan_gives_the_page_back_and_says_why(pages):
+    """C1's assertions, against the answer that used to be the 500 in them.
+
+    A refused write has to leave a page somebody can still use: Save back, the
+    edit still there and still counted, and the reason where the reader is
+    looking. This is the same shape as the plain-text 500 that took `flush()`
+    down with it, and the difference is that there is now something to read.
+    """
+    answer = drive(
+        pages["cycle"], SAVE_THE_ROSTER, [{"status": WEDGED_STATUS, "json": WEDGED}]
+    )
+    got = answer["value"]
+
+    assert got["threw"] is None, "the refusal came back as an exception nobody catches"
+    assert got["disabled"] is False, "Save never came back, so the page cannot be saved again"
+    assert got["unsaved"] == "1 unsaved change", "the edit is still there and still unsaved"
+    assert got["state"] == WEDGED["detail"], (
+        "the sentence that names the two shas is the whole of what a person can "
+        f"act on, and the page said: {got['state']!r}"
+    )
+
+
+@pytest.mark.parametrize("page", ["cycle", "table", "detail", "graph", "cycles", "new"])
+def test_every_page_that_writes_says_the_whole_sentence_a_forked_plan_answers(pages, page):
+    """One helper, in the shell, on every page that can write — and the status
+    code chosen for a divergence has to fall through it to `answer.detail`.
+
+    409 is the code that reads right and is the one that must not be used:
+    `refusal` special-cases it to mean "somebody else changed this first" and
+    paints the conflict box from `answer.conflict`, which a divergence does not
+    carry. That is asserted here from the browser's side — whatever `_refusal`
+    picks, this page has to print the sentence and not the empty-report wording.
+    """
+    answer = drive(
+        pages[page], f"refusal({json.dumps(WEDGED)}, {WEDGED_STATUS})"
+    )
+
+    assert answer["value"] == WEDGED["detail"]
+    assert "somebody else changed this first" not in answer["value"], (
+        "a divergence drawn as an ordinary edit collision: a reload fixes one of "
+        "those and nothing a person can do here fixes this one"
+    )
+    assert answer["value"] != "refused"
+
+
+def test_the_two_list_forms_say_it_too(pages):
+    """`refusals()` on the create form and `refusalLines()` on the table are the
+    two readings that are not `refusal()` itself. Both fall back to it when the
+    answer carries no `problems`, and a divergence carries none — it is not about
+    a field, or a record, or this request at all."""
+    created = drive(pages["new"], f"refusals({json.dumps(WEDGED)}, {WEDGED_STATUS})")
+    tabled = drive(pages["table"], f"refusalLines({json.dumps(WEDGED)}, {WEDGED_STATUS})")
+
+    assert created["value"] == [WEDGED["detail"]]
+    assert tabled["value"] == [WEDGED["detail"]]
