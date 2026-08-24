@@ -28,33 +28,43 @@ def _status_class(status: str) -> str:
 # is either derived (start, end, blocks, any rollup) or authoritative (id), and
 # neither belongs in a form: a derived value typed by hand is a lie the next
 # reschedule contradicts, and an edited id orphans the file from every reference.
+#
+# KEY ORDER IS THE PAGE. The facts column (`_fact_rows`) and the create form
+# (`_new_rows`) both draw in this order, and it is jcanton's, 2026-08-24, given
+# after tags ended up above status on the record page: the shape of the work
+# first (status, priority, appetite, tags), then its people, then where it sits
+# and when. `title` stays first and is the heading, skipped by both readers.
 EDITABLE: dict[str, str] = {
     "title": "text",
     "status": "status",
+    "priority": "priority",
+    "person_weeks": "number",
+    "tags": "list",
     "owner": "text",
+    "assignees": "list",
+    "reviewers": "list",
+    "review_waived": "bool",
+    "parent": "text",
+    "depends_on": "list",
+    "prs": "list",
+    "cycle": "number",
+    "assigned_on": "date",
+    # The inbox-only fields, after everything above: they were not in the order
+    # jcanton gave because no planned kind reads them, and trailing the shared
+    # fields keeps his order intact on every kind rather than threading gaps
+    # through it. Within the tail, who to ask before where it went.
+    #
     # An issue's and a note's "who to ask". `_editable_for` intersects with
     # `model_fields`, so only the two inbox kinds are ever offered these — the
     # pipeline was built one commit ahead of the kinds on purpose, so the flip
     # commit added rungs and deleted pages without touching a form.
     "reported_by": "text",
     "written_by": "text",
-    "assignees": "list",
-    "reviewers": "list",
-    "review_waived": "bool",
-    "assigned_on": "date",
-    "priority": "priority",
-    "cycle": "number",
-    "parent": "text",
-    "depends_on": "list",
     # The two one-way edges an inbox record carries; rendered through `_links`
     # like `depends_on`, which is links rather than the bare ids both old pages
     # printed. Offered only to the two inbox kinds, same as the pair above.
     "pitched_into": "list",
     "became": "list",
-    "tags": "list",
-    "prs": "list",
-    "person_weeks": "number",
-    "shaped_by": "list",
 }
 # The validator's own ladder, aliased and not retyped. This line was the five
 # words written out a second time — the same defect `PREFIX` below records being
@@ -276,7 +286,6 @@ LABELS = {
     "reviewers": "Reviewers", "review_waived": "Review waived", "assigned_on": "Assigned on",
     "priority": "Priority", "cycle": "Cycle", "parent": "Parent", "depends_on": "Blocked by",
     "tags": "Tags", "prs": "PRs", "person_weeks": "Appetite (person-weeks)",
-    "shaped_by": "Shaped by",
     "reported_by": "Reported by", "written_by": "Written by",
     "pitched_into": "Pitched into", "became": "Became",
     "opened_on": "Opened on", "written_on": "Written on",
@@ -356,7 +365,6 @@ HUMAN = {
     "owner": "Owner",
     "assignee": "Assignee",
     "reviewer": "Reviewer",
-    "shaper": "Shaper",
 }
 
 
@@ -487,12 +495,12 @@ def _read_date(value: object) -> str:
 
 # Fields that name a person. They get a datalist of everyone already in the corpus,
 # so a typo shows up as "not in the list" rather than as a reviewer who does not exist.
-PEOPLE_FIELDS = ("owner", "assignees", "reviewers", "shaped_by", "reported_by", "written_by")
+PEOPLE_FIELDS = ("owner", "assignees", "reviewers", "reported_by", "written_by")
 # Which suggestion list each field draws from. A datalist only completes a whole
 # value, so the comma-separated ones also get an "add" picker that appends a token
 # — otherwise the suggestions are useless the moment there is more than one name.
 SUGGESTS = {
-    "owner": "people", "assignees": "people", "reviewers": "people", "shaped_by": "people",
+    "owner": "people", "assignees": "people", "reviewers": "people",
     "parent": "records", "depends_on": "records", "tags": "tags", "prs": "prs",
     "reported_by": "people", "written_by": "people",
     "pitched_into": "records", "became": "records",
@@ -562,9 +570,10 @@ _KIND_MODELS: dict[str, type[Record]] = {rung.name: rung.model for rung in KIND_
 # The body a new record starts from, per kind.
 #
 # The pitch one is the team's own shaping template, copied from the note they
-# already write pitches against, minus its three header lines: `Shaped by`,
-# `Appetite` and `Developers` are fields here, and a heading restating a field is
-# the two-copies-of-one-fact problem this tool exists to end. The guidance stays
+# already write pitches against, minus its three header lines: `Appetite` and
+# `Developers` are fields here, `Shaped by` is what `owner` records now, and a
+# heading restating a field is the two-copies-of-one-fact problem this tool
+# exists to end. The guidance stays
 # in HTML comments exactly as it is written there — invisible on the page, see
 # `without_comments` — so a pitch drafted in HackMD and one drafted here are the
 # same document.

@@ -16,7 +16,6 @@ tags: [airflow, throughflow, bed, hearth, port, tapdeck]
 prs: ["kilnlab/kiln4py#2318"]
 created_schema_version: 2
 person_weeks: 7.5
-shaped_by: jackdawrie
 ---
 
 # Porting throughflow

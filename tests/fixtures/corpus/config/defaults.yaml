@@ -2,9 +2,10 @@
 #
 # schema_version is the version NEW records are created at. Every validation
 # rule records the version that introduced it, and a record is only blocked by
-# rules whose version <= its own created_schema_version (spec 5.4). The corpus
-# below is all created_schema_version 1, so the version-2 shaped_by rule reports
-# as a warning against it and as a blocker against anything created from now on.
+# rules whose version <= its own created_schema_version (spec 5.4). Most of the
+# corpus below is created_schema_version 1, so the version-2 somebody-assigned
+# rule reports as a warning against it and as a blocker against anything
+# created from now on.
 schema_version: 2
 nominal_availability: 1.0   # single global figure (D4); per-person overrides not used
 default_task_effort: 0.5    # weeks assumed when a record states no size

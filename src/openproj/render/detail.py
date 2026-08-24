@@ -28,6 +28,7 @@ from .styles import _DETAIL_STYLE, _SUGGEST_STYLE
 from .tokens import (
     _KIND_MODELS,
     _SIZE_FIELD_NAME,
+    EDITABLE,
     FIELD_TEACH,
     KINDS,
     LABELS,
@@ -110,8 +111,7 @@ def _viewbar(editing: bool) -> Markup:
 # reader, and dead code that still renders is code somebody wires back up.
 
 
-# Three views of one document, and the full page they are shown on. Asks 1 and 3,
-# which are the two highest on jcanton's list.
+# Three views of one document, on the one page the reader was already on.
 #
 # Emitted by the detail page and the create form and by nothing else, because it
 # reaches for `BODY` and `TITLED` — the two boxes those two pages declare — and
@@ -119,38 +119,33 @@ def _viewbar(editing: bool) -> Markup:
 # have no document to have a view of. The blocks share one lexical scope, so
 # this runs after theirs and the names are simply there.
 #
-# **Three states, and the landing one is `view`.** HackMD is always full page;
-# here `view` is the ordinary page — the server-rendered document, the facts
-# column, the nav alive — and it is where every session ends. `edit` and `both`
-# are sessions and go full page. The fourth, unnamed state this used to carry
-# is gone from every record page: exactly one segment is always pressed. The
-# one exception is the create form, which has no stored document to land on —
-# see `LANDING` and `GROUND` in the script below. Creating is a mode of the
-# record page now, and the exception is structural: the creating markup carries
-# no `.doc.read`, so there is nothing for a sessionless `view` to show.
+# **Three states, and the landing one is `view`.** `view` is the ordinary page —
+# the server-rendered document, the facts column — and it is where every session
+# ends. `edit` and `both` are sessions: the same page with the box in the
+# document's column. No view is a surface over the page any more — jcanton,
+# 2026-08-24: the full-page modes moved controls, dropped the nav and jumped the
+# layout, and "page elements should not move or appear/disappear when switching
+# views". The fourth, unnamed state this used to carry is gone from every record
+# page: exactly one segment is always pressed. The one exception is the create
+# form, which has no stored document to land on — see `LANDING` and `GROUND` in
+# the script below. Creating is a mode of the record page now, and the exception
+# is structural: the creating markup carries no `.doc.read`, so there is nothing
+# for a sessionless `view` to show.
 _VIEWS = Markup(r"""
 <script>
 const VIEW_ARTICLE = BODY.closest('article.record');
 const VIEW_PANE = document.getElementById('body-preview');
-// The row the switcher is drawn in, and the surface's own first row — the one
-// the back link is in, which is the top of the page once the surface is up.
-// The page-chrome controls come to live in the second of these; see `showView`,
-// which does the moving.
-const VIEW_BAR = VIEW_ARTICLE.querySelector('.editbar');
-const VIEW_TOP = VIEW_ARTICLE.querySelector('.back');
-const CORNER = document.querySelector('nav > .corner');
-const CORNER_HOME = CORNER && CORNER.parentElement;
 // The segment ids: the third is `preview`, which is the id the in-place Preview
-// button had. That button is gone — full page in preview-only is the same thing
-// and more of it — and the id stays where the control's job stayed, so that
-// `/new` and `/detail` still carry the same shapes and the test that says so
-// still passes without being rewritten to agree with the change.
+// button had. That button is gone — the preview view is the same thing and more
+// of it — and the id stays where the control's job stayed, so that `/new` and
+// `/detail` still carry the same shapes and the test that says so still passes
+// without being rewritten to agree with the change.
 const VIEW_IDS = {edit: 'view-edit', both: 'view-both', view: 'preview'};
 const VIEWS = ['edit', 'both', 'view'];
 // The server-rendered document, present on every record page and absent on the
 // create form — the structural fact the whole machine branches on. A page with
 // a landing has a sessionless `view` state to come back to; the create form
-// has nothing to read yet, so its way out of full page is the old surface-off
+// has nothing to read yet, so its way out of the views is the old surface-off
 // state (`null`). Structural on purpose: the creating mode of the record page
 // keeps `.doc.read` out of its markup so this branch cannot drift.
 const LANDING = VIEW_ARTICLE.querySelector('.doc.read');
@@ -165,65 +160,18 @@ function showView(mode) {
     VIEW_ARTICLE.classList.toggle('view-' + name, mode === name);
     document.getElementById(VIEW_IDS[name]).setAttribute('aria-pressed', String(mode === name));
   }
-  // Full page is what a SESSION looks like. On a record page `view` is the
-  // landing — the ordinary page, nav alive — and never full; the create form
-  // has no landing, so every view there is full and `null` is its off state.
-  const full = LANDING ? (mode === 'edit' || mode === 'both') : mode !== null;
-  VIEW_ARTICLE.classList.toggle('full', full);
-  // The page behind a fixed, viewport-filling article has nothing left to show
-  // and a scrollbar that scrolls it anyway is a scrollbar that moves nothing.
-  document.body.classList.toggle('fullpage', full);
-  // And nothing behind an opaque surface may still be tabbed into or read out.
-  // Measured before this: 43 focusable elements on the page, 9 outside the
-  // article, 8 of them painted over — so shift-tabbing back past the switcher
-  // put focus on a control nobody can see, and a screen reader walked the whole
-  // page behind a surface a sighted reader could see none of.
+  // A view is the classes above and nothing else. This function used to build a
+  // full-page surface here — `.full` on the article, `body.fullpage`, an
+  // `inert` sweep of `body > nav, body > a.skip`, and `#theme` and `#who`
+  // physically moved onto the article's back row. All of it is gone with the
+  // surface (jcanton, 2026-08-24: "the nav bar disappears when entering edit or
+  // side-by-side modes, should not do that ... ideally page elements should not
+  // move or appear/disappear when switching views"). The `inert` sweep and the
+  // corner move were both corrections for an opaque fixed article painting over
+  // the nav; with the article in the page's own flow the nav is never covered,
+  // so there is nothing to inert and nothing to move — and deleting the move
+  // leaves the two controls in the nav, once, with their listeners.
   //
-  // The two named, rather than a sweep over `<body>`'s children, because that
-  // sweep takes two things it must not. `#announce` is the live region every
-  // refusal on this page reaches a screen reader through, and an `inert` one is
-  // a silent one. The suggestion lists are parked on `<body>` too, drawn ABOVE
-  // this surface rather than behind it, and `inert` refuses pointer events as
-  // well as focus — so inerting them would take the owner picker away in
-  // exactly the view this stage is about.
-  for (const covered of document.querySelectorAll('body > nav, body > a.skip')) {
-    covered.inert = full;
-  }
-  // And the two controls that `inert` took with it come out from behind it —
-  // jcanton, 2026-08-20: "the light/dark mode toggle and sign in button seem to
-  // have disappeared from the edit view, bring those back please".
-  //
-  // The cause is the loop directly above, and the loop is right: those eight
-  // covered focusable elements really were in the tab order behind an opaque
-  // surface. So the nav stays inert and the two controls MOVE, onto the surface.
-  //
-  // **Into the surface's FIRST row, beside the back link — not the switcher's
-  // row.** They landed on the switcher's row first, and jcanton reported it with
-  // a screenshot of `/new`: the create form has no `.doc.read`, so it is full
-  // page from birth, and `.editbar` is its FIFTH row — under the back link, the
-  // kind picker, the heading and the meta line. Sign-in and the two palette
-  // controls sat four hundred pixels down the right-hand side, on a page whose
-  // actual top-right corner was empty. A control that is in the corner of the
-  // window everywhere else in the app is not in the corner here, and the corner
-  // is the only thing about it a reader has learnt.
-  //
-  // `.back` is the surface's first row on both pages and on the create form, so
-  // this is one rule and not a branch on `creating`. The detail page gets the
-  // same move for the same reason — full page is full page.
-  //
-  // **The same nodes, not a second copy.** `#theme` and `#who` are ids, in a
-  // document the detail template can be rendered seventeen times into; a copy
-  // would be a duplicate id, a second `labelTheme` to keep in step, and a
-  // sign-in control the shell's `/api/me` script — which fills exactly one
-  // `#who` — would leave empty. The move keeps the accessible name, the state,
-  // the listeners and the identity by construction, because it is one object.
-  //
-  // Appended to that row, which puts them after the back link and before
-  // everything the document is written with — the same place in the tab order
-  // they hold in the nav they came from, where they follow the nav's links and
-  // precede the page. `.corner`'s own `margin-left: auto` puts them at the far
-  // end, which is likewise where they sit there.
-  if (CORNER) (full ? (VIEW_TOP || VIEW_BAR) : CORNER_HOME).append(CORNER);
   // One mechanism for whether the preview pane is on the page, and it is the
   // `hidden` attribute the pane was drawn with. The landing does not use the
   // pane at all: the server already rendered this document into `.doc.read`
@@ -240,7 +188,7 @@ function showView(mode) {
   // own `CREATING` guard.
   if (LANDING && typeof showEditing === 'function') {
     const editing = VIEW_ARTICLE.classList.contains('editing');
-    if (full && !editing) showEditing(true);
+    if ((mode === 'edit' || mode === 'both') && !editing) showEditing(true);
     if (mode === 'view' && editing) showEditing(false);
   }
   // The room's bands are measured against a box that has a size, and a view
@@ -250,8 +198,10 @@ function showView(mode) {
   // where it used to be — a transient wrong that a three-view page would have
   // made the normal case.
   dispatchEvent(new Event('openproj:editing'));
-  // The width handle belongs to the measure, and full page has none. `place` is
-  // the detail page's; the create form has no grip and no such function.
+  // The width handle belongs to the measure, and the split view's edge is not
+  // the measure — `place` hides it there and parks it on the article's edge
+  // everywhere else. `place` is the detail page's; the create form has no grip
+  // and no such function.
   if (typeof place === 'function') place();
   // And the other handle, whose whole existence is this one view: the classes
   // are on the article by here, so the stylesheet has already decided whether
@@ -268,14 +218,14 @@ function showView(mode) {
 // person moves it.
 //
 // **This is not the width grip and the two are never on screen together.**
-// `#grip` drags `--measure`, the reading measure of the page, and `place()` hides
-// it the moment the article goes full page; `#splitter` divides two panes and the
-// stylesheet draws it in the split view and nowhere else. Two handles that both
-// change widths on one screen would be two controls nobody can tell apart, and
-// the answer to that is that there is only ever one of them there.
+// `#grip` drags `--measure`, the reading measure of the page, and `place()`
+// hides it in the split view; `#splitter` divides two panes and the stylesheet
+// draws it in the split view and nowhere else. Two handles that both change
+// widths on one screen would be two controls nobody can tell apart, and the
+// answer to that is that there is only ever one of them there.
 //
 // No null check on the handle, which is the contract this block already keeps
-// with `BODY`, `VIEW_PANE` and `VIEW_BAR`: the one template that emits `_VIEWS`
+// with `BODY`, `VIEW_PANE` and `TITLED`: the one template that emits `_VIEWS`
 // emits `_SPLIT_HANDLE` inside the same `{% if editable %}` as the box this whole
 // script is built around.
 const SPLITTER = VIEW_ARTICLE.querySelector('#splitter');
@@ -563,17 +513,17 @@ function previewMap() {
     previewPoints = [{line: 1, top: 0}];
     // Measured against the SCROLLER, and that is the whole of the accuracy on
     // this side. `offsetTop` is a distance from whatever happens to be
-    // positioned, and nothing positions the pane — so the offset parent was the
-    // article, which full page makes `position: fixed`, and every block reported
-    // its distance from the top of the WINDOW while the two synthetic points
-    // above and below it, and the `scrollTop` this map is read against, were in
-    // the pane's own scroll space. Measured in Chrome at 1400x900: a constant
-    // 283.625px out, the pane's own top inside the article, on a pane 458px
-    // tall — the rendered side sat a third of a screen past the heading the
-    // source side was showing. Adding `position: relative` to the pane would
-    // also have worked and would have left the number silently depending on a
-    // positioning rule staying put; this arithmetic asks the question that is
-    // actually being asked.
+    // positioned, and nothing positions the pane — the offset parent is the
+    // article, so every block reported its distance from the top of the ARTICLE
+    // while the two synthetic points above and below it, and the `scrollTop`
+    // this map is read against, were in the pane's own scroll space. Measured
+    // in Chrome at 1400x900 in the full-page era: a constant 283.625px out, the
+    // pane's own top inside the article, on a pane 458px tall — the rendered
+    // side sat a third of a screen past the heading the source side was
+    // showing. Adding `position: relative` to the pane would also have worked
+    // and would have left the number silently depending on a positioning rule
+    // staying put; this arithmetic asks the question that is actually being
+    // asked.
     const zero = VIEW_PANE.getBoundingClientRect().top - VIEW_PANE.scrollTop;
     for (const block of VIEW_PANE.querySelectorAll('[data-startline]')) {
       const line = Number(block.dataset.startline);
@@ -832,43 +782,8 @@ _DETAIL = """
 
       What is rendered is the destination for a page opened cold — a bookmark, a
       link in chat, a fresh tab — and the shell's script rewrites it when the tab
-      it is in remembers a view. `class="origin"` is that script's hook: this row
-      grows a second link in full page, when the sign-in control moves into it. -#}
+      it is in remembers a view. `class="origin"` is that script's hook. -#}
   <p class="back"><a class="origin" href="{{ links.records }}">← all records</a></p>
-  {#- Above the title, not under it. What a thing *is* is the first question a
-      page answers, and the kind was the third item on a line below the name,
-      between an id and a status. It is also the one fact here that never
-      changes, which is why it is the one that sits here. -#}
-  {%- if creating %}
-  {#- The kind sits where the stored record's kind chip sits: the two are the
-      same document in two modes, and this is the control that decides which
-      kind the reader will be looking at afterwards. Options come off `KINDS`,
-      never written out — a rung added to the ladder is on this menu the day it
-      lands. -#}
-  <p class="eyebrow"><label class="kindpick">kind
-      <select id="kind">
-        {% for k in kinds %}<option value="{{ k }}"
-          {% if k == creating %}selected{% endif %}>{{ k|human }}</option>{% endfor %}
-      </select>
-    </label></p>
-  {%- else %}
-  <p class="eyebrow"><span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span></p>
-  {%- endif %}
-  {#- The heading names the page; on the create page the title box below it is
-      a control, because a heading whose only content is an empty input is a
-      page with no name and a box with no name either. -#}
-  <h1>{% if creating %}New record{% else %}<span class="read">{{ e.title }}</span>{% endif %}</h1>
-  {#- No status chip. It was here as well as in the facts column forty pixels
-      below — the same word, in the same colour, twice, and in edit mode the
-      lower one is the select that changes it. A field that can be changed is
-      stated where it can be changed: STATUS is the first row of the facts
-      column, level with the title, so nothing is further away than it was. -#}
-  {% if creating %}
-  <p class="meta">the id and the file are the server's to choose</p>
-  {% else %}
-  <p class="meta"><code>{{ e.id }}</code>
-     {% if e.parent %}· in {{ e.parent_link }}{% endif %}</p>
-  {% endif %}
   {% if editable %}
   {#- The switcher is the way in: pressing Write or Write-and-preview opens
       the session it is a view of, so there is no Edit button beside it — two
@@ -956,10 +871,54 @@ _DETAIL = """
     </span>
   </div>
   {% endif %}
+  {#- The form opens ABOVE the heading so the title box can live inside it and
+      still be one of `FORM`'s own controls — `CONTROLS` is a `querySelectorAll`
+      over the form's subtree, and a title outside it is a title no save sends. -#}
   <form id="edit" data-id="{{ e.id }}" onsubmit="return false">
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
-    <input name="title" data-type="text" value="{{ e.title }}" aria-label="Title"
-           class="field title-field"{% if creating %} placeholder="Title"{% endif %}>
+  {% endif %}
+  {#- The header, BELOW the two bars of controls — jcanton, 2026-08-24: the
+      title "should always be below" the view buttons, in every view. It used to
+      sit above them as a heading while the box the form held sat below them, so
+      starting an edit moved the record's name down the page; the two are one
+      slot now and the slot does not travel. What a thing *is* is still read
+      first within the header: kind, then name, then the meta line. -#}
+  {%- if creating %}
+  {#- The kind sits where the stored record's kind chip sits: the two are the
+      same document in two modes, and this is the control that decides which
+      kind the reader will be looking at afterwards. Options come off `KINDS`,
+      never written out — a rung added to the ladder is on this menu the day it
+      lands. -#}
+  <p class="eyebrow"><label class="kindpick">kind
+      <select id="kind">
+        {% for k in kinds %}<option value="{{ k }}"
+          {% if k == creating %}selected{% endif %}>{{ k|human }}</option>{% endfor %}
+      </select>
+    </label></p>
+  {%- else %}
+  <p class="eyebrow"><span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span></p>
+  {%- endif %}
+  {#- One slot for the record's name in both modes: the read span and the title
+      box swap inside the heading, so pressing Write changes what the name is
+      drawn in and never where it is. The create page is the exception its own
+      comment has always argued: a heading whose only content is an empty input
+      is a page with no name and a box with no name either, so it keeps the
+      words "New record" and takes the box on the line below. -#}
+  <h1>{% if creating %}New record{% else %}<span class="read">{{ e.title }}</span>{%
+    if editable %}<input name="title" data-type="text" value="{{ e.title }}"
+           aria-label="Title" class="field title-field">{% endif %}{% endif %}</h1>
+  {#- No status chip. It was here as well as in the facts column forty pixels
+      below — the same word, in the same colour, twice, and in edit mode the
+      lower one is the select that changes it. A field that can be changed is
+      stated where it can be changed: STATUS is the first row of the facts
+      column, level with the title, so nothing is further away than it was. -#}
+  {% if creating %}
+  <input name="title" data-type="text" value="" aria-label="Title"
+         class="field title-field" placeholder="Title">
+  <p class="meta">the id and the file are the server's to choose</p>
+  {% else %}
+  <p class="meta"><code>{{ e.id }}</code>
+     {% if e.parent %}· in {{ e.parent_link }}{% endif %}</p>
   {% endif %}
   <div class="panes">
     <aside class="facts">
@@ -1171,18 +1130,20 @@ function place() {
   // hidden element gives zero — which parked the handle against the left edge of
   // the page, a rule down the side of a list it has nothing to do with.
   //
-  // `getClientRects()` and not `offsetParent`, which was the test until the full
-  // page arrived: an element with `position: fixed` has no offset parent, so the
-  // full-page article answered "hidden" and the handle would have parked at the
-  // left edge again — the same bug, through a second door. A box with no rects
-  // is one nothing is drawing, which is the question actually being asked.
+  // `getClientRects()` and not `offsetParent`: a box with no rects is one
+  // nothing is drawing, which is the question actually being asked — and it
+  // stays the test after surviving the full-page era, when a `position: fixed`
+  // article had no offset parent and an `offsetParent` check would have parked
+  // the handle at the left edge through a second door.
   const article = [...document.querySelectorAll('article.record')]
     .find(candidate => candidate.getClientRects().length > 0);
-  // And in full page there is no handle to have. It drags `--measure`, and the
-  // full-page surface is the window: a control that changes nothing is worse
-  // than an absent one, because somebody drags it and concludes the page is
-  // broken.
-  grip.hidden = !article || article.classList.contains('full');
+  // And not in the split view, whose width handle is the splitter. The grip
+  // sets `--measure` as the article's own width, and in the split the article
+  // is one measure plus one body wide — so a grip on that edge would move it
+  // twice the drag and land the measure somewhere nobody chose. Two handles
+  // that both change widths on one screen is the confusion `#splitter`'s
+  // comment already refuses; one of them is on the page at a time.
+  grip.hidden = !article || article.classList.contains('view-both');
   if (!grip.hidden) grip.style.left = article.getBoundingClientRect().right + 'px';
 }
 place();
@@ -2505,6 +2466,12 @@ def _new_rows() -> list[dict]:
     kind's fields and hides what does not apply. Rendering only the chosen kind
     meant switching kind
     was a fresh page, and a title typed before switching was gone.
+
+    Emitted in `EDITABLE` order, not in the order the union discovered them.
+    Building kind by kind put each field where the FIRST kind to own it landed
+    it — the first rung is `product`, which reads only `tags`, so the create
+    form opened with Tags above Status while the record page opened with
+    Status: two orders for one form.
     """
     rows: dict[str, dict] = {}
     for kind in KINDS:
@@ -2541,7 +2508,13 @@ def _new_rows() -> list[dict]:
                  "control": _control_html(field), "gates": field["gates"], "kinds": []},
             )
             row["kinds"].append(kind)
-    return [{**row, "kinds": " ".join(row["kinds"])} for row in rows.values()]
+    # `EDITABLE` decides the order, so this form and the facts column cannot
+    # disagree; the loops above only decide which rows exist.
+    return [
+        {**rows[name], "kinds": " ".join(rows[name]["kinds"])}
+        for name in EDITABLE
+        if name in rows
+    ]
 
 
 # What a promotion offers, per inbox, and the word for each.

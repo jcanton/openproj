@@ -16,7 +16,6 @@ tags: [griddle, whole-roast, transport, flume, drum, convergence]
 prs: ["kilnlab/kiln4py#2360"]
 created_schema_version: 2
 person_weeks: 6.0
-shaped_by: nightjarelli
 ---
 
 # Aroma transport convergence

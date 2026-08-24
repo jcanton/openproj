@@ -21,6 +21,7 @@ import base64
 import contextlib
 import gc
 import json
+import logging
 import queue
 import re
 import shutil
@@ -903,7 +904,10 @@ def test_a_room_whose_record_is_gone_says_to_copy_the_document_out(
     else's copy arrived over the socket and was never an `input` event, so
     "there is nothing to write this against" with no instruction beside it is a
     message that ends with the document being lost. It repeats every quiet
-    window until somebody acts on it, so it has to say what to do.
+    window until somebody acts on it, so it has to say what to do. The
+    instruction arrives from `_refuse_room` now — on every refusal, not only
+    this one — and this test holds the pairing: the arm says what is gone, the
+    door says what to do about it.
     """
     monkeypatch.setattr(Store, "read", lambda self, commit, path: None)
     with open_room(client, "ann") as one:
@@ -914,7 +918,128 @@ def test_a_room_whose_record_is_gone_says_to_copy_the_document_out(
         why = waited_for(ann, "refused", "saved")
     assert why["t"] == "refused", why
     assert "not in the plan any more" in why["why"]
-    assert "Copy the document out of the editor" in why["why"], why["why"]
+    assert "Copy your work out of the editor" in why["why"], why["why"]
+
+
+def test_a_refused_room_says_what_to_do_and_is_discoverable_from_the_server(
+    client: TestClient, plan: Path, caplog: pytest.LogCaptureFixture
+):
+    """The interim answer to the audit's Loss 3, both halves of it.
+
+    A conflict leaves `room.base` where it was, so the room re-runs the same
+    merge against the same base every window until it is swept — and the
+    refusal named the file, the lines and both texts without ever saying what
+    to do. The one action that works is copying the work out before the tab
+    closes, so the refusal now says so; and because every page answers 200
+    while the room is stuck, the server's output gets a WARNING naming the
+    path and the base, which is the only way an operator can find a wedged
+    room at all. The person who joins after the refusal was not there to hear
+    the frame, so the join replays it — sentence included.
+    """
+    told = (
+        "Copy your work out of the editor before you close this tab — "
+        "nothing typed since the last save has reached the plan."
+    )
+    caplog.set_level(logging.WARNING, logger="openproj.web")
+    with open_room(client, "ann") as one:
+        ann = Session(one, "ann")
+        ann.hello()
+        # The same line changed two ways: the refusal the audit measured a room
+        # never escaping from, not a field the model refused to read back.
+        front, body = split_front_matter(stored(plan))
+        line = "The artefact shows up at the drum seam only, and only with two ranks.\n"
+        at = body.index(line)
+        commit_directly(
+            plan,
+            {**SEED, PATH: f"---\n{front}\n---\n" + body.replace(line, "THEIRS\n")},
+            "a person with a terminal",
+            author="cy",
+        )
+        before = ann.doc.get_state()
+        del ann.text[at : at + len(line) - 1]
+        ann.text.insert(at, "MY VERSION OF THAT LINE")
+        ann.send(ann.doc.get_update(before))
+        ann.save()
+        refused = ann.take("refused", "saved")
+        assert refused["t"] == "refused", refused
+        assert refused["why"].endswith(told), refused["why"]
+
+        with open_room(client, "bo") as two:
+            bo = Session(two, "bo")
+            bo.hello()
+            replayed = waited_for(bo, "refused")
+            assert replayed["why"] == refused["why"], (
+                "the joiner heard a different refusal than the room did"
+            )
+
+    warned = [record for record in caplog.records if "refused to commit" in record.getMessage()]
+    assert warned, "a wedged room left nothing in the server's output"
+    assert PATH in warned[0].getMessage(), warned[0].getMessage()
+    assert "base" in warned[0].getMessage(), (
+        "without the base an operator cannot tell a wedged room — the same path "
+        "refusing at the same base — from a string of ordinary conflicts"
+    )
+    # This refusal is a conflict, so its report is the multi-line kind: a header
+    # and one line per collision, quoting both sides of the document. Only the
+    # header may reach the log — each stderr line is one entry on Cloud Run, so
+    # the quoted lines would let whoever is typing append entries to the
+    # operator's log, and one refusal spread over many entries defeats the
+    # "same path, same base, repeatedly" scan the line exists for.
+    assert "\n" not in warned[0].getMessage(), warned[0].getMessage()
+    assert "MY VERSION OF THAT LINE" not in warned[0].getMessage(), (
+        "text typed in the editor reached the server's log"
+    )
+
+
+def test_every_refusal_a_room_makes_leaves_through_one_door():
+    """`_commit_room` refuses in three arms — the store's conflict, the failures
+    `WRITE_FAILURES` names, and the last-resort `except Exception` — and all
+    three are the same stuck room. Held as syntax, because an instruction
+    written three times is one edit away from wording one condition three ways,
+    and the arm most likely to be edited alone is the one nobody reaches in a
+    test. `room.refusal` is written in exactly one place, and it is the door.
+    """
+    from openproj import web as w
+
+    tree = ast.parse(Path(w.__file__).read_text(encoding="utf-8"))
+    commit = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_commit_room"
+    ]
+    assert len(commit) == 1, "there is no _commit_room to read any more"
+    door = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_refuse_room"
+    ]
+    assert len(door) == 1, "the one door has been renamed"
+
+    refusal_writes = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Attribute) and t.attr == "refusal" for t in node.targets)
+    ]
+    inside = [
+        line for line in refusal_writes if door[0].lineno <= line <= door[0].end_lineno
+    ]
+    assert refusal_writes == inside, (
+        f"room.refusal is assigned outside _refuse_room at line(s) "
+        f"{sorted(set(refusal_writes) - set(inside))} — a refusal that skips the "
+        "door skips the sentence and the log line with it"
+    )
+    doors_used = [
+        node
+        for node in ast.walk(commit[0])
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_refuse_room"
+    ]
+    assert len(doors_used) >= 3, (
+        f"_commit_room refuses in three arms and only {len(doors_used)} of them "
+        "go through _refuse_room"
+    )
 
 
 def test_nothing_reaches_a_socket_before_its_welcome(client: TestClient):

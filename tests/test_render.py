@@ -1077,7 +1077,7 @@ def test_the_people_page_lists_everyone_the_plan_names(rendered: Path, seed_inde
     named = {
         login
         for record in seed_index.plan.values()
-        for field in ("owner", "shaped_by", "assignees", "reviewers")
+        for field in ("owner", "assignees", "reviewers")
         for login in (
             lambda v: v if isinstance(v, list) else [v] if v else []
         )(getattr(record, field, None))
@@ -1315,12 +1315,9 @@ def test_every_person_links_to_the_table_filtered_by_them(rendered: Path):
         login = re.search(r'data-login="([^"]+)"', group).group(1)
         roles = set(re.findall(r'<tr data-role="(\w+)"', group))
         opens = next((r for r in _ROLE_ORDER if r in roles and r in _ROLE_FILTER), None)
-        if opens is None:
-            # Only a shaper: `shaped_by` is not one of the table's facets, so the
-            # name stays a name rather than becoming a link to a filter that does
-            # not exist.
-            assert f'<span class="who">{login}</span>' in group, login
-            continue
+        # Every role is a table facet now that the shaper row retired with
+        # `shaped_by`, so a person on the page always has somewhere to open.
+        assert opens is not None, login
         assert f'<a class="who" href="table.html?{_ROLE_FILTER[opens][0]}={login}"' in group, login
         # And each count is the way into the rows it counted.
         for role in roles & set(_ROLE_FILTER):

@@ -39,6 +39,7 @@ import base64
 import binascii
 import contextlib
 import json
+import logging
 import math
 import os
 import re
@@ -117,6 +118,20 @@ from .store import Condition, Store, StoreDiverged, StoreLocked, SyncOutcome
 # bare 500 on every page. Both halves catch it now — `_write_or_refuse` below,
 # and `_commit_room` — and neither has a list of its own.
 WRITE_FAILURES = (HTTPException, ValueError, StoreLocked, StoreDiverged, pygit2.GitError)
+
+# The first log line in this package, and the argument for there being one at
+# all. Everything the server has had to say so far had a person to say it to —
+# a refusal on the page, a sentence in a socket frame — or a health surface:
+# `_wedged` below reaches an operator through `/api/health`. A refused co-editing
+# room has neither reader. Every page answers 200 while it is stuck, `/api/health`
+# asks the store and the store is fine — it did its job by refusing — and the
+# people in the room are shown a sentence only they can act on. The server's own
+# output is the one surface an operator actually watches, so that is where the
+# operator's half of a room refusal goes. WARNING through a named stdlib logger,
+# with no configuration on purpose: `logging`'s last-resort handler already puts
+# WARNING and above on stderr, which is what Cloud Run collects, and a deployment
+# that does configure logging can route `openproj.web` without this file knowing.
+_LOG = logging.getLogger(__name__)
 
 
 def _refusal(error: Exception) -> HTTPException:
@@ -261,6 +276,18 @@ def _wedged(state: Condition) -> str:
         "merge the two histories in the plan repository by hand — "
         "deploy/RUNBOOK.md, 'The service cannot write'."
     )
+
+
+# The half the room appends to every refusal it makes — the one action that
+# works in a room whose base no longer moves. Module-level, not inline in
+# `_refuse_room`, because the cross-surface test in `tests/test_web.py`
+# separates the store's words from this sentence to compare them against the
+# HTTP answer: the store's half travels verbatim to both surfaces, and a second
+# spelling of this half is how the two would drift apart unnoticed.
+COPY_WORK_OUT = (
+    "Copy your work out of the editor before you close this tab — "
+    "nothing typed since the last save has reached the plan."
+)
 
 
 # Why the co-editing socket said no, in a code and a sentence the browser can
@@ -811,7 +838,7 @@ def _as_positive(value: object, name: str, most: float = math.inf) -> float:
 
 
 _NUMERIC = ("cycle", "person_weeks")
-_LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on", "shaped_by",
+_LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on",
           "pitched_into", "became")
 
 
@@ -2883,6 +2910,59 @@ def create_app(
             # must not fail here, where there is nobody yet to tell.
             return split_front_matter(text)[1]
 
+    def _refuse_room(room: coedit.Room, why: str) -> None:
+        """One refusal, said to both of the readers it has — every arm of
+        `_commit_room` leaves through here, and
+        `test_every_refusal_a_room_makes_leaves_through_one_door` holds that,
+        because an instruction written three times is one edit away from wording
+        one condition three ways, which makes it look like three conditions.
+
+        The frame is for the person who was typing, and it appends the one
+        action that works. The audit's four-cell probe
+        (`docs/probes/concurrency-audit.md`, §4 Loss 3) measured why: a conflict
+        leaves `room.base` where it was, every retry re-runs the same merge
+        against the same base with a `mine` that only grows, and the join path's
+        absorb is gated on `not room.pending()` — false for exactly the stuck
+        room — so a reload does not clear it either. The report already names
+        the file, the lines and both texts; what it never said is what to DO,
+        and 373 characters typed and acknowledged in three browsers reached the
+        plan never. Stored on the room with the sentence in it, because the
+        join path replays `room.refusal` to whoever arrives next, and they were
+        not there to hear this frame.
+
+        The log is for the operator, who has no surface at all otherwise: every
+        page answers 200 while a room is wedged and `/api/health` asks the
+        store, which is fine. The same split as `_wedged` beside `_refusal` at
+        the top of this file, and the same rule — the store's words open both
+        surfaces verbatim, and each surface appends only the half it alone can
+        say: the frame what to do, the log where to look. The base is in the
+        line because it is how a wedged room is told apart from an ordinary
+        refusal in the output: the same path refused again at the same base is
+        the same stuck merge, not a new one.
+        """
+        room.refusal = f"{why} {COPY_WORK_OUT}"
+        _to_room(room, {"t": "refused", "why": room.refusal})
+        # The first line of `why` and never the rest: a conflict report's tail
+        # is one line per collision, quoting both sides of the document being
+        # typed. On the surface this line exists for, each stderr line is one
+        # log entry, so the tail would let anybody in the editor append entries
+        # to the operator's log — the `Co-authored-by:` trailer family again —
+        # and a scan for "the same path at the same base, repeatedly" would
+        # have to reassemble one refusal from many entries first. One line per
+        # refusal is the guarantee; the people who need the full report are in
+        # the room, and the frame above already carries it to them.
+        _LOG.warning(
+            "the room on %s refused to commit at base %s with %d editing: %s",
+            room.path,
+            room.base,
+            len(room.members),
+            # Guarded because `"".splitlines()` is `[]` and a bare exception can
+            # stringify to nothing: an IndexError here escapes the arms that call
+            # this and kills the room's timer, which may not happen — see
+            # `_commit_room`'s docstring.
+            why.splitlines()[0] if why else why,
+        )
+
     async def _commit_room(
         room: coedit.Room, presser: str = "", fields: dict | None = None
     ) -> None:
@@ -2902,9 +2982,10 @@ def create_app(
         **This never raises for a write that failed.** A timer task that dies
         takes the quiet window with it for as long as the room lives, and the
         only symptom is that nothing is committed any more. Every failure leaves
-        by the same door instead: `refused`, into the room's own box, said to
-        everybody in it. `_watch` guards itself as well, and the two are not the
-        same guard — see the note there.
+        by the same door instead — `_refuse_room`, into the room's own box for
+        the people in it and one WARNING for whoever reads the server's output.
+        `_watch` guards itself as well, and the two are not the same guard — see
+        the note there.
 
         **Nothing typed while this is running may be deleted.** Between the
         snapshot below and `room.settled` at the bottom there is no `await`, so
@@ -2954,16 +3035,17 @@ def create_app(
                 raise ValueError("this document is too large to commit")
             original = store.read(room.base, room.path)
             if original is None:
-                # Said with what to do about it. A room's text lives in no
-                # `localStorage` but the typist's own — everybody else's copy
-                # arrived over the socket and was never an `input` event — so
-                # "this is gone" without "copy it out" is an instruction to lose
-                # the document, and this refusal repeats every twenty seconds
-                # until somebody acts on it.
+                # A room's text lives in no `localStorage` but the typist's own
+                # — everybody else's copy arrived over the socket and was never
+                # an `input` event — so the room really is the only place the
+                # whole document exists. The "copy it out" instruction used to
+                # be written here and here alone; it is `_refuse_room`'s now,
+                # said identically on every refusal, and this arm keeps only
+                # the part the helper cannot know: that the file itself is gone.
                 raise ValueError(
                     f"{room.path} is not in the plan any more, so there is nothing to "
-                    "write this against. Copy the document out of the editor before "
-                    "closing this tab — the room is the only place it exists."
+                    "write this against — the room is the only place the document "
+                    "exists."
                 )
             content = _patched(original, fields, body, room.path)
             # The same gate the PATCH route stands behind, and for the same
@@ -3009,8 +3091,7 @@ def create_app(
                 # Into the room's own box, never into the editing surface: text
                 # pasted into a textarea is text somebody saves back. The room
                 # keeps the base it had and tries again once the text moves.
-                room.refusal = written.conflict
-                _to_room(room, {"t": "refused", "why": written.conflict})
+                _refuse_room(room, written.conflict)
                 return
             # Whatever actually landed, which is not what was sent when `_merge`
             # folded in somebody's git commit. Applied back into the document so
@@ -3058,8 +3139,7 @@ def create_app(
             # "another writer has the lock" is a different sentence from "this
             # broke".
             why = error.detail if isinstance(error, HTTPException) else str(error)
-            room.refusal = why
-            _to_room(room, {"t": "refused", "why": why})
+            _refuse_room(room, why)
         except Exception as error:  # noqa: BLE001 - see the docstring: this may not raise
             # A denylist is right where the failures can be named and the name is
             # what the reader needs; this file argues for that everywhere else and
@@ -3070,8 +3150,7 @@ def create_app(
             # the sentences it can write and this keeps the promise, and the class
             # name goes out with it rather than a shrug.
             why = f"that save did not go through: {type(error).__name__}: {error}"
-            room.refusal = why
-            _to_room(room, {"t": "refused", "why": why})
+            _refuse_room(room, why)
 
     async def _watch(room: coedit.Room) -> None:
         """The quiet window, and the last second before a shutdown.

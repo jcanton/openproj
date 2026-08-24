@@ -47,7 +47,7 @@ None of it happened.
 | Field | Status |
 |---|---|
 | The `whole_roast` project itself | **Invented.** No such milestone has been declared. |
-| Every `owner`, `assignees`, `reviewers`, `shaped_by` | **Invented.** The handles are invented too, and nobody agreed to any of this. |
+| Every `owner`, `assignees`, `reviewers` | **Invented.** The handles are invented too, and nobody agreed to any of this. |
 | Every `person_weeks` | **Invented.** Chosen to make the timeline interesting, not measured or estimated by anyone. |
 | Every `cycle` and `assigned_on` | **Invented.** The cycle *dates* in `config/cycles.yaml` are a plausible 2026 calendar, not anybody's. |
 | Every `depends_on` edge | **Invented.** Deliberately sparse so the graph stays readable. |
