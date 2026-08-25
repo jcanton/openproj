@@ -40,12 +40,25 @@ from openproj.render import (
 
 HEAD = "0123456789abcdef0123456789abcdef01234567"
 
-# The three words this deliberately says nothing about, written down so that
-# adding a rung to the ladder fails here rather than shipping a gap. `ready`,
-# `in_progress` and `done` are words a person owns before they meet this tool,
-# and a hint that restates a word's ordinary meaning is the one that teaches
-# people to skim the ones that do not.
-UNTAUGHT = {"ready", "in_progress", "done"}
+# Nothing, since 2026-08-25 — and the argument it held is worth keeping, because
+# it was a good one and it is the standard the copy that replaced it had to meet.
+#
+# It read: "`ready`, `in_progress` and `done` are words a person owns before they
+# meet this tool, and a hint that restates a word's ordinary meaning is the one
+# that teaches people to skim the ones that do not."
+#
+# That is true of a lesson that says what the word means. It is not true of the
+# three that were written: each says what the word means HERE and then the rule
+# of the method it implies — waiting for a betting table, an overrun is re-bet
+# rather than extended, anything still wanted is a new bet. None of those is in
+# the dictionary meaning, and a reader who does not know Shape Up learns it from
+# the hill rather than from a document nobody opens. jcanton, 2026-08-25: "we
+# should come up with a 2-line description for each of them too."
+#
+# Kept as an empty set rather than deleted: the assertion below derives the
+# ladder from `STATUS_ORDER`, so a rung added later still fails here and still
+# has to be decided about, which is the whole reason this list existed.
+UNTAUGHT: set[str] = set()
 
 
 @pytest.fixture
@@ -298,10 +311,11 @@ def test_a_record_that_locks_and_teaches_points_at_both(
     lock, lesson = spans[False], spans[True]
     assert lock["text"] == "from what it waits on"
     # `Handed.state()` answers `done`, so the lesson is the word the picture
-    # DRAWS and not the one the file stores — the same rule the display follows.
-    # `done` teaches nothing, which is why this is the empty string and not the
-    # sentence for `shaping`.
-    assert lesson["text"] == ""
+    # DRAWS and not the one the file stores — the same rule the display follows,
+    # and the point of the assertion. It was the empty string while `done` taught
+    # nothing; now that every stop has a lesson, naming it is what proves the
+    # sentence followed the picture rather than the field.
+    assert lesson["text"] == STATUS_TEACH["done"]
     assert "editing-only" not in lock["classes"], "the lock stopped reading on a read"
     assert "editing-only" in lesson["classes"], "the lesson leaked onto a read"
 
@@ -545,9 +559,13 @@ def test_the_sentence_follows_the_ball(index: Index, tmp_path: Path) -> None:
     assert not tall, f"a lesson wraps past two lines in a 295px column: {tall}"
     assert found["shelved"] == STATUS_TEACH["shelved"]
     assert found["thinking"] == STATUS_TEACH["thinking"]
-    assert found["done"] == "", "a lesson stayed under a stop it is not about"
-    # And the row does not keep a blank line where that lesson was.
-    assert found["done_shown"] == "none"
+    # Every stop teaches since 2026-08-25, so pressing one swaps the sentence
+    # rather than emptying it. What this asserts is still the same property —
+    # the lesson under the ball is the lesson for the stop the ball is on — and
+    # it is a stronger check than the old one, which could have passed with the
+    # element never being written to at all.
+    assert found["done"] == STATUS_TEACH["done"], "a lesson stayed under a stop it is not about"
+    assert found["done_shown"] != "none"
     assert found["shelved_shown"] != "none"
 
     # The drag. This is what puts the swap inside `show()` rather than beside
@@ -555,8 +573,8 @@ def test_the_sentence_follows_the_ball(index: Index, tmp_path: Path) -> None:
     # not moved, and letting go where you started puts the old lesson back.
     assert found["over_shelved"] == STATUS_TEACH["shelved"], "a drag taught nothing"
     assert found["value_midway"] == "shaping", "a preview committed"
-    assert found["over_ready"] == ""
-    assert found["over_ready_shown"] == "none"
+    assert found["over_ready"] == STATUS_TEACH["ready"], "the drag taught the wrong stop"
+    assert found["over_ready_shown"] != "none"
     assert found["abandoned"] == STATUS_TEACH["shaping"], "an abandoned drag kept the preview"
     assert found["value_after"] == "shaping"
 

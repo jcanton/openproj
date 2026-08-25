@@ -515,10 +515,32 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
 
 /* cv05 gives the l a tail, so l/1/I are three shapes in a login; ss03 fixes the
    spacing of the curly quotes and slashes that PR refs and paths are full of. */
+/* A column, so the footer sits at the bottom of the WINDOW on a page too short
+   to reach it and at the bottom of the CONTENT on a page that is not. jcanton,
+   2026-08-25: the People page has no footer at the foot of the window at all and
+   "the timeline page which is shorter vertically, moves it upwards instead of
+   having it fixed at the bottom".
+
+   `min-height` and never `height`: a fixed height would make every long page
+   overflow its own body, which is the scrollbar this whole line of work has been
+   about. `100dvh` because a phone's toolbars come and go and `100vh` is the tall
+   reading, which puts the footer under them.
+
+   The fill is `#main`'s `flex: 1 0 auto` below, not a margin on the footer: a
+   `margin-top: auto` would push the footer down and leave `<main>` measuring
+   whatever its content happens to be, and `--room` is computed from the space
+   below the box it fills. Growing MAIN keeps that arithmetic about the same box
+   the reader sees. */
 body { font-family: var(--font-sans); font-size: 14px; line-height: 1.5;
        font-feature-settings: "cv05" 1, "ss03" 1;
        margin: 0; padding: 1rem 1.25rem 3rem;
+       min-height: 100dvh; box-sizing: border-box;
+       display: flex; flex-direction: column;
        background: var(--bg); color: var(--fg); }
+/* `min-height: 0` beside the grow, because a flex item's automatic minimum is
+   its content: without it a page whose main is taller than the window refuses to
+   shrink and the two rules fight, which is a scrollbar of its own. */
+#main { flex: 1 0 auto; min-height: 0; }
 /* Wraps, because the corner grew a third control and a nav that cannot wrap is a
    nav that pushes the whole page sideways instead: at 500px the row came out
    587px wide and every page under it scrolled horizontally. */
@@ -2155,15 +2177,53 @@ function measureRoom() {
   // From the top of the document, so a page that happens to be scrolled when this
   // runs measures the same as one that is not.
   const above = rect.top + scrollY;
-  // Both in viewport coordinates, so the scroll cancels out of the subtraction.
-  // `document.body` and not `ROOT.scrollHeight`, which is clamped upwards to the
-  // window height: on a page shorter than its window that clamp reads as content
-  // nobody has, and the box would be capped below the room it is being given.
-  const below = document.body.getBoundingClientRect().bottom - rect.bottom;
+  // **What is actually after the box, element by element, and not the distance
+  // to the body's bottom.**
+  //
+  // It was `document.body.getBoundingClientRect().bottom - rect.bottom`, and
+  // that stopped being the same question the moment the body became a column
+  // with a pinned footer: `#main` grows to fill the window, so the space it
+  // grew into sits between this box and the body's bottom and was counted as
+  // something to leave room for. The box could then never grow into it — the
+  // formula returned the height it already had, a fixed point, and the deck sat
+  // with a band of empty page between its last slide and the footer.
+  //
+  // Walking the elements says what a reader means by "below": the things that
+  // have to stay visible. Flex slack is not an element, so it is not counted,
+  // and the box grows until there is none left. `offsetHeight` plus margins,
+  // because a margin is room the layout takes and a border box does not report —
+  // the same omission that let the footer's own margins go unmeasured.
+  let below = 0;
+  for (let el = box; el && el !== document.body; el = el.parentElement) {
+    for (let after = el.nextElementSibling; after; after = after.nextElementSibling) {
+      const style = getComputedStyle(after);
+      if (style.display === 'none' || style.position === 'fixed' ||
+          style.position === 'absolute') continue;
+      below += after.getBoundingClientRect().height
+        + parseFloat(style.marginTop) + parseFloat(style.marginBottom);
+    }
+    const own = getComputedStyle(el.parentElement || document.body);
+    below += parseFloat(own.paddingBottom) || 0;
+  }
   // Floor, not round. These are sub-pixel measurements and the whole point of the
   // number is that the page does not scroll: half a pixel rounded up is a
   // scrollbar, and half a pixel rounded down is invisible.
-  const value = Math.max(ROOM_FLOOR, Math.floor(innerHeight - above - below - roomSlack)) + 'px';
+  // **One pixel given away, on purpose.** `above` and `below` are sub-pixel
+  // measurements and the height applied from them is an integer, so the two can
+  // disagree by a fraction — and a fraction of a pixel of overflow is a real
+  // scrollbar in Firefox while `scrollHeight` and `clientHeight`, which are
+  // rounded integers, report no overflow at all. That is why the slack above
+  // could not see it: the correction asks the document a question the document
+  // answers in whole pixels.
+  //
+  // jcanton, 2026-08-25, after the slack shipped: still a scrollbar on `/table`
+  // in Firefox, "only at 100% page zoom" — the one zoom where CSS pixels and
+  // device pixels line up and nothing else rounds the fraction away — "and it
+  // must be just 1-2px because there is nothing to scroll".
+  //
+  // A pixel of a box that is hundreds tall is invisible. A scrollbar is not.
+  const value = Math.max(
+    ROOM_FLOOR, Math.floor(innerHeight - above - below - roomSlack) - 1) + 'px';
   if (value === roomIs) return false;
   roomIs = value;
   ROOT.style.setProperty('--room', value);

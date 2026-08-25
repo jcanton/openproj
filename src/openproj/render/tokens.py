@@ -454,6 +454,35 @@ STATUS_TEACH = {
         "Somebody is narrowing the problem to a solution that fits the appetite "
         "— nobody has bet yet."
     ),
+    # The three states that had no lesson, added 2026-08-25 on jcanton's ruling
+    # that "we should come up with a 2-line description for each of them too".
+    #
+    # Written to the same shape as the three above: what the state MEANS, then
+    # the rule of the method that the state implies. That second clause is the
+    # part worth having — a reader who does not know Shape Up learns the method
+    # from the states rather than from a document nobody opens, and the three
+    # that already existed all teach one ("nobody has bet yet", "a decision, not
+    # a failure").
+    #
+    # Each is one sentence that paints as two lines in the column this is drawn
+    # in, which is the measure `shaping` was cut down to on 2026-08-24 — the one
+    # that ran to three was rewritten rather than allowed to set a new height.
+    "ready": (
+        "Shaped, sized and argued for — waiting for a betting table to put it "
+        "in a cycle."
+    ),
+    # The rule this teaches is the cycle field's own, in the cycle field's own
+    # words: "Work that overruns is re-bet, not extended by default." One
+    # vocabulary through the flow, which is what stops `in_progress` meaning
+    # something slightly different on each page that draws it.
+    "in_progress": (
+        "Somebody is building this in the cycle it was bet into — an overrun is "
+        "re-bet, not extended."
+    ),
+    "done": (
+        "Built and finished inside its cycle — anything still wanted from it is "
+        "a new bet."
+    ),
     "shelved": "A decision, not a failure: we looked, and we are not doing this.",
 }
 
