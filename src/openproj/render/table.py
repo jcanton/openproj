@@ -663,9 +663,15 @@ function cell(row, key, place) {
   // link keeps the whole of the cell's content box: the indent is padding on the
   // cell, which is what puts it in the fit's measurement of the column.
   const rungs = key === 'title' && place ? place.rungs.join(' ') : '';
-  const body = treeHtml(rungs) + (CLAMPED.has(key)
-    ? `<span class="clamped">${shown(row, key)}${glyph}</span>`
-    : shown(row, key) + glyph);
+  // Nothing to clamp is nothing to wrap. The four clamped columns wrapped
+  // unconditionally, so every row with no assignees, no reviewers, no PRs and no
+  // tags carried four empty `<span class="clamped">`s — inert, and a lie to
+  // anything that asks what a cell holds: a product row that reads as empty was
+  // drawing four of them, which is how `test_a_products_row_is_empty_...` found
+  // this while looking for a chip.
+  const inner = shown(row, key) + glyph;
+  const body = treeHtml(rungs)
+    + (CLAMPED.has(key) && inner ? `<span class="clamped">${inner}</span>` : inner);
   const editable = EDITABLE && key in EDITABLE && reads(row, key);
   // One class list rather than three returns. The tags clamp used to be written
   // only into the editable branch, so on a rendered file the column kept the

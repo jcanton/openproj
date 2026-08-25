@@ -329,8 +329,17 @@ def test_the_page_carries_the_commit_it_was_rendered_at(page: str):
 def test_the_table_offers_a_way_to_create_a_record(page: str, client: TestClient):
     """Records are overwhelmingly born in the UI, so the UI has to be able to bear
     them. Without this the only supported way to add a task is to write a file by
-    hand, which is the workflow this tool exists to replace."""
-    assert re.search(r'href="/new"', page), "the table needs a way to reach the create page"
+    hand, which is the workflow this tool exists to replace.
+
+    The way in is the `+` row at the foot of the rows, and since 2026-08-25 it is
+    the only one on this page: the button above the table went, because two
+    controls for one job — one of them a page away — is what a table grows when a
+    feature arrives beside the thing it replaces rather than in it. The row is
+    built by the page's own script, so what the markup can be asked for is the
+    function that builds it; `test_the_table_ends_in_a_row_that_makes_one` drives
+    the row itself.
+    """
+    assert "function adderHtml" in page, "the table has no row that creates a record"
     assert client.get("/new").status_code == 200
 
 

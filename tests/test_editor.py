@@ -3753,7 +3753,7 @@ return answers;
 # happened is exactly the vacuous pass this file keeps finding.
 _SAVING_FROM_A_VIEW = """
 (async () => {
-  document.getElementById('view-both').click();
+  chooseView('both');
   const box = document.querySelector('[name=body]');
   box.value = 'A paragraph typed in the split view.\\n';
   box.dispatchEvent(new Event('input', {bubbles: true}));
@@ -3762,13 +3762,15 @@ _SAVING_FROM_A_VIEW = """
 })()
 """
 
-# What the page does with the word the save before it left behind.
+# What the page does with the word the save before it left behind. Through `VIEW`
+# and `classList.contains`, which is what the page itself writes and reads: the
+# shim has no `click()` on an element and its `classList` is not iterable, and a
+# test that needs either is a test about the harness.
 _WHERE_IT_LANDS = """
 (() => {
   const article = document.querySelector('article.record');
-  return {classes: [...article.classList].filter(c => c.startsWith('view-')
-                                                      || c === 'editing').sort(),
-          view: VIEW};
+  return {view: VIEW, editing: article.classList.contains('editing'),
+          split: article.classList.contains('view-both')};
 })()
 """
 
@@ -3787,6 +3789,12 @@ def test_saving_keeps_the_view_it_was_saved_from(client: TestClient):
     Driven rather than read off the source, because the two halves are in two
     script blocks that never run in the same order they are written in, and a
     grep for `keepView` would pass on a page where nothing calls it.
+
+    `chooseView` rather than a click on the segment: the node shim has no
+    `click()` on an element, and the segment is not what this is about —
+    `test_opening_a_session_moves_nothing_above_the_document` drives the buttons
+    in a real browser. What this needs is a live session in a named view, which
+    is what the function the button calls does.
     """
     from test_injection import run_js
 
@@ -3812,7 +3820,7 @@ def test_saving_keeps_the_view_it_was_saved_from(client: TestClient):
         page, _WHERE_IT_LANDS, page=True, session={"openproj:resumed": "both"}
     )
     assert not landed["errors"], landed["errors"]
-    assert landed["value"]["classes"] == ["editing", "view-both"], (
+    assert landed["value"] == {"view": "both", "editing": True, "split": True}, (
         f"the reloaded page did not come back into the split: {landed['value']}"
     )
     assert "openproj:resumed" not in landed["tabbed"], (
@@ -3824,7 +3832,7 @@ def test_saving_keeps_the_view_it_was_saved_from(client: TestClient):
     # word, no session, the landing. Without this the test above passes on a
     # page that opens the split for everybody.
     ordinary = run_js(page, _WHERE_IT_LANDS, page=True)
-    assert ordinary["value"]["classes"] == ["view-view"], (
+    assert ordinary["value"] == {"view": "view", "editing": False, "split": False}, (
         f"a page nobody saved from opened in a session: {ordinary['value']}"
     )
 
@@ -3848,7 +3856,7 @@ def test_a_link_beats_the_view_a_save_left_behind_and_still_spends_it(
         session={"openproj:resumed": "both"}, here=f"/detail/{TASK}?view",
     )
     assert not got["errors"], got["errors"]
-    assert got["value"]["classes"] == ["view-view"], (
+    assert got["value"] == {"view": "view", "editing": False, "split": False}, (
         f"the link did not win the argument with the saved view: {got['value']}"
     )
     assert "openproj:resumed" not in got["tabbed"], (
@@ -6808,4 +6816,231 @@ def test_a_stranded_save_raises_the_alarm_on_a_tab_that_missed_every_frame(clien
     )
     assert got["reloads"] == 0, (
         "nobody here pressed Save, so nothing above may tear the page down"
+    )
+
+
+# --- linking one record from another's document ------------------------------
+
+
+# The two pure functions the completion is decided by, driven where they live.
+# Neither reaches the surface, so neither needs Ace — and both are exactly where
+# a wrong answer is silent: a popup that opens on a checklist's brackets, or a
+# title that closes the handle it was written into.
+_WHERE_A_LINK_OPENS = """
+(() => {
+  const asked = [
+    // The ordinary case: a bracket on this line, with a name half typed.
+    ['See [Port', 9],
+    // Closed, so the caret is past the handle rather than inside it.
+    ['See [Port]', 10],
+    ['See [Port](task-0a1001) and more', 32],
+    // An image is not a link and has nothing to offer.
+    ['![a figure', 10],
+    // A bracket on the line above is not one somebody is in the middle of
+    // writing. A checklist body is full of these.
+    ['- [x] shaped it\\nand now ', 24],
+    // Nothing typed yet, which is the moment the popup should open on.
+    ['[', 1],
+  ];
+  return {
+    handles: asked.map(([text, at]) => {
+      const found = openHandle(text, at);
+      return found === null ? null : [found.open, found.typed];
+    }),
+    // A title is document text and the two characters that end a handle are
+    // escaped rather than dropped.
+    texts: [
+      linkText({value: 'task-0a1001', label: 'Fix [the] bracket'}),
+      linkText({value: 'task-0a1001', label: 'A back\\\\slash'}),
+      linkText({value: 'task-0a1001', label: ''}),
+    ],
+  };
+})()
+"""
+
+
+def test_a_bracket_is_where_a_record_link_starts(client: TestClient):
+    """Where the completion decides to open, and what it writes into the handle.
+
+    Both are one-line functions and both are silent when wrong. A popup that
+    opened on any `[` in the document would open on every point of every
+    checklist — `- [x]` is what a pitch's Progress section is made of — and a
+    title carrying a `]` would close the handle early and leave the rest of
+    somebody's record name as prose beside a broken link.
+    """
+    from test_injection import run_js
+
+    got = run_js(client.get(f"/detail/{TASK}{PLAIN}").text, _WHERE_A_LINK_OPENS, page=True)
+    assert not got["errors"], got["errors"]
+    assert got["value"]["handles"] == [
+        [4, "Port"],
+        None,
+        None,
+        None,
+        None,
+        [0, ""],
+    ], got["value"]["handles"]
+    assert got["value"]["texts"] == [
+        "Fix \\[the\\] bracket",
+        "A back\\\\slash",
+        # No title at all: the id, because a link with no text is a link nobody
+        # can see.
+        "task-0a1001",
+    ], got["value"]["texts"]
+
+
+def test_only_a_page_with_a_document_carries_the_list_of_linkable_records(
+    client: TestClient,
+):
+    """The widening jcanton asked for, and the two places it must not reach.
+
+    He asked for it in `records`: "include all records in SUGGEST.records, put
+    issues and notes in there too and use that". `records` is what completes
+    `parent` and `depends_on` — offering an issue there offers an edge the model
+    refuses, which the comment beside that key has said since it was written —
+    and the same blob ships to /table, where an inbox id in the bytes is the leak
+    `test_exclusion.py` exists to catch. So the widening is a second key in the
+    same blob, built by the same function, and only the two pages that carry a
+    document being written ask for it.
+    """
+    import json
+    import re
+
+    def blob(page: str) -> dict:
+        found = re.search(
+            r'<script id="suggest" type="application/json">(.*?)</script>', page, re.S
+        )
+        assert found, "the page carries no suggestion blob"
+        return json.loads(found.group(1))
+
+    detail = blob(client.get(f"/detail/{TASK}").text)
+    kinds = {value["value"].split("-")[0] for value in detail["linkable"]}
+    assert {"issue", "note"} <= kinds, (
+        f"the link list holds no inbox record, so the widening did nothing: {sorted(kinds)}"
+    )
+    assert len(detail["linkable"]) > len(detail["records"]), (
+        "the link list is no wider than the plan-only one it was widened from"
+    )
+    assert not [
+        value for value in detail["records"]
+        if value["value"].startswith(("issue-", "note-"))
+    ], "an inbox record reached the list that completes `parent` and `depends_on`"
+
+    table = blob(client.get("/table").text)
+    assert "linkable" not in table, (
+        "the table's blob carries the link list, so every inbox id it names is in "
+        "the bytes of a plan page"
+    )
+
+
+_COMPLETING_A_LINK = r"""
+  flipEditing();
+  await new Promise(r => setTimeout(r, 500));
+  const editor = SURFACE.editor;
+  const open = () => document.querySelector('ul.suggest:not([hidden])');
+  const shown = () => { const list = open(); return list
+    ? [...list.children].map(item => item.dataset.value) : null; };
+  // Ace's own entry point for a key, one level under the DOM:
+  // `keyBinding.onCommandKey` is what its `keydown` listener calls, and it
+  // answers whether some handler in the chain took the key. It is asked here
+  // rather than dispatching a `KeyboardEvent`, because `keyCode` is not
+  // settable through `KeyboardEventInit` in Chrome and a test that has to
+  // `defineProperty` its way past that is testing its own workaround.
+  const key = code => !!editor.keyBinding.onCommandKey(
+    {preventDefault() {}, stopPropagation() {}}, 0, code);
+
+  editor.focus();
+  editor.navigateFileEnd();
+  // Typed through the editor, so the popup opens the way it does for a person
+  // rather than because a test called the function that draws it.
+  editor.insert('\nSee [Port');
+  await new Promise(r => setTimeout(r, 250));
+  const opened = shown();
+  const placed = (() => {
+    const list = open();
+    const caret = document.querySelector('.acebox .ace_cursor');
+    if (!list || !caret) return null;
+    const box = list.getBoundingClientRect(), at = caret.getBoundingClientRect();
+    return {left: Math.round(box.left - at.left), under: Math.round(box.top - at.bottom)};
+  })();
+
+  // Down moves the highlight and the key does not reach the document.
+  const wasLines = editor.session.getLength();
+  const tookDown = key(40);
+  await new Promise(r => setTimeout(r, 60));
+  const highlighted = open()
+    ? [...open().children].findIndex(item => item.classList.contains('on')) : -1;
+
+  const tookReturn = key(13);
+  await new Promise(r => setTimeout(r, 200));
+  const written = SURFACE.text();
+  const closed = shown();
+  // And with nothing open, the same key is not claimed at all — which is the
+  // half that says this sits in front of Ace's command table without taking a
+  // single key away from writing.
+  const tookWhenClosed = key(13);
+
+  return {opened, placed, highlighted, tookDown, tookReturn, closed, tookWhenClosed,
+          lines: [wasLines, editor.session.getLength()],
+          tail: written.slice(written.lastIndexOf('\nSee '))};
+"""
+
+
+def test_the_second_editor_completes_a_link_to_a_record(
+    client: TestClient, tmp_path: Path
+):
+    """jcanton, 2026-08-25: "I'd like to have links to other records in the body
+    of a record, with autofill functioning when adding the link" — and, asked
+    which surface, "only ace editor. autofill the title with autocompletion and
+    then automatically place the (id)".
+
+    So: the popup completes on the title, and what it writes is `[Title](id)`.
+
+    In Chrome and not in the node shim, because every part of this is Ace's. The
+    popup is placed against Ace's own drawn cursor — the shim answers `[]` for
+    every `getClientRects` — and the keys are claimed through Ace's keyboard
+    chain, which is the whole reason the capability exists: `attachEditing`'s own
+    comment records that Ace's `stopEvent` calls `stopPropagation`, so Return and
+    the arrows never reach a DOM listener on the host.
+
+    `tookWhenClosed` is the assertion this feature could most easily be wrong in
+    the invisible direction. A handler that claims Return whenever it is on the
+    page takes the newline away from everybody writing, and nothing would say so
+    except somebody trying to start a paragraph.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "linking.html", 1400, _COMPLETING_A_LINK,
+        query="?editor=ace", patience=6800,
+    )
+
+    assert got["opened"], (
+        f"typing `[Port` opened no list of records: {got}"
+    )
+    assert all(value.split("-")[0] in {"prod", "proj", "pitch", "task", "issue", "note"}
+               for value in got["opened"]), got["opened"]
+    assert got["placed"] and abs(got["placed"]["left"]) <= 2, (
+        f"the list is not under the caret it completes: {got['placed']}"
+    )
+    assert 0 <= got["placed"]["under"] <= 8, (
+        f"the list is not against the caret's line: {got['placed']}"
+    )
+
+    assert got["tookDown"] and got["highlighted"] == 1, (
+        f"the arrow key did not move the highlight: {got}"
+    )
+    assert got["tookReturn"], "Return did not reach the popup"
+    assert got["closed"] is None, "the list stayed open after inserting"
+    assert got["lines"][0] == got["lines"][1], (
+        f"a claimed key reached the document as well: {got['lines']}"
+    )
+    assert re.fullmatch(
+        r"\nSee \[[^\]]+\]\((?:prod|proj|pitch|task|issue|note)-[0-9a-f]{6}\)",
+        got["tail"],
+    ), (
+        f"what was written is not a title and an id: {got['tail']!r}"
+    )
+    assert not got["tookWhenClosed"], (
+        "Return is claimed with no list open, so this popup has taken the newline "
+        "away from everybody writing a paragraph"
     )

@@ -2418,6 +2418,206 @@ function attachSuggest(input) {
   });
 }
 
+
+// --- linking one record from another's document -----------------------------
+//
+// jcanton, 2026-08-25: "I'd like to have links to other records in the body of a
+// record, with autofill functioning when adding the link, possibly as
+// [some_doc_tit]() autofilling the title as the handle and the record id as
+// url?" — which is exactly what this does: the popup completes on the TITLE,
+// because that is the half a person knows, and the id it writes into the target
+// is the half nobody remembers. The rendering half is `_link` in `markdown.py`.
+//
+// **Ace only**, by his answer when asked. The plain box carries no `caretBox`,
+// so `attachRecordLinks` returns without drawing anything there.
+
+// The open bracket the caret is inside, and what has been typed since it.
+//
+// **The current line only.** A `[` two paragraphs up is not a link somebody is
+// in the middle of writing, and scanning back to it would open this popup on
+// every stray bracket in a document — a checklist body is full of them. `]`
+// closes the handle, so a caret past one is not inside it; a `!` in front makes
+// it an image, which this has nothing to offer.
+function openHandle(text, at) {
+  const line = text.lastIndexOf('\n', at - 1) + 1;
+  const open = text.lastIndexOf('[', at - 1);
+  if (open < line) return null;
+  if (open > 0 && text[open - 1] === '!') return null;
+  const typed = text.slice(open + 1, at);
+  return typed.includes(']') ? null : {open, typed};
+}
+
+// A record title, as the text of a markdown link.
+//
+// `[` and `]` end a handle and a backslash escapes whatever follows one, so all
+// three are escaped rather than stripped: a title is what somebody named the
+// record, and the link should read as that name. This is markdown's own escape
+// and not markup escaping — what goes in here is document text, which reaches
+// the page through `_markdown` and `html: false` like every other character
+// somebody types.
+//
+// A record with no title at all is cited by its id, because a link with no text
+// is a link nobody can see or click.
+function linkText(item) {
+  return String(item.label || item.value).replace(/[\\\[\]]/g, mark => '\\' + mark);
+}
+
+function attachRecordLinks(surface) {
+  const source = SUGGEST.linkable || [];
+  // Three ordinary ways for there to be nothing to do, and none of them is
+  // news: the plain box (no `caretBox`), a page whose blob carries no link list
+  // (the table and the cycle page ask for none), and a plan with nothing in it.
+  if (!source.length || !surface.caretBox || !surface.keys) return;
+
+  const list = document.createElement('ul');
+  const id = 'suggest-' + (++SUGGEST_N);
+  list.className = 'suggest';
+  list.id = id;
+  list.hidden = true;
+  list.setAttribute('role', 'listbox');
+  list.setAttribute('aria-label', 'Records this link could point at');
+  let matches = [];
+  let active = -1;
+
+  // Under the caret, in the page's coordinates — the list hangs off the body
+  // for the reason every list here does, that an ancestor with `overflow` clips
+  // one that does not. Above the caret when there is no room under it, which on
+  // a 60vh box being typed in near the bottom of the window is the ordinary
+  // case rather than the edge.
+  function place() {
+    const at = surface.caretBox();
+    const under = innerHeight - at.bottom;
+    const over = under < list.offsetHeight && at.top > under;
+    list.style.left = (at.left + scrollX) + 'px';
+    list.style.top = (over ? at.top + scrollY - list.offsetHeight
+                           : at.bottom + scrollY) + 'px';
+  }
+
+  park(surface.el, list, () => { if (!list.hidden) place(); });
+
+  function close() {
+    if (list.hidden) return;
+    list.hidden = true;
+    list.replaceChildren();
+    matches = [];
+    active = -1;
+  }
+
+  function highlight(said) {
+    [...list.children].forEach((item, i) => {
+      item.classList.toggle('on', i === active);
+      item.setAttribute('aria-selected', String(i === active));
+    });
+    if (said && active >= 0) announce(matches[active].label || matches[active].value);
+  }
+
+  function open() {
+    const found = openHandle(surface.text(), surface.caret().from);
+    if (!found) return close();
+    const needle = found.typed.trim().toLowerCase();
+    matches = source
+      .filter(item => (item.value + ' ' + item.label).toLowerCase().includes(needle))
+      .slice(0, 8);
+    if (!matches.length) return close();
+    const opening = list.hidden;
+    // The title first and the id beside it, which is the other way round from
+    // the field completions above and is the same rule: what leads is what the
+    // person is typing. In a `parent` box that is an id; here it is a name.
+    //
+    // **Built, not written as markup.** Every other list on these pages is an
+    // `innerHTML` with `esc` around each value, and the census in
+    // `test_injection.py` is what holds those honest — by running the shipped
+    // script in node and handing what it assigns to `innerHTML` back to a
+    // parser. This widget is out of that census's reach, because in node it
+    // returns before drawing anything: the surface there is a textarea and
+    // carries no `caretBox`. So it is built out of elements and `textContent`,
+    // where there is no escaper to forget, rather than trusting one no harness
+    // can watch.
+    list.replaceChildren(...matches.map((m, i) => {
+      const item = document.createElement('li');
+      item.id = `${id}-${i}`;
+      item.setAttribute('role', 'option');
+      item.dataset.value = m.value;
+      item.append(m.label || m.value, ' ');
+      const dim = document.createElement('span');
+      dim.className = 'dim';
+      dim.textContent = m.value;
+      item.append(dim);
+      return item;
+    }));
+    active = 0;
+    list.hidden = false;
+    // After it is filled, because `place` measures how tall it is to decide
+    // whether it fits under the caret.
+    place();
+    highlight(false);
+    // **Said in words, once, when it appears.** The combobox attributes the
+    // field completions carry go on the input they belong to, and the input
+    // here is Ace's own hidden textarea, whose `aria-label` Ace rewrites —
+    // writing `aria-controls` onto the editor host would be a claim about the
+    // whole editor rather than about this popup. So the live region carries
+    // what the tree would have: that the list is open, how many are in it, and
+    // the three keys. Not on every keystroke after, because this filters as
+    // somebody types a title and a live region that repeats itself per
+    // character is one people turn off.
+    if (opening) {
+      announce(`${matches.length} record${matches.length === 1 ? '' : 's'} match. `
+               + 'Arrow keys to choose, Enter to insert the link, Escape to dismiss.');
+    }
+  }
+
+  function choose(item) {
+    if (!item) return close();
+    const text = surface.text();
+    const at = surface.caret().from;
+    const found = openHandle(text, at);
+    close();
+    if (!found) return;
+    // Whatever was typed to close the link goes with it. `[some_doc_tit]()` is
+    // what jcanton described typing, and inserting in front of that tail would
+    // leave `[Title](task-0a1001)]()` behind the caret — the feature writing the
+    // defect it was asked for.
+    const tail = /^\](\(\s*\))?/.exec(text.slice(at));
+    const put = '[' + linkText(item) + '](' + item.value + ')';
+    surface.splice(found.open, at + (tail ? tail[0].length : 0), put);
+    surface.setCaret(found.open + put.length);
+    // Announced, because the whole of what just happened is text appearing in a
+    // box somebody is not looking at character by character.
+    announce('Link to ' + (item.label || item.value) + ' inserted.');
+  }
+
+  surface.onInput(open);
+  // A caret that leaves the handle closes the list, and one that moves inside it
+  // refilters — `open` answers both, because `openHandle` is what decides.
+  // Guarded on the list being open so that clicking about in a document nobody
+  // is writing a link in does no work at all.
+  surface.onCaret(() => { if (!list.hidden) open(); });
+  // `focusout` and not `blur`: the caret is Ace's hidden textarea's and blur
+  // does not bubble. The delay is what lets a click on the list win the race,
+  // exactly as the field completions' does — and the `preventDefault` below
+  // means the race is usually not run at all.
+  surface.el.addEventListener('focusout', () => setTimeout(close, 150));
+  list.addEventListener('mousedown', event => {
+    const item = event.target.closest('li');
+    if (!item) return;
+    event.preventDefault();
+    choose(matches[[...list.children].indexOf(item)]);
+  });
+  // Claimed only while the list is open, which is what lets this sit in front of
+  // Ace's whole command table without taking a single key away from writing.
+  surface.keys(key => {
+    if (list.hidden) return false;
+    if (key === 'esc') { close(); return true; }
+    if (key === 'return') { choose(matches[active]); return true; }
+    if (key === 'up' || key === 'down') {
+      active = (active + (key === 'down' ? 1 : matches.length - 1)) % matches.length;
+      highlight(true);
+      return true;
+    }
+    return false;
+  });
+}
+
 for (const input of document.querySelectorAll('[data-suggest]')) attachSuggest(input);
 </script>
 """
@@ -2611,12 +2811,16 @@ def _pr_sort(ref: str) -> tuple[str, int]:
     return repo, int(number) if number.isdigit() else 0
 
 
-def _suggestions(index: Index) -> dict:
+def _suggestions(index: Index, linkable: bool = False) -> dict:
     """What already exists, offered rather than remembered.
 
     A reviewer who is not in this list is a typo far more often than a new
     colleague, and an id typed from memory is a dangling reference the validator
     will reject after the save rather than before it.
+
+    `linkable` adds the list the body's link completion reads, and only the two
+    pages that carry a body ask for it. See the key itself for why it is a
+    second list rather than a wider `records`.
     """
     people: set[str] = set()
     tags: set[str] = set()
@@ -2659,6 +2863,30 @@ def _suggestions(index: Index) -> dict:
             {"value": i, "label": e.title} for i, e in sorted(index.plan.items())
         ],
         "tags": [{"value": t, "label": ""} for t in sorted(tags)],
+        # Every record, plan and inbox, for the one control that completes a
+        # LINK rather than a field — jcanton, 2026-08-25, asked for issues and
+        # notes to be linkable from a shaping document, which is the ordinary
+        # case: a pitch cites the issue that started it.
+        #
+        # **A second list and not a wider `records`, and he asked for the
+        # wider one.** Two things read `records` and both would break: `parent`
+        # and `depends_on` would start offering an edge the model refuses (the
+        # comment above says so and predates this), and the blob ships to
+        # /table, /graph and /timeline, where an inbox id in the bytes is the
+        # leak the exclusion sweep exists to catch. So the widening is here,
+        # under its own name, and it reaches only the pages that draw a body.
+        # One function still builds the whole blob, which is what "use that"
+        # was asking for.
+        **(
+            {
+                "linkable": [
+                    {"value": i, "label": e.title}
+                    for i, e in sorted(index.records.items())
+                ]
+            }
+            if linkable
+            else {}
+        ),
         # Newest first: the cycle being bet into is nearly always the highest
         # number, and the label is the window, because 37 means nothing and
         # "2026-08-24 → 2026-10-04" is the thing being agreed to.
@@ -2727,12 +2955,18 @@ def _facets_html(
     )
 
 
-def _combobox_html(index: Index | None) -> Markup:
-    """The suggestion data and the widget that filters it, for any page with inputs."""
+def _combobox_html(index: Index | None, linkable: bool = False) -> Markup:
+    """The suggestion data and the widget that filters it, for any page with inputs.
+
+    `linkable` is "this page has a document being written in it", which is the
+    record page and the create form and nothing else. It decides one key of the
+    blob — see `_suggestions`.
+    """
     data = (
-        _suggestions(index)
+        _suggestions(index, linkable)
         if index
-        else {"people": [], "records": [], "tags": [], "prs": [], "cycles": []}
+        else {"people": [], "records": [], "tags": [], "prs": [], "cycles": [],
+              "linkable": []}
     )
     return _fragment(
         _COMBOBOX, suggest=data, max_body_bytes=MAX_BODY_BYTES, history_art=HISTORY_MARKS

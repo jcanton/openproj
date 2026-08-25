@@ -315,6 +315,11 @@ function aceSurface(area, seeded) {
   const indexOf = position => document_.positionToIndex(position);
   const positionOf = index => document_.indexToPosition(index);
 
+  // The keyboard handler `keys` adds, held because `setKeymap` has to put it
+  // back — see both. Null until something claims a key, which is every page
+  // that carries no link list.
+  let claimed = null;
+
   // **Ace's own change deltas, converted at the moment they arrive.** This is
   // the binding, and the whole reason it is not `typed()`'s prefix/suffix walk
   // is written in `docs/EDITOR.md`: `session.setValue` and `session.replace` are
@@ -511,6 +516,74 @@ function aceSurface(area, seeded) {
     keymaps: KEYMAPS,
     setKeymap(name) {
       editor.setKeyboardHandler(name === 'vim' ? 'ace/keyboard/vim' : null);
+      // And the claimed keys go back on, which is not a courtesy: Ace's
+      // `setKeyboardHandler` REPLACES the last handler on its stack, and the
+      // one `keys` below adds is the last handler on its stack. Without this
+      // line, choosing vim takes Return and the arrows away from the link
+      // popup and nothing anywhere says so.
+      if (claimed) editor.keyBinding.addKeyboardHandler(claimed);
+    },
+
+    // --- completing a link to another record ---------------------------------
+    //
+    // Two members, one caller — `attachRecordLinks` in the shared block — and
+    // they are Ace's alone. jcanton, 2026-08-25, asked for the completion in
+    // "only ace editor", and the first of them is why that is the sensible
+    // half: a textarea can only answer "where is the caret drawn" through the
+    // mirror, and this file's own history says a mirror is where the answers go
+    // quietly wrong. A surface without these is handled the way one without
+    // `onSplice` is — the caller looks, and there is no flag beside the absence
+    // saying the same thing a second time.
+
+    // Where the caret is drawn, as a viewport rectangle.
+    //
+    // **Ace's own cursor element, asked for its box.** Not
+    // `textToScreenCoordinates`, whose `pageX`/`pageY` are computed from
+    // `scroller.getBoundingClientRect()` and are therefore viewport numbers
+    // wearing page names — a difference invisible until somebody scrolls the
+    // page. And not the scroller's rect plus a screen row times a line height
+    // worked out here, which is the post-processing `AGENTS.md` records the
+    // graph paying for: the library has already drawn this caret in the right
+    // place, so the question is answered by asking the drawing.
+    caretBox() {
+      const drawn = host.querySelector('.ace_cursor');
+      // No cursor drawn is ordinary rather than an error — Ace does not draw
+      // one until the editor has been focused. The scroller's own top-left is
+      // where a caret would be, which is where a popup belongs until there is
+      // one to sit under.
+      const box = (drawn && drawn.getClientRects().length
+                   ? drawn : editor.renderer.scroller).getBoundingClientRect();
+      return {left: box.left, top: box.top, bottom: box.bottom};
+    },
+
+    // Keys, claimed before Ace's command table sees them. `claim` is handed the
+    // key's name and answers whether it took it.
+    //
+    // **A DOM `keydown` listener cannot do this**, and the reason is already
+    // written in `attachEditing`: Ace's `stopEvent` calls `stopPropagation` as
+    // well as `preventDefault`, so Return, Up and Down never reach a listener on
+    // this host at all — measured in Chrome, with a listener beside it, when Tab
+    // went the same way. `handleKeyboard` is the documented way in and is what
+    // Ace's own completion extension uses.
+    //
+    // Returning a command whose `exec` answers true is what consumes the key:
+    // Ace calls `event.stopEvent` only for a handler that says it did
+    // something, and returning nothing at all falls through to every handler
+    // under this one. A named `'null'` command was the other spelling and is
+    // not used — it carries `passEvent` in Ace's own table, which is the
+    // opposite of what this wants.
+    //
+    // `hashId === 0` is "no modifiers", which is the whole of what this claims:
+    // a printable character arrives as `-1` and every chord as a bitmask, and
+    // both of those belong to the editor.
+    keys(claim) {
+      claimed = {
+        handleKeyboard(data, hashId, keyString) {
+          if (hashId !== 0 || !claim(keyString)) return;
+          return {command: {exec: () => true}};
+        },
+      };
+      editor.keyBinding.addKeyboardHandler(claimed);
     },
 
     scrolled: () => session.getScrollTop(),

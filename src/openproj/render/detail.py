@@ -1330,6 +1330,12 @@ const TITLED = document.querySelector('.title-field');
 const SURFACE = bodySurface(BODY);
 attachUploads(SURFACE, document.getElementById('upload'));
 attachEditing(SURFACE, document.getElementById('marks'));
+// A `[` in the document offers the records it could point at. No element of its
+// own: the popup hangs off the body and the caret it sits under is the
+// surface's to report, so this one takes the surface and nothing else. It
+// returns without drawing anything on the plain box, which has no caret to
+// report — see `attachRecordLinks`.
+attachRecordLinks(SURFACE);
 attachGutter(SURFACE, document.getElementById('gutter-note'));
 attachStatus(SURFACE, document.getElementById('statusbar'));
 // The commit this page was rendered at, and what every save is compared against.
@@ -2841,7 +2847,9 @@ def render_detail(
         may_write=may_write,
         base_commit=base_commit or "",
         statuses=STATUSES,
-        combobox=_combobox_html(index),
+        # `linkable=True`: this is a page with a document being written in it, so
+        # the blob carries the list `attachRecordLinks` completes from.
+        combobox=_combobox_html(index, linkable=True),
         required=_REQUIRED_JS,
         hill=_HILL_JS,
         viewbar=_viewbar(_editing_possible(base_commit, may_write)),
