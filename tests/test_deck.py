@@ -461,7 +461,8 @@ def test_the_title_slide_names_the_cycle_its_review_and_what_it_was_for(deck: st
 
     assert title["heading"] == "Cycle 37"
     assert "Review" in title["text"]
-    assert "2026-09-28" in title["text"]
+    # The app's own format, not the file's — jcanton, 2026-08-25.
+    assert "28.09.2026" in title["text"]
     assert "The bed port is the one that cannot slip." in title["text"]
 
 
@@ -483,7 +484,7 @@ def test_a_review_date_nobody_chose_is_not_printed_as_though_somebody_had(index:
     guessed = slides_in(render_deck(index, 41, ROUTES))[0]
 
     assert "assumed" in guessed["text"]
-    assert re.search(r"\d{4}-\d{2}-\d{2}", guessed["text"])
+    assert re.search(r"\d{2}\.\d{2}\.\d{4}", guessed["text"]), guessed["text"]
 
 
 def test_work_bet_into_another_cycle_is_on_another_deck(deck: str):

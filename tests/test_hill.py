@@ -588,14 +588,14 @@ def _rendered_shell() -> str:
 def test_the_ball_follows_the_field_when_something_else_sets_it(
     index: Index, tmp_path: Path
 ) -> None:
-    """The other direction, which nothing exercises yet and something is about to.
+    """The other direction, and Reset is what exercises it.
 
-    The hill writes the status and the status is written back into the hill. Today
-    nothing but the hill sets that field; Cancel is about to, once it puts back
-    what the server rendered — it assigns `ORIGINAL` into every control, and a
-    value assigned by script fires no event a picture could hear. The sync hangs
-    off the session ending rather than off Cancel, because that is the fact it
-    cares about and a session has four doors out of it.
+    The hill writes the status and the status is written back into the hill.
+    Nothing but the hill sets that field except `resetEdits`, which assigns
+    `ORIGINAL` into every control — and a value assigned by script fires no event
+    a picture could hear. The sync hangs off two events, `openproj:reverted` and
+    a session ending, because those are two facts and they stopped being the same
+    button on 2026-08-25.
     """
     browser = chrome()
     record_id = next(i for i, e in sorted(index.plan.items()) if e.status != "ready")
@@ -625,17 +625,19 @@ def test_the_ball_follows_the_field_when_something_else_sets_it(
     assert found["after"] != found["moved"], "the ball stayed where the hill had put it"
 
 
-def test_cancelling_an_edit_rolls_the_ball_back(index: Index, tmp_path: Path) -> None:
-    """The seam between the hill and Cancel, which only exists once both are here.
+def test_resetting_an_edit_rolls_the_ball_back(index: Index, tmp_path: Path) -> None:
+    """The seam between the hill and Reset, which only exists once both are here.
 
-    Cancel puts every field back to what the server rendered, and it does that by
-    assigning into the control — which fires no event a picture could hear. The
-    hill listens for the session ending instead. What this asks is the ORDER those
-    two happen in: `showEditing` is what dispatches the end of a session, so the
-    fields have to be back before it is called. Ended first, Cancel put
-    `in_progress` back into the field and left the ball sitting on `ready`, with
-    the picture and the value disagreeing on a page nobody was editing — and both
-    branches passed on their own.
+    Reset puts every field back to what the server rendered, and it does that by
+    assigning into the control — which fires no event a picture could hear. So it
+    says so: `openproj:reverted`, which the hill listens for. What this asks is
+    the ORDER those two happen in — the fields have to be back before the event
+    goes out. Announced first, the ball read `ready` off a field that was about
+    to say `in_progress`, with the picture and the value disagreeing on a page
+    somebody was still editing — and both branches passed on their own.
+
+    It used to hang off the session ENDING, because until 2026-08-25 putting the
+    fields back and leaving the editor were the same button.
     """
     browser = chrome()
     record_id = next(i for i, e in sorted(index.plan.items()) if e.status != "ready")
@@ -653,7 +655,7 @@ def test_cancelling_an_edit_rolls_the_ball_back(index: Index, tmp_path: Path) ->
         [...hill.querySelectorAll('.hill-stop')]
           .find(s => s.querySelector('input').value === 'ready').click();
         const moved = ball.style.left;
-        document.getElementById('cancel').click();
+        document.getElementById('reset').click();
         await new Promise(settled => setTimeout(settled, 50));
         return {before, moved, after: ball.style.left, klass: ball.className,
                 status: value.value,
@@ -662,14 +664,16 @@ def test_cancelling_an_edit_rolls_the_ball_back(index: Index, tmp_path: Path) ->
         """,
         height=1400, patience=3000,
     )
-    assert found["moved"] != found["before"], "the ball never moved, so nothing was cancelled"
+    assert found["moved"] != found["before"], "the ball never moved, so nothing was reset"
     assert found["status"] == was, "the field was not put back"
     # All four say the same thing, which is the whole point: the value the form
     # will send, the stop the keyboard is on, the ball, and its colour.
-    assert found["after"] == found["before"], "the ball stayed where the cancelled edit put it"
+    assert found["after"] == found["before"], "the ball stayed where the undone edit put it"
     assert found["checked"] == was, "the stop the keyboard is on is not the one the field holds"
     assert found["klass"] == f"hill-ball hill-{was}"
-    assert found["unsaved"] == "Nothing to save"
+    # Still editing, because Reset does not leave — so the bar says the sentence
+    # a session with nothing in it says, not the one a page nobody is editing says.
+    assert found["unsaved"] == "Nothing changed yet"
 
 
 # ---------------------------------------------------------------------------

@@ -326,18 +326,18 @@ const keys = document.querySelector('.keys').getBoundingClientRect();
 // document order in a top-pinned flex column, so the tops are the measurement
 // that says whether the legend actually moved up when the count moved under it.
 const grid = document.querySelector('.keys .legends').getBoundingClientRect();
-const count = document.querySelector('.keys #summary').getBoundingClientRect();
 const statusKey = document.querySelector(
   '.keys .legend li:not(.legendname)').getBoundingClientRect();
 const priKey = document.querySelector(
   '.keys .legend.shorter li:not(.legendname)').getBoundingClientRect();
 const stack = {
   legendDrop: +(grid.top - keys.top).toFixed(1),
-  countUnder: count.top >= grid.bottom,
-  // The air over the count against the air the legend keeps between its own
-  // two rows, so "a caption under the block" is a comparison and not a pixel.
+  // The count is not in this box any more — it is in the control bar with the
+  // other two views' since 2026-08-25 — so what is left in the corner is the
+  // legend and nothing else. Asked rather than assumed: a second copy drawn
+  // here would be the same number in two places.
+  counted: document.querySelectorAll('.keys #summary').length,
   rowAir: +(priKey.top - statusKey.bottom).toFixed(1),
-  countAir: +(count.top - grid.bottom).toFixed(1),
 };
 return {
   stack,
@@ -435,24 +435,21 @@ def test_the_two_key_rows_are_one_length_and_sit_on_the_drawing(
     assert max(got["gaps"]) <= 40, f"{max(got['gaps'])}px between keys is too much air"
     assert got["inside"], "the keys are not over the drawing"
 
-    # The legend leads the corner and the count hangs under it — jcanton,
-    # 2026-08-24: "move it below the legend instead please? this way the legend
-    # can move a little upwards into the corner." The box's `top` is pinned, so
-    # the row that gains from the swap is whichever is first in the document:
-    # count-first held the legend 37px off the box's top edge (measured at
-    # 1400x900 before the swap), and the shell's `.legends` top margin would
-    # hold it 12px off on its own. 7px is the box's .35rem padding plus a pixel.
+    # The legend is in the corner, and the corner holds nothing else. jcanton,
+    # 2026-08-24 asked for the count to go under it ("this way the legend can
+    # move a little upwards into the corner"), and on 2026-08-25 for the count to
+    # leave the drawing altogether and share one bar with the table's and the
+    # timeline's. The box's `top` is pinned, so what used to hold the legend down
+    # was whatever was drawn before it: count-first held it 37px off the box's
+    # top edge, measured at 1400x900. 7px is the box's .35rem padding plus a
+    # pixel.
     assert got["stack"]["legendDrop"] <= 7, (
         f"the legend sits {got['stack']['legendDrop']}px below the corner box's "
         "top, so something is holding it out of the corner again"
     )
-    assert got["stack"]["countUnder"], "the count is not under the legend"
-    # And the count keeps at least the air the legend keeps between its own two
-    # rows: with less it reads as a third row of the priority grid, which is the
-    # measured effect of the box's .1rem gap alone (1.6px against the rows' 3.2).
-    assert got["stack"]["countAir"] >= got["stack"]["rowAir"], (
-        f"{got['stack']['countAir']}px over the count against {got['stack']['rowAir']}px "
-        "between the legend's own rows: the count reads as a row of the grid"
+    assert got["stack"]["counted"] == 0, (
+        "the count is drawn over the drawing as well as in the control bar, which "
+        "is the same number in two places"
     )
 
     # One swatch, whichever row it is on. jcanton, 2026-08-20: "the legend is

@@ -549,39 +549,97 @@ def test_the_legend_is_two_rows_and_the_keys_line_up(rendered: Path, tmp_path: P
     assert len(set(priority["ys"])) == 1 and len(set(status["ys"])) == 1
 
 
-def test_the_legend_leads_the_corner_and_the_count_hangs_under_it(rendered: Path):
+def test_the_corner_of_the_graph_holds_the_legend_and_nothing_else(rendered: Path):
     """jcanton, 2026-08-24: "move it below the legend instead please? this way
-    the legend can move a little upwards into the corner." `.keys` is a column
-    pinned by its `top`, so which row touches the corner is decided by document
-    order and nothing else — the count led for four days and held the legend
-    32px down from where the box starts.
+    the legend can move a little upwards into the corner." Then, 2026-08-25, the
+    count left the drawing altogether — the three plan views share one bar now,
+    and a count over the canvas as well would be the same number in two places.
 
-    Order is a fact about the document, so it is read off the parsed document:
-    a substring search for `id="summary"` against `class="legends"` would also
+    So what this asserts is what is left: the legend is the first thing in the
+    corner box, and the corner box holds nothing but the legend. Read off the
+    parsed document because order and containment are facts about a document: a
+    substring search for `id="summary"` against `class="legends"` would also
     match either name inside the stylesheet's own comments, which is how
-    `page.index("<h1>")` found a heading inside a CSS comment once already.
-    The pixels this order buys are measured where pixels live, in
+    `page.index("<h1>")` found a heading inside a CSS comment once already. The
+    pixels this buys are measured where pixels live, in
     `test_the_two_key_rows_are_one_length_and_sit_on_the_drawing`
-    (`test_graph_layout.py`)."""
+    (`test_graph_layout.py`).
+    """
     parsed = elements(read(rendered, "graph.html"))
     keys = next(i for i, el in enumerate(parsed)
                 if el.tag == "div" and el.attrs.get("class") == "keys")
     legends = next(i for i, el in enumerate(parsed)
                    if el.tag == "div" and el.attrs.get("class") == "legends")
-    summary = next(i for i, el in enumerate(parsed) if el.attrs.get("id") == "summary")
-    assert keys < legends < summary, (
-        "inside .keys the legend leads and the count follows: "
-        f"keys at {keys}, legends at {legends}, summary at {summary}"
+    assert legends == keys + 1, (
+        f"the legend is not the first thing in the corner: keys at {keys}, "
+        f"legends at {legends}"
     )
-    # The count is still the last thing in the corner box, not moved out of it:
-    # the next element after it is past the `</div>`s, and the first one is the
-    # canvas the box floats over.
-    after = next(el for el in parsed[summary + 1 :] if el.tag not in ("span",))
-    assert after.attrs.get("id") == "cy", after
-    # And the two spans the script writes by id ride inside it still — the move
-    # must not strand `getElementById('shown')` or `('context')`.
-    inside = {el.attrs.get("id") for el in parsed[summary + 1 : summary + 3]}
-    assert inside == {"shown", "context"}, inside
+    # The count is in the control bar, which is above the canvas rather than in
+    # it — so between the corner box and the canvas there is nothing left.
+    canvas = next(i for i, el in enumerate(parsed) if el.attrs.get("id") == "cy")
+    summary = next(i for i, el in enumerate(parsed) if el.attrs.get("id") == "summary")
+    assert summary < keys, (
+        "the count is still inside the corner box, so the graph says how much is "
+        "on screen twice"
+    )
+    # And every element the script writes by id went with it — the move must not
+    # strand `getElementById('shown')`, `('context')` or the blocker link's two
+    # halves somewhere the graph's own script cannot find them.
+    moved = [el.attrs.get("id") for el in parsed[summary : summary + 7]]
+    for name in ("shown", "context", "blockers", "blocker-count", "blocker-word"):
+        assert name in moved, f"{name} did not move with the count: {moved}"
+    assert keys < canvas, "the corner box is drawn after the canvas it floats over"
+
+
+def test_both_halves_of_the_app_write_a_date_the_same_way(seed_index: Index):
+    """One format, in two languages, driven against the same strings.
+
+    jcanton, 2026-08-25: "all dates everywhere should be as in the table: dd.mm
+    or dd.mm.YY or dd.mm.YYYY". The server prints the dates a page is rendered
+    with (`_read_date`, the `on()` global); the browser has to write one too,
+    because the echo beside a date box changes as somebody picks a date and that
+    is a thing only the browser sees. Two copies of one rule is this
+    repository's characteristic failure — "the invariant is written in two
+    languages, which copy is guarded" — so both are asked the same questions
+    here rather than being trusted to agree.
+
+    The odd inputs are the ones that decide it. An empty box is what an unset
+    date is, the em dash is what a table cell with no date holds, and a value
+    that is not three parts is a hand-edited file: none of the three may come
+    back rearranged or crash a page.
+    """
+    from test_injection import run_js
+
+    from openproj.render import render_detail
+    from openproj.render.tokens import _read_date
+
+    asked = ["2026-09-01", "2026-12-31", "2027-01-02", "", "—", "not-a-date",
+             "2026-09", "2026-09-01-02"]
+    # A record page rather than the table: `readDate` is the shell's and is on
+    # every page, and the table's own script reaches for a box the node shim has
+    # no layout for, which would put an unrelated error in the way of this one.
+    answer = run_js(
+        render_detail(
+            seed_index, ROUTES, base_commit="deadbee",
+            only=sorted(seed_index.plan)[0], may_write=True, signed_in="ann",
+            editor="plain",
+        ),
+        "(" + json.dumps(asked) + ").map(readDate)",
+        page=True,
+    )
+    assert not answer["errors"], answer["errors"]
+    assert answer["value"] == [_read_date(one) for one in asked], (
+        f"the two halves disagree: {answer['value']} against "
+        f"{[_read_date(one) for one in asked]}"
+    )
+    # And it is the format, not merely agreement: two functions that both
+    # answered ISO would pass the line above.
+    assert _read_date("2026-09-01") == "01.09.2026"
+    # `not-a-date` comes back as `date.a.not` from both, which is silly and is
+    # the honest consequence of "three dash-separated parts is a date": nothing
+    # here validates, both halves are wrong in the same way, and the alternative
+    # is a second date parser in two languages. It is asserted so that a future
+    # reader meets the decision rather than the surprise.
 
 
 def test_a_group_name_is_readable_inside_its_own_box(rendered: Path):
@@ -1061,7 +1119,13 @@ def test_a_cycle_number_is_offered_the_way_every_other_reference_is(seed_index: 
     ]
     dated = next(c for c in cycles if int(c["value"]) in seed_index.cycles)
     starts, ends = seed_index.cycles[int(dated["value"])]
-    assert dated["label"] == f"{starts} → {ends}"
+    # In the app's own format and not the file's: this label is read by somebody
+    # choosing a cycle from a popup, and every date beside it on that page is
+    # `dd.mm.YYYY`.
+    from openproj.render.tokens import _read_date
+
+    assert dated["label"] == f"{_read_date(starts)} → {_read_date(ends)}"
+    assert re.fullmatch(r"\d{2}\.\d{2}\.\d{4} → \d{2}\.\d{2}\.\d{4}", dated["label"])
 
 
 # --- the people page --------------------------------------------------------
@@ -2992,15 +3056,24 @@ def test_the_header_spans_the_page_and_the_facts_sit_beside_the_document(rendere
     assert "candidate.getClientRects().length > 0" in body
 
 
-def test_every_page_echoes_the_iso_value_of_a_date_box(rendered: Path):
-    """Every date the plan prints is ISO and every `<input type=date>` is drawn in
-    the reader's locale, so one desk edits 2026-09-01 as 01/09/2026 and the next
-    as 09/01/2026. The box keeps its locale; the stored value is echoed beside
-    it."""
+def test_every_page_says_which_day_a_date_box_holds(rendered: Path):
+    """An `<input type=date>` is drawn in the reader's locale, so one desk edits
+    the same stored day as 01/09/2026 and the next as 09/01/2026. The box keeps
+    its locale; the echo beside it says which day that is in the app's own
+    format.
+
+    It echoed the ISO string until 2026-08-25, on the argument that "every date
+    the plan prints is ISO" — true when it was written, and false once the
+    printed dates moved to `dd.mm.YYYY`. An echo in a third format is a second
+    thing to read rather than an answer to the ambiguity it exists for.
+    `test_both_halves_of_the_app_write_a_date_the_same_way` is what holds the
+    browser's copy of that format to the server's.
+    """
     for name in PAGES:
         body = read(rendered, name)
         assert "document.querySelectorAll('input[type=date]')" in body, name
         assert ".iso { display: block;" in body, name
+        assert "echo.textContent = readDate(box.value)" in body, name
 
 
 # --- cycles -----------------------------------------------------------------
@@ -3936,9 +4009,10 @@ return {
   search: line(document.getElementById('q')),
   aside: line(document.querySelector('#controls .aside')),
   key: line(document.querySelector('.keyrow .legend')),
+  keyTwo: line(document.querySelector('.keyrow .legend + .legend')),
   keys: line(document.querySelector('.keys')),
   count: line(document.getElementById('summary')),
-  editbar: line(document.querySelector('.editbar')),
+  blockers: line(document.getElementById('blockers')),
   controlsRight: Math.round(controls.getBoundingClientRect().right),
 };
 """
@@ -3961,23 +4035,19 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
     all — a sentence about how to move the drawing, and a count of what is in it —
     and each was a full row wide to hold twelve words.
 
-    One pattern on all three views. The instruction rides at the far end of the
-    search box's line, which is the row that exists on every view that filters
-    anything. The count rides at the far end of the last row before the thing it
-    counts: the key's row where there is a key, and the page's own control row
-    where there is not.
+    **One row on all three views, and one row is now the whole claim.** jcanton,
+    2026-08-25: "these three should actually share the nav+login+theme, search
+    box+description (to each its own)+problems+N/M shown, and filter rows". Until
+    that day each view had answered the question its own way — the table in a
+    `<p>` of its own above the controls, the graph in the corner of the canvas,
+    the timeline beside its key — which is three answers, three places to look,
+    and three things to keep in step. They are one fragment now
+    (`_summary_html`), in one slot, so what this test says of each view it says
+    in the same words.
 
-    The table's instruction was the exception and stopped being one on
-    2026-08-25: it was inline beside New record, which was a control and not a
-    sentence, and when jcanton took that button off the page ("we already have
-    the + new row at the bottom") the sentence had nothing left to share a row
-    with. It is in `#controls .aside` now, which is the same slot the graph's
-    pan/zoom line and the timeline's window line ride in — one pattern on all
-    three views rather than two-and-an-argument.
-
-    The heading is still first in the list and is now `.sr-only` — the seventh of
-    the six rows going. It is `position: absolute`, so it is out of flow and the
-    rows below it start where the nav ends; the test named below is the one that
+    The heading is still first in the list and is `.sr-only` — the seventh of the
+    six rows going. It is `position: absolute`, so it is out of flow and the rows
+    below it start where the nav ends; the test named below is the one that
     measures that, and this one only has to know the heading did not turn back
     into something a reader can see.
 
@@ -3991,67 +4061,71 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
     # Named, because the next thing anybody adds here is the row this is guarding
     # against.
     assert got["rows"] == {
-        # The graph has neither a key row nor a count row: both ride over the
-        # drawing in its top-right corner, which is the same rule as the others
-        # — a sentence about the view must not cost the view a row — taken one
-        # step further on the view where a row is worth the most.
-        #
-        # `div.commitbar` is a row and belongs here for the same reason
-        # `p.editbar` does on the table: this rule is about SENTENCES, and a row
-        # of controls is the thing a sentence was being asked to stop displacing.
-        # It moved above the canvas on 2026-08-20 so that every page keeps the
-        # control that commits it in one place, and it cost the drawing nothing —
-        # `--room` went 595px to 607px at 1400x900, because up here its top margin
-        # collapses with the filter row's and below the canvas it did not.
+        # `div.commitbar` is a row of CONTROLS, which is the thing a sentence was
+        # being asked to stop displacing rather than an instance of it. It moved
+        # above the canvas on 2026-08-20 so that every page keeps the control that
+        # commits it in one place, and it cost the drawing nothing — `--room` went
+        # 595px to 607px at 1400x900, because up here its top margin collapses
+        # with the filter row's and below the canvas it did not.
         "graph": ["h1.sr-only", "div#controls", "div#commitbar.commitbar"],
-        "table": ["h1.sr-only", "p.editbar", "div#controls"],
-        "timeline": ["h1.sr-only", "div#controls", "form.tl-controls",
-                     "ul.legend", "div.keyrow"],
+        # The table's `p.editbar` is gone: it held the count and the save receipt
+        # for one day, which is a row of furniture with one sentence at its right
+        # end and nothing at its left.
+        "table": ["h1.sr-only", "div#controls"],
+        # And the timeline's two keys are one row rather than two — status on the
+        # left, marks on the right.
+        "timeline": ["h1.sr-only", "div#controls", "form.tl-controls", "div.keyrow"],
     }[view], got["rows"]
 
-    if view == "table":
-        # No key to hang it on, so the count goes to the far end of the row the
-        # page's own controls stand in.
-        assert _shares_a_line(got["count"], got["editbar"])
-    elif view == "graph":
-        # Over the drawing, not above it. What matters is that neither the key
-        # nor the count is in the flow between the controls and the canvas —
-        # which the row list above has already said — and that they are inside
-        # the box they describe rather than floating somewhere else on the page.
+    # The same three claims on every view, which is what "share the bar" means.
+    assert got["aside"], "the view says nothing about itself"
+    assert _shares_a_line(got["aside"], got["search"]), (
+        f"the instruction is at {got['aside']} and the search box at {got['search']}"
+    )
+    assert _shares_a_line(got["count"], got["search"]), (
+        f"the count is at {got['count']} and the search box at {got['search']}"
+    )
+    assert got["blockers"], "the view does not say what is wrong with the plan"
+    assert _shares_a_line(got["blockers"], got["count"])
+    # Flush with the right edge of the bar above it.
+    assert got["count"]["right"] == got["controlsRight"], (
+        f"the count ends at {got['count']['right']} and the bar at {got['controlsRight']}"
+    )
+    # The instruction keeps the search box's line — that is what stops it costing
+    # a row above the drawing — but it reads left to right like the sentence on
+    # every other page, rather than being pushed to the far end and set
+    # right-aligned. Asked for on 2026-08-17, having been the one thing about
+    # these two views that did not match the rest of the site.
+    assert got["aside"]["right"] < got["controlsRight"], (
+        f"the instruction ends at {got['aside']['right']} and the bar at "
+        f"{got['controlsRight']}: it is still pinned to the right edge"
+    )
+
+    if view == "graph":
+        # The key is still over the drawing rather than above it, which is the
+        # same rule taken one step further on the view where a row is worth the
+        # most. The count used to ride with it and does not any more.
         assert got["keys"], "the keys are gone from the graph"
         assert got["keys"]["top"] >= got["boxTop"], (
             f"the keys are at {got['keys']['top']} and the drawing starts at "
             f"{got['boxTop']}: they are still costing the view a row"
         )
-        assert _shares_a_line(got["count"], got["keys"]) or (
-            got["count"]["top"] >= got["boxTop"]
-        ), "the count left the drawing"
-        assert got["aside"], "the view says nothing about itself"
-        assert _shares_a_line(got["aside"], got["search"])
-    else:
-        assert got["aside"], "the view says nothing about itself"
-        assert _shares_a_line(got["aside"], got["search"]), (
-            f"the instruction is at {got['aside']} and the search box at {got['search']}"
+        assert got["count"]["bottom"] <= got["boxTop"], (
+            "the count is still drawn over the canvas as well as in the bar"
         )
-        assert _shares_a_line(got["count"], got["key"]), (
-            f"the count is at {got['count']} and the key at {got['key']}"
+    if view == "timeline":
+        # Both keys on one line, and the second hangs off the right end —
+        # jcanton, 2026-08-25: "left-aligned for status and right aligned the
+        # others".
+        assert got["key"], "the timeline lost its key"
+        assert got["keyTwo"], "the timeline's second key is not beside the first"
+        assert _shares_a_line(got["key"], got["keyTwo"]), (
+            f"the two keys are on two rows: {got['key']} and {got['keyTwo']}"
         )
-        # It keeps the search box's line — that is what stops it costing a row
-        # above the drawing — but it reads left to right like the sentence on
-        # every other page, rather than being pushed to the far end and set
-        # right-aligned. Asked for on 2026-08-17, having been the one thing about
-        # these two views that did not match the rest of the site.
-        assert got["aside"]["right"] < got["controlsRight"], (
-            f"the instruction ends at {got['aside']['right']} and the bar at "
-            f"{got['controlsRight']}: it is still pinned to the right edge"
+        assert got["keyTwo"]["right"] == got["controlsRight"], (
+            f"the second key ends at {got['keyTwo']['right']} and the bar at "
+            f"{got['controlsRight']}: it is not right-aligned"
         )
-
-    if view == "graph":
-        return
-    # Flush with the right edge of the bar above it, on every view that has one.
-    assert got["count"]["right"] == got["controlsRight"], (
-        f"the count ends at {got['count']['right']} and the bar at {got['controlsRight']}"
-    )
 
 
 # What the nav and the box that fills the window are actually at, in the browser.

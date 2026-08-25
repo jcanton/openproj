@@ -695,9 +695,9 @@ addEventListener('keydown', event => {
 // Answered here only when there is a session view to leave, so on the landing
 // — and on the create form's ordinary page — the hatch that gives Tab back
 // opens on the first press. Leaving lands on `GROUND`: on a record page that
-// is the sessionless landing, so Escape ends the session — and ends it
-// without discarding anything, because the text stays in the surface and the
-// draft store is the body-undo; only Cancel restores fields.
+// is the sessionless landing, so Escape ends the session — and ends it without
+// discarding anything, which every door out of a session now does. Putting a
+// record back is `resetEdits`, a button that says so and does nothing else.
 BODY.addEventListener('openproj:escaped', event => {
   if (VIEW === GROUND) return;
   event.preventDefault();
@@ -794,8 +794,8 @@ if (VIEW_LINKED) {
 }
 
 // A session beginning or ending through any door this script did not open —
-// the restored draft's `showEditing(true)` runs before this script, Cancel and
-// the room's save run after it. One listener on the one event that means "a
+// the restored draft's `showEditing(true)` runs before this script, the view
+// switcher and the room's save run after it. One listener on the one event that means "a
 // session began or ended", rather than a copy at every call site: an invariant
 // written four times is an invariant guarded three. `VIEW` is set before
 // `showView` touches the session, which is what keeps this from looping.
@@ -880,13 +880,13 @@ _DETAIL = """
   <p class="editbar">{{ viewbar }}{% if not creating %}
     <button type="button" class="delete">Delete</button>{% endif %}</p>
   {% endif %}
-  {#- Save, Cancel and the count of what is unsaved, directly under the button
+  {#- Save, Reset and the count of what is unsaved, directly under the button
       that started the editing rather than at the far end of the document —
       jcanton, 2026-08-20. The old argument for the foot was that a commit bar
       belongs where the thing being committed ends. What that actually decided
-      was whether the three controls which begin, end and abandon one edit were
-      in one place, and they were not: Edit was here and the other two were a
-      shaping document away.
+      was whether the control which begins an edit and the ones which commit or
+      undo it were in one place, and they were not: Edit was here and the other
+      two were a shaping document away.
 
       Still sticky, so it is still reachable from the bottom of a long record —
       but stuck to the TOP now, which is where it is. Hidden in the markup and
@@ -896,7 +896,7 @@ _DETAIL = """
       Except when creating, where the bar is visible from birth with a static
       sentence: the page IS the session, and a form whose only way to commit it
       appears later is a form with no way to commit it. Creating has no Delete
-      and no Cancel — the article never leaves edit mode and there is nothing
+      and no Reset — the article never leaves edit mode and there is nothing
       stored to go back to or delete. -#}
   <div class="commitbar" id="commitbar"{% if not creating %} hidden{% endif %}>
     {% if creating %}
@@ -913,10 +913,26 @@ _DETAIL = """
         the worst thing in this row. -#}
     <span id="draftsaved" class="hint"></span>
     <button type="button" id="save" hidden>Save</button>
-    {#- Cancel stays beside Save and never beside Edit. They are the two ways one
-        editing session can end, and putting them in two places is how somebody
-        closes a tab believing the other one was the way out. -#}
-    <button type="button" id="cancel" hidden>Cancel</button>
+    {#- **Reset, and it was Cancel until 2026-08-25.** jcanton: "the 'Cancel'
+        button exits editing and goes to preview, even if there's no edit to
+        cancel. maybe we should change its function: call it 'reset' and it
+        undoes unsaved changes but doesn't change view to preview?"
+
+        Cancel named an ending and did two things: it put the fields back AND it
+        left the session, so the only control that undoes an edit was also the
+        only control that closed the box — and pressing it on a record you had
+        opened, looked at and changed nothing in threw you out of edit mode as
+        payment for asking. The two are separated now. Reset undoes; the view
+        switcher and Escape leave, which they already did.
+
+        `disabled` while there is nothing to undo, which is the other half of his
+        sentence: a control that answers a press by doing nothing is
+        indistinguishable from one that is broken. `dirty()` owns that.
+
+        Beside Save because they are what you do with what you have written —
+        commit it or throw it away — and putting the second one somewhere else is
+        how somebody closes a tab believing they had reverted. -#}
+    <button type="button" id="reset" hidden disabled>Reset</button>
     <span id="state" role="status"></span>
     {% endif %}
   </div>
@@ -1373,8 +1389,8 @@ function read(control) {
   // and `JSON.stringify(undefined)` is the VALUE undefined rather than the string
   // "undefined" — so `ORIGINAL.review_waived` was not a JSON document there at
   // all. Harmless while `changed()` only ever compared it, and a thrown
-  // `JSON.parse` the moment Cancel started reading `ORIGINAL` back. The contract
-  // is now the same in both.
+  // `JSON.parse` the moment `resetEdits` started reading `ORIGINAL` back. The
+  // contract is now the same in both.
   if (type === 'bool') return !!control.checked;
   const raw = control.value.trim();
   // Deduplicated: picking a name already in the list is a slip, not an intent to
@@ -1397,6 +1413,17 @@ for (const control of CONTROLS) ORIGINAL[control.name] = JSON.stringify(read(con
 // after that commit the saved text IS the baseline, and a `const` here left the
 // bar claiming one unsaved change forever over text that is already in git.
 let ORIGINAL_BODY = SURFACE.text();
+// And the commit that text belongs to, which is what Reset puts back.
+//
+// **Not `BASE.defaultValue`**, although the attribute the server wrote is right
+// there and never moves. It is right there and it is the wrong answer: the
+// room's `saved` handler moves BOTH `ORIGINAL_BODY` and `BASE.value` forward for
+// every member who did not press the button, so on their page "what the server
+// rendered" has been redefined and the attribute is a commit that is no longer
+// HEAD. Restoring to it would move that member's base BACKWARDS and turn their
+// next save into a conflict. This pairs with `ORIGINAL_BODY` and is written
+// wherever that is.
+let BASELINE = BASE.value;
 
 function changed() {
   const fields = {};
@@ -1412,6 +1439,10 @@ function changed() {
 // editor you close with work in it.
 const BAR = document.getElementById('commitbar');
 const UNSAVED = document.getElementById('unsaved');
+// Absent on the create form, which has nothing stored to go back to — hence the
+// `?.` at the one place this is written. Found once rather than per keystroke:
+// `dirty()` runs on every character typed into the document.
+const RESET = document.getElementById('reset');
 
 function dirty() {
   // The create bar's sentence is static — "Nothing is written until you press
@@ -1433,6 +1464,11 @@ function dirty() {
   // count needs saying.
   BAR.hidden = !editing && count === 0;
   BAR.classList.toggle('dirty', count > 0);
+  // Reset can only undo what there is. A control that answers a press by doing
+  // nothing is indistinguishable from one that is broken, and that is half of
+  // what jcanton reported about the button this replaced: it acted — by throwing
+  // you out of edit mode — on a record nothing had been typed into.
+  if (RESET) RESET.disabled = count === 0;
   UNSAVED.textContent = count
     ? `${count} unsaved change${count === 1 ? '' : 's'}`
     : (editing ? 'Nothing changed yet' : 'Nothing to save');
@@ -1514,20 +1550,19 @@ if (CREATING) {
 // that mentions one is a comment the template engine reads.)
 function showEditing(editing) {
   // Unreachable when creating — `showView` touches the session only where a
-  // landing exists and the create page has none, and neither Cancel nor
-  // Delete is on the page to reach it through `flipEditing` — and guarded
-  // anyway, because the failure if that ordering ever changed is a null deref
-  // that takes the whole script.
+  // landing exists and the create page has none, and Delete is not on the page
+  // to reach it through `flipEditing` — and guarded anyway, because the failure
+  // if that ordering ever changed is a null deref that takes the whole script.
   if (CREATING) return;
   // One class on the article. Each fact is a single row whose value swaps for its
   // control, so nothing is shown twice and the page does not jump when you start.
   document.querySelector('article.record').classList.toggle('editing', editing);
   document.getElementById('save').hidden = !editing;
-  // Save and Cancel are the two ways one editing session ends, and they
-  // arrive together at the top of the record. The way IN is the view switcher
-  // on the editbar; the Edit button that used to be here was a second door
-  // into the same session, one control's width from the first.
-  document.getElementById('cancel').hidden = !editing;
+  // Save and Reset are what you do with what you have written, and they arrive
+  // together at the top of the record. The way IN is the view switcher on the
+  // editbar and the way OUT is the same switcher or Escape; neither is a button
+  // in this bar, and Reset stopped being one on 2026-08-25 (see the markup).
+  document.getElementById('reset').hidden = !editing;
   // Delete leaves while an edit is open. Two destructive-ish answers to "I am
   // done with this record" on one line is one too many, and the one that throws
   // the record away should not be a slip of the hand from the one that keeps it.
@@ -1550,55 +1585,24 @@ function showEditing(editing) {
   dispatchEvent(new CustomEvent('openproj:session', {detail: editing}));
 }
 
-// Cancel's handler — and still the one programmatic door: called on a page in
-// read mode it opens the session instead (the segments do the same through
-// `showView`), which is what the tests and the room's plumbing drive it by.
-// A second copy of what ending a session means is how two doors come to
-// disagree about the draft.
+// The one programmatic door into and out of a session: called on a page in read
+// mode it opens one, called inside a session it ends one (the segments do the
+// same through `showView`), which is what the tests and the room's plumbing
+// drive it by. A second copy of what ending a session means is how two doors
+// come to disagree.
+//
+// **It restores nothing, and it used to.** This was Cancel's handler, so ending
+// a session by pressing that button put every field back while ending one by
+// Escape or by the view switcher left them alone — the same gesture with two
+// meanings depending on which of three doors you used. Undoing is `resetEdits`
+// below and it is a button of its own now; leaving is this, and leaving keeps
+// what is in the box.
 function flipEditing() {
-  // Nothing binds this when creating — no Cancel on the page — but called
-  // anyway it would put every field back to its load-time default before
-  // `showEditing`'s guard could refuse, so the door is barred here too.
+  // Nothing binds this when creating — the create form never leaves edit mode —
+  // but called anyway it would end a session that owns the whole page, so the
+  // door is barred here too.
   if (CREATING) return;
   const editing = !document.querySelector('article.record').classList.contains('editing');
-  // The fields go back BEFORE the session is ended, and the order is the whole
-  // point. `showEditing` dispatches `openproj:session`, and what listens for the
-  // end of a session includes the hill, which has to read the status it is going
-  // to keep rather than the one that is about to be undone. Ended first, Cancel
-  // put `in_progress` back into the field and left the ball sitting on `ready`,
-  // with the picture and the value disagreeing on a page nobody was editing.
-  let undone = 0;
-  if (!editing) {
-    // Cancel puts the FIELDS back to what the server rendered. It used to put
-    // nothing back: it dropped the saved draft and left every typed value sitting
-    // in its control, so the page returned to a read view showing the old value
-    // while the commit bar went on reporting "1 unsaved change" about a change
-    // nothing on screen was holding — and the count cleared only on a reload,
-    // which is also the moment that value was silently lost. jcanton, 2026-08-22.
-    try { undone = Object.keys(changed()).length; } catch (error) { undone = 0; }
-    for (const control of CONTROLS) {
-      const was = JSON.parse(ORIGINAL[control.name]);
-      if (control.dataset.type === 'bool') control.checked = !!was;
-      else control.value = Array.isArray(was) ? was.join(', ') : (was ?? '');
-    }
-    // The fields and NOT the document, which the issue page and the note page
-    // used to put back. The difference is deliberate and is written down in
-    // `test_cancelling_a_restored_draft_keeps_the_commit_it_was_written_against`:
-    // the text stays in the box on purpose, so that a page holding work written
-    // against an older commit goes on holding it and `base_commit` is never
-    // sprung forward underneath it. A field is a discrete choice somebody can
-    // choose again in one press; a shaping document is writing, and the three worst
-    // rounds this repository has had each destroyed somebody's writing without a
-    // word.
-    //
-    // So the bar may still be up after a cancel — and when it is, it is telling
-    // the truth: there is a paragraph in the box that is not in git, and pressing
-    // Edit shows it. What it may no longer do is count a field nothing is holding.
-    //
-    // The stored draft still goes, and the base it arrived with still stays:
-    // moving that forward here would be the silent overwrite by another route.
-    forgetDraft();
-  }
   // Ending the session leaves the surface the session was in — and the line that
   // does it is not here any more. It was here, and in the issue page's toggle,
   // and in the note page's, and the fourth door out of a session had no copy:
@@ -1606,15 +1610,74 @@ function flipEditing() {
   // listener on `openproj:session` in `_VIEWS` now, which this dispatches, so
   // every door is the same door. See the comment there.
   showEditing(editing);
+}
+
+// Reset: put the record back to what the server rendered, and stay where you
+// are. jcanton, 2026-08-25 — see the button's own comment for the sentence.
+//
+// **Three things go back, and the third is the one that is easy to miss.**
+//
+// * The FIELDS. It used to be the only thing that went back, and before that
+//   nothing did: the page returned to a read view showing the old value while
+//   the commit bar went on reporting "1 unsaved change" about a change nothing
+//   on screen was holding — and the count cleared only on a reload, which is
+//   also the moment that value was silently lost. jcanton, 2026-08-22.
+// * The DOCUMENT, which Cancel deliberately did not touch. That was right for a
+//   control named Cancel — the text staying in the box is what kept a page
+//   holding work written against an older commit from losing it — and it is
+//   wrong for one named Reset, which would then be a button that leaves the
+//   longest thing on the page exactly as it was. It goes back through
+//   `SURFACE.splice` and therefore as a PERSON's edit: one undo step in either
+//   surface, and in a room an ordinary edit everybody sees rather than a
+//   document swapped out from under them.
+// * The BASE. A restored draft moves `BASE.value` back to the commit that draft
+//   was written on top of, and the box's text is what justified it. Put the
+//   server's text back and leave the older base, and the page is holding today's
+//   document against yesterday's commit — the exact mismatch the compare-and-swap
+//   exists to catch, arranged by the button that was supposed to tidy up.
+//   `BASELINE` is the commit `ORIGINAL_BODY` belongs to and is written wherever
+//   that is; see its own comment for why the attribute the server wrote is the
+//   wrong thing to restore from.
+//
+// And the draft goes, because after this there is nothing unsaved for it to
+// hold. Nothing here ends the session: the switcher and Escape do that, and both
+// already keep what is in the box.
+function resetEdits() {
+  if (CREATING) return;
+  let undone = 0;
+  try { undone = Object.keys(changed()).length; } catch (error) { undone = 0; }
+  for (const control of CONTROLS) {
+    const was = JSON.parse(ORIGINAL[control.name]);
+    if (control.dataset.type === 'bool') control.checked = !!was;
+    else control.value = Array.isArray(was) ? was.join(', ') : (was ?? '');
+  }
+  const written = SURFACE.text();
+  if (written !== ORIGINAL_BODY) {
+    undone += 1;
+    SURFACE.splice(0, written.length, ORIGINAL_BODY);
+  }
+  BASE.value = BASELINE;
+  forgetDraft();
+  // A value assigned by script fires nothing. Two announcements, because two
+  // different things are listening for two different facts: `input` on the form
+  // is what the ordinary field machinery hears (`dirty`, the gate marks, the
+  // preview), and `openproj:reverted` is "the fields were put back", which is
+  // what the hill needs — it draws a picture of the status and cannot hear a
+  // `<select>` being assigned to. Until 2026-08-25 the hill hung off the session
+  // ENDING for this, because putting the fields back and ending the session were
+  // one button; they are two now.
+  FORM.dispatchEvent(new Event('input', {bubbles: true}));
+  dispatchEvent(new Event('openproj:reverted'));
+  dirty();
   // Said out loud. Discarding is still discarding, even when what is discarded
   // is a menu choice, and a page that quietly puts a value back is a page you
   // have to re-check to trust.
-  if (undone) {
-    announce(`Edit cancelled, ${undone} change${undone === 1 ? '' : 's'} discarded`);
-  }
+  announce(undone
+    ? `Reset, ${undone} unsaved change${undone === 1 ? '' : 's'} discarded`
+    : 'Nothing to reset');
 }
 if (!CREATING) {
-  document.getElementById('cancel').onclick = flipEditing;
+  document.getElementById('reset').onclick = resetEdits;
 }
 
 // Deleting a record. Two presses and a named record between them, and every

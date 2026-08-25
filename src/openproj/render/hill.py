@@ -96,17 +96,28 @@ function attachHill(form) {
   hill.addEventListener('change', event => choose(event.target.value));
 
   // And the other direction, for when something that is not this hill sets the
-  // status. Nothing does today; Cancel is about to, once it puts back what the
-  // server rendered — it writes `ORIGINAL` into every control, and a value
-  // assigned by script fires no event for the picture to hear. Hung off the
-  // session ending rather than off Cancel, because that is the fact this cares
-  // about and there are four doors out of a session.
-  addEventListener('openproj:session', event => {
-    if (event.detail) return;                      // a session beginning, not ending
+  // status: `resetEdits` writes `ORIGINAL` into every control, and a value
+  // assigned by script fires no event for the picture to hear — so without this
+  // the ball sat on the status that had just been undone, with the drawing and
+  // the value disagreeing on a page nobody was editing.
+  //
+  // **Two events, one handler, and the second is not a duplicate of the first.**
+  // `openproj:reverted` is "the fields were put back" and is what Reset
+  // dispatches; `openproj:session` with a false detail is "the session ended",
+  // which is a different fact and used to be the only one — because until
+  // 2026-08-25 putting the fields back and ending the session were one button.
+  // They are two now, and the picture has to follow the values whichever
+  // happens.
+  const follow = () => {
     const input = stops.map(one => one.querySelector('input'))
       .find(one => one.value === value.value);
     if (input) input.checked = true;
     show(value.value);
+  };
+  addEventListener('openproj:reverted', follow);
+  addEventListener('openproj:session', event => {
+    if (event.detail) return;                      // a session beginning, not ending
+    follow();
   });
 
   // Distance in painted pixels and not in the box's own units: the box is two and

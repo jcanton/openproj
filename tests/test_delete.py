@@ -320,7 +320,7 @@ const spot = () => {
 const before = {...spot(), said: bar.textContent.trim()};
 flipEditing();
 const editing = spot();
-document.getElementById('cancel').click();
+flipEditing();
 return {before, editing, after: spot()};
 """
 
@@ -365,7 +365,7 @@ const remove = one.querySelector('.editbar button.delete');
 const before = !remove.hidden;
 flipEditing();
 const editing = !remove.hidden;
-document.getElementById('cancel').click();
+flipEditing();
 return {before, editing, after: !remove.hidden};
 """
 

@@ -10,7 +10,7 @@ from ..index import Index
 from ..model import MAX_BODY_BYTES, Record
 from .env import _fragment
 from .hill import _hill_html
-from .tokens import HISTORY_MARKS, PEOPLE_FIELDS, PRIORITIES, _human
+from .tokens import HISTORY_MARKS, PEOPLE_FIELDS, PRIORITIES, _human, _read_date
 
 # The control bar, for every view that filters something. The field list is a
 # parameter because the people page filters by role, kind and status while the
@@ -46,6 +46,14 @@ _FACETS = """
       showing — and not one of them is worth a row of its own on a page whose
       whole point is the drawing underneath. -#}
   {% if aside %}<div class="aside">{{ aside }}</div>{% endif %}
+  {#- And the far end of it, which is the same three facts on all three plan
+      views — jcanton, 2026-08-25: "these three should actually share the
+      nav+login+theme, search box+description (to each its own)+problems+N/M
+      shown, and filter rows". It rode a row of its own on the table, a corner of
+      the drawing on the graph and the key's row on the timeline, which is three
+      answers to one question and three places to look for it. See
+      `_summary_html`. -#}
+  {{ summary }}
   </div>
   <div class="facets">
   {#- A field is a button and a list of checkboxes, and not a `<select>`, because
@@ -1995,7 +2003,7 @@ function attachEditing(surface, bar) {
       //    that traps people.
       // 3. **Discarding writing: never.** The session Escape ends keeps the
       //    text in the surface and the draft in its store; putting fields back
-      //    is Cancel, a button with a name, because a key that discards writing
+      //    is Reset, a button with a name, because a key that discards writing
       //    is a key somebody presses by mistake once.
       //
       // The seam is an event on the element, the way the image button's is: this
@@ -2986,8 +2994,12 @@ def _suggestions(index: Index, linkable: bool = False) -> dict:
         "cycles": [
             {
                 "value": str(number),
+                # In the app's own format, not the files': this label is read
+                # by a person choosing a cycle from a popup, and every other
+                # date they can see beside it is `dd.mm.YYYY`.
                 "label": (
-                    f"{index.cycles[number][0]} → {index.cycles[number][1]}"
+                    f"{_read_date(index.cycles[number][0])} → "
+                    f"{_read_date(index.cycles[number][1])}"
                     if number in index.cycles
                     else "no dates"
                 ),
@@ -3015,12 +3027,95 @@ def _cycle_numbers(index: Index) -> set[int]:
 _NO_ASIDE = Markup("")
 
 
+# What is wrong with the plan, and how much of it is on screen — the far end of
+# the search box's line on all three plan views.
+#
+# **One function because it was three copies and they had already come apart.**
+# The table said "1 blocking problem on 1 record · 37 of 37 shown" in a row of
+# its own; the graph said "37 of 37 shown" in the corner of the canvas and knew
+# nothing about problems; the timeline said "37 of 37 drawn" beside its key, in a
+# fourth word for the same thing. jcanton, 2026-08-25, asked for one row on all
+# three, and one row means one spelling.
+#
+# `#context` is the graph's own extra sentence — how many nodes are faded because
+# something on screen depends on them — and it is emitted everywhere and written
+# only there. Empty is the honest state of it on the other two, and giving the
+# graph a summary of its own to hold one span is how these three came apart the
+# first time.
+_SUMMARY = """
+<div id="summary">
+  {#- Two numbers, because the count is of problems and the link filters records:
+      "3 blocking problems" opening a table of 2 rows is the exact way a count
+      stops being believed. The second number is the one the link keeps its
+      promise about. -#}
+  {#- `none` from the server, because the count is of the whole plan and not of
+      what the filters left — so on two of the three views nothing ever writes it
+      again. The table's script re-toggles it after a save, which is when a
+      record really can gain or lose a problem. Rendered rather than left to a
+      script for the same reason the numbers are: a page that is right only once
+      its JavaScript has run is a page that is wrong for a moment. -#}
+  <a id="blockers"{% if not blockers %} class="none"{% endif %}
+     href="?predicate=has_blocker"><strong id="blocker-count">{{
+    blockers }}</strong> <span id="blocker-word">blocking problem{{
+    "" if blockers == 1 else "s" }}{% if blockers %} on {{ blocked }} {{
+    "record" if blocked == 1 else "records" }}{% endif %}</span></a> ·
+  {# Both numbers are written by each view's script as well as rendered here.
+     The second used to be the table template's alone, which was true until the
+     page could add a row to the plan without reloading: creating one read
+     "18 of 17 shown", and a count that contradicts itself inside one sentence
+     is the whole of what a count is for.
+     Neither delimiter here strips the whitespace around it, unlike every other
+     comment in this file: the separator above is a lone middle dot at the end of
+     its line, and eating that newline glues it to the digit — the bar read
+     "0 blocking problems ·9". A comment must not be able to do that. #}
+  <span id="shown" class="num">{{ total }}</span> of <span
+    id="total">{{ total }}</span> shown<span id="context"></span></div>
+"""
+
+
+def _plan_blockers(index: Index) -> tuple[int, int]:
+    """How many blocking problems the plan has, and on how many records.
+
+    Plan members only, like every payload these views ship: the count links to a
+    filter over the plan, and a blocker on an issue would inflate a number whose
+    filter can never show the row — the count-versus-filter mismatch the table
+    was already fixed for once, now shared by the two views that inherited the
+    sentence.
+    """
+    blocking = [
+        problem for problem in index.problems
+        if problem.severity == "blocker" and problem.record_id in index.plan
+    ]
+    return len(blocking), len({problem.record_id for problem in blocking})
+
+
+def _summary_html(index: Index, total: int, state: bool = False) -> Markup:
+    """The count and the blocker link, for the far end of the control bar.
+
+    `total` is what this view can draw rather than what the plan holds: the graph
+    draws every planned record and the timeline draws only the ones with dates,
+    and a timeline saying "37 of 37" over eleven bars is a number about a
+    different page.
+
+    `state` is the live region a view writes a receipt into, and it is a
+    parameter because the graph and the cycle pages already have one in their
+    commit bar — two elements cannot share an id. The table has no commit bar and
+    is the one page that needs it here.
+    """
+    blockers, blocked = _plan_blockers(index)
+    said = _fragment(_SUMMARY, blockers=blockers, blocked=blocked, total=total)
+    if not state:
+        return said
+    return Markup('<span id="state" role="status"></span>') + said
+
+
 def _facets_html(
     facets: dict,
     fields: tuple[str, ...] = _PLAN_FACETS,
     search: str = "Search titles, tags, PRs, people",
     aside: Markup = _NO_ASIDE,
     titles: dict[str, str] | None = None,
+    summary: Markup = _NO_ASIDE,
 ) -> Markup:
     """The control bar, for any view that filters anything.
 
@@ -3041,10 +3136,15 @@ def _facets_html(
     on each page because the sentence a view writes about itself was a full row on
     every one of them, and a row above the drawing is the most expensive place on
     these pages to put twelve words.
+
+    `summary` rides at the very end of it — the blocker count and how much of the
+    plan is on screen, which the three plan views now say in one place and one
+    wording. See `_summary_html`; the people page and the records list pass none,
+    because neither counts problems and both draw a count of their own.
     """
     return _fragment(
         _FACETS, facets=facets, fields=fields, search=search, aside=aside,
-        titles=titles or {},
+        titles=titles or {}, summary=summary,
     )
 
 

@@ -1025,6 +1025,23 @@ dt:has(+ dd .hill) { align-self: start; }
    the other three share, so this is theirs. `#shown` was three copies of `.num`
    under a different name; it wears `.num` now. */
 #summary { color: var(--muted); font-size: 13px; margin: .5rem 0 .25rem; }
+/* Except in the control bar, where it is the far end of the search box's line
+   rather than a line of its own — the three plan views put it there on
+   2026-08-25. `margin-left: auto` is what makes it the far end; the zeros are
+   what stop it making the row taller than the box in it, the same reason
+   `.keyrow`'s children lose theirs. */
+#controls .searching #summary { margin: 0 0 0 auto; text-align: right; }
+/* The whole phrase, not the digit: "1 blocking problems" in danger red with the
+   count black beside it read as two separate facts. And the colour has to mean
+   something — at zero it is muted, because danger nobody can act on is danger
+   nobody reads.
+   In the shell since 2026-08-25, because the sentence is on three views now and
+   it was in the table's own stylesheet: the graph and the timeline drew it as an
+   ordinary blue underlined link, which is the drift a shared fragment styled by
+   one page's sheet always ends in. */
+#blockers { color: var(--sev-blocker); text-decoration: none; }
+#blockers:hover { text-decoration: underline; }
+#blockers.none { color: var(--muted); }
 #state { color: var(--muted); font-size: 12px; }
 /* One meter for the whole app: weeks bet against weeks available. It was a rule
    on the cycle page until the cycles index and then the people page needed the
@@ -1268,8 +1285,13 @@ table.tight-priority td[data-col="priority"] .chip.pri { padding: .1rem .3rem; }
 /* Both children carry their own vertical margin for the rows they used to be.
    Inside a flex row those do not collapse, so the row would be as tall as the
    two of them stacked. */
-.keyrow > .legend, .keyrow > #summary { margin: 0; }
-.keyrow > #summary { margin-left: auto; text-align: right; }
+.keyrow > .legend { margin: 0; }
+/* The SECOND key hangs off the right end — jcanton, 2026-08-25, of the
+   timeline's two: "left-aligned for status and right aligned the others". Written
+   as an adjacent sibling and not as `:last-child`, which is also the FIRST child
+   on a row that has only one key and would push a lone legend to the right edge
+   for no reason anybody asked for. */
+.keyrow > .legend + .legend { margin-left: auto; }
 /* The row a page's own controls stand in — grep `class="editbar`: the table's
    create link, the record page's Delete-and-views row in both modes, the cycle
    page's "add somebody" and its goal bar, the one row of the cycles index's
@@ -2272,11 +2294,35 @@ if (SCHEME) {
   WHO.hidden = false;
 })();
 
+// `2026-09-01` as `01.09.2026` — `_read_date`'s twin, and the second copy of a
+// format written in two languages.
+//
+// It has to be in both: the server prints the dates a page is rendered with, and
+// this one has to change as somebody picks a date, which is a thing only the
+// browser sees. `test_both_halves_of_the_app_write_a_date_the_same_way` drives
+// the two against the same strings rather than trusting them to agree.
+//
+// Anything that is not three dash-separated parts comes back untouched, which
+// covers the empty box and the em dash below.
+function readDate(iso) {
+  const parts = String(iso || '').split('-');
+  return parts.length === 3 ? `${parts[2]}.${parts[1]}.${parts[0]}` : String(iso || '');
+}
+
 // The one format that never moves. A date box is drawn by the browser in the
 // reader's locale, so the same stored 2026-09-01 reads as 01/09/2026 here and
-// 09/01/2026 one desk over, while every date the plan *prints* is ISO. The echo
-// carries the class the box carries, so it appears and disappears with it rather
-// than repeating a value that is already on screen in read mode.
+// 09/01/2026 one desk over. The echo says which day it is in the app's own
+// format — jcanton, 2026-08-25: "all dates everywhere should be as in the table:
+// dd.mm or dd.mm.YY or dd.mm.YYYY".
+//
+// **It used to echo the ISO string**, on the argument that "every date the plan
+// prints is ISO" — which was true when it was written and stopped being true the
+// day the printed dates moved to dd.mm.YYYY. An echo in a third format is a
+// second thing to read rather than an answer to the ambiguity it was written
+// for.
+//
+// The echo carries the class the box carries, so it appears and disappears with
+// it rather than repeating a value that is already on screen in read mode.
 for (const box of document.querySelectorAll('input[type=date]')) {
   // Except on the create form, where the two boxes are the only dates on screen
   // and the echo under each label reads as a second, differently-formatted copy
@@ -2286,7 +2332,7 @@ for (const box of document.querySelectorAll('input[type=date]')) {
   if (box.closest('#create')) continue;
   const echo = document.createElement('span');
   echo.className = box.classList.contains('field') ? 'iso field' : 'iso';
-  const show = () => { echo.textContent = box.value || '—'; };
+  const show = () => { echo.textContent = readDate(box.value) || '—'; };
   show();
   box.addEventListener('input', show);
   box.addEventListener('change', show);

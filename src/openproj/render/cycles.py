@@ -43,10 +43,10 @@ _CYCLE = """
   >Review deck →</a></p>{% endif %}
 {% if c.recorded %}
 <p class="meta">{{ on(c.starts_on) }} → builds until <b>{{ on(c.builds_until) }}</b>
-   → cool-down ends {{ c.ends_on }}</p>
+   → cool-down ends {{ on(c.ends_on) }}</p>
 {% else %}
 <p class="meta">No record yet{% if c.dated %} — config/cycles.yaml puts this cycle at
-   {{ c.starts_on }} → {{ c.ends_on }}{% endif %}. Nothing holds these weeks: what is
+   {{ on(c.starts_on) }} → {{ on(c.ends_on) }}{% endif %}. Nothing holds these weeks: what is
    below is the record Save would write.</p>
 {% endif %}
 
@@ -92,7 +92,7 @@ _CYCLE = """
       {% if c.assumed_review %}<span class="warnish">— assumed: this cycle names
         no review meeting</span>{% endif %}</dd>
     <dt class="derived">Cool-down ends</dt>
-    <dd class="derived">{{ c.ends_on }}
+    <dd class="derived">{{ on(c.ends_on) }}
       {% if c.assumed_end %}<span class="warnish">— assumed: the next cycle's
         betting table is what ends it, and there is no record after this
         one</span>{% endif %}</dd>
@@ -123,7 +123,7 @@ _CYCLE = """
     <td class="derived capacity">{{ '%.1f'|format(row.capacity) }} wk</td>
     <td class="derived">{{ '%.1f'|format(row.held) }} wk</td>
     <td><span class="bar"><span style="width: {{ row.percent }}%"></span></span></td>
-    <td class="derived">{{ row.until }}</td>
+    <td class="derived">{{ on(row.until) }}</td>
   </tr>
   {% endfor %}
 </tbody></table>
@@ -758,8 +758,8 @@ _CYCLES = """
   <li class="card{{ ' over' if c.over else '' }}">
     <h2>{% if per_cycle_page %}<a href="{{ links.cycle }}{{ c.number }}">Cycle {{ c.number
       }}</a>{% else %}Cycle {{ c.number }}{% endif %}</h2>
-    <p class="window">{% if c.recorded %}{{ c.starts_on }} → builds until
-      {{ c.builds_until }}{% elif c.starts_on %}{{ c.starts_on }} → {{ c.ends_on }}
+    <p class="window">{% if c.recorded %}{{ on(c.starts_on) }} → builds until
+      {{ on(c.builds_until) }}{% elif c.starts_on %}{{ on(c.starts_on) }} → {{ on(c.ends_on) }}
       {% else %}no dates{% endif %}
       · {{ c.people }} {{ 'person' if c.people == 1 else 'people' }}</p>
     {% if c.recorded %}

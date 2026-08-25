@@ -7,7 +7,7 @@ from markupsafe import Markup
 from ..index import Index
 from ..model import KINDS as KIND_LADDER
 from ..vendor import _library
-from .controls import _FILTER_JS, _facets_html
+from .controls import _FILTER_JS, _facets_html, _summary_html
 from .env import _compiled
 from .rows import _row
 from .shell import STATIC, Links, _page, _titles
@@ -162,19 +162,13 @@ _GRAPH = """
   {% endfor %}
 </ul>
 </div>
-{#- The count, over the drawing with the keys. It was in a row of its own below
-    the filters, and taking the keys out of that row left it there alone — a
-    whole line of the tallest view on the site holding "31 of 31 shown", which is
-    the exact row `test_a_sentence_about_the_view_never_costs_the_view_a_row` was
-    written to prevent. It rides with the keys instead.
-
-    UNDER the legend, not over it — jcanton, 2026-08-24: "can you move it below
-    the legend instead please? this way the legend can move a little upwards
-    into the corner." The box's `top` is fixed, so which row is against the
-    corner is decided by document order alone; count first held the legend 32px
-    down from where the box starts. -#}
-<div id="summary"><span id="shown" class="num">{{ total }}</span> of {{ total }} shown<span
-  id="context"></span></div>
+{#- **No count here.** It rode with the keys from 2026-08-20, when taking it out
+    of a row of its own was worth a corner of the canvas. jcanton, 2026-08-25,
+    asked for the three plan views to share one bar — "search box+description (to
+    each its own)+problems+N/M shown" — and once the count is in that bar,
+    a second copy over the drawing is the same number in two places. It is in
+    `#controls .searching` now, through `_summary_html`, and `#context` — the
+    sentence about how many nodes are faded — went with it. -#}
 </div>
 
   {#- `data-fills`: this is the box the shell measures the window into. A canvas
@@ -1425,17 +1419,6 @@ _GRAPH_STYLE = """
    margin goes with it; `align-items: flex-end` on `.keys` already puts every
    row on the right edge. */
 .keys .legends { margin: 0; }
-/* .15rem on top of the box's .1rem gap: measured at 1400x900, the gap alone put
-   the count 1.6px under the priority row where the legend's own rows keep 3.2px
-   between themselves — the count is a different kind of line and reads as part
-   of the priority row with LESS air than the rows keep. .25rem in all leaves the
-   legend rows the tighter pair, so the two rows stay one block and the count
-   stays a caption. The margin here is what keeps the shell's bare `#summary`
-   (`margin: .5rem 0 .25rem`, written for the pages where the count is a row of
-   its own) out of this box: `.keys #summary` is (1,1,0) over the shell's
-   (1,0,0), so this wins on specificity, not just on this sheet coming second. */
-.keys #summary { margin: .15rem 0 0; pointer-events: auto; font-size: 12px;
-                 color: var(--muted); text-align: right; }
 
 .canvas { position: relative; }
 /* The room the window actually has left, not 78vh of it. A fraction of the window
@@ -1477,7 +1460,12 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
     body = _compiled(_GRAPH).render(
         editable=base_commit is not None,
         base_commit=base_commit or "",
-        facets=_facets_html(index.facets, aside=_GRAPH_HINT, titles=_titles(index)),
+        facets=_facets_html(
+            index.facets, aside=_GRAPH_HINT, titles=_titles(index),
+            # Every planned record: this canvas draws all of them, and the
+            # filtered count is what the script writes over the top of it.
+            summary=_summary_html(index, len(index.plan)),
+        ),
         filters=_FILTER_JS,
         statuses=STATUSES,
         priorities=PRIORITIES,

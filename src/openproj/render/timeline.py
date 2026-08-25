@@ -7,7 +7,7 @@ from datetime import date
 from ..index import Index
 from ..model import RUNG, Config, days_after, size_weeks
 from ..schedule import build_end
-from .controls import _FILTER_JS, _facets_html
+from .controls import _FILTER_JS, _facets_html, _summary_html
 from .env import _compiled, _fragment
 from .rows import _row
 from .shell import STATIC, Links, _page, _titles
@@ -391,24 +391,29 @@ _TIMELINE = """
   <span class="acts"><button type="submit" class="button primary">Apply</button>
     <a class="button reset" href="{{ links.timeline }}">Reset</a></span>
 </form>
-{#- Statuses first and marks second, because they are two questions: what state
-    is this in, and how much of this bar is a guess. Every swatch is drawn from
-    the same token or the same pattern the plot uses — including the glyph, which
-    is the half of the status channel that is not colour. -#}
+{#- **One row, both keys.** Statuses lead on the left and the marks hang off the
+    right end — jcanton, 2026-08-25: "the timeline can then have its legend on one
+    line only: left-aligned for status and right aligned the others". They are two
+    questions, which is why they stay two labelled lists: what state is this in,
+    and how much of this bar is a guess. Every swatch is drawn from the same token
+    or the same pattern the plot uses — including the glyph, which is the half of
+    the status channel that is not colour.
+
+    `.keyrow` is the shell's and already meant "first item left, last item
+    right"; the count it used to push right is in the control bar now with the
+    other two views' (`_summary_html`), so what it pushes right is the second key.
+
+    `bar`, and inset by half a pixel: two of these keys are bars, so they carry
+    the stroke every bar carries — and an SVG stroke is centred on the edge, so a
+    rect filling its own viewBox would have had half of its border clipped
+    away. -#}
+<div class="keyrow">
 <ul class="legend" aria-label="What a bar's colour and mark mean">
   {% for status in statuses %}
   <li><span class="swatch st-{{ status }}" aria-hidden="true">{{ glyph(status) }}</span
     >{{ status|human }}</li>
   {% endfor %}
 </ul>
-{#- The second key and the count, on one row — the same arrangement as the graph,
-    where there is one key and it carries the count. This is the last row before
-    the plot, which is where the count of what is in the plot belongs.
-    `bar`, and inset by half a pixel: these two keys are bars, so they carry the
-    stroke every bar carries — and an SVG stroke is centred on the edge, so a
-    rect filling its own viewBox would have had half of its border clipped
-    away. -#}
-<div class="keyrow">
 <ul class="legend" aria-label="What a bar marking means">
   <li><svg class="swatch" viewBox="0 0 20 11" aria-hidden="true"
       ><rect class="bar st-ready" x=".5" y=".5" width="19" height="10"/><rect
@@ -423,9 +428,6 @@ _TIMELINE = """
   <li><span class="swatch rule boundary"></span>a cycle closes</li>
   <li><span class="swatch band"></span>a cycle, build and cooldown</li>
 </ul>
-<div id="summary"><span id="shown" class="num">{{ t.bars|length }}</span> of {{ t.bars|length }}
-  drawn{% if t.offscreen %} · {{ t.offscreen }} with no dates in this
-  window{% endif %}</div>
 </div>
 {#- `data-fills`: the box the shell measures the window into, capped rather than
     filled — a plan with three bars is three bars tall. -#}
@@ -916,6 +918,9 @@ def render_timeline(
                 _TIMELINE_HINT, t=timeline, windowed=bool(window[0] or window[1])
             ),
             titles=_titles(index),
+            # The bars this window holds, not the plan: a timeline saying
+            # "37 of 37" over eleven bars is a number about a different page.
+            summary=_summary_html(index, len(timeline["bars"])),
         ),
         filters=_FILTER_JS,
         # The rows the shared `matches()` reads, for the bars that were drawn. Not
