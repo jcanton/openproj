@@ -2216,7 +2216,7 @@ def create_app(
         return page(render.render_detail(index_now()[1], render.ROUTES))
 
     @app.get("/detail/{record_id}", response_class=HTMLResponse)
-    def detail(record_id: str, request: Request) -> HTMLResponse:
+    def detail(record_id: str, request: Request, view: str = "") -> HTMLResponse:
         commit, index = index_now()
         if record_id not in index.records:
             raise HTTPException(404, f"no record {record_id!r}")
@@ -2231,6 +2231,29 @@ def create_app(
         # five red lines in the console of a page that is working exactly as
         # designed. That is how a real error comes to be ignored.
         who = viewer(request)
+        # The slide editor is a VIEW of this record, at this record's own
+        # address — jcanton, 2026-08-25: "don't make it /slide/<id> but keep it
+        # in /detail/<id> if possible". A query and not a path segment, so a link
+        # to the slide is a link to the record and the back button behaves.
+        #
+        # A separate renderer behind one route rather than a fourth state inside
+        # `showView`: `detail.py` is three thousand lines of one page's
+        # machinery — a co-editing socket, a draft store, two editors — and a
+        # slide editor needs none of it. Anything this route does not recognise
+        # is the record page, because a mistyped query should land somebody on
+        # the page they asked for rather than on a 404 about a spelling.
+        if view == "slide":
+            return page(
+                render.render_slide_editor(
+                    index,
+                    record_id,
+                    render.ROUTES,
+                    base_commit=commit,
+                    may_write=may_write(request),
+                    editor=which_editor(request),
+                    asset=lambda name: store.read_asset(commit, f"assets/{name}"),
+                )
+            )
         return page(
             render.render_detail(
                 index,
@@ -2265,6 +2288,54 @@ def create_app(
             {
                 "html": render.preview_html(
                     str(payload.get("body") or ""), title=str(payload.get("title") or "")
+                )
+            }
+        )
+
+    @app.post("/api/slide/preview")
+    async def slide_preview(request: Request) -> JSONResponse:
+        """One record's slides, as the deck would draw them, from unsaved settings.
+
+        The same reason `/api/preview` beside it exists, one level up. A slide is
+        markdown through `_markdown`, sections chosen by `only_sections`, a
+        checklist lifted by `checklist_items` and pull requests linked by
+        `_pr_link` — five functions, none of which exists in the browser. A
+        preview drawn there would be a second renderer of a slide, in a second
+        language, agreeing with the projector only for as long as somebody kept
+        the two in step. That is precisely the failure a generated deck exists to
+        end, and reintroducing it inside the feature for editing one would be a
+        poor joke.
+
+        Renders, never writes, so it takes whatever was typed: the settings
+        arrive through the same `_as_slide` the save door uses, because a preview
+        that accepted a shape the save will refuse is a preview of something
+        nobody can keep.
+        """
+        payload = await _sent(request)
+        commit, index = index_now()
+        record_id = payload.get("record_id")
+        if not isinstance(record_id, str) or record_id not in index.records:
+            raise HTTPException(404, "no such record")
+        settings = _as_slide(payload.get("slide"))
+        # A copy carrying the unsaved settings, and the stored record untouched.
+        # `model_copy` rather than assigning through: the index is shared by every
+        # request in this process, and a preview that mutated it would show one
+        # reader's unsaved draft to everybody else's page until the next reload.
+        record = index.records[record_id].model_copy(
+            update={"slide": None if settings is None else Slide.model_validate(settings)}
+        )
+        return JSONResponse(
+            {
+                "html": str(
+                    render.slide_html(
+                        index,
+                        record,
+                        render.ROUTES,
+                        render.inlined_assets(
+                            [record.body, record.slide.body if record.slide else ""],
+                            lambda name: store.read_asset(commit, f"assets/{name}"),
+                        ),
+                    )
                 )
             }
         )

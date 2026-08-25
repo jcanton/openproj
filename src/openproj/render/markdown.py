@@ -11,6 +11,7 @@ from markdown_it.renderer import RendererHTML
 from markdown_it.rules_core import StateCore
 from markdown_it.token import Token
 from markupsafe import Markup
+from mdit_py_plugins.attrs import attrs_plugin
 from mdit_py_plugins.tasklists import tasklists_plugin
 
 from ..model import ID_PATTERN, Record, without_comments
@@ -28,11 +29,67 @@ from .shell import ROUTES, STATIC, Links
 # `AGENTS.md` gives: `mdit-py-plugins` is markdown-it-py's own companion package,
 # it costs the browser nothing at all, and a second implementation of the one
 # checkbox syntax is a second thing to keep in step with the parser under it.
+# The two attributes a figure may carry, and the only shapes their values may
+# take. An allowlist twice over: the name has to be in this map and the value has
+# to match this pattern, or the attribute is dropped.
+#
+# Written as a size rather than as free CSS. `{width=60%}` becomes
+# `style="width: 60%"`, and because the value is bounded to digits and one of
+# three units it cannot carry a `;`, a quote or a second declaration — so this is
+# an allowlist and not an escape, which is the rule this repository keeps: there
+# is no denylist of CSS spellings that is ever finished.
+#
+# Three digits, because a figure wider than 999 of anything is not a figure.
+_ATTR_SAFE = re.compile(r"\A[0-9]{1,3}(?:%|px|rem)?\Z")
+_ATTR_KEEP = ("width", "height")
+
+
+def _with_unit(value: str) -> str:
+    """A bare number means per cent, which is what a figure on a slide wants.
+
+    `{width=60}` is what somebody types, and it is the only spelling that works
+    UNQUOTED: the plugin's inline attribute syntax ends a bare value at the first
+    character that is not word-ish, so `{width=60%}` parses as no attribute at
+    all and prints as literal text. `{width="60%"}` works and is two more
+    keystrokes for the thing people will write most often.
+
+    Per cent and not pixels, because a slide is scaled: everything on it is laid
+    out in one 1280x720 space and then multiplied to fit a thumbnail, a preview
+    pane or a wall, so a width relative to the sheet is the only one that means
+    the same thing at all four sizes. `px` and `rem` are still accepted for
+    somebody who wants a figure at a fixed size, and they scale with the rest.
+    """
+    return value + "%" if value.isdigit() else value
+
+
 _MD = (
     MarkdownIt("commonmark", {"html": False})
     .enable(["table", "strikethrough"])
     .use(tasklists_plugin)
+    # `![The driver](assets/0123….png){width=60%}` — jcanton, 2026-08-25, asking
+    # for figures that can be sized and stood side by side, on a slide and in a
+    # record body alike. The pandoc/kramdown spelling rather than one invented
+    # here, because it is what somebody who writes markdown elsewhere already
+    # types and what GitHub's own renderer is closest to.
+    #
+    # **This plugin sets ARBITRARY attributes**, which on a page in a repository
+    # anybody can push to is `{onload=…}`, `{style=…}` and `{class=…}` written
+    # into the plan by hand. `html: False` above stops raw tags and says nothing
+    # about this. So the allowlist is in `_image`, on the token, before the tag
+    # exists — the same place and the same reasoning as the `assets/` check that
+    # is already there. Nothing else in this file consumes an attribute, and
+    # `_ATTR_SAFE` is what makes that a rule rather than an accident.
+    # Narrowed on BOTH of the plugin's own axes as well: `after=("image",)` so a
+    # `{…}` following a link or a code span is text rather than markup — those
+    # are the plugin's other three sites and this file overrides the renderer for
+    # none of them — and `allowed` so the plugin itself drops a name before the
+    # token exists. `_image`'s check below is the third fence and stays: two of
+    # these three are the library's, and the one that is ours is the one that
+    # cannot be changed by a version bump.
+    .use(attrs_plugin, after=("image",), allowed=_ATTR_KEEP)
 )
+
+
 _PR = re.compile(r"\b([\w.-]+/[\w.-]+)#(\d+)\b")
 
 
@@ -198,6 +255,32 @@ def _image(
     token = tokens[idx]
     source = token.attrGet("src") or ""
     links = env.get("links", STATIC)
+    # **The attribute allowlist, applied before anything renders.** `attrs_plugin`
+    # puts whatever was inside `{…}` on this token, and a plan is a repository
+    # anybody can push to — so `{onerror=alert(1)}` and `{style=position:fixed;…}`
+    # are one line of markdown away from every page that draws this record. Both
+    # halves are allowlists: the NAME must be one of two, and the VALUE must be
+    # digits and one of three units.
+    #
+    # Read off and rebuilt rather than deleted in place: `token.attrs` is the
+    # dict the renderer will use, and removing keys while walking it is the kind
+    # of thing that half-works. Everything not named here is simply not carried
+    # forward, which is the same shape as the `assets/` question below — asked as
+    # "is this one of the things we allow" and never as "is this one of the
+    # things we know to be bad".
+    size = "; ".join(
+        f"{name}: {_with_unit(str(value))}"
+        for name in _ATTR_KEEP
+        if (value := token.attrGet(name)) and _ATTR_SAFE.match(str(value))
+    )
+    token.attrs = {"src": source, "alt": token.attrGet("alt") or ""}
+    if size:
+        # A `style` and not the HTML `width` attribute, because that one is
+        # defined in pixels and a percentage there is non-conforming — browsers
+        # honour it, which is worse than refusing it: it works until one does
+        # not. The value reaching here has already been through `_ATTR_SAFE`, so
+        # it cannot carry a semicolon, a quote or a second declaration.
+        token.attrSet("style", size)
     asset = _ASSET_SRC.fullmatch(source)
     if not asset:
         alt = self.renderInlineAsText(token.children, options, env) if token.children else ""

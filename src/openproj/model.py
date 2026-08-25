@@ -924,7 +924,16 @@ class Record(BaseModel):
         draws a heading over blank paper — the exact failure `_review` was
         rewritten to stop. Absent means generated, so garbage means generated.
         """
-        return value if isinstance(value, dict) else None
+        # A `Slide` as well as a mapping, and this is not a convenience. A
+        # `mode="before"` validator sees whatever the caller passed, and
+        # `Record(slide=Slide(...))` and `record.model_copy(update={"slide":
+        # Slide(...)})` both pass the MODEL — which is not a dict, so the first
+        # version of this line turned every one of them into `None` silently.
+        # `/api/slide/preview` builds its unsaved copy exactly that way, so the
+        # preview would have drawn the stored slide while claiming to draw the
+        # typed one. Found by a test, in the fixture that built a record the
+        # obvious way.
+        return value if isinstance(value, dict | Slide) else None
 
     def state(self, records: dict[str, Record]) -> str:
         """What this record actually is — for a plan record, its written status.

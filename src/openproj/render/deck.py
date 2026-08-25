@@ -61,43 +61,11 @@ from .tokens import PRIORITY_GLYPH, STATUS_GLYPH, TEMPLATES, _priority_class, _s
 # present it already is.
 # --------------------------------------------------------------------------- #
 
-_DECK = """
-{#- Screen furniture, and the first thing `@media print` takes away: a deck is
-    printed to reach the people who were not in the room, and neither a back link
-    nor a Present button is part of it. -#}
-<p class="back deckbar"><a href="{{ links.cycle }}{{ d.number }}">\u2190 cycle {{ d.number }}</a>
-  {#- Drawn by the server and not by the script that runs it, so it is on the page
-      for a reader whose JavaScript has not arrived yet rather than appearing
-      under their cursor a moment later. `hidden` until the script claims it: a
-      control that cannot do anything is worse than one that is not there, and
-      presenting is the one thing on this page that genuinely cannot work without
-      the script. -#}
-  <button type="button" id="present" class="ghost" hidden>Present</button>
-</p>
-
-<div class="deckwrap">
-  {#- The rail. Built from the sheets beside it rather than rendered twice — see
-      `_DECK_SCRIPT`, which clones each slide into its own thumbnail. Two
-      renderings of one slide is two things to keep in step, and the thumbnail is
-      the one nobody would notice going stale. -#}
-  <nav class="rail" id="rail" aria-label="Slides in this deck" hidden>
-    <ol id="thumbs"></ol>
-  </nav>
-
-  <div class="sheets" id="sheets">
-<article class="slide title" data-id="title" data-key="title">
-  <h1>Cycle {{ d.number }}</h1>
-  <p class="lead">Review</p>
-  <p class="when">{% if d.reviews_on %}{{ on(d.reviews_on) }}{% if d.assumed_review %}
-    <span class="assumed">\u2014 assumed: this cycle names no review meeting</span>
-    {% endif %}{% else %}No review meeting recorded{% endif %}</p>
-  {#- The goal, because a review opens by saying what the cycle was for and the
-      team already wrote that down on the cycle record. The real deck's title
-      slide is bare only because its goal lived in a different tool. -#}
-  {% if d.goal %}<div class="doc goal">{{ d.goal }}</div>{% endif %}
-</article>
-
-{% for s in d.slides %}
+# One slide's markup, lifted out of the deck so that the editor's preview pane
+# renders the SAME element rather than a second copy of it that would have to be
+# kept in step. Two renderings of a slide is the two-copies-of-one-fact this
+# whole file exists to end, arriving inside the file itself.
+_ARTICLE = """
 {#- `data-id` is the record, and it is what the rail reorders by and what the
     live refresh keeps its place by. Deliberately the record id and not the
     slide's index: a deck that reloaded under a presenter would otherwise land
@@ -164,6 +132,47 @@ _DECK = """
       silently dropped half a section looks exactly like a finished one. -#}
   {% if s.note %}<p class="note">{{ s.note }}</p>{% endif %}
 </article>
+"""
+
+
+_DECK = """
+{#- Screen furniture, and the first thing `@media print` takes away: a deck is
+    printed to reach the people who were not in the room, and neither a back link
+    nor a Present button is part of it. -#}
+<p class="back deckbar"><a href="{{ links.cycle }}{{ d.number }}">\u2190 cycle {{ d.number }}</a>
+  {#- Drawn by the server and not by the script that runs it, so it is on the page
+      for a reader whose JavaScript has not arrived yet rather than appearing
+      under their cursor a moment later. `hidden` until the script claims it: a
+      control that cannot do anything is worse than one that is not there, and
+      presenting is the one thing on this page that genuinely cannot work without
+      the script. -#}
+  <button type="button" id="present" class="ghost" hidden>Present</button>
+</p>
+
+<div class="deckwrap">
+  {#- The rail. Built from the sheets beside it rather than rendered twice — see
+      `_DECK_SCRIPT`, which clones each slide into its own thumbnail. Two
+      renderings of one slide is two things to keep in step, and the thumbnail is
+      the one nobody would notice going stale. -#}
+  <nav class="rail" id="rail" aria-label="Slides in this deck" hidden>
+    <ol id="thumbs"></ol>
+  </nav>
+
+  <div class="sheets" id="sheets">
+<article class="slide title" data-id="title" data-key="title">
+  <h1>Cycle {{ d.number }}</h1>
+  <p class="lead">Review</p>
+  <p class="when">{% if d.reviews_on %}{{ on(d.reviews_on) }}{% if d.assumed_review %}
+    <span class="assumed">\u2014 assumed: this cycle names no review meeting</span>
+    {% endif %}{% else %}No review meeting recorded{% endif %}</p>
+  {#- The goal, because a review opens by saying what the cycle was for and the
+      team already wrote that down on the cycle record. The real deck's title
+      slide is bare only because its goal lived in a different tool. -#}
+  {% if d.goal %}<div class="doc goal">{{ d.goal }}</div>{% endif %}
+</article>
+
+{% for s in d.slides %}
+""" + _ARTICLE + """
 {% else %}
 {#- Empty is not broken, and it is not a failure either: this cycle exists and
     holds no work. The way out is the cycle's own page, which is where work gets
@@ -591,15 +600,14 @@ async function save() {
   if (!answer.ok) {
     // Said out loud rather than swallowed. A drag that appeared to work and did
     // not is the failure a presenter finds in front of the room.
+    // The shell's `announce`, not one of this page's own. It is declared once
+    // for every page and writes the live region a screen reader is listening
+    // to; a second one here shadowed it, said the same thing to nobody, and
+    // `test_no_page_declares_one_name_twice` caught it.
     announce('That order could not be saved. Reload and try again.');
     return;
   }
   announce(`Slide order saved, ${ids.length} slides.`);
-}
-
-function announce(said) {
-  const live = document.getElementById('said');
-  if (live) live.textContent = said;
 }
 
 THUMBS.addEventListener('dragstart', event => {
@@ -1157,6 +1165,24 @@ def slides_of(index: Index, record: Record, links: Links, assets: dict[str, str]
         }
         for at, chunk in enumerate(chunks)
     ]
+
+
+def slide_html(
+    index: Index, record: Record, links: Links, assets: dict[str, str]
+) -> Markup:
+    """One record's slides as markup, for the editor's preview pane.
+
+    The same `slides_of` and the same `_ARTICLE` the deck renders, so the pane
+    somebody approves a slide in and the projector that shows it are one
+    drawing. A preview built any other way is a second renderer, and a second
+    renderer agrees with the first exactly as long as somebody keeps it in step
+    — which is the failure the generated deck was built to end, and it would be
+    a poor joke to reintroduce it inside the feature for editing one.
+    """
+    return Markup("").join(
+        Markup(_compiled(_ARTICLE).render(s=one, links=links))
+        for one in slides_of(index, record, links, assets)
+    )
 
 
 def _deck_order(records: list[Record], listed: list[str]) -> list[Record]:

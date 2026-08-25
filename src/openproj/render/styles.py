@@ -264,6 +264,25 @@ button.mark:disabled, button.mark:disabled:hover {
   border-color: var(--line); color: var(--muted); opacity: .45;
 }
 .doc img { max-width: 100%; height: auto; }
+/* Two figures in ONE paragraph stand side by side and share the width — no
+   blank line between them, which is how markdown already says "these belong
+   together". jcanton, 2026-08-25, asking for side-by-side figures without a
+   number to type for the common case.
+
+   The paragraph is the container, so this costs no new syntax and no new
+   element: `p:has(img + img)` is a paragraph holding more than one, and the
+   `flex` on it is what divides the room. `{width=…}` still overrides, because
+   `flex: 1 1 0` yields to an explicit width — which is exactly the layering
+   somebody wants when two of three figures are equal and the third is wider.
+
+   `:has()` because the alternative is a class the author has to remember, and a
+   layout that only happens when somebody remembers is a layout that mostly does
+   not happen. Baseline in every engine since 2023; where it is not supported
+   the figures stack, which is what they did before this rule. */
+.doc p:has(img + img) {
+  display: flex; flex-wrap: wrap; gap: .6rem; align-items: flex-start;
+}
+.doc p:has(img + img) img { flex: 1 1 0; min-width: 0; }
 /* A table in a shaping document. Tables have parsed since the day `_MD` was
    given the rule, and drew as four words in a row with no lines anywhere —
    which nobody had to look at until the toolbar gained a button that writes one.
@@ -776,6 +795,29 @@ article.record h1 { font-size: 1.5rem; margin: .2rem 0; }
    loads this sheet with a commit bar that is not inside an `article.record`,
    and it keeps the shell's spacing. */
 article.record .editbar { margin-bottom: .4rem; }
+/* The way to this record's slide, between the view switcher and Delete and
+   spaced away from both — jcanton, 2026-08-25: "little space [slide] little
+   space [delete]". The gap is what says these are three separate things rather
+   than one control with five parts, which is the distinction the switcher's own
+   `border: 0` comment is about from the other side.
+
+   It wears the app's rectangle rather than the switcher's segment look, and
+   deliberately: `.views .seg` drops the border precisely BECAUSE the group draws
+   one rectangle around three segments, and a lone control outside that group
+   with no border of its own would be a word floating between two things that do
+   have one. `.seg` was on this element for one commit and was the wrong
+   borrowing.
+
+   An anchor styled as a control, so it keeps the one behaviour a button cannot
+   have: middle-click, Cmd-click and "open in new tab" all work, which is what
+   somebody comparing a record against its slide will reach for. */
+article.record .editbar .slide-view {
+  margin: 0 .75rem; padding: .3rem .6rem; vertical-align: middle;
+  border: 1px solid var(--line-strong); border-radius: 3px;
+  background: var(--surface); color: var(--muted);
+  font: inherit; line-height: 1; text-decoration: none;
+}
+article.record .editbar .slide-view:hover { color: var(--accent); }
 article.record .commitbar { margin-top: 0; }
 /* The bar's BOX is on the page before the session that fills it — jcanton,
    2026-08-24: "page elements should not move or appear/disappear when
