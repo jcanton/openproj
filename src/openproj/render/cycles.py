@@ -14,7 +14,7 @@ from .env import _compiled
 from .icons import _ICON_ART, ICONS, icon_svg
 from .markdown import _markdown
 from .shell import ROUTES, STATIC, Links, _page
-from .styles import _DETAIL_STYLE, _SUGGEST_STYLE
+from .styles import _DETAIL_STYLE, _SCROLL_STYLE, _SUGGEST_STYLE
 
 # Betting table to review meeting for a plan with nothing to copy from. Four
 # weeks is the team's cadence; every cycle written after the first one carries
@@ -1147,6 +1147,16 @@ _PEOPLE = """
     column of statuses that started at a different x for every person cannot be
     read down. The person is a group row inside it instead of a heading above a
     table of their own. -#}
+{#- The same wrapper the Records list and the Table page carry, and for the same
+    three reasons at once: the table scrolls inside it, everything above it — the
+    nav, the search, the filters, the summary — stays where it is, and the footer
+    stays at the foot of the window. This page had none, so it scrolled the whole
+    document and took all four with it. jcanton, 2026-08-25, on seeing Records
+    beside it: "people doesn't even have the nav and search pinned!"
+
+    `data-fills` is what tells the shell this is the box to give the window's
+    remaining height to; `--room` does the measuring. -#}
+<div class="table-scroll" data-fills>
 <table id="roles">
   <thead><tr><th scope="col">role</th><th scope="col">record</th><th scope="col">kind</th>
     <th scope="col">status</th><th scope="col">scheduled</th></tr></thead>
@@ -1277,6 +1287,7 @@ _PEOPLE = """
     </td></tr>
   </tbody>
 </table>
+</div>
 {{ filters }}
 <script>
 // A person whose own name matches keeps all their rows: searching for somebody is
@@ -1472,7 +1483,13 @@ if (PICK && PICKER) {
 {% endif %}
 """
 
-_PEOPLE_STYLE = """
+# `_SCROLL_STYLE` first, which is what makes the wrapper above actually a
+# scroller: `.table-scroll { overflow: auto; max-height: var(--room) }` and the
+# frozen header row live there, and this page did not inline them. The Records
+# list and the Table page both open with the same line — the class was on the
+# markup here and dressed by nothing, which is a wrapper that scrolls the
+# document instead of itself.
+_PEOPLE_STYLE = _SCROLL_STYLE + """
 .hint { max-width: 46rem; font-size: 13px; }
 #roles { border-collapse: collapse; width: 100%; max-width: 72rem; font-size: 13px; }
 #roles th, #roles td { border-bottom: 1px solid var(--line); padding: .3rem .5rem;
