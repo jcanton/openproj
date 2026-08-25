@@ -706,7 +706,10 @@ _TIMELINE_STYLE = """
                margin: .75rem 0 .25rem; }
 .tl-controls > .facet { grid-row: 1; }
 .tl-controls > input, .tl-controls > select, .tl-controls > .acts { grid-row: 2; }
-.tl-controls > .iso { grid-row: 3; }
+/* The `.iso` echo this row reserved a third grid line for is gone — see the
+   note in `shell.py`. The row keeps three lines: the third is now simply
+   empty, which costs nothing and is one rule fewer than re-deriving the
+   grid for a control that may grow an echo again. */
 .tl-controls .acts { display: flex; gap: .5rem; align-items: baseline; }
 .tl-controls input, .tl-controls select {
   display: block; font: inherit; font-size: 13px; text-transform: none; letter-spacing: 0;

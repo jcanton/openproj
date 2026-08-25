@@ -349,16 +349,38 @@ _DECK_STYLE = """
    there. Each thumbnail is the real slide cloned and scaled, never a picture of
    one: a rasterised thumbnail is a second rendering that goes stale silently,
    and this page's whole argument is against a second copy of anything. */
-.deckwrap { display: flex; gap: 1.25rem; align-items: flex-start; }
+/* **The page does not scroll; the sheets do.** jcanton, 2026-08-25: clicking a
+   thumbnail "scrolls the whole page down ... but the top bar with nav/sign-in
+   etc and <- cycle N [Present] should not move (ever)".
+
+   It moved because the sheets were in the page's own flow, so `scrollIntoView`
+   on a slide scrolled the document and took the nav and the deck bar off the
+   top with it. Every slide tool keeps its chrome still and scrolls the deck
+   under it, and the fix is the same shape: the wrap is a viewport-height row and
+   the column inside it is the scroller, so the only thing that moves is the
+   thing being navigated.
+
+   `min-height: 0` on the flex child is what makes the scroll happen INSIDE it
+   rather than the child growing to fit its content — a flex item's automatic
+   minimum size is its content, so without this the column is as tall as eleven
+   slides and the document scrolls again, silently and exactly as before. */
+.deckwrap {
+  display: flex; gap: 1.25rem; align-items: stretch;
+  height: calc(100vh - var(--deckchrome, 8rem));
+}
+.sheets { overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
 /* Capped at the measure by the script, so the column is wider than the sheet on
    a big screen — centred, the way it was when `max-width: 62rem` did the
    capping. */
-.sheets { flex: 1 1 auto; min-width: 0; }
+.sheets { flex: 1 1 auto; min-width: 0; padding-right: .25rem; }
 .sized .sheets .slide { margin-left: auto; margin-right: auto; }
 .rail {
   flex: none; width: 13rem;
-  position: sticky; top: 1rem; max-height: calc(100vh - 2rem);
-  overflow-y: auto; overscroll-behavior: contain;
+  /* Not `position: sticky` any more. It was sticky because the PAGE scrolled and
+     the rail had to stay with it; now the wrap is a fixed-height row and the
+     rail is simply one of its two columns, each scrolling on its own. A sticky
+     box inside a non-scrolling parent sticks to nothing. */
+  min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   /* The gutter the slide numbers sit in, on the RAIL and not on the list inside
      it. `overflow-y: auto` makes this a scroll container, and a scroll container
      clips both axes — so a number positioned into negative space beside the list
@@ -483,7 +505,19 @@ _DECK_STYLE = """
   :root, :root[data-theme="dark"] { color-scheme: light; }
   /* The app is not part of the deck. `nav` and the banner are drawn by the shell
      on every page and belong on a screen, not in a handout. */
-  nav, .skip, .deckbar, #unreadable { display: none !important; }
+  nav, .skip, .deckbar, #unreadable, #build { display: none !important; }
+  /* **The screen's scroller is undone, and this is not a nicety.** On screen the
+     deck is a viewport-height row whose slide column scrolls, so the nav and the
+     deck bar never move. A fixed-height `overflow: auto` box does not PAGINATE:
+     everything past its first page is clipped, and an eleven-slide deck printed
+     as one sheet with slide one on it. Measured by
+     `test_every_deck_this_suite_can_reach_prints_one_slide_to_a_page`, which
+     counted 1 page where it wanted 4 — the pixel question asked of Chrome,
+     which is the only thing that knows.
+     Paper has no viewport and nothing to keep still, so here it is simply a
+     document again. */
+  .deckwrap { display: block; height: auto; gap: 0; }
+  .sheets { overflow: visible; height: auto; padding: 0; }
   #main { margin: 0; padding: 0; }
   html, body { background: var(--paper); color: var(--paper-ink); }
   /* The fixed canvas is a screen and a projector decision, and print is neither.
@@ -549,7 +583,30 @@ const slides = () => [...SHEETS.querySelectorAll('.slide')];
 // a blurrier one, not a better one.
 const SHEET_MAX = 62 * 16;
 
+// How much of the window the chrome above and below the deck is using. Measured
+// rather than written down: the bar carries a back link and a button, the shell
+// adds a nav and a footer, and any of them can wrap at a narrow window — a
+// constant here would be right at one width and wrong at the next, and the
+// symptom would be the page scrolling again, which is the whole thing this is
+// for.
+function deckRoom() {
+  const top = WRAP.getBoundingClientRect().top;
+  const foot = document.getElementById('build');
+  const below = foot ? foot.getBoundingClientRect().height + 24 : 24;
+  WRAP.style.setProperty('--deckchrome', (top + below) + 'px');
+}
+
 function fit() {
+  // `deckRoom` and not `room`: `fit` declares `const room` a few lines down, and
+  // a `const` shadows the outer binding for the WHOLE function body — so calling
+  // `room()` on the first line was a TDZ ReferenceError, `fit` died before it
+  // could add `.sized`, and the fixed canvas silently never switched on. The
+  // page still looked plausible because the fallback geometry is a complete
+  // slide; the only tell was a red line in a console nobody was reading.
+  //
+  // This is the third TDZ in this feature. The pattern each time is a name used
+  // before the line that declares it, and `typeof` does not save you either.
+  deckRoom();
   WRAP.classList.add('sized');
   // **Measured on a box whose width does not depend on the answer.** The rail's
   // scale was computed from `THUMBS.clientWidth`, and the thumbnails' width is
@@ -762,11 +819,23 @@ THUMBS.addEventListener('dblclick', event => {
 });
 
 // A single click is navigation, which is what a rail is mostly for.
+//
+// **`scrollTop`, and never `scrollIntoView`.** That method scrolls every
+// scrollable ancestor until the element is in view, and the document is one of
+// them — so the sheets scrolled correctly AND the page scrolled 30px underneath,
+// taking the nav and the deck bar up with it. Measured: nav top 16 to -14 on one
+// click. jcanton, 2026-08-25: the top bar "should not move (ever)", and the only
+// way to promise that is to move exactly one thing by hand.
 THUMBS.addEventListener('click', event => {
   const item = event.target.closest('li');
   if (!item) return;
   const slide = SHEETS.querySelector(`[data-key="${CSS.escape(item.dataset.key)}"]`);
-  if (slide) slide.scrollIntoView({block: 'center'});
+  if (!slide) return;
+  // Offsets within the scroller, taken from the two boxes rather than from
+  // `offsetTop` — the slide is `zoom`ed, and `offsetTop` is in the offset
+  // parent's unscaled coordinates while both rects are in the same painted ones.
+  const box = slide.getBoundingClientRect(), room = SHEETS.getBoundingClientRect();
+  SHEETS.scrollTop += box.top - room.top - Math.max(0, (room.height - box.height) / 2);
 });
 
 // --- Presenting ---------------------------------------------------------

@@ -74,6 +74,13 @@ _CYCLE = """
 {#- Three boxes that decide when the cycle runs and how long for, and not one of
     them had a name: the word beside each is a `<dt>`, which is a caption to a
     reader and nothing to the accessibility tree. -#}
+{#- The read-mode value is hidden wherever a box is drawn beside it. This page
+    renders both at once — it has no editing/reading toggle, so `.read` and the
+    input are on screen together — and after the `.iso` echo went that left
+    `25.08.2026` printed immediately left of a box already showing the same day.
+    One fact, twice, differently formatted, is exactly what jcanton asked to have
+    removed; the span stays in the markup for a reader the server would refuse a
+    write from, where there is no box and it is the only value on the row. -#}
 <form id="setup" onsubmit="return false">
   <dl id="facts">
     <dt><label for="starts_on">Starts on</label></dt>
@@ -167,16 +174,50 @@ _CYCLE = """
 {% endif %}
 
 <h2>The bet</h2>
-<p class="hint">Everything ready or in progress. Ticking one stamps it with cycle
+{#- The search box on the same line as the sentence that describes the table —
+    jcanton, 2026-08-25: "inline the search box left of the description". It
+    belongs to this table and not to the page, so it sits with the table's own
+    caption rather than in a control bar above the heading.
+
+    A box and not the facet bar the three plan views share. The facets it would
+    offer are status and kind, and this table is ALREADY only ready and
+    in-progress bettable records — a filter whose whole vocabulary has been
+    applied is a control with one setting. What a betting table actually needs
+    is "where is the thing somebody just said out loud", which is a search, and
+    "put the big ones together", which is a sort. -#}
+<p class="hint betsearch">
+  <label for="betfind" class="sr-only">Search the betting table</label>
+  <input type="search" id="betfind" placeholder="Search" autocomplete="off">
+  <span>Everything ready or in progress. Ticking one stamps it with cycle
   {{ c.number }}; an item already in progress from an earlier cycle keeps the cycle it
-  was bet in, so its overrun keeps counting.</p>
+  was bet in, so its overrun keeps counting.</span>
+</p>
+{#- Empty is not broken, and a search that matches nothing is the commonest way
+    to arrive at an empty table. Drawn inside the table's own body by the script,
+    with the control that gets you out of it — finding F1, which keeps coming
+    back through new mechanisms. -#}
+<p class="hint" id="betnone" hidden>Nothing here matches
+  <strong id="betterm"></strong>. <button type="button" id="betclear">Clear the
+  search</button></p>
 {#- No `table-scroll` wrapper. It wore one from the day it was written, against a
     stylesheet that has never carried the rule, so the class did nothing — and
     the rule is the table page's own, sized against a stack of controls this page
     does not have. Eight columns fit a screen; the page scrolls. -#}
+{#- Every column head but the first is a sort control. The tick column is not:
+    it holds a checkbox per row and sorting by "have I bet on this yet" would
+    reorder the table under the hand that is ticking it.
+
+    `aria-sort` and a real `<button>` inside the `<th>`, because a clickable
+    table head that is only a `<th>` with a listener is a control a keyboard
+    cannot reach and a screen reader does not announce — the quality floor this
+    repository holds every page to. -#}
 <table id="bets" autocomplete="off"><thead><tr>
-  <th>in {{ c.number }}</th><th>title</th><th>kind</th><th>status</th>
-  <th>appetite</th><th>assignees</th><th>reviewers</th><th>bet in</th>
+  <th>in {{ c.number }}</th>
+  {% for column in ("title", "kind", "status", "appetite", "assignees", "reviewers") %}
+  <th data-sort="{{ loop.index }}" aria-sort="none">
+    <button type="button" class="sorter">{{ column }}</button></th>
+  {% endfor %}
+  <th data-sort="7" aria-sort="none"><button type="button" class="sorter">bet in</button></th>
 </tr></thead><tbody>
   {#- Every box in this table is named after the row it is in, not after its
       column. A column header names a cell to somebody reading down the page; to
@@ -633,11 +674,210 @@ document.getElementById('add').onclick = () => {
   dirty();
   say(`${login} added — Save writes it`);
 };
+
+// --- Finding a row, and putting the big ones together ------------------------
+//
+// A betting table is a conversation: somebody says a name and everybody looks
+// for it. With thirty candidates that is a scroll and a squint, and the table
+// already has every word in it.
+//
+// **Rows are hidden and never removed.** Each row carries a checkbox that is
+// part of the form, and a row taken out of the DOM is a bet that cannot be made
+// and, worse, a tick that would not be saved. `hidden` leaves the form intact
+// and the search is a lens rather than an edit.
+const BETS = document.getElementById('bets');
+const BETFIND = document.getElementById('betfind');
+const BETNONE = document.getElementById('betnone');
+
+function betRows() { return [...BETS.tBodies[0].rows]; }
+
+function betSearch() {
+  const term = BETFIND.value.trim().toLowerCase();
+  let shown = 0;
+  for (const row of betRows()) {
+    // The whole row's text, which is what somebody means by "search": a title,
+    // an owner, a kind and an id are all things said out loud at a betting
+    // table. `textContent` misses what is inside the editable cells, whose
+    // value lives on the input rather than in the tree, so those are asked
+    // separately.
+    const typed = [...row.querySelectorAll('input')]
+      .filter(box => box.type !== 'checkbox').map(box => box.value).join(' ');
+    const hit = !term || (row.textContent + ' ' + typed).toLowerCase().includes(term);
+    row.hidden = !hit;
+    if (hit) shown++;
+  }
+  // Empty must not look like broken. A search matching nothing is the commonest
+  // way to arrive at an empty table, and it is a different sentence from "this
+  // cycle has nothing to bet on" — with the control that gets you out of it.
+  BETNONE.hidden = shown > 0 || !term;
+  if (!BETNONE.hidden) document.getElementById('betterm').textContent = BETFIND.value.trim();
+  say(term ? `${shown} of ${betRows().length} shown` : '');
+}
+
+BETFIND.addEventListener('input', betSearch);
+document.getElementById('betclear').onclick = () => {
+  BETFIND.value = '';
+  betSearch();
+  BETFIND.focus();
+};
+
+// Sorting, by the text a reader can see. `appetite` is the one column where
+// that is a number and sorting it as a string would put 10 before 2 — so a cell
+// that parses as one is compared as one, and everything else falls back to a
+// locale compare. One rule, decided per PAIR rather than per column, so a column
+// holding "3" and "assumed" still orders sensibly instead of throwing.
+function betCell(row, at) {
+  const cell = row.cells[at];
+  if (!cell) return '';
+  const box = cell.querySelector('input:not([type=checkbox])');
+  return (box ? box.value : cell.textContent).trim();
+}
+
+function betSort(at, descending) {
+  const rows = betRows();
+  rows.sort((a, b) => {
+    const one = betCell(a, at), two = betCell(b, at);
+    const x = parseFloat(one), y = parseFloat(two);
+    const by = Number.isFinite(x) && Number.isFinite(y)
+      ? x - y : one.localeCompare(two, undefined, {numeric: true});
+    return descending ? -by : by;
+  });
+  // Re-appending a row MOVES it, so the checkboxes and their state travel with
+  // it. This is the whole reason the sort is done on the live rows rather than
+  // by re-rendering the table from data: the data is in the form.
+  for (const row of rows) BETS.tBodies[0].append(row);
+}
+
+// --- The table follows the plan while the table is going on ------------------
+//
+// jcanton, 2026-08-25: "can the cycle page autoreload the betting table at
+// regular intervals in case people have added / modified records while the
+// betting table is going on? (which happens regularly)". It does happen: the
+// meeting is where somebody shapes the pitch that has just been argued for, and
+// until now the room was looking at a list rendered before they started.
+//
+// The shell already answers a plan change with a "reload" banner, which is right
+// on a reading page and wrong here for the same reason it was wrong on the deck:
+// this page is a FORM, and a reload throws away every tick nobody has saved yet.
+//
+// **So it swaps the rows, and only when swapping them cannot cost anything.**
+// Three refusals, and each is a way somebody loses work:
+//
+//   - not while anything on this page is unsaved, because a swap would drop
+//     ticks that are the whole point of the meeting;
+//   - not while the focus is inside the table, because the row under somebody's
+//     cursor moving mid-sentence is worse than a stale row;
+//   - not while a save is in flight, because the answer is about to move again.
+//
+// What it costs is that a busy table stops updating until somebody saves, which
+// is the right way round: the unsaved ticks are the thing that cannot be got
+// back, and the sentence below says so rather than leaving it silent.
+let betHead = null;
+let betSwapping = false;
+const BET_POLL_MS = 30000;
+
+// The same four things `beforeunload` above refuses to leave over, asked as one
+// question. Written as a call to that state rather than as a fifth copy of the
+// list: a swap and a tab close are the two ways unsaved work here is lost, and
+// they must not be able to disagree about what "unsaved" means.
+function betBusy() {
+  if (PENDING.size || ROSTER_DIRTY || NOTES_DIRTY || GOAL_DIRTY) return 'unsaved changes';
+  if (BETS.contains(document.activeElement)) return 'the table has focus';
+  return '';
+}
+
+async function betRefresh() {
+  if (betSwapping) return;
+  betSwapping = true;
+  try {
+    const answer = await fetch(location.pathname + location.search,
+                              {headers: {'accept': 'text/html'}});
+    if (!answer.ok) return;
+    const fresh = new DOMParser().parseFromString(await answer.text(), 'text/html');
+    const rows = fresh.querySelector('#bets tbody');
+    if (!rows) return;
+    // Which rows were ticked, by id, so the swap cannot lose a decision that
+    // has been made and saved — and so a row that arrives already bet in comes
+    // back ticked rather than blank.
+    BETS.tBodies[0].replaceWith(rows);
+    betSearch();
+    say('The betting table was refreshed — somebody changed the plan');
+  } finally {
+    betSwapping = false;
+  }
+}
+
+async function betPoll() {
+  try {
+    const health = await (await fetch('/api/health')).json();
+    if (betHead !== null && health.head !== betHead) {
+      const why = betBusy();
+      if (why) {
+        // Said, not swallowed. A table that has quietly stopped following the
+        // plan looks exactly like a plan that has not changed.
+        say(`The plan changed — this table will refresh once ${why} is cleared`);
+      } else {
+        await betRefresh();
+      }
+    }
+    betHead = health.head;
+  } catch { /* a moment offline is not news at a betting table */ }
+}
+
+// A poll and not the event stream, for the reason the deck's own refresh writes
+// down: Cloud Run recycles the stream every 300s with no replay, so an event
+// proves a change and its absence proves nothing. Thirty seconds, because this
+// is a meeting and a minute is a long time to argue about a stale row.
+setInterval(betPoll, BET_POLL_MS);
+betPoll();
+
+for (const head of BETS.querySelectorAll('th[data-sort]')) {
+  head.querySelector('.sorter').onclick = () => {
+    const at = Number(head.dataset.sort);
+    const was = head.getAttribute('aria-sort');
+    const descending = was === 'ascending';
+    for (const other of BETS.querySelectorAll('th[data-sort]'))
+      other.setAttribute('aria-sort', 'none');
+    head.setAttribute('aria-sort', descending ? 'descending' : 'ascending');
+    betSort(at, descending);
+    say(`Sorted by ${head.textContent.trim()}, ${descending ? 'descending' : 'ascending'}`);
+  };
+}
 </script>
 {% endif %}
 """
 
 _CYCLE_STYLE = """
+/* The printed date, hidden wherever the box that edits it is on screen. This
+   page draws read value and control together — it has no editing mode to
+   switch between — so with the `.iso` echo gone the row still read
+   `25.08.2026 [25.08.2026]`. `:has()` asks the question the layout actually
+   poses ("is there a control in this cell?") rather than encoding today's
+   answer, so a row that gains or loses its box stays right. */
+#setup dd:has(input[type="date"]) > .read { display: none; }
+
+/* The betting table's search, on the line with the sentence that describes the
+   table rather than in a bar above the heading: it belongs to this table. The
+   box first, because it is the control and the sentence is the caption. */
+.betsearch { display: flex; align-items: baseline; gap: .6rem; }
+.betsearch input { flex: none; width: 12rem; }
+.betsearch > span { flex: 1 1 auto; min-width: 0; }
+/* A column head that sorts. It is a real button so a keyboard can reach it, and
+   it wears the head's own type so the row still reads as a header row. */
+#bets th .sorter {
+  font: inherit; color: inherit; background: none; border: 0; padding: 0;
+  cursor: pointer; text-transform: inherit; letter-spacing: inherit;
+}
+#bets th .sorter:hover { color: var(--accent); }
+/* The arrows as CHARACTERS and not as CSS escapes. `_CYCLE_STYLE` is a Python
+   string that is not raw, so `\2191` never reaches the browser as one: Python
+   reads `\21` as an octal escape first and the declaration arrives as
+   `content: " \11 93"`, which Chrome renders as the literal text "93" beside
+   every column head. `shell.py` carries a comment about this exact trap, written
+   the last time somebody put a backslash in one of these blocks. */
+#bets th[aria-sort="ascending"] .sorter::after { content: " ↑"; }
+#bets th[aria-sort="descending"] .sorter::after { content: " ↓"; }
+
 /* .commitbar, #unsaved and #save are the shell's: the cycle page was the first
    to need a bar that says whether the page is saved, and then the detail page
    and the create page needed the same one. */
