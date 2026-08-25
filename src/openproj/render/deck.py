@@ -160,7 +160,7 @@ _DECK = """
   </span>
 </p>
 
-<div class="deckwrap">
+<div class="deckwrap" data-fills>
   {#- The rail. Built from the sheets beside it rather than rendered twice — see
       `_DECK_SCRIPT`, which clones each slide into its own thumbnail. Two
       renderings of one slide is two things to keep in step, and the thumbnail is
@@ -383,7 +383,24 @@ _DECK_STYLE = """
    slides and the document scrolls again, silently and exactly as before. */
 .deckwrap {
   display: flex; gap: 1.25rem; align-items: stretch;
-  height: calc(100vh - var(--deckchrome, 8rem));
+  /* `--room` and not a `100vh` sum of its own. The shell already measures how
+     much window is left for the one box on a page that fills it — from the
+     box's top to the BODY's bottom, so everything below it, the footer and its
+     margins included, is measured rather than enumerated. It also re-measures
+     until the answer stops moving, which matters here: giving this box its
+     height can take the page's scrollbar away, and on a platform whose
+     scrollbar has width that changes the answer it was just given.
+     `data-fills` on the element below is how a page says which box that is.
+
+     This computed its own `calc(100vh - top - footerHeight - 24)`, and it was
+     wrong by the footer's MARGINS — `getBoundingClientRect()` reports a border
+     box and the footer carries 40px above and 16px below. Measured on the
+     deployed deck: `scrollHeight` 1402 against a 1322 window, so the page had a
+     scrollbar of its own purely to reach the footer, beside the sheet column's.
+     jcanton, 2026-08-25, on that exact pair. Every hand-counted stack in this
+     file has been wrong at least once; the shell's comment on `--room` says so
+     about the two it replaced. */
+  height: var(--room);
 }
 .sheets { overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
 /* Capped at the measure by the script, so the column is wider than the sheet on
@@ -392,7 +409,32 @@ _DECK_STYLE = """
 .sheets { flex: 1 1 auto; min-width: 0; padding-right: .25rem; }
 .sized .sheets .slide { margin-left: auto; margin-right: auto; }
 .rail {
+  /* **`display: block`, and it has to be said.** This is a `<nav>`, and the
+     shell flexes every `nav` for the row of links at the top of the page — so
+     the list inside it was a flex ITEM, whose base size is its content. It
+     shrink-wrapped to whatever the thumbnails already were and never grew with
+     the column: dragging the rail from 229px to 420px left `#thumbs` at 181px,
+     so `fit()` measured the same number it had before and the thumbnails stayed
+     the size they were, in a wider column. jcanton, 2026-08-25: "if I make the
+     column larger the thumbnails should always fit the column width and become
+     larger too".
+
+     `border-box` for the same family of reason: the width the drag writes is
+     the width the reader sees the column at, not that number plus the gutter
+     the slide numbers live in. The two disagreed by 20.8px, which is a drag
+     that lands somewhere other than where it was let go. */
+  display: block; box-sizing: border-box;
   flex: none; width: var(--railwidth, 13rem);
+  /* The scrollbar's room, reserved whether or not it is there. Without it the
+     measurement chases itself: `fit()` reads the content width, sizes the
+     thumbnails to it, the taller column brings a vertical scrollbar in, the
+     content width drops by its width — and the thumbnails it just sized now
+     overflow by exactly that, which is a horizontal scrollbar under a column
+     that had none a frame ago. Measured on the double-click reset, which is the
+     one gesture that goes from a scrollbar-less rail to a scrollbarred one in a
+     single step. A stable gutter makes `clientWidth` a constant the layout
+     cannot move. */
+  scrollbar-gutter: stable;
   /* Not `position: sticky` any more. It was sticky because the PAGE scrolled and
      the rail had to stay with it; now the wrap is a fixed-height row and the
      rail is simply one of its two columns, each scrolling on its own. A sticky
@@ -631,30 +673,7 @@ const PANE_BORDER = 2;
 let ZOOM = 1;
 const ZOOM_MIN = 0.4, ZOOM_MAX = 4;
 
-// How much of the window the chrome above and below the deck is using. Measured
-// rather than written down: the bar carries a back link and a button, the shell
-// adds a nav and a footer, and any of them can wrap at a narrow window — a
-// constant here would be right at one width and wrong at the next, and the
-// symptom would be the page scrolling again, which is the whole thing this is
-// for.
-function deckRoom() {
-  const top = WRAP.getBoundingClientRect().top;
-  const foot = document.getElementById('build');
-  const below = foot ? foot.getBoundingClientRect().height + 24 : 24;
-  WRAP.style.setProperty('--deckchrome', (top + below) + 'px');
-}
-
 function fit() {
-  // `deckRoom` and not `room`: `fit` declares `const room` a few lines down, and
-  // a `const` shadows the outer binding for the WHOLE function body — so calling
-  // `room()` on the first line was a TDZ ReferenceError, `fit` died before it
-  // could add `.sized`, and the fixed canvas silently never switched on. The
-  // page still looked plausible because the fallback geometry is a complete
-  // slide; the only tell was a red line in a console nobody was reading.
-  //
-  // This is the third TDZ in this feature. The pattern each time is a name used
-  // before the line that declares it, and `typeof` does not save you either.
-  deckRoom();
   WRAP.classList.add('sized');
   // **Measured on a box whose width does not depend on the answer.** The rail's
   // scale was computed from `THUMBS.clientWidth`, and the thumbnails' width is
@@ -1115,6 +1134,10 @@ RAILGRIP.hidden = false;
 railed();
 watch();
 addEventListener('resize', fit);
+// The shell re-measures `--room` on its own schedule — on load, on resize, and
+// again until it settles. The slides are scaled against the box that number
+// sizes, so they have to be re-scaled when it moves.
+addEventListener('openproj:room', fit);
 // Fonts land after the first layout and change every wrap on the page, so a
 // `spills` mark computed before they arrive is computed against the wrong
 // drawing. The one thing on this page that is measured has to be measured after
