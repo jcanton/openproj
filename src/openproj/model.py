@@ -423,6 +423,17 @@ class Person(BaseModel):
         return value if value is None else str(value)
 
 
+# What a repository may be called. The allowlist `Config.repositories` is judged
+# by — see the validator there for why this is not a denylist.
+#
+# **Each segment must START with a letter or a digit**, which is the half that is
+# not decoration: `[\w.-]+` alone matches `..`, so `../..` is a legal name by that
+# rule and `https://api.github.com/repos/../../x/pulls` is a request to an
+# endpoint nobody wrote down. GitHub's own names start with an alphanumeric or an
+# underscore, so nothing real is refused by tightening it.
+_REPOSITORY = re.compile(r"[A-Za-z0-9][\w.-]*/[A-Za-z0-9][\w.-]*")
+
+
 class Config(BaseModel):
     """Repository-wide planning configuration.
 
@@ -443,6 +454,14 @@ class Config(BaseModel):
     # the right default: a tracker that refuses a name because nobody has written
     # a roster yet is a tracker nobody finishes setting up.
     known_people: list[str] = []
+    # The repositories this plan's work happens in, as `owner/repo`, from
+    # config/defaults.yaml. Empty is the ordinary state and means one thing only:
+    # the pull-request completion offers what the corpus already cites and asks
+    # nothing of the network. Named here rather than in this tool's source
+    # because they are a fact about the PLAN — jcanton, 2026-08-25, asking
+    # whether icon4py's and gt4py's open pull requests could be offered — and
+    # openproj is not the icon4py team's tool alone.
+    repositories: list[str] = []
     # Keyed by cycle number. Loaded from `cycles/*.md`, not from a config file.
     plans: dict[int, Cycle] = {}
     # Keyed by login. Loaded from `people/*.md`, and deliberately not from the
@@ -450,6 +469,32 @@ class Config(BaseModel):
     # is who the team says is on it. Neither answers the other's question, and a
     # login in one and not the other is the normal state of both.
     people: dict[str, Person] = {}
+
+    @field_validator("repositories")
+    @classmethod
+    def _repositories_are_owner_and_repo(cls, given: list[str]) -> list[str]:
+        """`owner/repo`, and nothing else.
+
+        **An allowlist, and it has to be**: this value ends up in a URL path on
+        api.github.com. A `..` or a `?` or a second slash in it is a request to
+        an endpoint nobody wrote down, and `AGENTS.md` records what a denylist of
+        URL spellings is worth. The two segments are exactly what GitHub allows
+        in a name — letters, digits, dot, dash, underscore — so anything else is
+        a typo or an attempt, and both are refused the same way.
+
+        Refused rather than filtered, which is the bargain every other config
+        value already has: the file is dropped and NAMED in the banner, where a
+        silent skip would leave somebody looking at a completion that offers
+        nothing and no reason anywhere on the page.
+        """
+        for name in given:
+            if not _REPOSITORY.fullmatch(name):
+                raise ValueError(
+                    f"repositories: {name!r} is not an owner/repo — two segments of "
+                    "letters, digits, dots, dashes and underscores, like "
+                    "'C2SM/icon4py'"
+                )
+        return given
 
     def with_people(self, people: list[Person]) -> Config:
         """Carried on the config for the same reason cycles are: nothing

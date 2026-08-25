@@ -3785,7 +3785,7 @@ def render_table(
             summary=_summary_html(index, len(payload["rows"]), state=True),
         ),
         filters=_FILTER_JS,
-        combobox=_combobox_html(index),
+        combobox=_combobox_html(index, live=base_commit is not None),
     )
     return _page(
         "openproj — table", body, _TABLE_STYLE + _SUGGEST_STYLE, links, "table",

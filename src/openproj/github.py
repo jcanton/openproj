@@ -77,6 +77,17 @@ def app_jwt(app_id: str, private_key_pem: str, now: float | None = None) -> str:
     return (signing_input + b"." + _b64(signature)).decode()
 
 
+# What one call asks for, and it is one call. A completion offers eight rows and
+# filters as somebody types, so the hundred most recently updated open pull
+# requests is already a wider net than it needs — and following `Link` headers is
+# a request count nobody predicted against a rate limit somebody else shares.
+_PULLS_QUERY = {"state": "open", "per_page": 100, "sort": "updated", "direction": "desc"}
+# Long enough that a burst of typing is one call and short enough that a pull
+# request opened during a betting table turns up in it — jcanton, 2026-08-25: "we
+# can even reduce the call frequency to every 5 minutes".
+PULLS_TTL_SECONDS = 300
+
+
 @dataclass
 class GitHubApp:
     """Mints and holds one installation token, hands out git credentials, and
@@ -146,6 +157,16 @@ class GitHubApp:
         be the one call that still quietly reaches the network."""
         return httpx.Client(transport=self.transport, timeout=10.0)
 
+    def api_headers(self) -> dict[str, str]:
+        """The headers an authenticated call to the API sends, token included.
+
+        Public because `open_pull_requests` below is not a method: it works with
+        no App at all, and reaching into `_headers` from outside the class would
+        be a second site deciding what an API call looks like — which is exactly
+        what `_headers` exists to stop.
+        """
+        return self._headers(self.token())
+
     def _headers(self, bearer: str) -> dict[str, str]:
         """The API headers, once: minting sends the App JWT, everything after
         sends the installation token, and the other two headers must not drift
@@ -203,3 +224,67 @@ class GitHubApp:
         return pygit2.RemoteCallbacks(
             credentials=pygit2.UserPass("x-access-token", self.token())
         )
+
+
+def open_pull_requests(
+    repository: str,
+    app: GitHubApp | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> list[dict[str, object]]:
+    """Every open pull request in one repository, most recently updated first.
+
+    `[{"number": 1403, "title": "..."}]` and nothing else off the answer: the
+    completion needs the number nobody can remember and the title that finds it,
+    and every other field GitHub sends is bytes on a page and something to keep
+    in step.
+
+    **Authenticated when it can be, anonymous when it cannot, and the fallback is
+    not a nicety.** The App's installation is `repository_selection: selected` on
+    the PLAN repository — that narrowness is the whole argument for using an App
+    at all (see this module's docstring) — so a token minted for it is refused by
+    `C2SM/icon4py` unless somebody has installed the App there too. Asking with
+    the token first and falling back on a refusal means both deployments work:
+    the one where the App has been installed on the code repositories gets 5,000
+    requests an hour and private repositories, and the one where it has not gets
+    the 60-an-hour anonymous limit against public ones. Which it took is not
+    reported, because nothing on the page would do anything differently.
+
+    The double call costs one extra request per repository per cache period, and
+    only where the token is refused. `PULLS_TTL_SECONDS` is what makes that a
+    number rather than a per-keystroke tax.
+
+    Raises on a refusal from both, and the CALLER decides what that means — see
+    `web.py`'s route, which answers with what the corpus already cites, because a
+    completion that is briefly narrower is a completion and a 502 is not.
+    """
+    # An explicit one wins, then the App's — which already documents itself as
+    # "an httpx transport a test can answer from without a socket". Two names for
+    # one seam would be two ways for a test to think it had stubbed the network.
+    reach = transport if transport is not None else getattr(app, "transport", None)
+
+    def ask(headers: dict[str, str]) -> httpx.Response:
+        with httpx.Client(transport=reach, timeout=10.0) as client:
+            return client.get(
+                f"{_API}/repos/{repository}/pulls", headers=headers, params=_PULLS_QUERY
+            )
+
+    anonymous = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    response = None
+    if app is not None:
+        response = ask(app.api_headers())
+        # Refused because this App cannot see this repository, which is the
+        # ordinary state of an installation scoped to the plan. Any other
+        # refusal — a rate limit, a 500 — is not something a second identical
+        # request improves.
+        if response.status_code in (401, 403, 404):
+            response = None
+    if response is None:
+        response = ask(anonymous)
+    response.raise_for_status()
+    return [
+        {"number": int(one["number"]), "title": str(one.get("title") or "")}
+        for one in response.json()
+    ]
