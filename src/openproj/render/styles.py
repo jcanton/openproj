@@ -839,7 +839,12 @@ article.record .editbar { margin-bottom: .4rem; }
    drew a word floating between two bordered things. */
 .editbar .slide-view {
   display: inline-flex; align-items: center; vertical-align: middle;
-  margin: 0 .75rem; padding: .3rem .55rem;
+  /* The gap is on the RIGHT only, because the control sits left of the trio
+     now and Delete has its own margin on the other side. `0 .75rem 0 0` and not
+     a symmetric margin: a left margin here would indent the whole row from the
+     page's edge, where the switcher used to start and where the title below it
+     still does. */
+  margin: 0 .75rem 0 0; padding: .3rem .55rem;
   border: 1px solid var(--line-strong); border-radius: 3px;
   background: var(--surface); color: var(--muted);
   line-height: 0; text-decoration: none;

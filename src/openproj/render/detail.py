@@ -919,7 +919,16 @@ _DETAIL = """
 
       Absent while creating, because a record that does not exist yet is bet
       into no cycle and appears on no deck. -#}
-  <p class="editbar">{{ viewbar }}{% if not creating %}{{ slidebar }}
+  {#- Slide FIRST, then the three views, then Delete — jcanton, 2026-08-25: "move
+      the slide play button/icon to the left of the trio with edit/side-by-side/
+      preview? keep the small space between the play button and the trio."
+
+      It reads better this way round and the reason is worth keeping: the row now
+      goes from the thing furthest from the document (the slide it makes) to the
+      document itself, and then to the one control that destroys it. Delete stays
+      last on its own merits, which the comment below still gives. -#}
+  <p class="editbar">{% if not creating %}{{ slidebar }}{% endif %}{{ viewbar }}{%
+    if not creating %}
     <button type="button" class="delete">Delete</button>{% endif %}</p>
   {% endif %}
   {#- Save, Reset and the count of what is unsaved, directly under the button

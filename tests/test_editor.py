@@ -4233,10 +4233,21 @@ const HEADER = ['.back', '.editbar', '#commitbar', '.eyebrow',
 // began. `#views` is the segmented control's own box, which starts where the
 // nav starts; `#view-edit` starts one pixel in, on `#views`'s border.
 const SWITCHER = ['#views', '#view-edit', '#view-both', '#preview'];
+// Whichever control the row actually begins with, asked of the DOM rather than
+// named. It was `#views` and is the Slide button since the play icon moved to
+// the left of the trio; the property the test is about — the controls begin
+// where the nav begins — is the same either way, and a selector written down
+// here would have to be edited every time one of them moves.
 const header = () => ({
   nav: box('body > nav'),
   ...Object.fromEntries(HEADER.map(sel => [sel, box(sel)])),
   ...Object.fromEntries(SWITCHER.map(sel => [sel, box(sel)])),
+  'editbar-first': (el => {
+    const first = el && el.firstElementChild;
+    const r = first.getBoundingClientRect();
+    return {top: Math.round(r.top), height: Math.round(r.height),
+            left: Math.round(r.left), width: Math.round(r.width)};
+  })(document.querySelector('.editbar')),
   facts: (({top, left}) => ({top, left}))(box('.panes > .facts')),
 });
 const landing = header();
@@ -4324,16 +4335,22 @@ def test_opening_a_session_moves_nothing_above_the_document(
                 f"in the {view} view {name} is not the page's width beside the "
                 f"nav: {spot} against {nav}"
             )
-        # The switcher is three buttons and not a full-width row, so only its
-        # left edge is the nav's. `#views` is the box the segments are drawn
-        # inside; asking `#view-edit` for the same number would be asking for
-        # x=21, which is `#views`'s 1px border and not a measurement of
-        # anything. `landing == writing` and the split loop above already say
-        # the segments do not move; this says where they do not move FROM.
-        views = got[view]["#views"]
-        assert views["left"] == nav["left"], (
-            f"in the {view} view the switcher does not start where the nav "
-            f"starts: {views} against {nav}"
+        # The controls are a handful of buttons and not a full-width row, so
+        # only the leftmost one's edge is the nav's. That control is the SLIDE
+        # button since 2026-08-25 — jcanton: "move the slide play button/icon to
+        # the left of the trio with edit/side-by-side/preview" — and it was the
+        # switcher before it. What the sentence behind this test asks for is that
+        # the row of controls begins where the nav begins, so the assertion
+        # follows whichever control begins it rather than naming one.
+        #
+        # Read off the bar rather than listed here, so moving a control within
+        # the row is a change to the markup and not to a test: a list written
+        # down is a list that goes stale, and going stale here means asserting
+        # the alignment of something that is no longer first.
+        edge = got[view]["editbar-first"]
+        assert edge["left"] == nav["left"], (
+            f"in the {view} view the controls do not start where the nav "
+            f"starts: {edge} against {nav}"
         )
 
 

@@ -3019,10 +3019,29 @@ headers.forEach((th, i) => {
     // stopping propagation here is not enough — the sort handler checks this.
     dragging = true;
     grip.classList.add('dragging');
-    // Freeze every column first, or resizing one reflows all the others.
+    // Freeze every column at the width it is DRAWN AT, or resizing one reflows
+    // all the others.
+    //
+    // **Measured, never `WIDTHS[key] ||`.** That is the defect jcanton found on
+    // 2026-08-25: "it starts full width when loading the page, but grabbing any
+    // of the column resize drag handles resizes it weirdly (I believe to laptop
+    // screen width)". He was right about the cause as well as the symptom.
+    //
+    // `refit` applies `scaledWidths(room)` to the DOM — stored widths are a
+    // decision about PROPORTION and are re-scaled to whatever window you are in,
+    // which is why the table opens correctly on any screen. But it applies them
+    // without writing them back, so `WIDTHS` still holds the pixel numbers from
+    // the window they were dragged in. The old line read that stale number
+    // because it was truthy, and the first `applyWidths()` of the drag snapped
+    // every column back to the laptop it came from — the whole table jumping the
+    // instant a handle was touched, before the pointer had moved at all.
+    //
+    // A drag is a decision about the layout in front of the person making it, so
+    // it starts from what is on the screen. The stored numbers keep their job:
+    // they are what `scaledWidths` re-proportions on the next load.
     headers.forEach(other => {
-      const key = keyOf(other);
-      WIDTHS[key] = WIDTHS[key] || Math.round(other.getBoundingClientRect().width);
+      if (other.offsetParent === null) return;   // a column this width has shed
+      WIDTHS[keyOf(other)] = Math.round(other.getBoundingClientRect().width);
     });
     table.style.tableLayout = 'fixed';
     const key = keyOf(th);
