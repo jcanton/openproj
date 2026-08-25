@@ -1300,13 +1300,23 @@ function column(article) { return article.querySelector('.panes'); }
 
 function place() {
   const article = shown();
-  // And not in the split view, whose width handle is the splitter. The grip
-  // sets `--measure` as the column's own width, and in the split the column is
-  // one measure plus one body wide — so a grip on that edge would move it twice
-  // the drag and land the measure somewhere nobody chose. Two handles that both
-  // change widths on one screen is the confusion `#splitter`'s comment already
-  // refuses; one of them is on the page at a time.
-  grip.hidden = !article || article.classList.contains('view-both');
+  // **On the page in every view, the split included.** It was hidden there, on
+  // the argument that the grip sets `--measure` as the column's own width while
+  // the split's column is one measure plus one body wide, "so a grip on that
+  // edge would move it twice the drag and land the measure somewhere nobody
+  // chose".
+  //
+  // The arithmetic was the whole objection and it is answered below: the drag
+  // converts the pointer's movement through the same factor the stylesheet
+  // widens the column by, so a hundred pixels of pointer is a hundred pixels of
+  // column in every view. jcanton, 2026-08-25: "I can only resize the edit pane
+  // wrt the preview pane but not all together, can we have it back?"
+  //
+  // The two handles do different things and are not the confusion the old note
+  // feared: `#splitter` moves the boundary BETWEEN the two panes and this one
+  // moves the outside edge of both. That is the pair every editor with a split
+  // has.
+  grip.hidden = !article;
   if (!grip.hidden) grip.style.left = column(article).getBoundingClientRect().right + 'px';
 }
 place();
@@ -1336,7 +1346,17 @@ grip.onpointerdown = event => {
     const article = shown();
     if (!article) return;
     const box = article.getBoundingClientRect();
-    const width = Math.max(320, e.clientX - box.left);
+    // What the reader is dragging is the column's right edge, and in the split
+    // view the column is `2 * --measure - 21rem` wide. Rather than invert that
+    // — which would put the stylesheet's `21rem` in a second file — the drag
+    // moves `--measure` by the pointer's delta DIVIDED by however many measures
+    // the column is made of. One number, read off the view the script already
+    // branches on, and the `21rem` never has to be known here at all.
+    const per = article.classList.contains('view-both') ? 2 : 1;
+    const column_ = column(article).getBoundingClientRect();
+    const now = parseFloat(getComputedStyle(root).getPropertyValue('--measure'));
+    const wanted = Math.max(320, e.clientX - box.left);
+    const width = Math.max(320, now + (wanted - column_.width) / per);
     root.style.setProperty('--measure', width + 'px');
     place();
     // The one control whose entire job is to change the width of the box has to

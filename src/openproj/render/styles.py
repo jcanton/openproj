@@ -516,7 +516,7 @@ button.stat.pick:hover { color: var(--accent); }
    everything above it. Which way the cascade resolves: `article.record.view-both
    .panes` is (0,3,0) against the base `.panes` at (0,1,0), so the split wins on
    weight and not on the order the two are written in. */
-article.record.view-both .panes { width: calc(2 * var(--measure, 64rem) - 21rem); }
+article.record.view-both .panes { width: calc(2 * var(--measure) - 21rem); }
 /* Both panes at one height, and it is the height the box already has: the box
    is `min-height: var(--writing)` on the ordinary page, the split pins it
    there — `resize: none`, because a box dragged taller than the pane beside it
@@ -705,6 +705,14 @@ _DETAIL_STYLE = """
    at automatic width already fills its container and cannot exceed it, and an
    inert declaration is the next reader's wasted hour — the same trap the
    `min-width: 0` note above is written about. */
+/* The reading measure, declared rather than left to a `var()` fallback.
+   Every `var(--measure, 64rem)` in this file was the default written again, and
+   the width grip could not read the effective value at all — an unset custom
+   property answers the empty string, so a drag that began before anything had
+   set it had no number to work from. Declared here it is one default, and
+   `getComputedStyle(root)` always returns it. */
+:root { --measure: 64rem; }
+
 article.record {
   margin: 0 0 3rem; position: relative;
   /* One writing height. The box, Ace's box and the split view's rendered pane
@@ -752,7 +760,7 @@ article.record {
    and not a media query, because the width that decides this is the column's,
    which the reader sets with the grip — not the window's. */
 .panes {
-  width: var(--measure, 64rem); max-width: 100%; margin-inline: 0;
+  width: var(--measure); max-width: 100%; margin-inline: 0;
   container-type: inline-size;
   display: grid; gap: 0 2.5rem;
   /* Both of these used to be inside the query below and neither may stay there,
@@ -1104,7 +1112,7 @@ textarea.body-field { min-height: var(--writing, 60vh); resize: vertical; }
    `test_the_promotion_bar_keeps_the_column_it_sits_under` makes, which is of the
    two left edges against each other and not of either one against the page, so
    it holds whichever way the pair is aligned. */
-#promote { width: var(--measure, 64rem); max-width: 100%; margin-inline: 0;
+#promote { width: var(--measure); max-width: 100%; margin-inline: 0;
            display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap;
            border-top: 1px solid var(--line); margin-top: 1.5rem; padding-top: 1rem; }
 .record.editing #promote { display: none; }

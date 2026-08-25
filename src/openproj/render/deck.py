@@ -139,38 +139,19 @@ _DECK = """
 {#- Screen furniture, and the first thing `@media print` takes away: a deck is
     printed to reach the people who were not in the room, and neither a back link
     nor a Present button is part of it. -#}
-<p class="back deckbar"><a href="{{ links.cycle }}{{ d.number }}">\u2190 cycle {{ d.number }}</a>
-  {#- Drawn by the server and not by the script that runs it, so it is on the page
-      for a reader whose JavaScript has not arrived yet rather than appearing
-      under their cursor a moment later. `hidden` until the script claims it: a
-      control that cannot do anything is worse than one that is not there, and
-      presenting is the one thing on this page that genuinely cannot work without
-      the script. -#}
+<p class="back deckbar"><a href="{{ links.cycle }}{{ d.number }}">← cycle {{ d.number }}</a></p>
+{#- The controls on a line of their own, under the way back — jcanton,
+    2026-08-25: "I'd like the buttons for present a zoom to be on a newline,
+    below <- cycle N". A back link and a verb are two different kinds of thing
+    and were sharing a row because the row was there. -#}
+<p class="deckbar deckacts">
+  {#- Drawn by the server and not by the script that runs it, so it is on the
+      page for a reader whose JavaScript has not arrived yet rather than
+      appearing under their cursor a moment later. `hidden` until the script
+      claims it: a control that cannot do anything is worse than one that is not
+      there, and presenting is the one thing here that genuinely cannot work
+      without the script. -#}
   <button type="button" id="present" class="ghost" hidden>Present</button>
-  {#- Zoom, for reading a slide at the desk rather than presenting it. Buttons as
-      well as the gesture, because `ctrl` and a wheel is a thing you have to
-      already know and a trackpad pinch arrives as the same event — jcanton,
-      2026-08-25: "either with +- buttons or with mouse gestures like ctrl+scroll
-      or pinch". The readout is a control too: pressing it is the way back to
-      fitting the column. -#}
-  <span class="zoomer" id="zoomer" hidden>
-    <button type="button" id="zoomout" aria-label="Smaller">−</button>
-    <button type="button" id="zoomfit" title="Fit the column">100%</button>
-    <button type="button" id="zoomin" aria-label="Larger">+</button>
-    {#- Fit the slide to the whole column, which is a different thing from 100%
-        and worth its own control: 100% is "as wide as the deck is MEANT to be",
-        capped at the 62rem measure a slide has always had, and this is "use the
-        window I actually have". On a wide screen the first leaves margins the
-        second fills.
-
-        A double-headed arrow, which is what every tool that has this button
-        draws — jcanton, 2026-08-25, asked for it by that shape. Text and not an
-        SVG for the same reason `PRIORITY_GLYPH` is text: it is one character, it
-        arrives in the control's own ink, and it is the same drawing on every
-        machine. -#}
-    <button type="button" id="zoomwide" aria-label="Fit the slide to the column"
-            title="Fit to width">↔</button>
-  </span>
 </p>
 
 <div class="deckwrap" data-fills>
@@ -188,7 +169,22 @@ _DECK = """
   <div class="railgrip" id="railgrip" role="separator" tabindex="0"
        aria-orientation="vertical" aria-label="Resize the slide list" hidden></div>
 
-  <div class="sheets" id="sheets">
+  {#- The slide column: a toolbar and the slides under it, as a column of its
+      own. The zoom sat in the page's top bar, immediately right of Present and
+      immediately ABOVE the rail — jcanton: "the zoom controls where they are
+      right now may appear to affect the thumbnails instead of the slides
+      themselves. can we move them to the slide pane?" A control belongs over the
+      thing it changes, and every reading of a toolbar's position is a claim
+      about scope. -#}
+  <div class="sheetcol">
+    <p class="zoomer" id="zoomer" hidden>
+      <button type="button" id="zoomout" aria-label="Smaller">−</button>
+      <button type="button" id="zoomfit" title="Fit the column">100%</button>
+      <button type="button" id="zoomin" aria-label="Larger">+</button>
+      <button type="button" id="zoomwide" aria-label="Fit the slide to the column"
+              title="Fit to width">↔</button>
+    </p>
+    <div class="sheets" id="sheets">
 <article class="slide title" data-id="title" data-key="title">
   <h1>Cycle {{ d.number }}</h1>
   <p class="lead">Review</p>
@@ -215,6 +211,7 @@ _DECK = """
      and it will have a slide here.</p>
 </article>
 {% endfor %}
+    </div>
   </div>
 </div>
 """
@@ -394,6 +391,7 @@ _DECK_STYLE = """
    rather than the child growing to fit its content — a flex item's automatic
    minimum size is its content, so without this the column is as tall as eleven
    slides and the document scrolls again, silently and exactly as before. */
+.deckacts { margin: 0 0 .5rem; }
 .deckwrap {
   display: flex; gap: 1.25rem; align-items: stretch;
   /* `--room` and not a `100vh` sum of its own. The shell already measures how
@@ -415,11 +413,29 @@ _DECK_STYLE = """
      about the two it replaced. */
   height: var(--room);
 }
-.sheets { overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
+/* The slide column is now a column of its own: a toolbar that stays put and the
+   scroller under it. `min-height: 0` on both, for the reason the wrap above
+   carries — a flex item's automatic minimum is its content, and without it the
+   slides make the column as tall as eleven of them and the document scrolls. */
+.sheetcol {
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+}
 /* Capped at the measure by the script, so the column is wider than the sheet on
    a big screen — centred, the way it was when `max-width: 62rem` did the
    capping. */
-.sheets { flex: 1 1 auto; min-width: 0; padding-right: .25rem; }
+.sheets {
+  flex: 1 1 auto; min-width: 0; min-height: 0; padding-right: .25rem;
+  /* Vertically only, and that is a statement of intent rather than a patch: a
+     slide is SCALED to the width of this column, so there is never anything to
+     scroll sideways to. Saying so also settles a phantom — a `zoom`ed element's
+     scroll area is computed in its unzoomed coordinates and rounded, so Chrome
+     reported `scrollWidth` three pixels past `clientWidth` with no element
+     overflowing at all (checked: every descendant inside the box, none past its
+     right edge). A scrollbar for three pixels that do not exist is still a
+     scrollbar across the deck. */
+  overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
+}
 .sized .sheets .slide { margin-left: auto; margin-right: auto; }
 .rail {
   /* **`display: block`, and it has to be said.** This is a `<nav>`, and the
@@ -533,7 +549,13 @@ _DECK_STYLE = """
 }
 /* Zoom, beside the Present button. Not part of the deck: `@media print` and the
    presenting rules both take `.deckbar` away, and this is inside it. */
-.zoomer { display: inline-flex; align-items: center; gap: .15rem; margin-left: .75rem; }
+/* Over the slides it scales, at the far edge of that column so it does not read
+   as a label on the first slide. It sat in the page's top bar, directly above
+   the rail, which read as a control over the THUMBNAILS. */
+.zoomer {
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: .15rem; flex: none; margin: 0 0 .4rem;
+}
 .zoomer button {
   font: inherit; font-size: 12px; color: var(--muted); background: none;
   border: 1px solid var(--line); border-radius: 3px; padding: .1rem .4rem;
@@ -566,6 +588,7 @@ _DECK_STYLE = """
    second route rendering the same slides would be the second copy this file
    argues against on every other line. */
 :root.presenting body > nav, :root.presenting .deckbar,
+:root.presenting .zoomer,
 :root.presenting .rail, :root.presenting #unreadable,
 :root.presenting body > a.skip { display: none !important; }
 :root.presenting, :root.presenting body { background: #000; overflow: hidden; }
@@ -701,7 +724,13 @@ function fit() {
   // `RAIL` is `width: 13rem; flex: none`, so its width is a stylesheet fact and
   // not a consequence of what is inside it. `clientWidth` less the padding is
   // the room a thumbnail actually has.
-  const room = Math.min(SHEETS.clientWidth, SHEET_MAX) * ZOOM;
+  // A pixel off the width, for the reason `--room` gives a pixel back on the
+  // height: `zoom` scales a 1280px box by a fraction and the product does not
+  // land on a whole pixel, so a slide sized to EXACTLY the column comes out a
+  // sub-pixel wider than it and the column grows a horizontal scrollbar with
+  // nothing to scroll to. Measured here: a 965px column, a 965px slide, and
+  // `scrollWidth` one greater than `clientWidth`.
+  const room = Math.min(SHEETS.clientWidth - 1, SHEET_MAX) * ZOOM;
   if (room > 0) SHEETS.style.setProperty('--fit', String(room / SLIDE_W));
   // **The thumbnail fits the rail, borders and scrollbar and all.** It was
   // `clientWidth` less the rail's own padding, which forgot the 1px border each
