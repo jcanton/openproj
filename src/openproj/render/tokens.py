@@ -468,7 +468,12 @@ def _ago(epoch: int, now: int) -> str:
     """
     gone = now - epoch
     if gone < 0 or gone >= _ABSOLUTE_AFTER:
-        return datetime.fromtimestamp(epoch, tz=UTC).date().isoformat()
+        # Through `_read_date`, because this is a date a reader reads and the
+        # app has one way of writing one — jcanton, 2026-08-25: "all dates
+        # everywhere should be as in the table: dd.mm or dd.mm.YY or
+        # dd.mm.YYYY". ISO is what a file holds and what an `<input type=date>`
+        # is given; it is not what a sentence says.
+        return _read_date(datetime.fromtimestamp(epoch, tz=UTC).date().isoformat())
     if gone < 60:
         return "just now"
     if gone < 3600:

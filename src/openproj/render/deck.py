@@ -67,7 +67,7 @@ _DECK = """
 <article class="slide title">
   <h1>Cycle {{ d.number }}</h1>
   <p class="lead">Review</p>
-  <p class="when">{% if d.reviews_on %}{{ d.reviews_on }}{% if d.assumed_review %}
+  <p class="when">{% if d.reviews_on %}{{ on(d.reviews_on) }}{% if d.assumed_review %}
     <span class="assumed">— assumed: this cycle names no review meeting</span>
     {% endif %}{% else %}No review meeting recorded{% endif %}</p>
   {#- The goal, because a review opens by saying what the cycle was for and the

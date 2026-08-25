@@ -549,39 +549,97 @@ def test_the_legend_is_two_rows_and_the_keys_line_up(rendered: Path, tmp_path: P
     assert len(set(priority["ys"])) == 1 and len(set(status["ys"])) == 1
 
 
-def test_the_legend_leads_the_corner_and_the_count_hangs_under_it(rendered: Path):
+def test_the_corner_of_the_graph_holds_the_legend_and_nothing_else(rendered: Path):
     """jcanton, 2026-08-24: "move it below the legend instead please? this way
-    the legend can move a little upwards into the corner." `.keys` is a column
-    pinned by its `top`, so which row touches the corner is decided by document
-    order and nothing else — the count led for four days and held the legend
-    32px down from where the box starts.
+    the legend can move a little upwards into the corner." Then, 2026-08-25, the
+    count left the drawing altogether — the three plan views share one bar now,
+    and a count over the canvas as well would be the same number in two places.
 
-    Order is a fact about the document, so it is read off the parsed document:
-    a substring search for `id="summary"` against `class="legends"` would also
+    So what this asserts is what is left: the legend is the first thing in the
+    corner box, and the corner box holds nothing but the legend. Read off the
+    parsed document because order and containment are facts about a document: a
+    substring search for `id="summary"` against `class="legends"` would also
     match either name inside the stylesheet's own comments, which is how
-    `page.index("<h1>")` found a heading inside a CSS comment once already.
-    The pixels this order buys are measured where pixels live, in
+    `page.index("<h1>")` found a heading inside a CSS comment once already. The
+    pixels this buys are measured where pixels live, in
     `test_the_two_key_rows_are_one_length_and_sit_on_the_drawing`
-    (`test_graph_layout.py`)."""
+    (`test_graph_layout.py`).
+    """
     parsed = elements(read(rendered, "graph.html"))
     keys = next(i for i, el in enumerate(parsed)
                 if el.tag == "div" and el.attrs.get("class") == "keys")
     legends = next(i for i, el in enumerate(parsed)
                    if el.tag == "div" and el.attrs.get("class") == "legends")
-    summary = next(i for i, el in enumerate(parsed) if el.attrs.get("id") == "summary")
-    assert keys < legends < summary, (
-        "inside .keys the legend leads and the count follows: "
-        f"keys at {keys}, legends at {legends}, summary at {summary}"
+    assert legends == keys + 1, (
+        f"the legend is not the first thing in the corner: keys at {keys}, "
+        f"legends at {legends}"
     )
-    # The count is still the last thing in the corner box, not moved out of it:
-    # the next element after it is past the `</div>`s, and the first one is the
-    # canvas the box floats over.
-    after = next(el for el in parsed[summary + 1 :] if el.tag not in ("span",))
-    assert after.attrs.get("id") == "cy", after
-    # And the two spans the script writes by id ride inside it still — the move
-    # must not strand `getElementById('shown')` or `('context')`.
-    inside = {el.attrs.get("id") for el in parsed[summary + 1 : summary + 3]}
-    assert inside == {"shown", "context"}, inside
+    # The count is in the control bar, which is above the canvas rather than in
+    # it — so between the corner box and the canvas there is nothing left.
+    canvas = next(i for i, el in enumerate(parsed) if el.attrs.get("id") == "cy")
+    summary = next(i for i, el in enumerate(parsed) if el.attrs.get("id") == "summary")
+    assert summary < keys, (
+        "the count is still inside the corner box, so the graph says how much is "
+        "on screen twice"
+    )
+    # And every element the script writes by id went with it — the move must not
+    # strand `getElementById('shown')`, `('context')` or the blocker link's two
+    # halves somewhere the graph's own script cannot find them.
+    moved = [el.attrs.get("id") for el in parsed[summary : summary + 7]]
+    for name in ("shown", "context", "blockers", "blocker-count", "blocker-word"):
+        assert name in moved, f"{name} did not move with the count: {moved}"
+    assert keys < canvas, "the corner box is drawn after the canvas it floats over"
+
+
+def test_both_halves_of_the_app_write_a_date_the_same_way(seed_index: Index):
+    """One format, in two languages, driven against the same strings.
+
+    jcanton, 2026-08-25: "all dates everywhere should be as in the table: dd.mm
+    or dd.mm.YY or dd.mm.YYYY". The server prints the dates a page is rendered
+    with (`_read_date`, the `on()` global); the browser has to write one too,
+    because the echo beside a date box changes as somebody picks a date and that
+    is a thing only the browser sees. Two copies of one rule is this
+    repository's characteristic failure — "the invariant is written in two
+    languages, which copy is guarded" — so both are asked the same questions
+    here rather than being trusted to agree.
+
+    The odd inputs are the ones that decide it. An empty box is what an unset
+    date is, the em dash is what a table cell with no date holds, and a value
+    that is not three parts is a hand-edited file: none of the three may come
+    back rearranged or crash a page.
+    """
+    from test_injection import run_js
+
+    from openproj.render import render_detail
+    from openproj.render.tokens import _read_date
+
+    asked = ["2026-09-01", "2026-12-31", "2027-01-02", "", "—", "not-a-date",
+             "2026-09", "2026-09-01-02"]
+    # A record page rather than the table: `readDate` is the shell's and is on
+    # every page, and the table's own script reaches for a box the node shim has
+    # no layout for, which would put an unrelated error in the way of this one.
+    answer = run_js(
+        render_detail(
+            seed_index, ROUTES, base_commit="deadbee",
+            only=sorted(seed_index.plan)[0], may_write=True, signed_in="ann",
+            editor="plain",
+        ),
+        "(" + json.dumps(asked) + ").map(readDate)",
+        page=True,
+    )
+    assert not answer["errors"], answer["errors"]
+    assert answer["value"] == [_read_date(one) for one in asked], (
+        f"the two halves disagree: {answer['value']} against "
+        f"{[_read_date(one) for one in asked]}"
+    )
+    # And it is the format, not merely agreement: two functions that both
+    # answered ISO would pass the line above.
+    assert _read_date("2026-09-01") == "01.09.2026"
+    # `not-a-date` comes back as `date.a.not` from both, which is silly and is
+    # the honest consequence of "three dash-separated parts is a date": nothing
+    # here validates, both halves are wrong in the same way, and the alternative
+    # is a second date parser in two languages. It is asserted so that a future
+    # reader meets the decision rather than the surprise.
 
 
 def test_a_group_name_is_readable_inside_its_own_box(rendered: Path):
@@ -2992,15 +3050,24 @@ def test_the_header_spans_the_page_and_the_facts_sit_beside_the_document(rendere
     assert "candidate.getClientRects().length > 0" in body
 
 
-def test_every_page_echoes_the_iso_value_of_a_date_box(rendered: Path):
-    """Every date the plan prints is ISO and every `<input type=date>` is drawn in
-    the reader's locale, so one desk edits 2026-09-01 as 01/09/2026 and the next
-    as 09/01/2026. The box keeps its locale; the stored value is echoed beside
-    it."""
+def test_every_page_says_which_day_a_date_box_holds(rendered: Path):
+    """An `<input type=date>` is drawn in the reader's locale, so one desk edits
+    the same stored day as 01/09/2026 and the next as 09/01/2026. The box keeps
+    its locale; the echo beside it says which day that is in the app's own
+    format.
+
+    It echoed the ISO string until 2026-08-25, on the argument that "every date
+    the plan prints is ISO" — true when it was written, and false once the
+    printed dates moved to `dd.mm.YYYY`. An echo in a third format is a second
+    thing to read rather than an answer to the ambiguity it exists for.
+    `test_both_halves_of_the_app_write_a_date_the_same_way` is what holds the
+    browser's copy of that format to the server's.
+    """
     for name in PAGES:
         body = read(rendered, name)
         assert "document.querySelectorAll('input[type=date]')" in body, name
         assert ".iso { display: block;" in body, name
+        assert "echo.textContent = readDate(box.value)" in body, name
 
 
 # --- cycles -----------------------------------------------------------------

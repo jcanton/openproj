@@ -337,10 +337,10 @@ def test_an_issue_renders_on_the_shared_record_page(
     assert "Blocks</dt>" not in page
     hovered = client.get(f"/api/body/{issue_id}")
     assert hovered.status_code == 200, "the hover card reads records, not the plan"
-    # The commitbar arrives with the shared page. Cancel now means what it
-    # means everywhere on this page — the text stays in the box and the stored
-    # draft is forgotten — a DELIBERATE change from the old restore-the-body.
-    assert 'id="save"' in page and 'id="cancel"' in page
+    # The commitbar arrives with the shared page, and so does what it holds:
+    # Save, and Reset — which since 2026-08-25 puts the record back and stays
+    # where it is, rather than being a Cancel that also closed the editor.
+    assert 'id="save"' in page and 'id="reset"' in page
 
 
 def test_the_create_form_offers_an_issue_no_plan_status(client: TestClient):

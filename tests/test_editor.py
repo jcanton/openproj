@@ -243,14 +243,16 @@ def test_the_second_editor_is_inlined_checksummed_and_named(client: TestClient):
     assert "No editor library" not in note.split("## What is deliberately not here")[1]
 
 
-def test_the_way_in_is_at_the_top_and_the_two_ways_out_are_together(page: str):
+def test_the_way_in_is_at_the_top_and_what_you_do_with_it_is_beside_it(page: str):
     """All three in one place, at the top — jcanton, 2026-08-20.
 
     They were split: Edit at the head of the record and Save and Cancel in a
     sticky bar at its foot. Both halves were argued for and both arguments were
     about reachability, which the stickiness had already settled — what the split
-    actually decided was that the three controls which begin, end and abandon one
-    edit were in two places, a shaping document apart.
+    actually decided was that the control which begins an edit and the ones which
+    commit or undo it were in two places, a shaping document apart. (Cancel became
+    Reset on 2026-08-25 and stopped being a way out at all; the ways out are the
+    view switcher on the same row and Escape.)
 
     Still sticky, so it is still reachable from the bottom of a long record; stuck
     to the top, which is where it now is. `bottom: auto` matters as much as `top`:
@@ -293,7 +295,9 @@ def test_the_bar_says_how_much_is_unsaved(page: str):
     assert ".commitbar.dirty { border-color: var(--warn); }" in page
 
 
-def test_reset_puts_the_record_back_and_stays_in_the_editor(page: str, tmp_path: Path):
+def test_reset_puts_the_record_back_and_stays_in_the_editor(
+    client: TestClient, tmp_path: Path
+):
     """Reset undoes, and it is the only thing it does.
 
     jcanton, 2026-08-25: "the 'Cancel' button exits editing and goes to preview,
@@ -314,10 +318,13 @@ def test_reset_puts_the_record_back_and_stays_in_the_editor(page: str, tmp_path:
     commit that has to go with it.
 
     Asked of the browser rather than of the source, because what went wrong was a
-    value left in a box and a box is a thing only a browser has.
+    value left in a box and a box is a thing only a browser has — and of the
+    PLAIN box, because this one types into the document as well as into a field,
+    and on Ace the `<textarea>` is a hidden element nothing reads.
     """
+    plain = client.get(f"/detail/{TASK}{PLAIN}").text
     found = measured_in(
-        chrome(), page, tmp_path / "reset.html", 1100,
+        chrome(), plain, tmp_path / "reset.html", 1100,
         """
         const bar = document.getElementById('commitbar');
         const owner = document.querySelector('[name=owner]');
@@ -397,7 +404,9 @@ def test_reset_puts_the_base_back_with_the_text(client: TestClient):
         "(() => {"
         "  const base = () => document.querySelector('[name=base_commit]').value;"
         "  const restored = base();"
-        "  document.getElementById('reset').click();"
+        # `resetEdits()` and not a click: the shim has no `click()` on an
+        # element, and what is under test is what the handler does.
+        "  resetEdits();"
         "  return {restored, after: base(),"
         "          body: document.querySelector('[name=body]').value}; })()",
         page=True,
@@ -459,13 +468,16 @@ def test_the_status_a_row_is_set_to_says_what_it_will_be_refused_without(page: s
     assert "control.name === 'reviewers' && waived" in page
 
 
-def test_a_date_box_says_what_it_will_store(page: str):
-    """`assigned_on` is printed 2026-07-06 in the read view and drawn 07/06/2026 or
-    06/07/2026 in the control that edits it, depending on where the reader is
-    sitting. The echo is the value the file gets."""
+def test_a_date_box_says_which_day_it_holds(page: str):
+    """`assigned_on` is printed 06.07.2026 in the read view and drawn 07/06/2026
+    or 06/07/2026 in the control that edits it, depending on where the reader is
+    sitting. The echo says which of the two it is, in the format the read view
+    used — jcanton, 2026-08-25: "all dates everywhere should be as in the
+    table"."""
     assert 'type="date"' in control(page, "assigned_on")
     assert "document.querySelectorAll('input[type=date]')" in page
     assert "echo.className = box.classList.contains('field') ? 'iso field' : 'iso'" in page
+    assert "echo.textContent = readDate(box.value)" in page
 
 
 def test_the_facts_read_as_a_column_beside_the_document(page: str):
@@ -4721,7 +4733,8 @@ const held = () => {
   return raw === null ? null : JSON.parse(raw).text;
 };
 const receipt = () => document.getElementById('draftsaved').textContent;
-const type = what => { area.value = what; area.dispatchEvent(new Event('input')); };
+const type = what => { area.value = what;
+  area.dispatchEvent(new Event('input', {bubbles: true})); };
 flipEditing();
 localStorage.removeItem(key);
 
@@ -4790,7 +4803,7 @@ def test_a_throttled_draft_is_still_written_before_the_tab_can_be_closed(
         "the throttled write was never flushed, so the last thing typed before "
         "the tab closed is gone"
     )
-    assert got["after"]["held"] is None, "cancelling left the draft in storage"
+    assert got["after"]["held"] is None, "resetting left the draft in storage"
     assert got["after"]["receipt"] == "", (
         f"the receipt still claims a draft that no longer exists: "
         f"{got['after']['receipt']!r}"

@@ -671,7 +671,9 @@ def test_resetting_an_edit_rolls_the_ball_back(index: Index, tmp_path: Path) -> 
     assert found["after"] == found["before"], "the ball stayed where the undone edit put it"
     assert found["checked"] == was, "the stop the keyboard is on is not the one the field holds"
     assert found["klass"] == f"hill-ball hill-{was}"
-    assert found["unsaved"] == "Nothing to save"
+    # Still editing, because Reset does not leave — so the bar says the sentence
+    # a session with nothing in it says, not the one a page nobody is editing says.
+    assert found["unsaved"] == "Nothing changed yet"
 
 
 # ---------------------------------------------------------------------------

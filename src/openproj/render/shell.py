@@ -2294,11 +2294,35 @@ if (SCHEME) {
   WHO.hidden = false;
 })();
 
+// `2026-09-01` as `01.09.2026` — `_read_date`'s twin, and the second copy of a
+// format written in two languages.
+//
+// It has to be in both: the server prints the dates a page is rendered with, and
+// this one has to change as somebody picks a date, which is a thing only the
+// browser sees. `test_both_halves_of_the_app_write_a_date_the_same_way` drives
+// the two against the same strings rather than trusting them to agree.
+//
+// Anything that is not three dash-separated parts comes back untouched, which
+// covers the empty box and the em dash below.
+function readDate(iso) {
+  const parts = String(iso || '').split('-');
+  return parts.length === 3 ? `${parts[2]}.${parts[1]}.${parts[0]}` : String(iso || '');
+}
+
 // The one format that never moves. A date box is drawn by the browser in the
 // reader's locale, so the same stored 2026-09-01 reads as 01/09/2026 here and
-// 09/01/2026 one desk over, while every date the plan *prints* is ISO. The echo
-// carries the class the box carries, so it appears and disappears with it rather
-// than repeating a value that is already on screen in read mode.
+// 09/01/2026 one desk over. The echo says which day it is in the app's own
+// format — jcanton, 2026-08-25: "all dates everywhere should be as in the table:
+// dd.mm or dd.mm.YY or dd.mm.YYYY".
+//
+// **It used to echo the ISO string**, on the argument that "every date the plan
+// prints is ISO" — which was true when it was written and stopped being true the
+// day the printed dates moved to dd.mm.YYYY. An echo in a third format is a
+// second thing to read rather than an answer to the ambiguity it was written
+// for.
+//
+// The echo carries the class the box carries, so it appears and disappears with
+// it rather than repeating a value that is already on screen in read mode.
 for (const box of document.querySelectorAll('input[type=date]')) {
   // Except on the create form, where the two boxes are the only dates on screen
   // and the echo under each label reads as a second, differently-formatted copy
@@ -2308,7 +2332,7 @@ for (const box of document.querySelectorAll('input[type=date]')) {
   if (box.closest('#create')) continue;
   const echo = document.createElement('span');
   echo.className = box.classList.contains('field') ? 'iso field' : 'iso';
-  const show = () => { echo.textContent = box.value || '—'; };
+  const show = () => { echo.textContent = readDate(box.value) || '—'; };
   show();
   box.addEventListener('input', show);
   box.addEventListener('change', show);

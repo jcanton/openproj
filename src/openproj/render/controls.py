@@ -10,7 +10,7 @@ from ..index import Index
 from ..model import MAX_BODY_BYTES, Record
 from .env import _fragment
 from .hill import _hill_html
-from .tokens import HISTORY_MARKS, PEOPLE_FIELDS, PRIORITIES, _human
+from .tokens import HISTORY_MARKS, PEOPLE_FIELDS, PRIORITIES, _human, _read_date
 
 # The control bar, for every view that filters something. The field list is a
 # parameter because the people page filters by role, kind and status while the
@@ -2994,8 +2994,12 @@ def _suggestions(index: Index, linkable: bool = False) -> dict:
         "cycles": [
             {
                 "value": str(number),
+                # In the app's own format, not the files': this label is read
+                # by a person choosing a cycle from a popup, and every other
+                # date they can see beside it is `dd.mm.YYYY`.
                 "label": (
-                    f"{index.cycles[number][0]} → {index.cycles[number][1]}"
+                    f"{_read_date(index.cycles[number][0])} → "
+                    f"{_read_date(index.cycles[number][1])}"
                     if number in index.cycles
                     else "no dates"
                 ),

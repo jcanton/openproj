@@ -2330,8 +2330,14 @@ def test_the_blocking_count_is_a_link_that_pluralises_and_mutes_at_zero(page: st
     It links at the predicate that means exactly what it counts, so the rows you
     land on are the rows the number counted.
     """
-    assert re.search(r'<a id="blockers" href="\?predicate=has_blocker"', page)
+    assert re.search(r'<a id="blockers"[^>]*href="\?predicate=has_blocker"', page, re.S)
     assert re.search(r'id="blocker-count">\d+<', page), "the count is the element's own text"
+    # Muted from the SERVER as well as from the script, since the fragment is
+    # shared with two views whose scripts never write this: a page that is right
+    # only once its JavaScript has run is a page that is wrong for a moment.
+    assert re.search(r'<a id="blockers" class="none"', page), (
+        "this corpus has no blocking problem and the link is not muted"
+    )
 
     body = script(page)
     assert "blocking problem${BLOCKERS === 1 ? '' : 's'}" in body
