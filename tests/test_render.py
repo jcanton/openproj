@@ -19,6 +19,7 @@ from openproj.index import Index, build_index
 from openproj.model import Config, load_repo
 from openproj.render import (
     ROUTES,
+    STATIC,
     STATUS_GLYPH,
     STATUSES,
     preview_html,
@@ -2715,6 +2716,55 @@ def test_the_preview_shows_the_same_two_syntaxes_the_page_will(seed_index: Index
 
     assert [e.attrs.get("class") for e in drawn if e.tag == "ul"] == ["contains-task-list"]
     assert ("s", "Dropped") in [(e.tag, e.text) for e in drawn]
+
+
+_LINKED = """A pitch worth reading: [Port the transport](pitch-000001).
+
+And [the docs](https://example.com/a), [a sibling](./notes.md), [an anchor](#top),
+[a fragment](task-abc123#progress) and `[not a link](task-abc123)` in a code span.
+"""
+
+
+def test_a_link_to_a_record_points_at_that_record_s_page(seed_index: Index):
+    """jcanton, 2026-08-25: "I'd like to have links to other records in the body
+    of a record".
+
+    `[Title](pitch-000001)` is what a person types, and it is a relative link to
+    nothing in git and on GitHub — which is the trade this takes deliberately, so
+    that the plan's own files do not carry this tool's URL shape. The prefix is
+    the renderer's, exactly as an asset's is: `/detail/<id>` where there is a
+    server and `detail.html#<id>` in the export, one renderer drawing both.
+
+    The four hrefs beside it are the allowlist said out loud. A record id with a
+    fragment glued on is somebody meaning an anchor and not a record, and the
+    code span is markdown-it's own guarantee rather than this rule's — a
+    `code_inline` token is never walked at all — which is why it is here: the PR
+    rule was written over finished HTML once and turned exactly this into a link.
+    """
+    served = {
+        (e.text, e.attrs.get("href")) for e in elements(preview_html(_LINKED))
+        if e.tag == "a"
+    }
+    assert ("Port the transport", "/detail/pitch-000001") in served, served
+    # Untouched, every one of them.
+    assert ("the docs", "https://example.com/a") in served
+    assert ("a sibling", "./notes.md") in served
+    assert ("an anchor", "#top") in served
+    assert ("a fragment", "task-abc123#progress") in served
+    assert not [href for _, href in served if href and href.endswith("#progress")
+                and href.startswith("/detail/")], served
+    # And the code span is text, not a link.
+    assert "not a link" not in {text for text, _ in served}, served
+
+    # The same document in the export, where the record page is a fragment of one
+    # file. Only the prefix differs, which is the whole claim.
+    exported = {
+        (e.text, e.attrs.get("href"))
+        for e in elements(preview_html(_LINKED, STATIC))
+        if e.tag == "a"
+    }
+    assert ("Port the transport", "detail.html#pitch-000001") in exported, exported
+    assert ("the docs", "https://example.com/a") in exported
 
 
 def test_a_rendered_block_carries_the_source_line_it_came_from(seed_index: Index):
