@@ -525,7 +525,7 @@ function aceSurface(area, seeded) {
 
     // --- completing a link to another record ---------------------------------
     //
-    // Two members, one caller — `attachRecordLinks` in the shared block — and
+    // Two members, one caller — `attachBodyCompletion` in the shared block — and
     // they are Ace's alone. jcanton, 2026-08-25, asked for the completion in
     // "only ace editor", and the first of them is why that is the sensible
     // half: a textarea can only answer "where is the caret drawn" through the

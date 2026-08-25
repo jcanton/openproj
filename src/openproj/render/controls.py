@@ -2419,17 +2419,30 @@ function attachSuggest(input) {
 }
 
 
-// --- linking one record from another's document -----------------------------
+// --- completing a reference inside a document -------------------------------
 //
 // jcanton, 2026-08-25: "I'd like to have links to other records in the body of a
 // record, with autofill functioning when adding the link, possibly as
 // [some_doc_tit]() autofilling the title as the handle and the record id as
-// url?" — which is exactly what this does: the popup completes on the TITLE,
-// because that is the half a person knows, and the id it writes into the target
-// is the half nobody remembers. The rendering half is `_link` in `markdown.py`.
+// url?" — and then, of pull requests, "ideally both in the PRs field as well as
+// in the body". The field has completed a PR reference since `_suggestions` was
+// written; the body completed nothing at all.
 //
-// **Ace only**, by his answer when asked. The plain box carries no `caretBox`,
-// so `attachRecordLinks` returns without drawing anything there.
+// So: one popup, two things it completes, and each is recognised by the shape of
+// what is being typed rather than by a mode anybody has to be in.
+//
+//   `[Port`        → the records it could point at, completing on the TITLE,
+//                    because that is the half a person knows. Accepting writes
+//                    `[Title](pitch-0c0001)` — the id is the half nobody
+//                    remembers. `_link` in `markdown.py` is what makes that a
+//                    link to the record rather than to a file that is not there.
+//   `C2SM/icon`    → the pull requests already cited anywhere in this plan, and
+//                    the bare `org/repo#` of each repository they are in.
+//                    `_pr_refs` in `markdown.py` already turns the finished
+//                    reference into a link.
+//
+// **Ace only**, by his answer when asked which surface. The plain box carries no
+// `caretBox`, so this returns without drawing anything there.
 
 // The open bracket the caret is inside, and what has been typed since it.
 //
@@ -2447,6 +2460,26 @@ function openHandle(text, at) {
   return typed.includes(']') ? null : {open, typed};
 }
 
+// And the word the caret is in the middle of, when that word is shaped like a
+// pull request reference.
+//
+// **A slash or a hash, and that is the whole test.** `org/repo#123` is the
+// notation `_pr_refs` renders and the one the field completes, and neither
+// character turns up in ordinary prose often enough to be worth guarding
+// against: a token that is not a reference matches nothing in the list and the
+// popup closes itself on the next keystroke. Anything looser — every word of
+// three letters or more — would put a popup over somebody's writing.
+//
+// Back to whitespace rather than to a word boundary, because both halves of a
+// reference are things a `\b` would stop at.
+function openRef(text, at) {
+  const line = text.lastIndexOf('\n', at - 1) + 1;
+  let from = at;
+  while (from > line && !/\s/.test(text[from - 1])) from--;
+  const typed = text.slice(from, at);
+  return /[/#]/.test(typed) ? {from, typed} : null;
+}
+
 // A record title, as the text of a markdown link.
 //
 // `[` and `]` end a handle and a backslash escapes whatever follows one, so all
@@ -2462,12 +2495,46 @@ function linkText(item) {
   return String(item.label || item.value).replace(/[\\\[\]]/g, mark => '\\' + mark);
 }
 
-function attachRecordLinks(surface) {
-  const source = SUGGEST.linkable || [];
-  // Three ordinary ways for there to be nothing to do, and none of them is
-  // news: the plain box (no `caretBox`), a page whose blob carries no link list
-  // (the table and the cycle page ask for none), and a plan with nothing in it.
-  if (!source.length || !surface.caretBox || !surface.keys) return;
+// What the caret is in the middle of writing, as {source, from, typed, wrap}.
+// `wrap` is what accepting writes; `null` when there is nothing to complete.
+//
+// The bracket wins where both could match, and it has to: `[C2SM/icon4py#1403]`
+// is a handle containing a slash, and the reader who typed the bracket asked for
+// the records.
+function bodyToken(text, at) {
+  const handle = openHandle(text, at);
+  if (handle) {
+    return {
+      source: SUGGEST.linkable || [],
+      from: handle.open,
+      typed: handle.typed,
+      lead: item => item.label || item.value,
+      // Whatever was typed to close the link goes with it. `[some_doc_tit]()`
+      // is the shape jcanton described typing, and inserting in front of that
+      // tail would leave `[Title](task-0a1001)]()` behind the caret — the
+      // feature writing the defect it was asked for.
+      eats: /^\](\(\s*\))?/,
+      wrap: item => '[' + linkText(item) + '](' + item.value + ')',
+    };
+  }
+  const ref = openRef(text, at);
+  if (ref) {
+    return {
+      source: SUGGEST.prs || [],
+      from: ref.from,
+      typed: ref.typed,
+      lead: item => item.value,
+      eats: null,
+      wrap: item => item.value,
+    };
+  }
+  return null;
+}
+
+function attachBodyCompletion(surface) {
+  // Two capabilities, and their absence is ordinary rather than news: the plain
+  // box answers neither, so this is Ace's popup and nothing else's.
+  if (!surface.caretBox || !surface.keys) return;
 
   const list = document.createElement('ul');
   const id = 'suggest-' + (++SUGGEST_N);
@@ -2475,9 +2542,18 @@ function attachRecordLinks(surface) {
   list.id = id;
   list.hidden = true;
   list.setAttribute('role', 'listbox');
-  list.setAttribute('aria-label', 'Records this link could point at');
+  list.setAttribute('aria-label', 'What this reference could point at');
   let matches = [];
   let active = -1;
+  // What was just accepted, so that accepting it does not immediately offer it
+  // again. A finished `org/repo#1877` is still a token this popup recognises —
+  // it is the shape it completes — so the splice that inserts one fires the
+  // input that reopens the list on it, and the reader is left choosing the thing
+  // they have already chosen. Cleared by the next keystroke that changes the
+  // token, which is what makes this a suppression of one redraw rather than a
+  // mode. Null after a half reference, which is the one case where staying open
+  // is the point.
+  let settled = null;
 
   // Under the caret, in the page's coordinates — the list hangs off the body
   // for the reason every list here does, that an ancestor with `overflow` clips
@@ -2512,37 +2588,44 @@ function attachRecordLinks(surface) {
   }
 
   function open() {
-    const found = openHandle(surface.text(), surface.caret().from);
-    if (!found) return close();
-    const needle = found.typed.trim().toLowerCase();
-    matches = source
+    const token = bodyToken(surface.text(), surface.caret().from);
+    if (!token || !token.source.length) return close();
+    if (settled && settled.from === token.from && settled.typed === token.typed) {
+      return close();
+    }
+    settled = null;
+    const needle = token.typed.trim().toLowerCase();
+    matches = token.source
       .filter(item => (item.value + ' ' + item.label).toLowerCase().includes(needle))
       .slice(0, 8);
     if (!matches.length) return close();
     const opening = list.hidden;
-    // The title first and the id beside it, which is the other way round from
-    // the field completions above and is the same rule: what leads is what the
-    // person is typing. In a `parent` box that is an id; here it is a name.
+    // What leads is what the person is typing: a title where a record is being
+    // named, the reference itself where a pull request is. The other half is
+    // beside it, quieter.
     //
     // **Built, not written as markup.** Every other list on these pages is an
     // `innerHTML` with `esc` around each value, and the census in
     // `test_injection.py` is what holds those honest — by running the shipped
     // script in node and handing what it assigns to `innerHTML` back to a
-    // parser. This widget is out of that census's reach, because in node it
-    // returns before drawing anything: the surface there is a textarea and
-    // carries no `caretBox`. So it is built out of elements and `textContent`,
-    // where there is no escaper to forget, rather than trusting one no harness
-    // can watch.
+    // parser. This widget is out of that census's reach, because in node the
+    // surface is a textarea and it returns before drawing anything. Where no
+    // harness can watch, the construction has to be the guarantee rather than
+    // half of it.
     list.replaceChildren(...matches.map((m, i) => {
       const item = document.createElement('li');
       item.id = `${id}-${i}`;
       item.setAttribute('role', 'option');
       item.dataset.value = m.value;
-      item.append(m.label || m.value, ' ');
-      const dim = document.createElement('span');
-      dim.className = 'dim';
-      dim.textContent = m.value;
-      item.append(dim);
+      const lead = token.lead(m);
+      item.append(lead);
+      const beside = lead === m.value ? m.label : m.value;
+      if (beside) {
+        const dim = document.createElement('span');
+        dim.className = 'dim';
+        dim.textContent = ' ' + beside;
+        item.append(dim);
+      }
       return item;
     }));
     active = 0;
@@ -2558,11 +2641,11 @@ function attachRecordLinks(surface) {
     // whole editor rather than about this popup. So the live region carries
     // what the tree would have: that the list is open, how many are in it, and
     // the three keys. Not on every keystroke after, because this filters as
-    // somebody types a title and a live region that repeats itself per
-    // character is one people turn off.
+    // somebody types and a live region that repeats itself per character is one
+    // people turn off.
     if (opening) {
-      announce(`${matches.length} record${matches.length === 1 ? '' : 's'} match. `
-               + 'Arrow keys to choose, Enter to insert the link, Escape to dismiss.');
+      announce(`${matches.length} match${matches.length === 1 ? '' : 'es'}. `
+               + 'Arrow keys to choose, Enter to insert, Escape to dismiss.');
     }
   }
 
@@ -2570,27 +2653,30 @@ function attachRecordLinks(surface) {
     if (!item) return close();
     const text = surface.text();
     const at = surface.caret().from;
-    const found = openHandle(text, at);
+    const token = bodyToken(text, at);
     close();
-    if (!found) return;
-    // Whatever was typed to close the link goes with it. `[some_doc_tit]()` is
-    // what jcanton described typing, and inserting in front of that tail would
-    // leave `[Title](task-0a1001)]()` behind the caret — the feature writing the
-    // defect it was asked for.
-    const tail = /^\](\(\s*\))?/.exec(text.slice(at));
-    const put = '[' + linkText(item) + '](' + item.value + ')';
-    surface.splice(found.open, at + (tail ? tail[0].length : 0), put);
-    surface.setCaret(found.open + put.length);
+    if (!token) return;
+    const tail = token.eats && token.eats.exec(text.slice(at));
+    const put = token.wrap(item);
+    surface.splice(token.from, at + (tail ? tail[0].length : 0), put);
+    surface.setCaret(token.from + put.length);
     // Announced, because the whole of what just happened is text appearing in a
     // box somebody is not looking at character by character.
-    announce('Link to ' + (item.label || item.value) + ' inserted.');
+    announce((item.label && item.label !== 'any pull request'
+              ? item.label : item.value) + ' inserted.');
+    // `C2SM/icon4py#` is half a reference and the number still has to be typed,
+    // so the popup stays up to filter it — the same branch the field completion
+    // takes, for the same reason. A whole one is finished, and the splice that
+    // wrote it is about to fire the input that would offer it back.
+    if (put.endsWith('#')) open();
+    else settled = {from: token.from, typed: put};
   }
 
   surface.onInput(open);
-  // A caret that leaves the handle closes the list, and one that moves inside it
-  // refilters — `open` answers both, because `openHandle` is what decides.
+  // A caret that leaves the token closes the list, and one that moves inside it
+  // refilters — `open` answers both, because `bodyToken` is what decides.
   // Guarded on the list being open so that clicking about in a document nobody
-  // is writing a link in does no work at all.
+  // is writing a reference in does no work at all.
   surface.onCaret(() => { if (!list.hidden) open(); });
   // `focusout` and not `blur`: the caret is Ace's hidden textarea's and blur
   // does not bubble. The delay is what lets a click on the list win the race,

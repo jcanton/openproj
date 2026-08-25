@@ -25,7 +25,19 @@ from browser import chrome, measured_in
 from fastapi.testclient import TestClient
 from pages import elements
 from test_store import commit_directly
-from test_web import ANN, PATH, SECRET, SEED, TASK, file_at, git_head, head, save
+from test_web import (
+    ANN,
+    DONE,
+    OTHER,
+    PATH,
+    SECRET,
+    SEED,
+    TASK,
+    file_at,
+    git_head,
+    head,
+    save,
+)
 
 from openproj.auth import sign_session
 from openproj.web import SESSION_COOKIE, create_app
@@ -6854,19 +6866,35 @@ _WHERE_A_LINK_OPENS = """
       linkText({value: 'task-0a1001', label: 'A back\\\\slash'}),
       linkText({value: 'task-0a1001', label: ''}),
     ],
+    // And the other shape the body completes: a word with a slash or a hash in
+    // it. Ordinary prose has neither, which is the whole of why the trigger can
+    // be this cheap — and a word that has one and completes nothing closes the
+    // popup on the next keystroke rather than being guarded against here.
+    refs: [
+      ['See gt4py', 9],
+      ['See GridTools/', 14],
+      ['See C2SM/icon4py#14', 19],
+      ['a sentence ending in a full stop.', 33],
+      // Two words back is not the word being typed.
+      ['C2SM/icon4py#1403 and then', 26],
+    ].map(([text, at]) => {
+      const found = openRef(text, at);
+      return found === null ? null : found.typed;
+    }),
   };
 })()
 """
 
 
-def test_a_bracket_is_where_a_record_link_starts(client: TestClient):
-    """Where the completion decides to open, and what it writes into the handle.
+def test_the_body_knows_which_reference_is_being_typed(client: TestClient):
+    """Where the completion decides to open, and what it writes.
 
-    Both are one-line functions and both are silent when wrong. A popup that
-    opened on any `[` in the document would open on every point of every
-    checklist — `- [x]` is what a pitch's Progress section is made of — and a
-    title carrying a `]` would close the handle early and leave the rest of
-    somebody's record name as prose beside a broken link.
+    Three one-line functions, all three silent when wrong. A popup that opened on
+    any `[` would open on every point of every checklist — `- [x]` is what a
+    pitch's Progress section is made of. A title carrying a `]` would close the
+    handle early and leave the rest of somebody's record name as prose beside a
+    broken link. And a PR trigger looser than "this word has a slash or a hash in
+    it" would put a popup over ordinary writing.
     """
     from test_injection import run_js
 
@@ -6887,6 +6915,9 @@ def test_a_bracket_is_where_a_record_link_starts(client: TestClient):
         # can see.
         "task-0a1001",
     ], got["value"]["texts"]
+    assert got["value"]["refs"] == [
+        None, "GridTools/", "C2SM/icon4py#14", None, None,
+    ], got["value"]["refs"]
 
 
 def test_only_a_page_with_a_document_carries_the_list_of_linkable_records(
@@ -7030,6 +7061,11 @@ def test_the_second_editor_completes_a_link_to_a_record(
     the invisible direction. A handler that claims Return whenever it is on the
     page takes the newline away from everybody writing, and nothing would say so
     except somebody trying to start a paragraph.
+
+    The same popup completes a pull request reference — see
+    `test_the_second_editor_completes_a_pull_request_in_the_body`. One widget,
+    two things it recognises, and what it recognises them by is
+    `test_the_body_knows_which_reference_is_being_typed`.
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}?editor=ace").text,
@@ -7073,3 +7109,110 @@ def test_the_second_editor_completes_a_link_to_a_record(
         "Return is claimed with no list open, so this popup has taken the newline "
         "away from everybody writing a paragraph"
     )
+
+
+_COMPLETING_A_PULL_REQUEST = r"""
+  flipEditing();
+  await new Promise(r => setTimeout(r, 500));
+  const editor = SURFACE.editor;
+  const open = () => document.querySelector('ul.suggest:not([hidden])');
+  const shown = () => { const list = open(); return list
+    ? [...list.children].map(item => item.dataset.value) : null; };
+  const key = code => !!editor.keyBinding.onCommandKey(
+    {preventDefault() {}, stopPropagation() {}}, 0, code);
+  const line = () => SURFACE.text().split('\n').pop();
+
+  editor.focus();
+  editor.navigateFileEnd();
+  // A word with no slash and no hash in it: prose, and nothing to complete.
+  editor.insert('\nSee gt4py');
+  await new Promise(r => setTimeout(r, 250));
+  const overProse = shown();
+
+  // The repository, half typed. Both what is in it: the bare `org/repo#`, which
+  // is the half nobody remembers, and the reference already cited in the plan.
+  for (let i = 0; i < 5; i++) editor.remove('left');
+  editor.insert('GridTools/');
+  await new Promise(r => setTimeout(r, 250));
+  const onRepo = shown();
+
+  // Taking the bare one leaves the number to be typed, so the popup stays.
+  const tookRepo = key(13);
+  await new Promise(r => setTimeout(r, 250));
+  const afterRepo = {line: line(), list: shown()};
+
+  editor.insert('1877');
+  await new Promise(r => setTimeout(r, 250));
+  const narrowed = shown();
+  const tookRef = key(13);
+  await new Promise(r => setTimeout(r, 250));
+  const afterRef = {line: line(), list: shown()};
+
+  // And the other repository, reached from the half of the name that is not the
+  // organisation — the list matches on the whole reference.
+  editor.insert(' and icon4py#');
+  await new Promise(r => setTimeout(r, 250));
+  const other = shown();
+  return {overProse, onRepo, tookRepo, afterRepo, narrowed, tookRef, afterRef, other};
+"""
+
+
+def test_the_second_editor_completes_a_pull_request_in_the_body(
+    client: TestClient, tmp_path: Path
+):
+    """jcanton, 2026-08-25, asked whether the autofill reaches pull requests from
+    the two repositories this plan is about — "ideally both in the PRs field as
+    well as in the body".
+
+    The field has completed them since `_suggestions` was written. The body
+    completed nothing, although `_pr_refs` has rendered `org/repo#123` in prose
+    as a link for just as long: the notation was readable and unwritable.
+
+    **What it offers is what the plan already cites**, and that is the whole
+    answer to "does it work for icon4py and gt4py". There is no live lookup —
+    every page here is inlined and reaches no network, which is the rule
+    `static/VENDOR.md` exists for — so a repository is offered once some record
+    names a pull request in it, and the bare `org/repo#` for each of those comes
+    with it. The two references below are put in through the write path rather
+    than by editing a fixture, because the write path is what a person uses.
+
+    `overProse` is the assertion this feature could most easily be wrong in the
+    annoying direction: a trigger that fired on any word would put a popup over
+    everybody's writing, and nothing but somebody complaining would say so.
+    """
+    for record, refs in (
+        (OTHER, ["C2SM/icon4py#1403"]),
+        (DONE, ["GridTools/gt4py#1877", "C2SM/icon4py#1521"]),
+    ):
+        written = client.patch(f"/api/record/{record}", json={
+            "base_commit": head(client), "fields": {"prs": refs}, "body": None,
+        })
+        assert written.status_code == 200, written.text
+
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "prs.html", 1400, _COMPLETING_A_PULL_REQUEST,
+        query="?editor=ace", patience=6800,
+    )
+
+    assert got["overProse"] is None, (
+        f"a word with no slash and no hash in it opened a popup: {got['overProse']}"
+    )
+    assert got["onRepo"] == ["GridTools/gt4py#", "GridTools/gt4py#1877"], got["onRepo"]
+    assert got["tookRepo"] and got["afterRepo"]["line"] == "See GridTools/gt4py#", (
+        f"taking the bare repository wrote something else: {got['afterRepo']}"
+    )
+    assert got["afterRepo"]["list"], (
+        "the popup closed on half a reference, so the number it left to be typed "
+        "has to be remembered rather than chosen"
+    )
+    assert got["narrowed"] == ["GridTools/gt4py#1877"], got["narrowed"]
+    assert got["tookRef"] and got["afterRef"] == {
+        "line": "See GridTools/gt4py#1877", "list": None,
+    }, got["afterRef"]
+    # The bare `org/repo#` leads, because `icon4py#` is a substring of it too —
+    # and it is the entry that is worth the most when the number is the part
+    # nobody has memorised.
+    assert got["other"] == [
+        "C2SM/icon4py#", "C2SM/icon4py#1521", "C2SM/icon4py#1403",
+    ], f"the other repository's references are not offered: {got['other']}"
