@@ -215,7 +215,7 @@ _SLIDE = """
       handle does not go anywhere. It stays against the left edge at zero width,
       it keeps its hit area and its focus ring, and dragging it right past the
       same threshold brings the record back. -#}
-  <div class="panes3" id="panes3">
+  <div class="panes3" id="panes3" data-fills>
     {#- LEFT: the record as it reads. The same facts list and the same document
         the record page draws, from the same three functions, because a second
         rendering of a record is a second thing to keep in step — and this is
@@ -410,8 +410,14 @@ _SLIDE_STYLE = """
   padding: .2rem .5rem; cursor: pointer;
 }
 .panebar button:hover { color: var(--accent); }
+/* The row is as tall as the window has left, measured by the shell's `--room`
+   rather than by a `100vh` minus a hand-counted stack — this said
+   `calc(100vh - 12rem)`, which knew nothing about the bar above it, the heading,
+   or the footer and its margins below. `data-fills` on the grid is how a page
+   tells the shell which box that is. */
+.panes3 { height: var(--room); }
 .panes3 > .pane {
-  min-width: 0; max-height: calc(100vh - 12rem); overflow: auto;
+  min-width: 0; max-height: 100%; overflow: auto;
   border: 1px solid var(--line); border-radius: 4px; padding: .9rem 1rem;
   background: var(--surface);
 }
@@ -795,6 +801,9 @@ if (SURFACE) {
 ARTICLE.addEventListener('change', refresh);
 if (SURFACE) SURFACE.onInput(refresh); else PROSE.addEventListener('input', refresh);
 addEventListener('resize', fit);
+// The preview is scaled against a pane the shell sizes, so it is re-scaled when
+// that measurement moves.
+addEventListener('openproj:room', fit);
 document.fonts?.ready.then(fit);
 fit();
 })();

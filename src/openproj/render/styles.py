@@ -395,7 +395,18 @@ textarea.body-field { box-sizing: border-box; }
    and then it is the first thing they ask for. Outside `#main`'s measure, so it
    does not sit inside the reading column. */
 #build {
-  margin: 2.5rem 0 1rem; padding: .6rem 1rem 0;
+  /* **Padding and not margin, and that is the whole of a defect.** `--room` is
+     measured as `document.body.getBoundingClientRect().bottom` less the box's
+     bottom, and a border box does not include margins — a bottom margin on the
+     last element in the body collapses through it and is measured by nothing at
+     all. So the page was `2.5rem + 1rem` taller than anything knew, which is a
+     page scrollbar that exists purely to reach the footer, beside whatever
+     scrollbar the content already had. jcanton, 2026-08-25, seeing both at once.
+
+     As padding it is inside the border box, so every measurement of this element
+     and of the body includes it. The rule that mattered was never "how far from
+     the content" — it was "be measurable". */
+  margin: 0; padding: 1.4rem 1rem 1rem;
   border-top: 1px solid var(--line);
   font-size: 11px; color: var(--muted); font-family: var(--font-mono);
 }
