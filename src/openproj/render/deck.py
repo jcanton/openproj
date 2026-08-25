@@ -147,6 +147,17 @@ _DECK = """
       presenting is the one thing on this page that genuinely cannot work without
       the script. -#}
   <button type="button" id="present" class="ghost" hidden>Present</button>
+  {#- Zoom, for reading a slide at the desk rather than presenting it. Buttons as
+      well as the gesture, because `ctrl` and a wheel is a thing you have to
+      already know and a trackpad pinch arrives as the same event — jcanton,
+      2026-08-25: "either with +- buttons or with mouse gestures like ctrl+scroll
+      or pinch". The readout is a control too: pressing it is the way back to
+      fitting the column. -#}
+  <span class="zoomer" id="zoomer" hidden>
+    <button type="button" id="zoomout" aria-label="Smaller">−</button>
+    <button type="button" id="zoomfit" title="Fit the column">100%</button>
+    <button type="button" id="zoomin" aria-label="Larger">+</button>
+  </span>
 </p>
 
 <div class="deckwrap">
@@ -157,6 +168,12 @@ _DECK = """
   <nav class="rail" id="rail" aria-label="Slides in this deck" hidden>
     <ol id="thumbs"></ol>
   </nav>
+  {#- The join between the rail and the sheets. Same control and same gesture as
+      the slide editor's: drag to resize, double-click to put it back. Drawn
+      hidden and revealed with the rail, because a handle for a column that is
+      not there resizes nothing. -#}
+  <div class="railgrip" id="railgrip" role="separator" tabindex="0"
+       aria-orientation="vertical" aria-label="Resize the slide list" hidden></div>
 
   <div class="sheets" id="sheets">
 <article class="slide title" data-id="title" data-key="title">
@@ -375,7 +392,7 @@ _DECK_STYLE = """
 .sheets { flex: 1 1 auto; min-width: 0; padding-right: .25rem; }
 .sized .sheets .slide { margin-left: auto; margin-right: auto; }
 .rail {
-  flex: none; width: 13rem;
+  flex: none; width: var(--railwidth, 13rem);
   /* Not `position: sticky` any more. It was sticky because the PAGE scrolled and
      the rail had to stay with it; now the wrap is a fixed-height row and the
      rail is simply one of its two columns, each scrolling on its own. A sticky
@@ -446,6 +463,29 @@ _DECK_STYLE = """
    written second. That tie is this repository's characteristic failure and it
    was in the first draft of this block. */
 .rail { --fit: .14; }
+/* The handle between the rail and the sheets, drawn the way every other one in
+   this app is: a hairline that thickens under the pointer. */
+.railgrip {
+  flex: none; width: .75rem; align-self: stretch; position: relative;
+  cursor: col-resize; background: none; border: 0;
+}
+.railgrip::before {
+  content: ""; position: absolute; inset: 0 calc(50% - 1px);
+  background: var(--line); border-radius: 1px;
+}
+.railgrip:hover::before, .railgrip:focus-visible::before, .railgrip.dragging::before {
+  background: var(--accent); inset: 0 calc(50% - 1.5px);
+}
+/* Zoom, beside the Present button. Not part of the deck: `@media print` and the
+   presenting rules both take `.deckbar` away, and this is inside it. */
+.zoomer { display: inline-flex; align-items: center; gap: .15rem; margin-left: .75rem; }
+.zoomer button {
+  font: inherit; font-size: 12px; color: var(--muted); background: none;
+  border: 1px solid var(--line); border-radius: 3px; padding: .1rem .4rem;
+  cursor: pointer; min-width: 1.6rem;
+}
+.zoomer button:hover { color: var(--accent); }
+#zoomfit { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .rail .slide { margin: 0; border: 0; border-radius: 3px; pointer-events: none; }
 /* Dropped from the deck: greyed rather than hidden, on the rail and on the page,
    because a slide nobody can see is a slide nobody can put back. Presentation
@@ -582,6 +622,14 @@ const slides = () => [...SHEETS.querySelectorAll('.slide')];
 // a slide scaled ABOVE 1 is a slide drawn bigger than it was designed, which is
 // a blurrier one, not a better one.
 const SHEET_MAX = 62 * 16;
+// The 1px border on each side of a thumbnail. Subtracted because the width a
+// thumbnail may draw INTO is its content box, and `--fit` scales the slide,
+// not the box around it.
+const PANE_BORDER = 2;
+// How much bigger or smaller than "fits the column" the sheets are drawn.
+// 1 means fit, which is where the page opens and what the readout calls 100%.
+let ZOOM = 1;
+const ZOOM_MIN = 0.4, ZOOM_MAX = 4;
 
 // How much of the window the chrome above and below the deck is using. Measured
 // rather than written down: the bar carries a back link and a button, the shell
@@ -621,12 +669,17 @@ function fit() {
   // `RAIL` is `width: 13rem; flex: none`, so its width is a stylesheet fact and
   // not a consequence of what is inside it. `clientWidth` less the padding is
   // the room a thumbnail actually has.
-  const room = Math.min(SHEETS.clientWidth, SHEET_MAX);
+  const room = Math.min(SHEETS.clientWidth, SHEET_MAX) * ZOOM;
   if (room > 0) SHEETS.style.setProperty('--fit', String(room / SLIDE_W));
-  const pad = parseFloat(getComputedStyle(RAIL).paddingLeft) +
-              parseFloat(getComputedStyle(RAIL).paddingRight);
-  const rail = RAIL.clientWidth - (pad || 0);
-  if (rail > 0) RAIL.style.setProperty('--fit', String(rail / SLIDE_W));
+  // **The thumbnail fits the rail, borders and scrollbar and all.** It was
+  // `clientWidth` less the rail's own padding, which forgot the 1px border each
+  // thumbnail wears — so every thumbnail was 2px wider than the room it had and
+  // the rail grew a horizontal scrollbar under a column of slides that all
+  // looked right. Measured against the LIST's content box instead, which is what
+  // a row actually gets: `clientWidth` on `#thumbs` is inside the rail's padding
+  // and inside the vertical scrollbar, so neither has to be worked out here.
+  const row = THUMBS.clientWidth - PANE_BORDER;
+  if (row > 0) RAIL.style.setProperty('--fit', String(row / SLIDE_W));
   marked();
   if (presenting()) show(at);
 }
@@ -969,7 +1022,96 @@ addEventListener('openproj:landed', () => { asked(); });
 setInterval(asked, POLL_MS);
 asked();
 
+// --- Zooming the sheets ---------------------------------------------------
+//
+// A factor on top of the fit, so "fits the column" stays the thing 100% means
+// and the number a reader sees is about what they did rather than about the
+// window. `fit()` multiplies by it and everything downstream — the spills mark,
+// the presented scale — follows from one place.
+const ZOOM_KEY = 'openproj:deckzoom';
+const ZOOMER = document.getElementById('zoomer');
+const READOUT = document.getElementById('zoomfit');
+
+function zoom(to) {
+  ZOOM = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, to));
+  READOUT.textContent = Math.round(ZOOM * 100) + '%';
+  remembered.set(ZOOM_KEY, String(ZOOM));
+  fit();
+}
+
+(() => {
+  const held = parseFloat(remembered.get(ZOOM_KEY));
+  ZOOM = Number.isFinite(held) ? Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, held)) : 1;
+  READOUT.textContent = Math.round(ZOOM * 100) + '%';
+  ZOOMER.hidden = false;
+})();
+
+document.getElementById('zoomin').onclick = () => zoom(ZOOM * 1.15);
+document.getElementById('zoomout').onclick = () => zoom(ZOOM / 1.15);
+READOUT.onclick = () => zoom(1);
+
+// Ctrl and a wheel, which is also what a trackpad pinch arrives as — the browser
+// synthesises `wheel` with `ctrlKey` for it, so one listener answers both
+// gestures and there is no second code path to keep in step.
+//
+// `passive: false` and `preventDefault`, because the default here is the
+// BROWSER's own page zoom: without it a pinch over the deck would zoom the whole
+// app, nav and all, which is the thing a slide tool must not do. Scoped to the
+// sheets, so a pinch anywhere else on the page still does what the browser says.
+SHEETS.addEventListener('wheel', event => {
+  if (!event.ctrlKey && !event.metaKey) return;
+  event.preventDefault();
+  // A wheel notch is about 100 units and a pinch is a handful; dividing by 400
+  // makes the two feel like the same gesture rather than tuning each.
+  zoom(ZOOM * Math.exp(-event.deltaY / 400));
+}, {passive: false});
+
+// --- The rail's own width -------------------------------------------------
+const RAILGRIP = document.getElementById('railgrip');
+const RAIL_KEY = 'openproj:railwidth';
+const RAIL_MIN = 90, RAIL_MAX = 520;
+
+function railWidth(px) {
+  const width = Math.max(RAIL_MIN, Math.min(RAIL_MAX, px));
+  RAIL.style.setProperty('--railwidth', Math.round(width) + 'px');
+  remembered.set(RAIL_KEY, Math.round(width) + 'px');
+  fit();
+}
+
+(() => {
+  const held = remembered.get(RAIL_KEY);
+  if (held && /^[0-9]+px$/.test(held)) RAIL.style.setProperty('--railwidth', held);
+})();
+
+RAILGRIP.onpointerdown = event => {
+  RAILGRIP.setPointerCapture(event.pointerId);
+  RAILGRIP.classList.add('dragging');
+  const move = e => railWidth(e.clientX - RAIL.getBoundingClientRect().left);
+  const stop = () => {
+    RAILGRIP.classList.remove('dragging');
+    removeEventListener('pointermove', move);
+    removeEventListener('pointerup', stop);
+  };
+  addEventListener('pointermove', move);
+  addEventListener('pointerup', stop);
+};
+RAILGRIP.onkeydown = event => {
+  const step = event.key === 'ArrowLeft' ? -24 : event.key === 'ArrowRight' ? 24 : 0;
+  if (!step) return;
+  event.preventDefault();
+  railWidth(RAIL.getBoundingClientRect().width + step);
+};
+// Back to the stylesheet's own 13rem. Removed rather than written, so the
+// default stays in one place — the same rule the slide editor's handles follow.
+RAILGRIP.ondblclick = () => {
+  RAIL.style.removeProperty('--railwidth');
+  remembered.forget(RAIL_KEY);
+  fit();
+  announce('Slide list width reset');
+};
+
 // --- Go -----------------------------------------------------------------
+RAILGRIP.hidden = false;
 railed();
 watch();
 addEventListener('resize', fit);

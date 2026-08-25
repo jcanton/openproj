@@ -149,7 +149,7 @@ _SLIDE = """
       end somebody can only find by pressing it, which is the argument that
       already kept a Delete off the create form. -#}
   {% if editable %}
-  <p class="editbar">
+  <p class="editbar">{{ slidebar }}
     <span id="views" class="views" role="group" aria-label="How the document is shown">
       <a class="seg" href="{{ links.record }}{{ e.id }}?edit" aria-pressed="false"
          aria-label="Write" title="Write">
@@ -164,7 +164,7 @@ _SLIDE = """
         <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M2.5 12S6 6.2 12 6.2 21.5 12 21.5 12 18 17.8 12 17.8 2.5 12 2.5 12Z"/>
         <circle cx="12" cy="12" r="2.7"/></svg></a>
-    </span>{{ slidebar }}
+    </span>
   </p>
   {% endif %}
   <h1>{{ e.title }}</h1>
@@ -205,20 +205,16 @@ _SLIDE = """
   <input type="hidden" id="base" value="{{ base_commit }}">
   {% endif %}
 
-  {#- The one control that takes the record out of the way. A slide is usually
-      personalised by somebody who has just read the record and now wants the
-      room the preview is squeezed into — jcanton, 2026-08-25: "including the
-      option of collapsing the leftmost one".
+  {#- **No Hide button.** There was one, and it is gone because the drag now does
+      the whole job — jcanton, 2026-08-25: "would it be possible to hide the
+      record dynamically ... we can get rid of the hide/show button in that
+      case."
 
-      A button and not a drag to zero: a pane dragged to nothing is a pane whose
-      handle is a hairline nobody can find again, which is the trap the width
-      grip on the record page had until this morning. -#}
-  {% if e.rows %}
-  <p class="panebar">
-    <button type="button" id="foldread" aria-pressed="false"
-            aria-controls="pane-read">Hide the record</button>
-  </p>
-  {% endif %}
+      The objection the button answered was real and is answered differently: a
+      pane dragged to nothing leaves a handle nobody can find again. Here the
+      handle does not go anywhere. It stays against the left edge at zero width,
+      it keeps its hit area and its focus ring, and dragging it right past the
+      same threshold brings the record back. -#}
   <div class="panes3" id="panes3">
     {#- LEFT: the record as it reads. The same facts list and the same document
         the record page draws, from the same three functions, because a second
@@ -374,16 +370,21 @@ _SLIDE_STYLE = """
    `0` and not `display: none` on the pane, so the pane keeps its scroll position
    and its rendered document — unfolding is instant and does not re-render a
    whole record. */
-/* Folded, the two remaining panes share the whole row BY RATIO and the stored
-   pixel widths are ignored. Carrying them over left the record's width as a gap
-   nothing filled — measured: hiding a 501px pane in a 1200px row left the other
-   two at 318 and 381 and 501px of nothing beside them. A width chosen for a
-   three-column row is not a width for a two-column one, and the stored numbers
-   come back untouched the moment it unfolds. */
-.panes3.folded {
-  grid-template-columns: 0 0 minmax(0, 1.15fr) .75rem minmax(0, 1fr);
-}
-.panes3.folded > .pane.read, .panes3.folded > .pgrip[data-at="0"] {
+/* **Folding is a WIDTH, not a second template.** `--pane-read: 0px` and the
+   first track is gone; nothing else about the row changes.
+
+   It was a `grid-template-columns` of its own, and that was the bug jcanton
+   found: the folded template named `1.15fr` and `1fr` while the drag went on
+   writing `--pane-pick` and `--pane-show` in pixels, so the two remaining panes
+   sat at a fixed ratio and the handle between them did nothing at all. Two
+   templates is two places the layout is decided, and the second one silently
+   ignored the first's numbers.
+
+   The handle beside the folded pane STAYS, and that is the whole of the
+   dynamic-fold gesture: at zero width it sits against the left edge, and
+   dragging it right is what brings the record back. A control that vanished with
+   the thing it controls would leave nothing to drag. */
+.panes3.folded > .pane.read {
   visibility: hidden; padding: 0; border: 0; overflow: hidden;
 }
 
@@ -661,61 +662,74 @@ if (MAY_WRITE) {
 const PANES = document.getElementById('panes3');
 const PANE_KEY = 'openproj:slidepanes';
 const PANE_VARS = ['--pane-read', '--pane-pick', '--pane-show'];
-const PANE_MIN = 160;
+// The narrowest a pane may be dragged before it stops being a pane. Below this
+// the record FOLDS rather than becoming a sliver — a 40px column of clipped
+// words is not a reading pane, it is a rendering artefact, and the gesture that
+// produced it was somebody asking for the room.
+//
+// One number for both directions, so folding and unfolding happen at the same
+// place and the handle does not stick: drag left through it and the record goes,
+// drag right through it and the record comes back at exactly this width.
+const PANE_FOLD = 120;
+
+function paneWidths() {
+  return [...PANES.querySelectorAll(':scope > .pane')]
+    .map(pane => pane.getBoundingClientRect().width);
+}
+
+// Every width written down at once, in pixels. Pinning all three is what stops
+// the row re-flowing when one `fr` is turned into a length beside two others —
+// a grid with two fixed tracks and one flexible one gives the flexible one
+// everything left over, which is not what a drag between two neighbours means.
+function paneSet(widths) {
+  widths.forEach((width, at) =>
+    PANES.style.setProperty(PANE_VARS[at], Math.max(0, Math.round(width)) + 'px'));
+  PANES.classList.toggle('folded', widths[0] < 1);
+  fit();
+}
 
 function panesRemember() {
   remembered.set(PANE_KEY, JSON.stringify({
     widths: PANE_VARS.map(name => PANES.style.getPropertyValue(name)),
-    folded: PANES.classList.contains('folded'),
   }));
 }
 
 (() => {
   const held = remembered.map(PANE_KEY);
-  if (Array.isArray(held.widths) && held.widths.length === PANE_VARS.length) {
-    // Only strings that look like a length. A stored value is a value somebody's
-    // devtools can write, and it reaches a `grid-template-columns` — so this is
-    // an allowlist rather than a trust, the same shape as every other stored
-    // value this app reads back.
-    held.widths.forEach((value, at) => {
-      if (typeof value === 'string' && /^[0-9]+(\.[0-9]+)?px$/.test(value))
-        PANES.style.setProperty(PANE_VARS[at], value);
-    });
-  }
-  if (held.folded) fold(true);
+  if (!Array.isArray(held.widths) || held.widths.length !== PANE_VARS.length) return;
+  // Only strings that look like a length. A stored value is a value somebody's
+  // devtools can write and it reaches `grid-template-columns`, so this is an
+  // allowlist rather than a trust — the same shape as every other stored value
+  // this app reads back.
+  const clean = held.widths.map(value =>
+    typeof value === 'string' && /^[0-9]+(\\.[0-9]+)?px$/.test(value) ? parseFloat(value) : null);
+  if (clean.every(width => width !== null)) paneSet(clean);
 })();
 
-function fold(on) {
-  PANES.classList.toggle('folded', on);
-  const button = document.getElementById('foldread');
-  if (!button) return;
-  button.setAttribute('aria-pressed', String(on));
-  button.textContent = on ? 'Show the record' : 'Hide the record';
-}
-
-const FOLD = document.getElementById('foldread');
-if (FOLD) FOLD.onclick = () => {
-  fold(!PANES.classList.contains('folded'));
-  panesRemember();
-  fit();
-};
-
 // One handle moves the two panes it sits between and nothing else, so the row
-// keeps its total width and the pane on the far side does not jump.
+// keeps its total width and the pane on the far side does not move.
+//
+// **The fold happens here rather than in a mode**, which is what makes it
+// reversible with the same gesture: a read pane dragged under `PANE_FOLD`
+// collapses to nothing and gives its width to its neighbour, and the same handle
+// dragged back out past the threshold restores it. Nothing latches, so there is
+// no state to get stuck in.
 function slide(at, byPixels) {
-  const panes = [...PANES.querySelectorAll(':scope > .pane')];
-  const left = panes[at], right = panes[at + 1];
-  const was = [left.getBoundingClientRect().width, right.getBoundingClientRect().width];
-  const moved = Math.max(PANE_MIN - was[0], Math.min(was[1] - PANE_MIN, byPixels));
-  PANES.style.setProperty(PANE_VARS[at], (was[0] + moved) + 'px');
-  PANES.style.setProperty(PANE_VARS[at + 1], (was[1] - moved) + 'px');
-  // The third column keeps whatever it had; pinning it too is what stops the
-  // row re-flowing when one `fr` is turned into a pixel width beside two others.
-  for (const [index, name] of PANE_VARS.entries()) {
-    if (!PANES.style.getPropertyValue(name))
-      PANES.style.setProperty(name, Math.round(panes[index].getBoundingClientRect().width) + 'px');
+  const was = paneWidths();
+  const total = was[at] + was[at + 1];
+  let left = was[at] + byPixels;
+  if (at === 0 && left < PANE_FOLD) {
+    // Folded, or on the way back. Below half the threshold it is shut; above it
+    // the record reappears at the threshold rather than at one pixel, so the
+    // drag never leaves a pane too narrow to read.
+    left = left < PANE_FOLD / 2 ? 0 : PANE_FOLD;
+  } else {
+    left = Math.max(PANE_FOLD, Math.min(total - PANE_FOLD, left));
   }
-  fit();
+  const next = was.slice();
+  next[at] = left;
+  next[at + 1] = total - left;
+  paneSet(next);
 }
 
 for (const grip of PANES.querySelectorAll(':scope > .pgrip')) {
@@ -723,8 +737,18 @@ for (const grip of PANES.querySelectorAll(':scope > .pgrip')) {
   grip.onpointerdown = event => {
     grip.setPointerCapture(event.pointerId);
     grip.classList.add('dragging');
-    let from = event.clientX;
-    const move = e => { slide(at, e.clientX - from); from = e.clientX; };
+    // Measured against where the POINTER started rather than accumulated frame
+    // by frame. A running total drifts once a pane hits its floor: the pointer
+    // keeps moving, the pane cannot, and the difference is silently thrown away
+    // — so dragging back out lagged by however far past the edge you had gone.
+    const from = event.clientX;
+    const start = paneWidths();
+    const move = e => {
+      const was = paneWidths();
+      // `slide` works in deltas, so the delta handed to it is measured from the
+      // width this drag began at.
+      slide(at, (e.clientX - from) - (was[at] - start[at]));
+    };
     const stop = () => {
       grip.classList.remove('dragging');
       panesRemember();
@@ -742,6 +766,18 @@ for (const grip of PANES.querySelectorAll(':scope > .pgrip')) {
     event.preventDefault();
     slide(at, step);
     panesRemember();
+  };
+  // Double-click puts the row back the way it starts — jcanton, 2026-08-25:
+  // "have the double click mechanism on the bars to restore the default 1/3
+  // spacing". The properties are REMOVED rather than set: the default lives in
+  // the stylesheet, as the fallback in `var(--pane-read, 1fr)`, and writing the
+  // numbers here would be that ratio in a second place.
+  grip.ondblclick = () => {
+    for (const name of PANE_VARS) PANES.style.removeProperty(name);
+    PANES.classList.remove('folded');
+    remembered.forget(PANE_KEY);
+    fit();
+    announce('Panes reset');
   };
 }
 
