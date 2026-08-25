@@ -868,3 +868,51 @@ def test_an_issue_whose_pitch_is_done_reads_done_with_a_locked_hill_and_the_hint
     assert 'placeholder="ann"' in str(reported["control"])
     opened = next(r for r in rows if r["label"] == "Opened on")
     assert opened["derived"] and opened["control"] == ""
+
+
+def test_a_ghost_appears_only_on_a_hill_whose_ball_can_be_moved():
+    """jcanton, 2026-08-25: "the hill graph shows all nodes as grey circles on
+    hover even when the editor is in preview mode, they should only appear on
+    hover if in the edit or side-by-side view".
+
+    A ghost is where this record COULD stand, which is an offer. On a hill with
+    no stops under it there is nothing to accept, so it was a row of grey dots
+    that answered a hover and then did nothing — on the table's hover card, the
+    people page, the cycle roster and the record page in preview, which is every
+    read-only hill there is.
+
+    Two halves, and both are needed: the class is emitted by the same `live` that
+    emits the stops, and the rule that reveals a ghost asks for the class. Asked
+    of the resolved cascade rather than of a substring, because "is this rule the
+    one that wins" is the question and a stylesheet containing a selector answers
+    a different one.
+    """
+    from cascade import el, sheet_of
+
+    from openproj.index import build_index
+    from openproj.model import Config
+    from openproj.render import render_table
+
+    read_only = str(_hill_html("ready"))
+    live = str(_hill_html("ready", live=True))
+
+    assert "hill-live" not in read_only, read_only[:200]
+    assert "hill-stop" not in read_only, "a read-only hill has stops to hover"
+    assert "hill-live" in live and "hill-stop" in live, live[:200]
+
+    # Off a served page, so the rules are the shell's in the order a browser
+    # reads them rather than a constant this test went and found.
+    sheet = sheet_of(
+        render_table(build_index([], Config(), date(2026, 8, 25)), ROUTES, base_commit="d")
+    )
+    ghost = el("span", "hill-ghost")
+    assert sheet.value([el("span", "hill hill-live", states="hover"), ghost], "opacity") == (
+        ".5"
+    ), "hovering a hill with stops does not offer them"
+    assert sheet.value([el("span", "hill", states="hover"), ghost], "opacity") == "0", (
+        "hovering a read-only hill still draws the row of grey dots"
+    )
+    # Dragging and the keyboard need no guard of their own: a hill with no stops
+    # has no input to focus and nothing to drag. Asserted so that a later reader
+    # meets the reasoning rather than the omission.
+    assert sheet.value([el("span", "hill dragging"), ghost], "opacity") == ".5"

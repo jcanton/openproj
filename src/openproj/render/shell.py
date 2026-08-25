@@ -897,10 +897,28 @@ dt:has(+ dd .hill) { align-self: start; }
    Revealed by a hover anywhere on the drawing rather than by a hover on one stop:
    a stop that appears only once the pointer is already on it is a target you find
    by accident. Focus reveals them for the same reason, for somebody arriving by
-   keyboard who never hovers anything at all. */
+   keyboard who never hovers anything at all.
+
+   **And only on a hill whose ball can actually be moved** — jcanton, 2026-08-25:
+   "the hill graph shows all nodes as grey circles on hover even when the editor
+   is in preview mode, they should only appear on hover if in the edit or
+   side-by-side view". A ghost is where this record COULD stand, which is an
+   offer; on a hill with no stops under it there is nothing to accept, so it is a
+   row of grey dots that answers a hover and then does nothing. The read-only
+   hills are every one on the table's hover card, the people page and the cycle
+   roster as well as the record page in preview, and all of them were making it.
+
+   `.hill-live` and not `:has(.hill-stop)`, which says the same thing: the class
+   is emitted by the same `{if live}` that emits the stops, so the two cannot
+   drift, and a plain descendant selector is one `tests/cascade.py` can actually
+   resolve — its `:has()` is weighed for specificity and matched against
+   ancestors, which is the wrong question and would have answered "hidden" for
+   both hills. The other two reveals need no guard: `dragging` is put on by the
+   drag and `input:focus-visible` needs an input, and neither exists on a hill
+   with no stops. */
 .hill-ghost { width: var(--ghost); height: var(--ghost);
               background: var(--line-strong); opacity: 0; }
-.hill:hover .hill-ghost, .hill.dragging .hill-ghost,
+.hill-live:hover .hill-ghost, .hill.dragging .hill-ghost,
 .hill:has(input:focus-visible) .hill-ghost { opacity: .5; }
 /* Half the line, and not a pixel guessed at: `.hill-line` is 2px painted, so the
    surface a ball rests on is 1px above the path's own coordinates. */
