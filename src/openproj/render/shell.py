@@ -2124,6 +2124,27 @@ const ROOT = document.documentElement;
 // 144px: a reader who has asked for larger text has taller rows to fit as well.
 const ROOM_FLOOR = 9 * parseFloat(getComputedStyle(document.documentElement).fontSize);
 let roomIs = '';
+// What the subtraction above cannot see, learned by looking at the result.
+//
+// `--room` is `innerHeight - above - below`, and `below` is measured as
+// `document.body`'s bottom less the box's. That is every element after the box
+// AS THE BODY REPORTS IT, which is not always every pixel the page turns out to
+// be: a margin that collapses through the body, a sub-pixel that rounds the
+// wrong way, a root-level padding the body's own border box excludes, or simply
+// a browser that computes one of those differently — jcanton, 2026-08-25, still
+// seeing a page scrollbar on `/table` in Firefox at a window where Chrome has
+// none, on a build where the arithmetic says there should be nothing left over.
+//
+// So the formula is the estimate and the PAGE is the authority. After the box is
+// given its height, whatever the document still overflows by is added here and
+// taken off the next answer. It is remembered rather than recomputed from
+// nothing each time, because the thing it is correcting for does not go away
+// when the window moves.
+//
+// This is `chromeOverhead`'s bargain in `table.py`, one level up: "Once round to
+// find out what the border costs, and once more to pay for it." A measurement
+// that can be checked against reality should be.
+let roomSlack = 0;
 function measureRoom() {
   const box = document.querySelector('[data-fills]');
   // The timeline hides its plot when there are no bars, and a box with no layout
@@ -2142,7 +2163,7 @@ function measureRoom() {
   // Floor, not round. These are sub-pixel measurements and the whole point of the
   // number is that the page does not scroll: half a pixel rounded up is a
   // scrollbar, and half a pixel rounded down is invisible.
-  const value = Math.max(ROOM_FLOOR, Math.floor(innerHeight - above - below)) + 'px';
+  const value = Math.max(ROOM_FLOOR, Math.floor(innerHeight - above - below - roomSlack)) + 'px';
   if (value === roomIs) return false;
   roomIs = value;
   ROOT.style.setProperty('--room', value);
@@ -2165,9 +2186,26 @@ function measureRoom() {
 // `addEventListener`, and a counter as a default parameter would have been
 // re-seeded with an Event on every resize.
 function settleRoom(passes) {
-  if (measureRoom() && passes > 1) requestAnimationFrame(() => settleRoom(passes - 1));
+  const moved = measureRoom();
+  // What the page still overflows by, asked AFTER the box has been given its
+  // height. Anything here is height the subtraction did not know about, so it
+  // goes into the slack and comes off next pass. Bounded by the same pass count
+  // as the loop it lives in: a layout that has not settled in four frames is not
+  // going to, and a correction that keeps growing is better stopped than
+  // trusted.
+  const over = ROOT.scrollHeight - ROOT.clientHeight;
+  if (over > 0 && passes > 1) {
+    roomSlack += over;
+    requestAnimationFrame(() => settleRoom(passes - 1));
+    return;
+  }
+  if (moved && passes > 1) requestAnimationFrame(() => settleRoom(passes - 1));
 }
-function fitRoom() { settleRoom(4); }
+// The slack is forgotten before each fresh settle and learned again. It corrects
+// for whatever the current layout hides, and a window that has just grown may
+// hide less — so carrying the old number forward would leave the box short of
+// the room it now has, for ever, with nothing on screen to say why.
+function fitRoom() { roomSlack = 0; settleRoom(4); }
 </script>
 <main id="main">
 {#- What the plan holds that is not a record, on every page because the shell

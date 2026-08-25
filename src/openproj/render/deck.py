@@ -157,6 +157,19 @@ _DECK = """
     <button type="button" id="zoomout" aria-label="Smaller">−</button>
     <button type="button" id="zoomfit" title="Fit the column">100%</button>
     <button type="button" id="zoomin" aria-label="Larger">+</button>
+    {#- Fit the slide to the whole column, which is a different thing from 100%
+        and worth its own control: 100% is "as wide as the deck is MEANT to be",
+        capped at the 62rem measure a slide has always had, and this is "use the
+        window I actually have". On a wide screen the first leaves margins the
+        second fills.
+
+        A double-headed arrow, which is what every tool that has this button
+        draws — jcanton, 2026-08-25, asked for it by that shape. Text and not an
+        SVG for the same reason `PRIORITY_GLYPH` is text: it is one character, it
+        arrives in the control's own ink, and it is the same drawing on every
+        machine. -#}
+    <button type="button" id="zoomwide" aria-label="Fit the slide to the column"
+            title="Fit to width">↔</button>
   </span>
 </p>
 
@@ -1068,6 +1081,16 @@ function zoom(to) {
 document.getElementById('zoomin').onclick = () => zoom(ZOOM * 1.15);
 document.getElementById('zoomout').onclick = () => zoom(ZOOM / 1.15);
 READOUT.onclick = () => zoom(1);
+// The factor that makes the drawn slide exactly as wide as the column, undoing
+// the `SHEET_MAX` cap rather than ignoring it: `fit()` computes
+// `min(clientWidth, SHEET_MAX) * ZOOM`, so this is the number that turns that
+// product back into `clientWidth`. Derived from the same expression rather than
+// written as a second formula, which is what keeps the two agreeing when the cap
+// changes.
+document.getElementById('zoomwide').onclick = () => {
+  const room = SHEETS.clientWidth;
+  if (room > 0) zoom(room / Math.min(room, SHEET_MAX));
+};
 
 // Ctrl and a wheel, which is also what a trackpad pinch arrives as — the browser
 // synthesises `wheel` with `ctrlKey` for it, so one listener answers both
