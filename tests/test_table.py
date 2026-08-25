@@ -5552,3 +5552,55 @@ def test_both_landing_marks_are_pixels_a_browser_draws(page: str, tmp_path: Path
         f"the mark grew its row to {got['markedRow']}px against {got['plainRow']}px, "
         "so a quiet mark reads as a different kind of row"
     )
+
+
+def test_the_table_teaches_its_gestures_beside_the_search_box(seed_root: Path):
+    """jcanton, 2026-08-25: "the new record button on top of the table should be
+    removed: we already have the + new row at the bottom; move the description
+    ... next to the search box so the page is consistent with the timeline and
+    graph pages".
+
+    Two claims, and the second is the one a substring search cannot make. The
+    sentence has to be IN the aside — the slot `_facets_html` puts at the far end
+    of the search box's line, where the graph's pan/zoom line and the timeline's
+    window line already ride — and not merely somewhere on the page with the same
+    words in it. Parsed rather than searched for the reason `pages.py` exists:
+    the shell's stylesheet is inlined into every page, so any comment naming a
+    control puts those exact characters into the served bytes.
+
+    And it stays off the reader's copy, which is where the pair used to be
+    together: a rendered file has no server to save to, so a line promising an
+    editor is a page that stops being believed the first time somebody
+    double-clicks.
+    """
+    from pages import elements
+
+    records, config, _ = load_repo(seed_root)
+    index = build_index(records, config, date(2026, 8, 17))
+    page = render_table(index, ROUTES, base_commit="deadbee", may_write=True)
+
+    drawn = elements(page)
+    asides = [i for i, e in enumerate(drawn) if e.tag == "div"
+              and "aside" in e.attrs.get("class", "").split()]
+    assert len(asides) == 1, f"the table draws {len(asides)} aside slots"
+    said = drawn[asides[0] + 1]
+    assert (said.tag, said.attrs.get("class")) == ("p", "hint"), (
+        f"the aside holds {said} rather than the view's own sentence"
+    )
+    assert "double-click a cell" in said.text and "drag a row by the grip" in said.text, (
+        f"the sentence beside the search box is not the table's: {said.text!r}"
+    )
+
+    # And the control it used to stand beside is off the page, not merely
+    # restyled: the `+` row at the foot is the one way in now.
+    assert not [
+        e for e in drawn
+        if e.tag == "a" and "button" in e.attrs.get("class", "").split()
+        and e.text.strip() == "New record"
+    ], "the table still draws a second way to create a record above the rows"
+
+    reader = elements(render_table(index, ROUTES, base_commit="deadbee"))
+    assert not [e for e in reader if e.tag == "div"
+                and "aside" in e.attrs.get("class", "").split()], (
+        "the reader's table promises gestures it has no server for"
+    )

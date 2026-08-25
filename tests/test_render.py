@@ -3488,6 +3488,13 @@ def test_a_rendered_plan_offers_no_dead_control(rendered: Path, seed_index: Inde
     button back to the page you were already on; the hint beside it promised an
     editor with no server to save to; and every cycle card linked to a per-cycle
     page that `render_static` does not write.
+
+    The button is gone from the table altogether since 2026-08-25 — the `+` row
+    at the foot creates a record in place — so the first assertion below can no
+    longer fail and is kept only as the name of what must not come back. The
+    second is still live and moved with the sentence it is about: the hint is in
+    `#controls .aside` now, drawn only where `may_write` and a `base_commit`
+    both say there is a server behind the page.
     """
     table = read(rendered, "table.html")
     cycles = read(rendered, "cycles.html")
@@ -3910,10 +3917,13 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
     counts: the key's row where there is a key, and the page's own control row
     where there is not.
 
-    The table keeps its instruction where it is, and that is the pattern rather
-    than an exception to it: the rule is about rows, and "double-click a cell to
-    edit it" is already inline beside New record — the control it shares a subject
-    with — so it costs no row to move and no row to leave.
+    The table's instruction was the exception and stopped being one on
+    2026-08-25: it was inline beside New record, which was a control and not a
+    sentence, and when jcanton took that button off the page ("we already have
+    the + new row at the bottom") the sentence had nothing left to share a row
+    with. It is in `#controls .aside` now, which is the same slot the graph's
+    pan/zoom line and the timeline's window line ride in — one pattern on all
+    three views rather than two-and-an-argument.
 
     The heading is still first in the list and is now `.sr-only` — the seventh of
     the six rows going. It is `position: absolute`, so it is out of flow and the

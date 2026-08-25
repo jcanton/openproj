@@ -446,3 +446,117 @@ def test_a_product_can_be_patched_and_deleted(tmp_path: Path):
         )
         assert gone.status_code == 200, gone.json()
         assert client.get(f"/detail/{product}").status_code == 404
+
+
+def test_a_products_row_is_empty_where_a_product_holds_nothing(plan: Path):
+    """The table draws one row shape for every kind, and a product reads eleven
+    fewer fields than the rows around it.
+
+    jcanton, 2026-08-25: "a product has no status, but in the table the status
+    cell has a chip with background and color, that should not be there, nor
+    should any of the other cells contain anything (currently I see blockers and
+    progress)". Three separate mechanisms put content in those cells, and only
+    one of them was a value:
+
+    - `status` arrived as `null` — `_row` has withheld it since the ladder gained
+      `Rung.statuses` — and the cell drew the chip anyway. `priority` beside it
+      was guarded and `status` was not, so the ground colour of an unknown rung
+      sat behind an empty word, which reads as a status this record has and
+      nobody can name.
+    - `blocked_by` was counted for every row. A product cannot depend on
+      anything, so the count was always `0` and always drawn: a nought is not an
+      empty cell, and a column headed Blockers saying `0` about a codebase is a
+      field the record does not have, answered.
+    - `progress` rolled its children up in weeks, correctly and irrelevantly. A
+      product groups the codebases a plan spans; "42% done" beside one is a
+      sentence about the plan wearing the name of the thing it is filed under.
+
+    Driven rather than read off the payload, because the cells are built by
+    `cellHtml` at runtime and appear in no rendered file — the row is the claim,
+    and `_row` returning `None` says nothing about what the script does with it.
+    Two rows are read: a product, and a pitch beneath it as the control that
+    would fail if this test simply found an empty table.
+    """
+    from pages import elements
+    from test_injection import run_js
+
+    from openproj.render import ROUTES, render_table
+
+    records, config, _ = load_repo(plan)
+    index = build_index(records, config, date(2026, 8, 20))
+    counted = index.progress.get("prod-000001")
+    assert counted is not None, (
+        "the fixture's product rolls nothing up, so the progress half of this "
+        "test would pass on an empty column"
+    )
+
+    page = render_table(index, ROUTES, base_commit="0" * 40, may_write=True)
+    drawn = run_js(page, "null", page=True)
+    assert not drawn["errors"], drawn["errors"]
+    body = next((str(s) for s in drawn["written"] if 'data-id="prod-000001"' in str(s)), None)
+    assert body is not None, "the table drew no row for the product"
+
+    def cells(row_id: str) -> dict[str, dict]:
+        """One row's cells: column -> the text, the td's classes, and every
+        element drawn INSIDE it.
+
+        The inside is the half that matters here and the half a text comparison
+        cannot see: `human(null)` is the empty string and so is the glyph beside
+        it, so the status chip this test exists for contains no text at all. It
+        is a coloured box, and a cell that reads `''` while painting one is
+        exactly what jcanton was looking at.
+        """
+        found: dict[str, dict] = {}
+        inside = False
+        column: str | None = None
+        for element in elements(body):
+            if element.tag == "tr":
+                inside, column = element.attrs.get("data-id") == row_id, None
+            elif element.tag == "td":
+                column = element.attrs.get("data-col", "") if inside else None
+                if column is not None:
+                    found[column] = {
+                        "text": element.text,
+                        "classes": element.attrs.get("class", "").split(),
+                        "inside": [],
+                    }
+            elif inside and column is not None:
+                found[column]["inside"].append(
+                    (element.tag, element.attrs.get("class", ""))
+                )
+        return found
+
+    product = cells("prod-000001")
+    assert product, "the product's row has no cells"
+    # What a product IS: an id and a title, and tags if anybody wrote any.
+    holds = {"id", "title", "tags"}
+    for column, cell in product.items():
+        if column in holds:
+            continue
+        assert cell["text"] == "", (
+            f"the product's {column} cell says {cell['text']!r}, and a product "
+            f"has no {column}"
+        )
+        assert cell["inside"] == [], (
+            f"the product's {column} cell draws {cell['inside']} — an empty cell "
+            "that paints something is the chip this was reported as"
+        )
+        assert "edit" not in cell["classes"], (
+            f"the product's {column} cell has no value and still opens an editor "
+            "that would write the field into the file"
+        )
+
+    # The control. The same columns on the pitch beneath it, which does read
+    # them — without this every assertion above passes on a table of empty rows.
+    pitch = cells("pitch-000001")
+    assert ("span", "chip st-ready") in pitch["status"]["inside"], (
+        f"the pitch lost the chip a status is drawn as: {pitch['status']}"
+    )
+    assert "edit" in pitch["status"]["classes"], (
+        "the per-kind gate took the editor off a row that does read a status"
+    )
+    assert pitch["blocked_by"]["text"] == "1", (
+        "the pitch waits on one thing and its cell no longer says so: "
+        f"{pitch['blocked_by']}"
+    )
+    assert pitch["owner"]["text"] == "ann", pitch["owner"]

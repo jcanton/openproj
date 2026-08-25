@@ -1282,8 +1282,11 @@ table.tight-priority td[data-col="priority"] .chip.pri { padding: .1rem .3rem; }
 .editbar { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center;
            margin: .4rem 0 1rem; }
 /* A link that is a control. The only rule was `.tl-controls .button`, scoped to
-   the timeline's filter bar, so the table's create link — the one way to bring
-   a record into existence from the UI — rendered as underlined blue text.
+   the timeline's filter bar, so the table's create link — which was, at the time,
+   the one way to bring a record into existence from the UI — rendered as
+   underlined blue text. That link is gone (the `+` row at the foot of the table
+   replaced it); the rule is not, because the empty states still link to `/new`
+   with it and so does the records list.
    `:visited` as well as the base state, because the shell colours every visited
    link with `a:visited`, which is (0,1,1) and would beat a bare `.button`: the
    button turned back into a link the moment somebody had used it once. Written
