@@ -75,12 +75,14 @@ from .model import (
     ID_PATTERN,
     KINDS,
     MAX_BODY_BYTES,
+    MAX_SLIDE_BYTES,
     PEOPLE_DIR,
     RUNG,
     Config,
     Cycle,
     Person,
     Record,
+    Slide,
     Unreadable,
     _an,
     edited_by_id,
@@ -633,6 +635,20 @@ MAX_CYCLE_WEEKS = 520.0
 # document into a field whose whole value is being short — the notes below the
 # table are where prose goes, and they are unbounded.
 MAX_GOAL_CHARS = 400
+# The most slides one cycle's deck may be ordered into. A cycle holds tens of
+# records and the deck draws the leaves among them; this is an order of magnitude
+# above the largest real cycle, and it exists because `deck_order` is otherwise
+# an unbounded list of strings a writer can put in a file in git, on a protected
+# branch, where the force-push that would take it back out is blocked. The same
+# reasoning as `MAX_CYCLE_WEEKS` above, which was written after the unbounded
+# version had already committed.
+MAX_DECK_SLIDES = 500
+# The most sections one slide may choose. They are headings in one shaping
+# document; the team's own template ships six, and a record with a hundred is not
+# one anybody is standing up and presenting from. Same argument as the two bounds
+# above — an unbounded list of strings that reaches a file in git needs a number
+# somewhere, and the door is the only place it can be.
+MAX_SLIDE_SECTIONS = 100
 
 
 def _cycle_message(fields: dict) -> str:
@@ -857,6 +873,42 @@ def _reject_bad_cycle(fields: dict) -> None:
         fields["availability"] = {
             str(who): _as_positive(rate, f"availability of {who}") for who, rate in rates.items()
         }
+    if "deck_order" in fields:
+        fields["deck_order"] = _as_record_ids(fields["deck_order"], "deck_order")
+
+
+def _as_record_ids(value: object, name: str) -> list[str]:
+    """A list of record ids, refused at the door rather than sanitised on the way out.
+
+    `Cycle` parses this permissively — a file that arrived in git holding
+    nonsense here has to load, or one hand edit takes every date on every page
+    down. The write path is the opposite bargain and always has been: what a
+    person committed by hand is a fact to work around, what this server is about
+    to commit is a choice it can decline. `PATCH /api/record` learned that the
+    expensive way, with eleven bodies that committed and then 500ed every page.
+
+    Bounded, because a deck order is one id per slide in one cycle and a cycle
+    holds tens of records. Unbounded, this is a list of arbitrary strings a
+    signed-in writer can put in a file in git, on a protected branch, where
+    branch protection blocks the force-push that would take it back out.
+
+    Not checked against the records that exist, deliberately. An order naming an
+    id this cycle has since stopped holding is ORDINARY — somebody re-bets while
+    a deck tab is open — and `_deck_order` ignores it. Refusing it here would
+    turn a stale tab into a dead end whose only cure is a reload, which is the
+    same failure `/cycle/-1` was before it was bounded.
+    """
+    if not isinstance(value, list):
+        raise HTTPException(422, f"{name} is a list of record ids, not {value!r}")
+    if len(value) > MAX_DECK_SLIDES:
+        raise HTTPException(
+            422, f"{name} holds at most {MAX_DECK_SLIDES} record ids, and that one holds "
+            f"{len(value)}"
+        )
+    for one in value:
+        if not isinstance(one, str) or not ID_PATTERN.match(one):
+            raise HTTPException(422, f"{name} holds record ids, and {one!r} is not one")
+    return list(value)
 
 
 def _as_iso_date(value: object, name: str) -> str:
@@ -944,6 +996,64 @@ def _reject_bad_types(fields: dict) -> None:
             raise HTTPException(422, f"{name} must be a list, not {fields[name]!r}")
     if "review_waived" in fields and not isinstance(fields["review_waived"], bool):
         raise HTTPException(422, "review_waived must be true or false")
+    if "slide" in fields:
+        fields["slide"] = _as_slide(fields["slide"])
+
+
+def _as_slide(value: object) -> dict | None:
+    """One record's slide settings, refused at the door rather than defaulted.
+
+    `Slide` parses permissively — a hand edit that says `progress: banana` costs
+    one slide drawn the generated way, never a record that will not load. This is
+    the other half of that bargain and the one this repository keeps relearning:
+    what a person committed by hand is a fact to work around, what this server is
+    about to commit is a choice it can decline. Sanitising here instead would
+    write the *corrected* value into git and leave nobody any way to see that
+    what they sent was not what landed.
+
+    `null` is how the editor says "stop personalising this and go back to the
+    generated slide", so it is a value rather than an omission — the one write
+    that takes the key back out of the file.
+
+    The prose is bounded because nothing else bounds it. A body goes through
+    `_body_in`'s `MAX_BODY_BYTES`; this is frontmatter, and there is no ceiling
+    anywhere on the way in — which on a protected branch means a blob that cannot
+    be taken back out.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise HTTPException(422, f"slide is a map of settings, not {value!r}")
+    unknown = sorted(set(value) - set(Slide.model_fields))
+    if unknown:
+        raise HTTPException(
+            422,
+            f"slide has no setting called {unknown[0]!r}; it holds "
+            f"{', '.join(Slide.model_fields)}",
+        )
+    for name in ("skip", "progress", "prs", "lead"):
+        if name in value and not isinstance(value[name], bool):
+            raise HTTPException(422, f"slide.{name} must be true or false, not {value[name]!r}")
+    chosen = value.get("sections")
+    if chosen is not None:
+        if not isinstance(chosen, list) or not all(isinstance(one, str) for one in chosen):
+            raise HTTPException(422, f"slide.sections is a list of section names, not {chosen!r}")
+        # Bounded against the same kind of unbounded-list-into-git argument as
+        # `deck_order`, and low: these are headings in one document, and a
+        # document with a hundred of them is not one anybody is presenting from.
+        if len(chosen) > MAX_SLIDE_SECTIONS:
+            raise HTTPException(
+                422,
+                f"slide.sections names at most {MAX_SLIDE_SECTIONS} sections, and that one "
+                f"names {len(chosen)}",
+            )
+    prose = value.get("body")
+    if prose is not None:
+        if not isinstance(prose, str):
+            raise HTTPException(422, f"slide.body is text, not {prose!r}")
+        if len(prose.encode("utf-8")) > MAX_SLIDE_BYTES:
+            raise HTTPException(413, "that slide is too large to commit")
+    return dict(value)
 
 
 def _reject_bad_status(kind: str, fields: dict) -> None:
@@ -2033,7 +2143,7 @@ def create_app(
         return page(render.render_cycle(index, number, render.ROUTES, commit))
 
     @app.get("/deck/{number}", response_class=HTMLResponse)
-    def deck(number: int) -> HTMLResponse:
+    def deck(number: int, request: Request) -> HTMLResponse:
         """The review deck for one cycle, printable to one slide a page.
 
         Bounded the same way `/cycle/{number}` is, and by the same pattern: two
@@ -2055,6 +2165,12 @@ def create_app(
                 number,
                 render.ROUTES,
                 lambda name: store.read_asset(commit, f"assets/{name}"),
+                # The commit the rail's Save compares against, and whether this
+                # reader may write at all. Both, for the reason `render_deck`
+                # says: a reader keeps the rail, because it is how anybody finds
+                # slide nine of eleven, and only a writer is offered the drag.
+                base_commit=commit,
+                may_write=may_write(request),
             )
         )
 

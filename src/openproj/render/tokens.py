@@ -24,6 +24,22 @@ def _status_class(status: str) -> str:
     return f"st-{status}" if status in STATUSES else "st-ready"
 
 
+# The same rule for the other permissive field, written when the deck grew a
+# server-rendered priority chip. `priority` is a plain `str` for exactly the
+# reasons `status` is, so it holds whatever is in the file, and the rule above
+# is not about status — it is about a permissive value reaching a class
+# attribute. The table draws its own priority chip in JavaScript and interpolates
+# `row.priority` through `esc`, which is safe and still names a rule the
+# stylesheet may not have; here the fold is what makes the attribute mean
+# something.
+#
+# Falls back to `medium`, which is the field's own default — the rung a record
+# has when nobody has said otherwise, so an unreadable word draws as the
+# unremarkable middle rather than shouting at the top of the ladder.
+def _priority_class(priority: str) -> str:
+    return f"pri-{priority}" if priority in PRIORITIES else "pri-medium"
+
+
 # What a person owns, in the order they think about it. Everything not named here
 # is either derived (start, end, blocks, any rollup) or authoritative (id), and
 # neither belongs in a form: a derived value typed by hand is a lie the next
