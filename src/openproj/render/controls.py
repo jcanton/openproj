@@ -947,7 +947,13 @@ const FORMATS = [
   // asset this repository stored, on the allowlist rule, and renders it as a
   // link instead. So the image button does what paste and drop already do —
   // uploads the bytes and writes the path they landed at.
-  {label: '![]', title: 'Image', upload: true},
+  // The title is where a keyboard reader and a hoverer both meet this control,
+  // so the size syntax is on it as well as in the line the upload writes
+  // afterwards. Two places for one fact, deliberately: one is read before you
+  // have a picture and the other after, and the day somebody wants it is
+  // whichever of the two they are looking at.
+  {label: '![]', title: 'Image  —  size it with {width=60}, a bare number is per cent',
+   upload: true},
   // No shortcut on the last three: every letter this page could spare is spoken
   // for, and none of them is something anybody inserts twice a minute.
   // `chooses` is an offset and a length into the inserted text, so the word you
@@ -2168,8 +2174,21 @@ function attachUploads(surface, status) {
         return;
       }
       surface.splice(at, at + token.length, response.ok ? `![${alt}](${answer.path})` : '');
+      // **And how to size it, said at the moment somebody has one to size.**
+      // jcanton, 2026-08-25: "what was the syntax to change figure width? can we
+      // teach it with the image button?" — he wrote the feature's brief and
+      // could not remember its spelling a day later, which is the whole case
+      // against a syntax that lives only in a hint under a box nobody reads
+      // twice.
+      //
+      // Said rather than INSERTED. Writing `{width=60}` into the document would
+      // put a size on every figure whether or not anybody wanted one, and a
+      // default nobody chose is the thing they then have to find and delete. The
+      // line is where the reader is already looking: it is the same status
+      // element that just told them the upload landed.
       status.textContent = response.ok
         ? (answer.fresh ? `${answer.path} uploaded` : `${answer.path} — already in the plan`)
+          + ' · size it with {width=60} — a bare number is per cent'
         : (answer.detail || 'that upload was refused');
     } catch (error) {
       // The connection went while the request was in the air: wifi dropped, the
