@@ -186,7 +186,7 @@ _CYCLE = """
     is "where is the thing somebody just said out loud", which is a search, and
     "put the big ones together", which is a sort. -#}
 <p class="hint betsearch">
-  <label class="sr-only" for="betfind">Search the betting table</label>
+  <label for="betfind" class="sr-only">Search the betting table</label>
   <input type="search" id="betfind" placeholder="Search" autocomplete="off">
   <span>Everything ready or in progress. Ticking one stamps it with cycle
   {{ c.number }}; an item already in progress from an earlier cycle keeps the cycle it

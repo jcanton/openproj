@@ -476,14 +476,19 @@ def test_every_kind_chip_is_the_same_shape(index: Index, kind: str):
 
 
 def test_the_timeline_window_controls_stand_on_one_line(index: Index):
-    """FROM, TO, ZOOM, Apply and Reset are one row, and the ISO echo under each
-    date box must not push what is beside it out of line.
+    """FROM, TO, ZOOM, Apply and Reset are one row, and nothing under a date box
+    pushes what is beside it out of line.
 
-    As a flex row it could not be both: the echo makes the two date labels a line
-    taller than the zoom label, so `align-items: end` dropped ZOOM and both
-    buttons a whole line below the boxes and the bar read as two rows. Three
-    explicit grid rows say it directly, and this asks which row each part of the
-    bar actually lands in.
+    As a flex row it could not be both: the ISO echo that used to sit under each
+    date box made the two date labels a line taller than the zoom label, so
+    `align-items: end` dropped ZOOM and both buttons a whole line below the boxes
+    and the bar read as two rows. Three explicit grid rows say it directly.
+
+    The echo went on 2026-08-25 — see `test_no_page_prints_a_date_twice` — and the
+    third row went with its rule rather than staying behind as a track nothing
+    lands in. The first two are what this test is actually about: every caption on
+    one line and every control on the next, which is the property that broke and
+    the reason the grid is explicit at all.
     """
     sheet = sheet_of(render_timeline(index, ROUTES))
     bar = PAGE + [el("form", "tl-controls")]
@@ -496,7 +501,6 @@ def test_the_timeline_window_controls_stand_on_one_line(index: Index):
         (el("input"), "2"),               # the two date boxes
         (el("select"), "2"),              # the zoom picker, level with them
         (el("span", "acts"), "2"),        # and Apply and Reset, level with those
-        (el("span", "iso"), "3"),         # the echo, under the box it came from
     ):
         path = bar + [child]
         assert sheet.value(path, "grid-row") == row, says(sheet, path, "grid-row")

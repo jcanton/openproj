@@ -477,16 +477,31 @@ def test_the_status_a_row_is_set_to_says_what_it_will_be_refused_without(page: s
     assert "control.name === 'reviewers' && waived" in page
 
 
-def test_a_date_box_says_which_day_it_holds(page: str):
-    """`assigned_on` is printed 06.07.2026 in the read view and drawn 07/06/2026
-    or 06/07/2026 in the control that edits it, depending on where the reader is
-    sitting. The echo says which of the two it is, in the format the read view
-    used — jcanton, 2026-08-25: "all dates everywhere should be as in the
-    table"."""
+def test_a_date_box_is_the_only_copy_of_the_day_it_holds(page: str):
+    """No echo beside a date box, and nothing on the page repeating its value.
+
+    This asserted the opposite for most of 2026-08-25. Every `<input type=date>`
+    was followed by a `.iso` span reprinting the value in dd.mm.YYYY, because the
+    box is drawn in the READER's locale and 2026-09-01 reads as 01/09 at one desk
+    and 09/01 at the next. jcanton, having used it: "the date pickers in the
+    cycle are still mm/dd/yyyy and on their right is the date reprinted as
+    dd.mm.yyy ... delete the echo: it's confusing to have both formats."
+
+    The ambiguity it settled is back for anybody whose browser draws a month
+    first — Chrome and Safari honour the document's `lang` and already draw
+    25.08.2026, Firefox follows the operating system. That is the trade, it was
+    put to him in those words, and this test is where the next person meets it.
+
+    `readDate` stays and is still asserted elsewhere: it is the browser's half of
+    one format written in two languages, and
+    `test_both_halves_of_the_app_write_a_date_the_same_way` drives it against
+    `_read_date` whether or not anything on a page calls it today.
+    """
     assert 'type="date"' in control(page, "assigned_on")
-    assert "document.querySelectorAll('input[type=date]')" in page
-    assert "echo.className = box.classList.contains('field') ? 'iso field' : 'iso'" in page
-    assert "echo.textContent = readDate(box.value)" in page
+    assert "insertAdjacentElement('afterend', echo)" not in page
+    assert "'iso field' : 'iso'" not in page
+    # And no stylesheet still dresses a span nothing inserts.
+    assert not re.search(r"^\.iso \{", page, re.M)
 
 
 def test_the_facts_read_as_a_column_beside_the_document(page: str):
@@ -1605,19 +1620,18 @@ def test_a_toolbar_button_keeps_the_selection_it_acts_on(client: TestClient):
     assert "event.detail" in page
 
 
-def test_the_create_form_does_not_echo_the_dates_it_is_asking_for(page: str):
-    """Every `input[type=date]` gets an ISO echo beside it, because a date box is
-    drawn in the reader's locale and the same stored 2026-09-01 reads as
-    01/09/2026 here and 09/01/2026 one desk over.
+def test_no_page_echoes_the_dates_it_is_asking_for(page: str):
+    """The create form was the first page to lose the ISO echo, on the grounds
+    that its two date boxes are the only dates on screen and had nothing to be
+    disambiguated against. On 2026-08-25 every other page followed, by jcanton's
+    ruling that two formats on one line is a question rather than an answer — so
+    the carve-out this test was written for is now the rule, and the `#create`
+    special case it asserted has nothing left to be special about.
 
-    On the create form that echo has nothing to disambiguate against — those two
-    boxes are the only dates on screen — so it read as a second, differently
-    formatted copy of a value somebody is in the middle of typing. Two dates,
-    four numbers.
+    See `test_a_date_box_is_the_only_copy_of_the_day_it_holds` for the trade.
     """
-    assert "if (box.closest('#create')) continue;" in page
-    # And the echo itself is still there for every other date box on the page.
-    assert "echo.className = box.classList.contains('field') ? 'iso field' : 'iso'" in page
+    assert "box.closest('#create')" not in page, "the carve-out outlived the rule"
+    assert "insertAdjacentElement('afterend', echo)" not in page
 
 
 def test_the_goal_is_above_the_bet_and_the_notes_are_below_it(client: TestClient, repo_path: Path):

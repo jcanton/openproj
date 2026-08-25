@@ -3056,24 +3056,25 @@ def test_the_header_spans_the_page_and_the_facts_sit_beside_the_document(rendere
     assert "candidate.getClientRects().length > 0" in body
 
 
-def test_every_page_says_which_day_a_date_box_holds(rendered: Path):
-    """An `<input type=date>` is drawn in the reader's locale, so one desk edits
-    the same stored day as 01/09/2026 and the next as 09/01/2026. The box keeps
-    its locale; the echo beside it says which day that is in the app's own
-    format.
+def test_no_page_prints_a_date_twice(rendered: Path):
+    """A date box is drawn in the reader's locale and nothing on the page repeats
+    the value beside it.
 
-    It echoed the ISO string until 2026-08-25, on the argument that "every date
-    the plan prints is ISO" — true when it was written, and false once the
-    printed dates moved to `dd.mm.YYYY`. An echo in a third format is a second
-    thing to read rather than an answer to the ambiguity it exists for.
-    `test_both_halves_of_the_app_write_a_date_the_same_way` is what holds the
-    browser's copy of that format to the server's.
+    Every one of these pages carried an echo until 2026-08-25 — a `.iso` span
+    after each `<input type=date>`, saying which day the box held in the app's
+    own `dd.mm.YYYY`. It existed because the same stored 2026-09-01 reads as
+    01/09/2026 at one desk and 09/01/2026 at the next. jcanton, having used it:
+    "delete the echo: it's confusing to have both formats."
+
+    So the ambiguity is back, for anybody whose browser draws a month first, and
+    that was the choice rather than an oversight. Asserted across every exported
+    page because the echo was inserted by the shell and would come back the same
+    way — on all of them at once, silently.
     """
     for name in PAGES:
         body = read(rendered, name)
-        assert "document.querySelectorAll('input[type=date]')" in body, name
-        assert ".iso { display: block;" in body, name
-        assert "echo.textContent = readDate(box.value)" in body, name
+        assert "insertAdjacentElement('afterend', echo)" not in body, name
+        assert ".iso { display: block;" not in body, name
 
 
 # --- cycles -----------------------------------------------------------------

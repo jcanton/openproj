@@ -505,7 +505,19 @@ _DECK_STYLE = """
   :root, :root[data-theme="dark"] { color-scheme: light; }
   /* The app is not part of the deck. `nav` and the banner are drawn by the shell
      on every page and belong on a screen, not in a handout. */
-  nav, .skip, .deckbar, #unreadable { display: none !important; }
+  nav, .skip, .deckbar, #unreadable, #build { display: none !important; }
+  /* **The screen's scroller is undone, and this is not a nicety.** On screen the
+     deck is a viewport-height row whose slide column scrolls, so the nav and the
+     deck bar never move. A fixed-height `overflow: auto` box does not PAGINATE:
+     everything past its first page is clipped, and an eleven-slide deck printed
+     as one sheet with slide one on it. Measured by
+     `test_every_deck_this_suite_can_reach_prints_one_slide_to_a_page`, which
+     counted 1 page where it wanted 4 — the pixel question asked of Chrome,
+     which is the only thing that knows.
+     Paper has no viewport and nothing to keep still, so here it is simply a
+     document again. */
+  .deckwrap { display: block; height: auto; gap: 0; }
+  .sheets { overflow: visible; height: auto; padding: 0; }
   #main { margin: 0; padding: 0; }
   html, body { background: var(--paper); color: var(--paper-ink); }
   /* The fixed canvas is a screen and a projector decision, and print is neither.
