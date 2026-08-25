@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from markupsafe import Markup
 from pydantic import BaseModel
 
+from .. import __version__
 from ..index import Index
 from ..model import Unreadable
 from ..themes import FAMILIES
@@ -1475,12 +1476,6 @@ input:not([type="checkbox"]):not([type="radio"]), textarea {
    already been told. */
 .req { font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
        color: var(--sev-warn); font-weight: 600; }
-/* Every date the plan renders is ISO; every `<input type=date>` renders in the
-   browser's locale. So one reader edits 2026-09-01 as 01/09/2026 and the next as
-   09/01/2026, and neither can tell which. The box keeps its locale — that is
-   what it is typed in — and the value the file holds is echoed beside it. */
-.iso { display: block; font-family: var(--font-mono); font-size: 11px;
-       color: var(--muted); font-variant-numeric: tabular-nums; }
 /* Inside the body, not above it or beside it: an empty table with the message
    somewhere else is still a header row over a void. Two tables draw one now —
    the plan's rows and the people's — so the shape of "there is nothing here"
@@ -2208,6 +2203,28 @@ function fitRoom() { settleRoom(4); }
 {% endif -%}
 {{ content }}
 </main>
+{#- What is running, and what it is running ON. jcanton, 2026-08-25: "can we have
+    the app version show up in the web interface?"
+
+    Two facts and not one, because they answer different questions and reading
+    one for the other has already cost this project an afternoon — `AGENTS.md`
+    says so in as many words: the version moves only on a deploy and names this
+    CODE; the plan's sha moves whenever anybody saves a record and names the
+    DATA. Somebody who reads a moving sha as the version concludes a deploy
+    landed because a colleague edited a pitch.
+
+    The version is rendered; the sha is filled in by the health poll that is
+    already running for the pile banner — no second request for it, and on a
+    rendered file there is no server to ask, so that half simply stays empty.
+
+    In the footer because it is reference and not news. It is on every page, out
+    of the reading column, and it is the first thing anybody asks for when a
+    page behaves unexpectedly. -#}
+<footer id="build">
+  <a href="https://github.com/jcanton/openproj/releases/tag/v{{ version }}">openproj
+    {{ version }}</a>{% if live %} · <span id="planhead" title="the plan's own commit"></span>
+  {% endif %}
+</footer>
 <script>
 // No third state to cycle through: with nothing stored the page follows the
 // system, and the first click stores the opposite of whatever is on screen.
@@ -2327,35 +2344,30 @@ function readDate(iso) {
   return parts.length === 3 ? `${parts[2]}.${parts[1]}.${parts[0]}` : String(iso || '');
 }
 
-// The one format that never moves. A date box is drawn by the browser in the
-// reader's locale, so the same stored 2026-09-01 reads as 01/09/2026 here and
-// 09/01/2026 one desk over. The echo says which day it is in the app's own
-// format — jcanton, 2026-08-25: "all dates everywhere should be as in the table:
-// dd.mm or dd.mm.YY or dd.mm.YYYY".
+// **There is no echo beside a date box any more**, and the trade is worth
+// stating because it is one.
 //
-// **It used to echo the ISO string**, on the argument that "every date the plan
-// prints is ISO" — which was true when it was written and stopped being true the
-// day the printed dates moved to dd.mm.YYYY. An echo in a third format is a
-// second thing to read rather than an answer to the ambiguity it was written
-// for.
+// Every `<input type=date>` was followed by a `.iso` span repeating the value in
+// dd.mm.YYYY, because the box itself is drawn by the browser in the READER's
+// locale — the same stored 2026-09-01 reads as 01/09/2026 at one desk and
+// 09/01/2026 at the next, and neither reader can tell which. The echo said which
+// day it was in the app's own format.
 //
-// The echo carries the class the box carries, so it appears and disappears with
-// it rather than repeating a value that is already on screen in read mode.
-for (const box of document.querySelectorAll('input[type=date]')) {
-  // Except on the create form, where the two boxes are the only dates on screen
-  // and the echo under each label reads as a second, differently-formatted copy
-  // of a value you are in the middle of typing. The ambiguity this exists to
-  // settle is between a printed date and a box beside it; there is nothing to
-  // compare against there.
-  if (box.closest('#create')) continue;
-  const echo = document.createElement('span');
-  echo.className = box.classList.contains('field') ? 'iso field' : 'iso';
-  const show = () => { echo.textContent = readDate(box.value) || '—'; };
-  show();
-  box.addEventListener('input', show);
-  box.addEventListener('change', show);
-  box.insertAdjacentElement('afterend', echo);
-}
+// jcanton, 2026-08-25, having used it: "the date pickers in the cycle are still
+// mm/dd/yyyy and on their right is the date reprinted as dd.mm.yyy ... delete the
+// echo: it's confusing to have both formats." Two formats on one line is a
+// question rather than an answer, and he is the reader.
+//
+// What comes back is the original ambiguity, for anybody whose browser draws a
+// month first. Chrome and Safari honour the document's `lang` and already draw
+// 25.08.2026; Firefox follows the operating system and will not. That is the
+// cost, it is known, and it was chosen — this note is here so the next person to
+// meet a misread date finds the decision rather than the bug.
+//
+// `readDate` stays. It is the browser's half of one format written in two
+// languages, `test_both_halves_of_the_app_write_a_date_the_same_way` drives it
+// against `_read_date`, and it is what any future date this page draws goes
+// through.
 
 // The box is measured once the page around it exists, and again on each of the
 // two things that move the answer.
@@ -2554,6 +2566,13 @@ const PILE_LOUD_AGE_S = 60;
 // almost nothing; the landed listener below re-asks the moment there is news.
 const PILE_POLL_MS = 60000;
 
+// The plan's own commit, in the footer, off the poll that is already happening.
+// A second request for seven characters would be a second request.
+function showHead(health) {
+  const at = document.getElementById('planhead');
+  if (at && health.head) at.textContent = 'plan ' + String(health.head).slice(0, 7);
+}
+
 function showPile(health) {
   const stranded = health.unpushed || 0;
   const age = health.oldest_unpushed_age || 0;
@@ -2597,7 +2616,11 @@ async function readPile() {
   // this banner exists for. A network failure or a non-JSON body from
   // something in front of the service is caught and the banner keeps its last
   // word — the next poll asks again.
-  try { showPile(await (await fetch('/api/health')).json()); } catch {}
+  try {
+    const health = await (await fetch('/api/health')).json();
+    showPile(health);
+    showHead(health);
+  } catch {}
 }
 
 readPile();
@@ -2778,4 +2801,9 @@ def _page(
         # Only the server has an event stream to listen to. A static page opening a
         # connection to nothing would retry forever in the console.
         live=links.table.startswith("/"),
+        # This code's own version, in the footer. Imported from the package
+        # rather than passed in by each caller: it is a fact about the build and
+        # not about the page, and `pyproject.toml` and `__init__.py` have already
+        # disagreed with each other and with the newest tag once.
+        version=__version__,
     )

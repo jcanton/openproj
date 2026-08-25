@@ -38,6 +38,7 @@ from markupsafe import Markup
 from ..index import Index
 from ..model import Record, lead_text
 from ..vendor import _ace
+from .controls import _combobox_html
 from .deck import _DECK_STYLE, _deck_view, _said, _seeded, choosable, slide_html
 from .detail import _body_html, _fact_rows, _progress_view, _slidebar
 from .editor import _ACE_SURFACE, _ace_wanted
@@ -204,13 +205,27 @@ _SLIDE = """
   <input type="hidden" id="base" value="{{ base_commit }}">
   {% endif %}
 
-  <div class="panes3">
+  {#- The one control that takes the record out of the way. A slide is usually
+      personalised by somebody who has just read the record and now wants the
+      room the preview is squeezed into — jcanton, 2026-08-25: "including the
+      option of collapsing the leftmost one".
+
+      A button and not a drag to zero: a pane dragged to nothing is a pane whose
+      handle is a hairline nobody can find again, which is the trap the width
+      grip on the record page had until this morning. -#}
+  {% if e.rows %}
+  <p class="panebar">
+    <button type="button" id="foldread" aria-pressed="false"
+            aria-controls="pane-read">Hide the record</button>
+  </p>
+  {% endif %}
+  <div class="panes3" id="panes3">
     {#- LEFT: the record as it reads. The same facts list and the same document
         the record page draws, from the same three functions, because a second
         rendering of a record is a second thing to keep in step — and this is
         the pane somebody is reading FROM while they decide what goes on the
         slide, so it has to be what the record actually says. -#}
-    <section class="pane read" aria-label="The record">
+    <section class="pane read" id="pane-read" aria-label="The record">
       <dl class="facts">
         {% for row in e.rows %}
         <dt class="{% if row.derived %}derived{% endif %}">{{ row.label }}</dt>
@@ -233,6 +248,14 @@ _SLIDE = """
       {% endif %}
       <div class="doc read">{{ e.body }}</div>
     </section>
+
+    {#- The two joins, and the same control the record page's split view uses:
+        `role="separator"`, focusable, and answering an arrow key as well as a
+        pointer. A splitter that answers only a mouse is the same defect as a
+        table that answers only a double-click, which this repository has already
+        shipped once. -#}
+    <div class="pgrip" role="separator" tabindex="0" aria-orientation="vertical"
+         aria-label="Resize the record pane" data-at="0"></div>
 
     {#- CENTRE: what goes on the slide. -#}
     <section class="pane pick" aria-label="What goes on the slide">
@@ -275,13 +298,41 @@ _SLIDE = """
 
       <p class="field">
         <label for="prose">And on the slide, in your own words</label>
-        <textarea id="prose" name="prose" class="field"
-          rows="12">{{ e.slide.body }}</textarea>
         <span class="hint">Markdown. A line reading <code>\\newslide</code> starts
           another slide for this record — the second is titled
           “{{ e.title }} (2)”. Paste or drop a picture to put it in the plan.</span>
       </p>
+      {#- The same three strips the record page puts around its box, in the same
+          order and with the same ids, because they are filled by the same
+          functions: `applyMark` writes the toolbar into `#marks`, `attachUploads`
+          reports into `#upload`, `attachGutter` into `#gutter-note` and
+          `attachStatus` wraps `#statusbar`. jcanton, 2026-08-25: "editor in the
+          slide body editing: it doesn't have the bottom bar with draft/spaces/
+          keymap etc, can you include it please?"
+
+          Reached by inlining `controls.py`'s whole editor block rather than by
+          re-deriving any of it here — that block is what declares `EDITOR`,
+          `INDENT` and `KEYMAPS`, which is also why this page's Ace surface had
+          to default them. Two copies of a status bar is two things to keep in
+          step, and the one nobody would notice going stale is the small one.
+
+          No `#draftevery`: a draft is the record page's, where a body is being
+          co-edited and losing it means losing writing git never saw. This box
+          saves through the same Save as the checkboxes above it. -#}
+      <p class="field bodybar markbar">
+        <span id="marks" class="marks"></span>
+        <span class="hint" id="upload" role="status" aria-live="polite"></span>
+        <span class="hint" id="gutter-note" role="status" aria-live="polite"></span>
+      </p>
+      <div class="bodywrap">
+        <textarea id="prose" name="prose" class="field body-field"
+          aria-label="What this slide says in your own words">{{ e.slide.body }}</textarea>
+      </div>
+      <p class="field bodybar statusbar" id="statusbar"></p>
     </section>
+
+    <div class="pgrip" role="separator" tabindex="0" aria-orientation="vertical"
+         aria-label="Resize the slide pane" data-at="1"></div>
 
     {#- RIGHT: the slide, built by the same function the deck builds it with, so
         this pane and the projector cannot disagree. -#}
@@ -300,11 +351,65 @@ _SLIDE_STYLE = """
    middle is the widest because it is the only one being typed into; the right is
    sized to the slide's own 16:9 rather than to a share of the row, so the
    preview is never a shape the projector is not. */
+/* Three panes and two handles, as five grid tracks. The widths are custom
+   properties so the drag writes ONE number per column and the grid does the
+   arithmetic — a `grid-template-columns` rebuilt in JavaScript is a second place
+   the layout is decided, and it is the copy that gets it wrong at a narrow
+   window.
+
+   `minmax(0, …)` on every column, not a bare fraction: a grid track's automatic
+   minimum is its content, so a pane holding a wide code block or a 1280px slide
+   refuses to shrink below it and the drag simply stops working part-way. This is
+   the same `min-width: 0` note the record page's `.panes` carries, in the shape
+   a grid needs. */
 .panes3 {
-  display: grid; grid-template-columns: 1fr 1.15fr 1fr; gap: 1rem;
+  display: grid; gap: 0;
+  grid-template-columns:
+    minmax(0, var(--pane-read, 1fr)) .75rem
+    minmax(0, var(--pane-pick, 1.15fr)) .75rem
+    minmax(0, var(--pane-show, 1fr));
   align-items: start;
 }
-.panes3 .pane {
+/* Folded: the record pane and the handle beside it stop taking a track at all.
+   `0` and not `display: none` on the pane, so the pane keeps its scroll position
+   and its rendered document — unfolding is instant and does not re-render a
+   whole record. */
+/* Folded, the two remaining panes share the whole row BY RATIO and the stored
+   pixel widths are ignored. Carrying them over left the record's width as a gap
+   nothing filled — measured: hiding a 501px pane in a 1200px row left the other
+   two at 318 and 381 and 501px of nothing beside them. A width chosen for a
+   three-column row is not a width for a two-column one, and the stored numbers
+   come back untouched the moment it unfolds. */
+.panes3.folded {
+  grid-template-columns: 0 0 minmax(0, 1.15fr) .75rem minmax(0, 1fr);
+}
+.panes3.folded > .pane.read, .panes3.folded > .pgrip[data-at="0"] {
+  visibility: hidden; padding: 0; border: 0; overflow: hidden;
+}
+
+/* The handle between two panes. Its whole visible self is a hairline that
+   thickens under the pointer — the same device and the same `--accent` as the
+   record page's `#splitter`, because two spellings of "drag this" on one app is
+   one too many. */
+.pgrip {
+  align-self: stretch; cursor: col-resize; position: relative;
+  background: none; border: 0;
+}
+.pgrip::before {
+  content: ""; position: absolute; inset: 0 calc(50% - 1px);
+  background: var(--line); border-radius: 1px;
+}
+.pgrip:hover::before, .pgrip:focus-visible::before, .pgrip.dragging::before {
+  background: var(--accent); inset: 0 calc(50% - 1.5px);
+}
+.panebar { margin: 0 0 .5rem; }
+.panebar button {
+  font: inherit; font-size: 12px; color: var(--muted);
+  background: none; border: 1px solid var(--line); border-radius: 3px;
+  padding: .2rem .5rem; cursor: pointer;
+}
+.panebar button:hover { color: var(--accent); }
+.panes3 > .pane {
   min-width: 0; max-height: calc(100vh - 12rem); overflow: auto;
   border: 1px solid var(--line); border-radius: 4px; padding: .9rem 1rem;
   background: var(--surface);
@@ -312,7 +417,12 @@ _SLIDE_STYLE = """
 /* One column under a narrow window, in reading order: what the record says,
    then what you are choosing, then what it looks like. `1100px` is where the
    middle column stops holding a checkbox label and its two tags on one line. */
-@media (max-width: 1100px) { .panes3 { grid-template-columns: 1fr; } }
+/* One column under a narrow window, in reading order, and the handles go with
+   it: a col-resize grip on a stacked layout resizes nothing. */
+@media (max-width: 1100px) {
+  .panes3, .panes3.folded { grid-template-columns: minmax(0, 1fr); }
+  .panes3 > .pgrip { display: none; }
+}
 
 .panes3 .facts { margin: 0 0 1rem; }
 .panes3 .read .doc { border-top: 1px solid var(--line); padding-top: .8rem; }
@@ -538,6 +648,114 @@ if (MAY_WRITE) {
   });
 }
 
+// --- Three panes, two handles, one fold --------------------------------------
+//
+// The widths are written as custom properties and the grid does the arithmetic;
+// see the stylesheet for why a rebuilt `grid-template-columns` would be a second
+// place the layout is decided.
+//
+// Remembered, because a reader who has made room for the preview means it for
+// the next slide too — through the shell's `remembered` door, which is the one
+// place that knows `localStorage` throws on the property itself in a private
+// window.
+const PANES = document.getElementById('panes3');
+const PANE_KEY = 'openproj:slidepanes';
+const PANE_VARS = ['--pane-read', '--pane-pick', '--pane-show'];
+const PANE_MIN = 160;
+
+function panesRemember() {
+  remembered.set(PANE_KEY, JSON.stringify({
+    widths: PANE_VARS.map(name => PANES.style.getPropertyValue(name)),
+    folded: PANES.classList.contains('folded'),
+  }));
+}
+
+(() => {
+  const held = remembered.map(PANE_KEY);
+  if (Array.isArray(held.widths) && held.widths.length === PANE_VARS.length) {
+    // Only strings that look like a length. A stored value is a value somebody's
+    // devtools can write, and it reaches a `grid-template-columns` — so this is
+    // an allowlist rather than a trust, the same shape as every other stored
+    // value this app reads back.
+    held.widths.forEach((value, at) => {
+      if (typeof value === 'string' && /^[0-9]+(\.[0-9]+)?px$/.test(value))
+        PANES.style.setProperty(PANE_VARS[at], value);
+    });
+  }
+  if (held.folded) fold(true);
+})();
+
+function fold(on) {
+  PANES.classList.toggle('folded', on);
+  const button = document.getElementById('foldread');
+  if (!button) return;
+  button.setAttribute('aria-pressed', String(on));
+  button.textContent = on ? 'Show the record' : 'Hide the record';
+}
+
+const FOLD = document.getElementById('foldread');
+if (FOLD) FOLD.onclick = () => {
+  fold(!PANES.classList.contains('folded'));
+  panesRemember();
+  fit();
+};
+
+// One handle moves the two panes it sits between and nothing else, so the row
+// keeps its total width and the pane on the far side does not jump.
+function slide(at, byPixels) {
+  const panes = [...PANES.querySelectorAll(':scope > .pane')];
+  const left = panes[at], right = panes[at + 1];
+  const was = [left.getBoundingClientRect().width, right.getBoundingClientRect().width];
+  const moved = Math.max(PANE_MIN - was[0], Math.min(was[1] - PANE_MIN, byPixels));
+  PANES.style.setProperty(PANE_VARS[at], (was[0] + moved) + 'px');
+  PANES.style.setProperty(PANE_VARS[at + 1], (was[1] - moved) + 'px');
+  // The third column keeps whatever it had; pinning it too is what stops the
+  // row re-flowing when one `fr` is turned into a pixel width beside two others.
+  for (const [index, name] of PANE_VARS.entries()) {
+    if (!PANES.style.getPropertyValue(name))
+      PANES.style.setProperty(name, Math.round(panes[index].getBoundingClientRect().width) + 'px');
+  }
+  fit();
+}
+
+for (const grip of PANES.querySelectorAll(':scope > .pgrip')) {
+  const at = Number(grip.dataset.at);
+  grip.onpointerdown = event => {
+    grip.setPointerCapture(event.pointerId);
+    grip.classList.add('dragging');
+    let from = event.clientX;
+    const move = e => { slide(at, e.clientX - from); from = e.clientX; };
+    const stop = () => {
+      grip.classList.remove('dragging');
+      panesRemember();
+      removeEventListener('pointermove', move);
+      removeEventListener('pointerup', stop);
+    };
+    addEventListener('pointermove', move);
+    addEventListener('pointerup', stop);
+  };
+  // The keyboard half. A separator that answers only a pointer is a control half
+  // the readers of this page cannot use, and the quality floor asks for both.
+  grip.onkeydown = event => {
+    const step = event.key === 'ArrowLeft' ? -24 : event.key === 'ArrowRight' ? 24 : 0;
+    if (!step) return;
+    event.preventDefault();
+    slide(at, step);
+    panesRemember();
+  };
+}
+
+// The toolbar, the upload path, the gutter and the status strip — the same four
+// calls the record page makes, in the same order, on the same surface. They come
+// from `controls.py`'s block, which this page now inlines; guarded, because a
+// reader gets no surface and none of them may be called on nothing.
+if (SURFACE) {
+  attachUploads(SURFACE, document.getElementById('upload'));
+  attachEditing(SURFACE, document.getElementById('marks'));
+  attachGutter(SURFACE, document.getElementById('gutter-note'));
+  attachStatus(SURFACE, document.getElementById('statusbar'));
+}
+
 ARTICLE.addEventListener('change', refresh);
 if (SURFACE) SURFACE.onInput(refresh); else PROSE.addEventListener('input', refresh);
 addEventListener('resize', fit);
@@ -628,6 +846,17 @@ def render_slide_editor(
         # `<script>` and goes in as it is.
         + (Markup("<script>{}</script>").format(_ace()) if ace else Markup(""))
         + (_ACE_SURFACE if ace else Markup(""))
+        # The editor's whole toolkit — the preferences (`EDITOR`, `INDENT`,
+        # `KEYMAPS`), the mark toolbar, the uploader, the gutter and the status
+        # strip. Inlined rather than picked apart: the four `attach*` calls this
+        # page makes are the four the record page makes, and taking three
+        # functions out of a block that declares thirty would be a second copy of
+        # whichever three, going stale on the commit that changes the first.
+        #
+        # It also brings paste-and-drop image upload with it, which is what makes
+        # `![figure](assets/…){width=60}` something somebody can produce here
+        # rather than only type.
+        + (_combobox_html(index) if editable else Markup(""))
         + _fragment(
             _SLIDE_SCRIPT,
             e=view,

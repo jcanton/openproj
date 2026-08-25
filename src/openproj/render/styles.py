@@ -389,6 +389,21 @@ textarea.body-field { box-sizing: border-box; }
 .statusbar { margin: .25rem 0 0; font-size: 11px; color: var(--muted);
              flex-wrap: wrap; }
 .stat { white-space: nowrap; }
+
+/* What is running, at the foot of every page. Muted and small because it is
+   reference rather than news: nobody reads it until something behaves oddly,
+   and then it is the first thing they ask for. Outside `#main`'s measure, so it
+   does not sit inside the reading column. */
+#build {
+  margin: 2.5rem 0 1rem; padding: .6rem 1rem 0;
+  border-top: 1px solid var(--line);
+  font-size: 11px; color: var(--muted); font-family: var(--font-mono);
+}
+#build a, #build a:visited { color: inherit; text-decoration: none; }
+#build a:hover { color: var(--accent); text-decoration: underline; }
+/* Not in a handout, and not on a projector. `@media print` in the deck's own
+   sheet drops the app's chrome; this one is on every page, so it says so here. */
+@media print { #build { display: none; } }
 /* A picker that looks like the words beside it until you point at it. `Spaces:
    2` is a value that states itself and is its own click target; drawing it as a
    button with a border would make it the loudest thing in a row of quiet facts,
