@@ -6993,6 +6993,12 @@ _COMPLETING_A_LINK = r"""
 
   editor.focus();
   editor.navigateFileEnd();
+  // The scroll that moving to the end of the document causes, settled before
+  // anything is typed — a person opens a popup in an editor that is already
+  // sitting still, and this is the harness catching up with that rather than a
+  // wait the product needs.
+  editor.renderer.updateFull(true);
+  await new Promise(r => setTimeout(r, 150));
   // Typed through the editor, so the popup opens the way it does for a person
   // rather than because a test called the function that draws it. The bracket
   // alone first: nothing typed yet is when the whole plan is on offer, and it is
@@ -7000,12 +7006,33 @@ _COMPLETING_A_LINK = r"""
   editor.insert('\nSee [');
   await new Promise(r => setTimeout(r, 250));
   const opened = shown();
+  // The frame the cursor layer is drawn on, forced — the same call
+  // `tests/test_seats.py` makes for the same reason. Headless Chrome does not
+  // reliably render Ace's cursor before a measurement: measured here at column
+  // 5 with the element still drawn at column 0, which makes `.ace_cursor` an
+  // oracle that answers about the frame before the keystroke. The popup's own
+  // position does not come from the drawing — it comes from Ace's arithmetic,
+  // which needs no frame — so this is the test catching up with the product
+  // rather than the product waiting for the test.
+  editor.renderer.updateFull(true);
+  await new Promise(r => setTimeout(r, 150));
   const placed = (() => {
     const list = open();
     const caret = document.querySelector('.acebox .ace_cursor');
     if (!list || !caret) return null;
     const box = list.getBoundingClientRect(), at = caret.getBoundingClientRect();
     return {left: Math.round(box.left - at.left), under: Math.round(box.top - at.bottom)};
+  })();
+  // What the surface SAYS, against where Ace drew the caret. The popup's own
+  // position is one subtraction away from this, so a disagreement here is the
+  // first place it shows — and it is where a fallback answering about a
+  // different box would be caught rather than being averaged into a placement
+  // that looks nearly right.
+  const agrees = (() => {
+    const drawn = document.querySelector('.acebox .ace_cursor');
+    if (!drawn) return null;
+    const box = drawn.getBoundingClientRect(), said = SURFACE.caretBox();
+    return {dx: Math.round(said.left - box.left), dy: Math.round(said.top - box.top)};
   })();
 
   // And then the title, which is what the completion is on.
@@ -7034,7 +7061,7 @@ _COMPLETING_A_LINK = r"""
   // single key away from writing.
   const tookWhenClosed = key(13);
 
-  return {opened, narrowed, placed, highlighted, tookDown, tookReturn, closed,
+  return {opened, narrowed, placed, agrees, highlighted, tookDown, tookReturn, closed,
           tookWhenClosed,
           lines: [wasLines, editor.session.getLength()],
           tail: written.slice(written.lastIndexOf('\nSee '))};
@@ -7090,6 +7117,10 @@ def test_the_second_editor_completes_a_link_to_a_record(
     )
     assert 0 <= got["placed"]["under"] <= 8, (
         f"the list is not against the caret's line: {got['placed']}"
+    )
+    assert got["agrees"] and abs(got["agrees"]["dx"]) <= 1 and abs(got["agrees"]["dy"]) <= 1, (
+        "the surface and the drawing disagree about where the caret is, which is "
+        f"the placement above about to be wrong on some other machine: {got['agrees']}"
     )
 
     assert got["tookDown"] and got["highlighted"] == 1, (
