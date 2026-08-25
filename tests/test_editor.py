@@ -7362,3 +7362,79 @@ def test_the_second_editor_completes_a_pull_request_in_the_body(
     assert got["other"] == [
         "C2SM/icon4py#", "C2SM/icon4py#1521", "C2SM/icon4py#1403",
     ], f"the other repository's references are not offered: {got['other']}"
+
+
+_WIDENING = """
+(async () => {
+  const values = () => SUGGEST.prs.map(one => one.value);
+  const before = values();
+  widenPullRequests();
+  // The fetch and its three `.then`s are microtasks; the shim's clock is not
+  // involved, so draining the queue is what waiting means here.
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+  const after = values();
+  // And asking again asks nothing: one page, one call.
+  widenPullRequests();
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+  return {before, after, again: values(),
+          labels: Object.fromEntries(SUGGEST.prs.map(one => [one.value, one.label])),
+          live: SUGGEST.live};
+})()
+"""
+
+
+def test_the_page_widens_its_pull_requests_with_what_is_open_now(client: TestClient):
+    """jcanton, 2026-08-25: "would it be possible to have a page connect to the
+    network to get the actual list of PRs from the repos?"
+
+    The page still connects to nothing but this server — `/api/prs` is
+    same-origin and the server is what talks to GitHub. What this asserts is the
+    fold: the list the corpus gave the page grows, in place, so a popup opened
+    before the answer landed reads the wider list on the next keystroke without
+    being handed it.
+
+    **Order is the argument.** A reference some record already cites is one this
+    plan has a reason to mention again, so it keeps its place and only gains the
+    title it never had; everything else is appended, and the filter runs over the
+    whole list. And a bare `owner/repo#` is put at the front for a repository the
+    corpus has never cited, because that is the half nobody has memorised.
+
+    One call per page: the second ask returns without touching the network, which
+    the single scripted reply is what proves — a second fetch would find none.
+    """
+    from test_injection import run_js
+
+    cited = client.patch(f"/api/record/{TASK}", json={
+        "base_commit": head(client), "fields": {"prs": ["C2SM/icon4py#1403"]}, "body": None,
+    })
+    assert cited.status_code == 200, cited.text
+
+    got = run_js(
+        client.get(f"/detail/{TASK}{PLAIN}").text, _WIDENING, page=True,
+        replies=[{"status": 200, "json": {"prs": [
+            {"value": "C2SM/icon4py#1403", "label": "The one already cited"},
+            {"value": "C2SM/icon4py#1521", "label": "Open and never mentioned"},
+            {"value": "GridTools/gt4py#1877", "label": "In a repository nobody cited"},
+        ], "stale": False}}],
+    )
+    assert not got["errors"], got["errors"]
+    answer = got["value"]
+
+    assert answer["live"] is True, "the served page does not know it has a server"
+    assert "C2SM/icon4py#1403" in answer["before"], "the corpus's own list is missing"
+    assert "C2SM/icon4py#1521" not in answer["before"], (
+        "this test cannot show a widening: the corpus already had the open one"
+    )
+    for value in ("C2SM/icon4py#1403", "C2SM/icon4py#1521", "GridTools/gt4py#1877"):
+        assert value in answer["after"], f"{value} is not offered: {answer['after']}"
+    # The cited one keeps its place at the front and gains the title it never had.
+    assert answer["after"].index("C2SM/icon4py#1403") < answer["after"].index(
+        "C2SM/icon4py#1521"
+    ), answer["after"]
+    assert answer["labels"]["C2SM/icon4py#1403"] == "The one already cited"
+    # And the repository nobody cited is offered bare, so the number can be typed.
+    assert "GridTools/gt4py#" in answer["after"], answer["after"]
+    assert answer["labels"]["GridTools/gt4py#"] == "any pull request"
+    assert answer["again"] == answer["after"], (
+        "asking twice asked GitHub twice, or folded the same list in again"
+    )

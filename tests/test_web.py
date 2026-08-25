@@ -5324,3 +5324,183 @@ def test_the_banner_appears_with_nobody_calling_showpile_by_hand(client: TestCli
         "setInterval(readPile, PILE_POLL_MS) is gone"
     )
     assert "7 saves" in got["polled"]["said"], got["polled"]["said"]
+
+
+# --- the open pull requests, live -------------------------------------------
+
+
+def _plan_that_names_repositories(tmp_path: Path, named: str) -> Path:
+    """The corpus, plus the one config key that turns this feature on."""
+    path = tmp_path / "prs.git"
+    pygit2.init_repository(str(path), bare=True, initial_head="main")
+    seeded = dict(SEED)
+    seeded["config/defaults.yaml"] = seeded["config/defaults.yaml"] + named
+    commit_directly(path, seeded, "seed the corpus")
+    return path
+
+
+def _github_answering(pulls: dict[str, list[dict]], asked: list[str]):
+    """A GitHub that answers from a dict, and writes down what was asked."""
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.path)
+        for repository, open_now in pulls.items():
+            if request.url.path == f"/repos/{repository}/pulls":
+                return httpx.Response(200, json=open_now)
+        return httpx.Response(404, json={"message": "Not Found"})
+
+    return httpx.MockTransport(answer)
+
+
+def test_the_open_pull_requests_come_from_the_plan_and_are_cached(tmp_path: Path):
+    """jcanton, 2026-08-25: "would it be possible to have a page connect to the
+    network to get the actual list of PRs from the repos? ... we can even reduce
+    the call frequency to every 5 minutes".
+
+    Three things, and the first is the one that matters most.
+
+    **The route takes no input.** A `?repo=` parameter would make this server a
+    proxy that fetches any path on api.github.com that anybody can name, from an
+    IP inside our project and with our token on it where the App has access. The
+    repositories come from `config/defaults.yaml`, which is a file somebody
+    committed to the plan — so the set this can ever ask about is the set the
+    plan named, and a query string is ignored rather than honoured.
+
+    **One call per repository per five minutes.** A completion filters as
+    somebody types; without the cache the first burst after an expiry is one API
+    call per keystroke against a rate limit shared with everything else this
+    deployment does.
+
+    **`{value, label}`**, which is the shape the combobox already reads, so the
+    page merges this with what the corpus cites and needs no second code path.
+    """
+    asked: list[str] = []
+    repo = _plan_that_names_repositories(
+        tmp_path, "repositories: [C2SM/icon4py, GridTools/gt4py]\n"
+    )
+    app = create_app(
+        repo, auth="dev", secret=SECRET,
+        github_transport=_github_answering(
+            {
+                "C2SM/icon4py": [{"number": 1403, "title": "Halo exchange drops a rank"}],
+                "GridTools/gt4py": [{"number": 1877, "title": "Scan carry"}],
+            },
+            asked,
+        ),
+    )
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        first = client.get("/api/prs")
+        assert first.status_code == 200, first.text
+        assert first.json() == {
+            "prs": [
+                {"value": "C2SM/icon4py#1403", "label": "Halo exchange drops a rank"},
+                {"value": "GridTools/gt4py#1877", "label": "Scan carry"},
+            ],
+            "stale": False,
+        }
+        # Twice more, one of them naming a repository this plan does not: the
+        # answer is the plan's either way, and nothing new is asked of GitHub.
+        again = client.get("/api/prs")
+        elsewhere = client.get("/api/prs?repo=torvalds/linux")
+        assert again.json() == first.json()
+        assert elsewhere.json() == first.json(), (
+            "a query string reached the repositories this server will fetch"
+        )
+    assert asked == ["/repos/C2SM/icon4py/pulls", "/repos/GridTools/gt4py/pulls"], (
+        f"three requests cost {len(asked)} calls to GitHub: {asked}"
+    )
+
+
+def test_a_github_that_will_not_answer_costs_the_completion_and_nothing_else(
+    tmp_path: Path,
+):
+    """A refusal is not an error here.
+
+    What this offers is a WIDENING of a list the page already has, so GitHub
+    being down, rate-limited or unreachable answers with what is still cached and
+    otherwise with nothing at all — the completion goes back to the corpus, which
+    is where it was yesterday. `stale` says which, for a reader who wonders why a
+    pull request opened a minute ago is not on the list.
+
+    And a failure is retried at the ordinary interval, not on the next request: a
+    GitHub that is down must not cost a call per keystroke.
+    """
+    asked: list[str] = []
+
+    def broken(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.path)
+        return httpx.Response(503, text="unavailable")
+
+    repo = _plan_that_names_repositories(tmp_path, "repositories: [C2SM/icon4py]\n")
+    app = create_app(
+        repo, auth="dev", secret=SECRET, github_transport=httpx.MockTransport(broken)
+    )
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        answer = client.get("/api/prs")
+        assert answer.status_code == 200, "a broken GitHub is not a broken page"
+        assert answer.json() == {"prs": [], "stale": True}
+        client.get("/api/prs")
+    assert len(asked) == 1, f"the failure was retried per request: {asked}"
+
+
+def test_the_open_pull_requests_are_not_offered_to_a_signed_out_visitor(tmp_path: Path):
+    """The completion is drawn on the pages a writer gets, and this route spends
+    a network call and a rate-limit slot every time it is not cached. A route
+    that spends them for anybody who asks is a route that can be made to spend
+    them all."""
+    asked: list[str] = []
+    repo = _plan_that_names_repositories(tmp_path, "repositories: [C2SM/icon4py]\n")
+    app = create_app(
+        repo,
+        auth="github",
+        org=ORG,
+        secret=SECRET,
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+        github_transport=_github_answering({"C2SM/icon4py": []}, asked),
+    )
+    with TestClient(app) as client:
+        assert client.get("/api/prs").status_code == 403
+    assert asked == [], "a signed-out visitor made this server call GitHub"
+
+
+def test_a_plan_that_names_no_repository_asks_nothing(tmp_path: Path):
+    """Empty is the ordinary state of this setting and means one thing: the
+    completion offers what the corpus already cites and the network is not
+    touched. A tool that reached out because somebody had not yet said not to
+    would be the opposite of the rule every page here is held to."""
+    asked: list[str] = []
+    repo = _plan_that_names_repositories(tmp_path, "")
+    app = create_app(
+        repo, auth="dev", secret=SECRET,
+        github_transport=_github_answering({"C2SM/icon4py": []}, asked),
+    )
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        assert client.get("/api/prs").json() == {"prs": [], "stale": False}
+    assert asked == []
+
+
+def test_a_repository_that_is_not_an_owner_and_a_repo_is_refused_and_named(
+    tmp_path: Path,
+):
+    """This value ends up in a URL path on api.github.com, so it is an allowlist
+    — `AGENTS.md` records what a denylist of URL spellings is worth.
+
+    Refused rather than filtered, which is the bargain every other config value
+    already has: the file is dropped and NAMED on every page, where a silent skip
+    would leave somebody looking at a completion that offers nothing and no
+    reason anywhere on the screen. `..` is the one worth a line of its own —
+    `[\\w.-]+` admits it, and `/repos/../../x/pulls` is a request to an endpoint
+    nobody wrote down.
+    """
+    repo = _plan_that_names_repositories(tmp_path, "repositories: ['../..']\n")
+    app = create_app(repo, auth="dev", secret=SECRET)
+    with TestClient(app) as client:
+        page = client.get("/table")
+        assert page.status_code == 200, "one bad config value must not take a page down"
+        assert "config/defaults.yaml" in page.text, (
+            "the file was dropped and the page does not say so"
+        )

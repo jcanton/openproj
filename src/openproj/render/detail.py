@@ -2913,7 +2913,7 @@ def render_detail(
         statuses=STATUSES,
         # `linkable=True`: this is a page with a document being written in it, so
         # the blob carries the list `attachBodyCompletion` completes records from.
-        combobox=_combobox_html(index, linkable=True),
+        combobox=_combobox_html(index, linkable=True, live=base_commit is not None),
         required=_REQUIRED_JS,
         hill=_HILL_JS,
         viewbar=_viewbar(_editing_possible(base_commit, may_write)),

@@ -1332,6 +1332,7 @@ def create_app(
     credentials: object | None = None,
     dev_login: str = "dev",
     today: date | None = None,
+    github_transport: httpx.BaseTransport | None = None,
 ) -> FastAPI:
     if auth == "github":
         if secret in _DEV_SECRETS:
@@ -2177,6 +2178,113 @@ def create_app(
         if record is None:
             raise HTTPException(status_code=404, detail="no such record")
         return JSONResponse({"html": str(render._body_html(record, render.ROUTES))})
+
+    # What GitHub last said about each repository the plan names:
+    # `owner/repo -> (good until, entries, whether the last attempt failed)`.
+    #
+    # On the closure and not at module scope because the repositories are this
+    # plan's and the token is this app's — a module-level cache is one every test
+    # that builds a second app would share, which is the shape of a test that
+    # passes because of the one before it.
+    pulls: dict[str, tuple[float, list[dict[str, object]], bool]] = {}
+    pulls_lock = threading.Lock()
+
+    def _live_pull_requests(repositories: list[str]) -> tuple[list[dict], bool]:
+        """Every open pull request in these repositories, and whether it is stale.
+
+        `{value, label}` — the shape the combobox already reads, so the page
+        merges this with what the corpus cites and needs no second code path.
+
+        **One lock around the whole sweep**, which serialises the refresh rather
+        than letting every request in a burst start its own. FastAPI runs a sync
+        route in a threadpool, so without it the first typing burst after a cache
+        expiry is one API call per keystroke against a rate limit that is shared
+        with everything else this deployment does. Held across the network call
+        deliberately: at one refresh per repository per five minutes the wait it
+        can cause is a wait somebody would otherwise have had anyway.
+
+        A failure keeps whatever was cached and is retried at the ordinary
+        interval, not immediately — GitHub being down must not cost a call per
+        request — and the entries it kept are still worth offering, because a
+        pull request that was open five minutes ago is almost certainly still
+        open.
+
+        The exceptions are named rather than caught wholesale: `open_pull_requests`
+        documents itself as raising for a refusal, and around that the failures
+        are httpx's transport errors and a body that is not the JSON this reads.
+        Anything outside the tuple reaches the route and 500s it, which is the
+        right answer for a defect here — the page's own fetch fails and the
+        completion is back to the corpus either way.
+        """
+        import json as _json
+
+        from .github import PULLS_TTL_SECONDS, open_pull_requests
+
+        # `github_transport` is `create_app`'s one test seam for this: an httpx
+        # transport a test answers from without a socket, the same shape and the
+        # same name `GitHubApp.transport` already carries. It is None in every
+        # deployment, which is the real network.
+
+        app_for = credentials if hasattr(credentials, "api_headers") else None
+        now = time.monotonic()
+        offered: list[dict] = []
+        stale = False
+        with pulls_lock:
+            for repository in repositories:
+                until, entries, failed = pulls.get(repository, (0.0, [], False))
+                if now >= until:
+                    try:
+                        entries = open_pull_requests(repository, app_for, github_transport)
+                        failed = False
+                    except (httpx.HTTPError, _json.JSONDecodeError, KeyError, ValueError):
+                        # WARNING and not an exception: the operator wants to know
+                        # the completion is narrower than it should be; nobody
+                        # wants a traceback per five minutes for a repository that
+                        # has been renamed.
+                        _LOG.warning("could not read open pull requests for %s", repository)
+                        failed = True
+                    pulls[repository] = (now + PULLS_TTL_SECONDS, entries, failed)
+                stale = stale or failed
+                offered += [
+                    {"value": f"{repository}#{one['number']}", "label": str(one["title"])}
+                    for one in entries
+                ]
+        return offered, stale
+
+    @app.get("/api/prs")
+    def prs(request: Request) -> JSONResponse:
+        """Open pull requests in the repositories the PLAN names, `{value,label}`.
+
+        The completion in a shaping document and in the `prs:` field has always
+        offered what the corpus already cites, which answers "which of the ones
+        we have written down" and never "which are open right now" — jcanton,
+        2026-08-25, asking for the latter.
+
+        **This route takes no input, and that is the security decision on it.**
+        A `?repo=` parameter would make this server a proxy that fetches any URL
+        on api.github.com that anybody can name, from an IP inside our project,
+        with our token on it where the App has access. The repositories come from
+        `config/defaults.yaml` through `Config.repositories`, which is validated
+        against an allowlist at the model — so the set this can ever ask about is
+        a thing somebody committed to the plan repository.
+
+        **Signed-in writers only**, for the same reason the create form is: this
+        completion is drawn on the pages a writer gets, and a route that spends a
+        network call and a rate-limit slot for an anonymous visitor is a route
+        that can be made to spend them all.
+
+        A refusal is not an error here. What this offers is a widening of a list
+        the page already has, so GitHub being down, rate-limited or unreachable
+        answers with whatever is still cached and otherwise with nothing at all —
+        the completion goes back to the corpus, which is where it was yesterday.
+        `stale` says which, for a reader who wonders why a pull request opened a
+        minute ago is not on the list.
+        """
+        if not may_write(request):
+            raise HTTPException(403, "sign in to read the open pull requests")
+        _, index = index_now()
+        offered, stale = _live_pull_requests(index.repositories)
+        return JSONResponse({"prs": offered, "stale": stale})
 
     # Two paths, one answer, because `/healthz` is not ours on Cloud Run.
     #
