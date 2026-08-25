@@ -354,7 +354,8 @@ _HILL_HANDED_ON = {"promoted": "shaping"}
 # reason: `_status_class` would have called it `st-ready` and put it on a summit.
 _HILL = """
 <span data-hill="{{ ladder }}"
-      class="hill{% if control %} hill-control{% endif %}{% if dim %} hill-off{% endif %}"
+      class="hill{% if live %} hill-live{% endif %}{%
+        if control %} hill-control{% endif %}{% if dim %} hill-off{% endif %}"
      {% if describedby %}aria-describedby="{{ describedby }}"{% endif %}
      {% if live %}role="radiogroup" aria-label="{{ label }}"
      {% else %}role="img" aria-label="{{ said }}"{% endif %}>
