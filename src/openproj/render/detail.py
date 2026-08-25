@@ -877,7 +877,23 @@ _DETAIL = """
       of nothing, which answers half his sentence and contradicts the other
       half — he asked for those buttons level with the nav, not merely still. -#}
   {% if may_write %}
+  {#- The slide, between the switcher and Delete and spaced away from both —
+      jcanton, 2026-08-25: "edit/side-by-side/preview little space [slide] little
+      space [delete]".
+
+      **Deliberately NOT a fourth segment inside the switcher.** That control is
+      a `role="group"` labelled "How the document is shown", and three adjacent
+      segments in one bordered box say "three states of one thing". A slide is
+      not a state of this document — it is a different document, built out of
+      this one — so putting it in there would say something false about both.
+      It is a link and not a button for the same reason Delete is a button and
+      not a link: this one goes somewhere and that one does something.
+
+      Absent while creating, because a record that does not exist yet is bet
+      into no cycle and appears on no deck. -#}
   <p class="editbar">{{ viewbar }}{% if not creating %}
+    <a class="slide-view" href="{{ links.record }}{{ e.id }}?view=slide"
+       title="The slide this record makes in its cycle's review deck">Slide</a>
     <button type="button" class="delete">Delete</button>{% endif %}</p>
   {% endif %}
   {#- Save, Reset and the count of what is unsaved, directly under the button

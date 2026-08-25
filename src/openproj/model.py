@@ -17,10 +17,11 @@ from typing import Literal, NamedTuple
 
 import networkx as nx
 from frontmatter.default_handlers import YAMLHandler
-from pydantic import BaseModel, PrivateAttr, ValidationError, field_validator
+from pydantic import BaseModel, PrivateAttr, ValidationError, field_validator, model_validator
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedSeq
 from ruamel.yaml.error import MarkedYAMLError
+from ruamel.yaml.scalarstring import LiteralScalarString
 
 CONFIG_FILES = ("defaults.yaml", "cycles.yaml", "holidays.yaml", "people.yaml")
 _CYCLE_DIR = "cycles"
@@ -337,6 +338,29 @@ class Cycle(BaseModel):
     # Everything else the room said: why a pitch was left out, what would make it
     # a bet next time. Prose, so it is the body and not a field.
     body: str = ""
+    # The order the review deck walks its slides in, by record id.
+    #
+    # **On the cycle and not on the records**, and that is a concurrency decision
+    # rather than a taste. An order is one list about many records, so storing a
+    # rank on each record would make one drag of one thumbnail a write to every
+    # file below it — where `store.py`'s compare-and-swap is scoped to the path,
+    # so a rail with eleven slides on it would contend eleven ways per gesture.
+    # Here one drag is one write to one file, and the file is the one the deck is
+    # already of.
+    #
+    # The mirror argument is why the slides' CONTENT is not here: that is one
+    # record's own, seven presenters edit seven of them at once, and putting them
+    # all in this file would be the contention this arrangement just removed. See
+    # `Slide`.
+    #
+    # **Partial and stale are both ordinary.** `_deck_order` draws what is listed
+    # in the order listed, then everything else after it — so a record bet into
+    # the cycle after somebody saved an order still gets a slide, and an id left
+    # here by a record that has since moved out is ignored rather than drawn as a
+    # gap. An order that could take a slide off the deck by going stale is an
+    # order nobody could trust, and the deck is the one page whose reader cannot
+    # check.
+    deck_order: list[str] = []
 
     # --- derived by Config.with_plans ---------------------------------------
     builds_until: date | None = None
@@ -347,6 +371,28 @@ class Cycle(BaseModel):
     # printing a date it invented as though somebody had chosen it.
     assumed_review: bool = False
     assumed_end: bool = False
+
+    @field_validator("deck_order", mode="before")
+    @classmethod
+    def _ids_as_written(cls, value: object) -> object:
+        """Whatever is in the file, reduced to the ids in it — never a refusal.
+
+        Parse permissively, validate strictly, and here the stakes are the whole
+        calendar: a cycle that fails to load takes every derived date on every
+        page with it, and this field is the newest thing in the file and so the
+        likeliest to be wrong in one written by hand. The cost of nonsense here
+        must be a deck in its default order, which is exactly what an empty list
+        gives — `_deck_order` falls through to the bet-then-title ordering the
+        deck used before this field existed.
+
+        The write door is the opposite bargain and says so: `_as_record_ids`
+        (`web.py`) refuses rather than sanitises, because what this server is
+        about to commit is a choice it can decline, and a file that arrived in
+        git is a fact it cannot.
+        """
+        if not isinstance(value, list):
+            return []
+        return [one for one in value if isinstance(one, str)]
 
     def capacity(self, who: str, nominal: float = 1.0) -> float:
         """Weeks of work this person can hold in this cycle."""
@@ -680,6 +726,132 @@ def _config_on_disk(root: Path) -> tuple[list[str], Callable[[str], str]]:
 STATUS_ORDER = ("thinking", "shaping", "ready", "in_progress", "done", "shelved")
 
 
+# The largest slide prose this tool will put in git, and a fraction of what a
+# body may be. A slide is a fixed 16:9 sheet read from the back of a room; the
+# most text that can physically fit on one is a few hundred words, so a ceiling
+# three orders of magnitude above that is not a limit anybody meets, it is a
+# bound on what a crafted PATCH can commit into a *frontmatter* block scalar —
+# where, unlike a body, there is no `MAX_BODY_BYTES` already standing in front of
+# it. Derived from that constant rather than written as digits, for the reason
+# written beside it: two ceilings spelled out separately are two ceilings that
+# drift, and this repository has already paid for that once.
+MAX_SLIDE_BYTES = MAX_BODY_BYTES // 16
+
+
+class Slide(BaseModel):
+    """What one record contributes to its cycle's review deck.
+
+    **Absent means generated.** `Record.slide` is `None` on every record nobody
+    has opened the slide editor for, and that is not a default standing in for a
+    choice — it is the statement that no choice has been made, which is what lets
+    the deck go on drawing what it drew before this field existed. A `Slide()`
+    with everything at its default is a different fact: somebody looked, chose
+    nothing, and meant it. Collapsing the two would have made shipping this
+    feature a change to every existing deck.
+
+    **The prose is here and not in the body**, which is the one decision in this
+    class worth the paragraph. `checklist_items` scans the whole body and feeds
+    `index.progress`, which feeds the table's meter, the detail panel's count and
+    every rollup above it — so a `## Slide` section in the body means a checkbox
+    somebody typed into a *slide* moves the plan's own numbers. `sections()` has
+    the same reach (`index.py`'s "for later", `detail.py`'s written-sections
+    panel). The alternative was stripping the section at all eight call sites,
+    each of which would fail silently and none of which would fail in a test.
+    Here it cannot reach any of them: a body is a body.
+
+    What it costs is real and was weighed. Prose in YAML is prose somebody
+    hand-editing in git has to indent correctly, and `store.write` merges
+    frontmatter per key — so two people writing this same record's slide prose at
+    once resolve whole-value, where a body would have line-merged. That is a
+    trade of merge granularity on a field one presenter writes for their own
+    record, against arithmetic every page displays.
+
+    **`sections` is the chosen list, not the excluded one.** A section added to
+    the record after somebody personalised its slide therefore does NOT appear on
+    the slide until they open the editor and tick it — jcanton, 2026-08-25:
+    "newly-discovered section should always arrive but not checked, default is
+    leave out". The editor is where the reconciliation happens, and it happens on
+    open without writing anything: a GET that commits would fire for every reader
+    of the page and 403 the ones who may not write.
+    """
+
+    # Not presented at all. The record stays bet into the cycle and stays on the
+    # rail — greyed, not hidden, because a slide that vanishes is one nobody can
+    # find their way back to. Excluded from presentation mode, drawn dimmed on
+    # `/deck/<n>` so the presenter can see what they dropped.
+    skip: bool = False
+    # The two things the slide already lifted out of the record before any of
+    # this existed: the ticked checklist at the top, and the pull requests under
+    # it. Default true because that is what the deck drew the day before this
+    # field was added, and a personalisation that changes the drawing merely by
+    # existing is one nobody can reason about.
+    progress: bool = True
+    prs: bool = True
+    # The record's own section names, lowercased the way `sections()` keys them.
+    # A list and not a set because YAML has no set and a person hand-editing this
+    # writes a list; the ORDER in it is not read — the slide draws sections in
+    # body order, which is the order the author is looking at while they tick the
+    # boxes. Left as a list so that changing that later is a change to one
+    # function rather than to the file format.
+    sections: list[str] = []
+    # Whether the record's opening prose — everything above its first heading —
+    # goes on the slide.
+    #
+    # Its own flag because it is the one part of a body that `sections` cannot
+    # name. Without it a record whose body is plain prose with no headings at all
+    # has an empty section list, and personalising such a record would blank a
+    # slide that had been drawing perfectly well: the checkbox UI would offer
+    # nothing to tick, so there would be no way to get the text back. Default
+    # true, like the two flags above and for the same reason — it is what the
+    # deck drew before this field existed.
+    lead: bool = True
+    # Whatever the author wants to say that the record does not. Free markdown,
+    # split into further slides on `\newslide` — see `slide_chunks`.
+    body: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _as_written(cls, value: object) -> object:
+        """Take what is usable and DROP what is not, so a default takes its place.
+
+        Parse permissively, validate strictly — the same bargain `status` and
+        `priority` make, and here the argument is stronger rather than weaker. A
+        `progress: banana` somebody hand-edited is worth one slide drawn the
+        generated way; it is not worth a record that will not load, and a record
+        that will not load takes the other four hundred with it.
+
+        Dropping the key rather than substituting a value is what makes that
+        true without writing the defaults out a second time: pydantic fills the
+        field from its own declaration above, so there is one place a default is
+        written and it is the field. Returning a corrected value from a
+        `field_validator` cannot do that — the validator has no way to name the
+        default, so it would have to repeat it.
+
+        The bare-scalar `sections: solution` is corrected rather than dropped:
+        it is what somebody writing YAML by hand types, it can only mean one
+        thing, and refusing to read it would be this tool being stricter about
+        its own file than a person is.
+        """
+        if not isinstance(value, dict):
+            return {}
+        taken = {}
+        for key in ("skip", "progress", "prs", "lead"):
+            if isinstance(value.get(key), bool):
+                taken[key] = value[key]
+        if isinstance(value.get("body"), str):
+            taken["body"] = value["body"]
+        chosen = value.get("sections")
+        if isinstance(chosen, str):
+            taken["sections"] = [chosen.strip().lower()]
+        elif isinstance(chosen, list):
+            taken["sections"] = [
+                str(name).strip().lower()
+                for name in chosen
+                if isinstance(name, str | int | float) and not isinstance(name, bool)
+            ]
+        return taken
+
+
 class Record(BaseModel):
     """One record of any rung: project, pitch, task, product, issue or note.
 
@@ -744,6 +916,17 @@ class Record(BaseModel):
     prs: list[str] = []
 
     body: str = ""
+    # What this record contributes to its cycle's review deck, or `None` where
+    # nobody has said — see `Slide`, which is where the whole argument is.
+    #
+    # Deliberately absent from `EDITABLE` (`tokens.py`), which is what keeps it
+    # off the facts column and out of the create form. That dict is the page's
+    # key order and the set of fields a form offers; this is neither a fact about
+    # the work nor something to fill in while creating one, and jcanton was
+    # explicit that the slide's own settings must not turn up in the record's
+    # reading view. It is still in `RECORD_FIELDS` — which `web.py` derives from
+    # `model_fields` — so the save path can write it and name it in a commit.
+    slide: Slide | None = None
     created_schema_version: int = 1
 
     @field_validator("kind")
@@ -773,6 +956,29 @@ class Record(BaseModel):
         over one stale record; accepting it means one problem next to one record.
         """
         return value if value is None else str(value)
+
+    @field_validator("slide", mode="before")
+    @classmethod
+    def _a_slide_or_nothing(cls, value: object) -> object:
+        """A `slide:` that is not a map is nobody's slide, so it is nobody's slide.
+
+        `Slide` sanitises what is *inside* the map; this decides whether there is
+        one at all, and the distinction is the whole point of the field being
+        optional. Letting `slide: 5` through to `Slide()` would read a hand edit
+        nobody meant as "somebody opened the editor and chose nothing", which
+        draws a heading over blank paper — the exact failure `_review` was
+        rewritten to stop. Absent means generated, so garbage means generated.
+        """
+        # A `Slide` as well as a mapping, and this is not a convenience. A
+        # `mode="before"` validator sees whatever the caller passed, and
+        # `Record(slide=Slide(...))` and `record.model_copy(update={"slide":
+        # Slide(...)})` both pass the MODEL — which is not a dict, so the first
+        # version of this line turned every one of them into `None` silently.
+        # `/api/slide/preview` builds its unsaved copy exactly that way, so the
+        # preview would have drawn the stored slide while claiming to draw the
+        # typed one. Found by a test, in the fixture that built a record the
+        # obvious way.
+        return value if isinstance(value, dict | Slide) else None
 
     def state(self, records: dict[str, Record]) -> str:
         """What this record actually is — for a plan record, its written status.
@@ -1296,6 +1502,49 @@ def parse_person_text(text: str, source: str) -> Person:
     return Person.model_validate({**fields, "login": login_of(source)})
 
 
+def _as_block(text: object) -> object:
+    """Multi-line text as a YAML literal block, where a literal block is safe.
+
+    Slide prose is the first prose this tool puts in frontmatter, and the default
+    emitter writes it as `body: "hello\\nworld"` — one long line of escapes. That
+    is readable by the parser and not by a person, and "edit it in git if you
+    prefer" is a promise this repository keeps by not writing files nobody wants
+    to open. A literal block gives back the lines somebody typed.
+
+    Guarded, because the block form cannot carry everything a string can. A line
+    ending in a space loses it — YAML strips trailing whitespace on every line of
+    a literal block, so the round trip would come back different from what was
+    saved, silently, which is worse than an ugly line. `\\r` is the same problem
+    with a different spelling: the emitter has no way to say "this line ends in a
+    carriage return" inside a block. Both fall back to the quoted form, which is
+    ugly and exact.
+
+    Exactness beats beauty in a file that is also a record, so the guard is what
+    the value CAN do rather than what it usually does.
+    """
+    if not isinstance(text, str) or "\n" not in text or "\r" in text:
+        return text
+    if any(line != line.rstrip() for line in text.split("\n")):
+        return text
+    return LiteralScalarString(text)
+
+
+def _readable_slide(mapping: object) -> object:
+    """The same mapping, with a slide's prose written as lines rather than escapes.
+
+    Narrow on purpose: it reaches for exactly one key in exactly one nested map,
+    and leaves a mapping without one alone. A general walk that blockified every
+    multi-line string it met would reformat `goal`, a title somebody wrapped, and
+    every field this tool has not thought about yet — which is the one thing
+    `serialise` exists to never do.
+    """
+    if isinstance(mapping, dict) and isinstance(mapping.get("slide"), dict):
+        slide = mapping["slide"]
+        if "body" in slide:
+            slide["body"] = _as_block(slide["body"])
+    return mapping
+
+
 def _in_the_style_of(old: object, new: object) -> object:
     """Keep a hand-written `tags: [a, b]` from becoming a three-line block list
     the moment somebody adds a tag from the web.
@@ -1337,7 +1586,7 @@ def serialise(record: Record, original_text: str | None = None) -> str:
                 data[key] = value
 
     stream = io.StringIO()
-    yaml.dump(data, stream)
+    yaml.dump(_readable_slide(data), stream)
     return f"---\n{stream.getvalue()}---\n" + (f"\n{record.body}" if record.body else "")
 
 
@@ -1556,6 +1805,28 @@ def sections(body: str) -> dict[str, str]:
     return {name: "\n".join(lines).strip() for name, lines in found.items()}
 
 
+def lead_text(body: str) -> str:
+    """Everything above the first heading — the opening `sections` cannot name.
+
+    `sections` keys its answer by heading, so the paragraph a record opens with
+    is in none of them. On a well-shaped record that is nothing at all, because
+    the template opens with `## Problem`; on a chore somebody wrote three
+    sentences into it is the entire document, and a slide chooser built only out
+    of headings would have had nothing to offer for it.
+
+    A heading inside a fence is not a heading, which is the same `_outside_code`
+    walk every reader here makes and matters more than usual: a record whose
+    opening paragraph quotes a markdown example would otherwise end at the `#`
+    inside the quote.
+    """
+    out: list[str] = []
+    for line, in_code in _outside_code(body):
+        if not in_code and _HEADING.match(line):
+            break
+        out.append(line)
+    return "\n".join(out).strip("\n")
+
+
 def checklist_items(body: str) -> list[tuple[bool, str]]:
     """Every task-list item as (ticked, what it says), in the order written.
 
@@ -1715,6 +1986,54 @@ def only_sections(body: str, names: Iterable[str]) -> str:
     what was going to happen when nobody wrote anything else down.
     """
     return _by_section(body, names, keep=True)
+
+
+# Where the author says "and then a second slide". A whole line, so a `\newslide`
+# written mid-sentence is the word and not a break, and outside a code fence, so
+# a document explaining this feature can quote it.
+#
+# `\newslide` and not `---`, which is what reveal.js, remark and Marp all use and
+# was the first candidate. It cannot be used here: `---` is the frontmatter fence
+# this repository's own parser splits on, and `_SPLITTER.split` would read the
+# first one in a slide as the end of the record's frontmatter. Choosing the
+# convention every other deck tool uses would have meant a record that no longer
+# loads, which is the one cost this codebase refuses everywhere else. jcanton
+# asked for `\newslide` before any of that was worked out, and it is the spelling
+# that survives the constraint.
+_NEWSLIDE = re.compile(r"^[ \t]*\\newslide[ \t]*$")
+
+
+def slide_chunks(prose: str) -> list[str]:
+    """One entry per slide the author asked for, in order, at least one always.
+
+    Always at least one, and that is what the callers rely on: a record with no
+    slide prose at all still has a slide — the generated one — so the empty
+    string is a chunk rather than an absence. A list that could be empty would
+    put `if chunks:` at every call site, and one of them would get it wrong.
+
+    Split outside code fences, so a `\\newslide` inside a triple-backtick block
+    is text somebody is showing rather than a break they are asking for. This is
+    the same `_outside_code` walk `sections` and `checklist_items` use, for the
+    same reason each of them uses it.
+    """
+    chunks: list[list[str]] = [[]]
+    for line, in_code in _outside_code(prose):
+        if not in_code and _NEWSLIDE.match(line):
+            chunks.append([])
+            continue
+        chunks[-1].append(line)
+    return ["\n".join(lines).strip("\n") for lines in chunks]
+
+
+def slide_title(title: str, at: int) -> str:
+    """`Title`, then `Title (2)`, `Title (3)` for each continuation after it.
+
+    The first slide is never numbered, whether or not any follow — jcanton,
+    2026-08-25: "no (1) on the first / unique". A `(1)` says the same thing the
+    absence of a number already says, and it says it on the one slide of the
+    record that most often stands alone.
+    """
+    return title if at == 0 else f"{title} ({at + 1})"
 
 
 # --------------------------------------------------------------------------- #
@@ -2686,5 +3005,5 @@ def patch_text(original: str, fields: dict, body: str | None = None) -> str:
     for key, value in fields.items():
         mapping[key] = value
     stream = io.StringIO()
-    yaml.dump(mapping, stream)
+    yaml.dump(_readable_slide(mapping), stream)
     return f"---\n{stream.getvalue()}---\n{existing_body if body is None else body}"

@@ -34,6 +34,7 @@ from openproj.model import (
     Pitch,
     Project,
     Record,
+    Slide,
     Task,
     checklist,
     checklist_items,
@@ -42,6 +43,8 @@ from openproj.model import (
     without_sections,
 )
 from openproj.render import ROUTES, STATIC, STATUSES, render_cycle, render_deck
+from openproj.render.deck import _deck_order
+from openproj.render.tokens import PRIORITY_GLYPH, STATUS_GLYPH
 
 TODAY = date(2026, 8, 17)
 
@@ -1067,3 +1070,287 @@ def test_a_deck_prints_on_paper_whatever_theme_it_was_read_in(deck: str):
         )
     for tag in ("html", "body"):
         assert paper.value([el(tag)], "background") == "var(--paper)", tag
+
+
+# --------------------------------------------------------------------------- #
+# Personalising a slide
+#
+# The claims here are about three different things and are asked in three
+# different places, for the reason the file's own docstring gives. What is ON a
+# slide is a question about a document, so it is parsed. What SURVIVES a save is
+# a question about a file, so it goes through `serialise` and `parse_text` and is
+# compared byte for byte. And what a write door ACCEPTS is a question about the
+# API, so it is asked through the API — hand-editing a fixture would have found
+# none of the eleven PATCH bodies that committed and then 500ed every page.
+# --------------------------------------------------------------------------- #
+
+
+def _one(**over) -> Task:
+    """A leaf in cycle 37 with a body worth choosing sections out of."""
+    body = over.pop(
+        "body",
+        "The opening sentence.\n\n"
+        "## Problem\nWhy this was bet.\n\n"
+        "## Solution\nWhat was going to happen.\n\n"
+        "## Progress\n- [x] one\n- [ ] two\n\nIt went well.\n",
+    )
+    fields = {
+        "id": "task-d00001", "kind": "task", "title": "A leaf",
+        "status": "in_progress", "owner": "ann", "cycle": 37,
+        "person_weeks": 1, "priority": "high", "body": body,
+    }
+    return Task(**{**fields, **over})
+
+
+def _index_of(*records: Record) -> Index:
+    return build_index(list(records), Config(schema_version=2), TODAY)
+
+
+def _slides_on(index: Index, number: int = 37) -> list[dict]:
+    parsed = _Slides()
+    parsed.feed(render_deck(index, number))
+    # `text` is a list of the strings inside the article, so it is joined here
+    # rather than in each test. The title slide has no `.who` row and is told
+    # apart by its class, not by looking for the word Review in its prose — a
+    # record whose title happens to say Review would have vanished from every
+    # assertion in this file.
+    for slide in parsed.found:
+        slide["said"] = " ".join(slide["text"])
+    return [slide for slide in parsed.found if "title" not in slide["classes"]]
+
+
+def test_a_record_with_no_slide_key_draws_what_it_always_drew():
+    """The whole feature has to be invisible until somebody uses it.
+
+    `Record.slide` defaults to `None`, and `None` means generated rather than
+    "generated is what was chosen". Collapsing the two would have made shipping
+    this a change to every deck in the plan on the day it merged — which is the
+    one thing a review deck must never be, because the person holding the sheet
+    is the person who cannot check.
+    """
+    record = _one()
+    assert record.slide is None
+    drawn = render_deck(_index_of(record), 37)
+    assert "It went well." in drawn
+    # The bet is still out, which is the rule that predates this field.
+    assert "Why this was bet." not in drawn
+    assert "What was going to happen." not in drawn
+
+
+def test_a_chosen_slide_with_nothing_ticked_stays_empty():
+    """An author who cleared every box meant it, and the fallback must not argue.
+
+    This is the one branch `chosen` exists for. `_review`'s fallback chain puts
+    the Solution on a slide that would otherwise be blank, which is right for a
+    GENERATED slide — five of seven slides in the demo's own cycle came out as a
+    heading over blank paper without it. Run under a personalised slide it would
+    reprint the very section somebody had just unticked, in front of the room.
+    """
+    record = _one(slide=Slide(sections=[], lead=False))
+    drawn = render_deck(_index_of(record), 37)
+    assert "It went well." not in drawn
+    assert "What was going to happen." not in drawn
+    # And not the "nothing is written on this record" line either: something IS
+    # written, and the reason the sheet is bare is that somebody chose it.
+    assert "Nothing is written on this record" not in drawn
+
+
+def test_a_section_is_drawn_when_it_is_ticked_and_not_when_it_is_not():
+    record = _one(slide=Slide(sections=["solution"], lead=False))
+    drawn = render_deck(_index_of(record), 37)
+    assert "What was going to happen." in drawn
+    assert "It went well." not in drawn
+
+
+def test_the_opening_prose_has_its_own_box_because_no_section_names_it():
+    """`sections` is keyed by heading, so the text above the first one is in none
+    of them. Without `lead` a record whose body is plain prose would have had
+    nothing to tick, and personalising it would have blanked a slide with no way
+    to get the words back."""
+    record = _one(slide=Slide(sections=[], lead=True))
+    assert "The opening sentence." in render_deck(_index_of(record), 37)
+    record = _one(slide=Slide(sections=[], lead=False))
+    assert "The opening sentence." not in render_deck(_index_of(record), 37)
+
+
+def test_newslide_makes_another_slide_and_numbers_it_from_two():
+    record = _one(slide=Slide(body="First half.\n\\newslide\nSecond half."))
+    slides = _slides_on(_index_of(record))
+    assert [slide["heading"] for slide in slides] == ["A leaf", "A leaf (2)"]
+    assert "First half." in slides[0]["said"]
+    assert "Second half." in slides[1]["said"]
+    # The record's own contribution goes on the first slide only. Repeating the
+    # ticks and the pull requests under every continuation would print the same
+    # list three times, which is what `without_checklist` exists to stop.
+    assert "one" in slides[0]["said"] and "one" not in slides[1]["said"]
+
+
+def test_a_newslide_inside_a_code_fence_is_text_and_not_a_break():
+    record = _one(slide=Slide(body="Before.\n```\n\\newslide\n```\nAfter."))
+    assert len(_slides_on(_index_of(record))) == 1
+
+
+def test_a_skipped_slide_is_marked_and_not_removed():
+    """Greyed, never hidden — jcanton, 2026-08-25. A slide that vanishes from the
+    deck is a slide nobody can find their way back to, and the rail is where you
+    put it back. Presentation mode is where it is actually absent, and that is
+    the script's job rather than this markup's."""
+    record = _one(slide=Slide(skip=True))
+    drawn = render_deck(_index_of(record), 37)
+    assert 'data-skip="1"' in drawn
+    assert "A leaf" in drawn
+
+
+def test_the_chips_carry_the_marks_every_other_view_carries():
+    """The deck drew a status as a bare word while the table, the graph and the
+    legend have drawn glyph-and-word since the glyphs existed, and it drew no
+    priority at all. The fill is the channel a projector loses first and the one
+    `_DECK_STYLE` deliberately gives up, so the mark was the only one left and it
+    was missing."""
+    record = _one()
+    parsed = _Slides()
+    parsed.feed(render_deck(_index_of(record), 37))
+    text = " ".join(word for slide in parsed.found for word in slide["text"])
+    assert STATUS_GLYPH["in_progress"] in text
+    assert PRIORITY_GLYPH["high"] in text
+    assert "High" in text
+
+
+def test_a_deck_order_puts_the_listed_first_and_keeps_everything_else():
+    """Partial and stale are both ordinary, and neither may take a slide off the
+    deck. Somebody re-bets while a tab is open; an order that could silently drop
+    the record they just added is an order nobody could trust, on the one page
+    whose reader cannot check."""
+    a, b, c = (_one(id=f"task-d0000{n}", title=f"T{n}") for n in (1, 2, 3))
+    assert [one.id for one in _deck_order([a, b, c], ["task-d00003"])] == [
+        "task-d00003", "task-d00001", "task-d00002",
+    ]
+    # An id for a record this cycle no longer holds is ignored, not drawn as a gap.
+    assert [one.id for one in _deck_order([a, b], ["task-d00009", "task-d00002"])] == [
+        "task-d00002", "task-d00001",
+    ]
+    # A repeated id is taken once. The rail deduplicates before it saves, so this
+    # is a hand-edited file, and the honest reading is "that record, once".
+    assert [one.id for one in _deck_order([a, b], ["task-d00002", "task-d00002"])] == [
+        "task-d00002", "task-d00001",
+    ]
+    # Nothing listed is the order the deck had before this field existed.
+    assert [one.id for one in _deck_order([a, b, c], [])] == [a.id, b.id, c.id]
+
+
+def test_a_slide_survives_a_save_byte_for_byte():
+    """The prose is the first prose this tool puts in frontmatter, so the round
+    trip is the thing to prove. A literal block is what a person hand-editing
+    wants to see; a value the block form cannot carry exactly — a line ending in
+    a space — falls back to the quoted form, because exact beats pretty in a file
+    that is also a record."""
+    from openproj.model import parse_text, serialise
+
+    for body in ("A line.\n\n\\newslide\nAnother.", "trailing   \nspace", "", "one line"):
+        record = _one(slide=Slide(sections=["progress"], skip=True, body=body))
+        back = parse_text(serialise(record), "x")
+        assert back.slide is not None
+        assert back.slide.body == body
+        assert back.slide.sections == ["progress"]
+        assert back.slide.skip is True
+
+
+def test_a_slide_nobody_can_read_costs_that_slide_and_nothing_else():
+    """Parse permissively, validate strictly. A record that fails to load takes
+    the other four hundred with it, so a hand-edited `slide:` that is nonsense
+    has to cost one slide drawn the generated way — never a page."""
+    from openproj.model import parse_text
+
+    text = (
+        "---\nid: task-d00001\nkind: task\ntitle: A leaf\ncycle: 37\n"
+        "slide: 5\n---\n\nThe body.\n"
+    )
+    assert parse_text(text, "x").slide is None
+    # And a map whose MEMBERS are nonsense keeps the map and loses the members,
+    # so each field falls back to its own declared default rather than to a copy
+    # of it written in a validator.
+    text = (
+        "---\nid: task-d00001\nkind: task\ntitle: A leaf\ncycle: 37\n"
+        "slide:\n  progress: banana\n  sections: solution\n  body: 7\n---\n\nThe body.\n"
+    )
+    slide = parse_text(text, "x").slide
+    assert slide is not None
+    assert slide.progress is True
+    assert slide.sections == ["solution"]
+    assert slide.body == ""
+
+
+def test_a_figure_may_be_sized_and_two_may_stand_side_by_side():
+    """`{width=60}` on an image, in a slide and in a record body alike.
+
+    A bare number means per cent because a slide is SCALED — everything on it is
+    laid out in one 1280x720 space and multiplied to fit a thumbnail, a preview
+    pane or a wall, so a width relative to the sheet is the only one that means
+    the same thing at all four sizes. It is also the only spelling that works
+    unquoted: the plugin ends a bare value at the first non-word character, so
+    `{width=60%}` parses as no attribute and prints as literal text.
+    """
+    from openproj.render.markdown import _markdown
+
+    one = "assets/0123456789abcdef.png"
+    drawn = _markdown(f"![d]({one})" + "{width=60}", ROUTES, {})
+    assert 'style="width: 60%"' in drawn
+    assert 'style="width: 300px"' in _markdown(f"![d]({one})" + '{width="300px"}', ROUTES, {})
+
+
+def test_an_image_attribute_that_is_not_a_size_never_reaches_the_page():
+    """`attrs_plugin` sets ARBITRARY attributes, and a plan is a repository
+    anybody can push to — so `{onerror=…}` and `{style=…}` are one line of
+    markdown away from every page that draws the record. Three fences: the
+    plugin's own `after` and `allowed`, and `_image`'s rebuild of `token.attrs`.
+    The third is the one a version bump cannot change.
+
+    **Asked of a parser and never of a substring**, which is this repository's
+    oldest lesson about exactly this class of claim. A rejected `{onerror=…}`
+    survives in the page as literal TEXT — the plugin declined to consume it, so
+    it is prose, escaped like any other prose — and a substring test cannot tell
+    that from a live handler. Five escaping bugs shipped under tests that
+    asserted on substrings of the page. So this asserts on the attributes the
+    `<img>` actually carries.
+    """
+    from html.parser import HTMLParser
+
+    from openproj.render.markdown import _markdown
+
+    class _Imgs(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=True)
+            self.found: list[dict] = []
+
+        def handle_starttag(self, tag: str, attrs: list) -> None:
+            if tag == "img":
+                self.found.append(dict(attrs))
+
+    one = "assets/0123456789abcdef.png"
+    for hostile in (
+        "{onerror=alert(1)}",
+        "{style=position:fixed}",
+        "{class=evil}",
+        "{width=60%;background:url(http://x)}",
+        "{width=99999}",
+        '{width="60%\\" onload=\\"alert(1)"}',
+        '{width="60%" onerror="alert(1)"}',
+    ):
+        parsed = _Imgs()
+        parsed.feed(_markdown(f"![x]({one})" + hostile, ROUTES, {}))
+        assert len(parsed.found) == 1, hostile
+        carried = parsed.found[0]
+        # Only ever these three, whatever was written in the braces.
+        assert set(carried) <= {"src", "alt", "style"}, (hostile, carried)
+        assert not any(name.startswith("on") for name in carried), (hostile, carried)
+        # A style that survives is a size and nothing else — one declaration,
+        # digits and a unit, no second property smuggled in behind a semicolon.
+        if "style" in carried:
+            assert re.fullmatch(
+                r"(?:width|height): [0-9]{1,3}(?:%|px|rem)(?:; (?:width|height): "
+                r"[0-9]{1,3}(?:%|px|rem))?",
+                carried["style"],
+            ), (hostile, carried["style"])
+        # And the picture survives every one of them: a hostile attribute costs
+        # the attribute, never the figure.
+        assert carried["src"].endswith("0123456789abcdef.png"), hostile

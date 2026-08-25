@@ -39,7 +39,7 @@ from .cycles import (
     render_cycles,
     render_people,
 )
-from .deck import _bet_headings, render_deck
+from .deck import _bet_headings, render_deck, slide_html
 from .detail import (
     _DETAIL,
     _TOC_LADDER,
@@ -70,10 +70,20 @@ from .hill import (
     hill_geometry,
 )
 from .icons import _ICON_ART, ICONS, icon_svg
-from .markdown import _ASSET_MEDIA, _ASSET_SRC, _body_html, _drop_repeated_title, preview_html
+from .markdown import (
+    _ASSET_MEDIA,
+    _ASSET_SRC,
+    _body_html,
+    _drop_repeated_title,
+    preview_html,
+)
+from .markdown import (
+    _inlined_assets as inlined_assets,
+)
 from .records import render_records
 from .rows import _row
 from .shell import _SHELL, CSP, ROUTES, STATIC, _page
+from .slides import render_slide_editor
 from .styles import STATUS_SLOTS, _chosen, _scheme_css
 from .table import (
     _TABLE_COLUMNS,
@@ -204,6 +214,9 @@ __all__ = [
     "render_cycle",
     "render_cycles",
     "render_deck",
+    "render_slide_editor",
+    "slide_html",
+    "inlined_assets",
     "render_detail",
     "render_graph",
     "render_people",

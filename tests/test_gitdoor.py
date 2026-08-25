@@ -486,6 +486,14 @@ def test_every_page_the_renderer_can_draw_carries_the_banner(on_disk: Path):
             arguments |= {"kind": "task", "base_commit": "deadbee"}
         if "number" in wanted:
             arguments |= {"number": 37}
+        # The slide editor is of ONE record and cannot be drawn without saying
+        # which — the first entry point here to need an argument the corpus has
+        # to supply. Taken from the index rather than written down, for the same
+        # reason this loop reads `render.py`'s namespace rather than listing it:
+        # a fixture id typed in here is an id that goes stale the day the corpus
+        # is regenerated.
+        if "record_id" in wanted:
+            arguments |= {"record_id": next(iter(index.records))}
         named = unreadable_in(entry(**arguments))
         assert any("tasks/task-a00002.md" in line for line in named), f"{name} said {named}"
         drawn += 1

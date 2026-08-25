@@ -4745,6 +4745,15 @@ def test_every_write_route_refuses_in_words_while_the_plan_is_forked(forked: For
         # Renders markdown and answers with it. No store, no commit, and it
         # answers an anonymous visitor.
         ("POST", "/api/preview"),
+        # The same, one level up: it renders one record's SLIDES from settings
+        # that have not been saved, so the editor's preview pane and the
+        # projector are one drawing rather than two renderers agreeing by
+        # accident. A POST because the unsaved slide goes in the body — a
+        # personalised slide carries prose, and prose does not belong in a query
+        # string. It reads the store to inline the pictures, at a commit, the
+        # way every rendered page does; it opens no write and reaches no
+        # `store.write`, so a forked plan is not something it can make worse.
+        ("POST", "/api/slide/preview"),
         # Clears a cookie.
         ("POST", "/logout"),
     }
