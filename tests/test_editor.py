@@ -2605,12 +2605,25 @@ const stacked = () => {
 // that had nothing to do with what it checks.
 const drag = width => {
   const box = document.querySelector('article.record').getBoundingClientRect();
-  const to = box.left + box.width / 2 + width / 2;
+  // The column is pinned left, so the pointer x that asks for a width IS that
+  // width from the article's left edge. This read `box.left + box.width / 2 +
+  // width / 2` — the centred-box arithmetic the drag used until 2026-08-25 —
+  // and the comment above was already written about exactly this: a helper that
+  // encodes the drag's maths asks about the drag, and this test is about the
+  // container query. When the maths were corrected, 620 and 1024 stopped
+  // meaning 620px and 1024px of column and the query looked broken.
+  //
+  // So the helper now CHECKS what it achieved rather than assuming it. A drag
+  // that lands somewhere else fails here, loudly, instead of surfacing three
+  // assertions later as a container query that appears to be answering about
+  // the window.
+  const to = box.left + width;
   grip.dispatchEvent(new PointerEvent('pointerdown', {
     bubbles: true, pointerId: 1, clientX: grip.getBoundingClientRect().left, clientY: 400}));
   dispatchEvent(new PointerEvent('pointermove', {bubbles: true, pointerId: 1, clientX: to}));
   dispatchEvent(new PointerEvent('pointerup', {bubbles: true, pointerId: 1}));
-  return stacked();
+  const landed = document.querySelector('.panes').getBoundingClientRect().width;
+  return {...stacked(), asked: width, landed: Math.round(landed)};
 };
 const wide = stacked();
 // Either side of the 56rem (896px) the query names, and not close to it: 620
@@ -2645,6 +2658,14 @@ def test_the_facts_answer_to_the_column_the_reader_drags_and_not_to_the_window(
     )
 
     assert got["width"] == 1400, "the window moved, so this is not asking about the column"
+    # The drag has to have landed where it was asked to, or nothing below is
+    # about the container query. One pointer pixel is one width pixel; a couple
+    # of pixels of border and rounding is the whole tolerance.
+    for name in ("narrow", "back"):
+        assert abs(got[name]["landed"] - got[name]["asked"]) <= 4, (
+            f"the {name} drag asked for {got[name]['asked']}px of column and landed at "
+            f"{got[name]['landed']}px, so this is measuring the drag and not the query: {got}"
+        )
     assert got["wide"]["beside"], f"the facts are not beside the document to start with: {got}"
     assert not got["narrow"]["beside"], (
         "the facts kept their column beside a document dragged narrower than the "

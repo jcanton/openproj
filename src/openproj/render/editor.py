@@ -189,7 +189,22 @@ function aceSurface(area, seeded) {
     // `preventDefault`, so Tab never reaches the keydown listener `attachEditing`
     // put on this box. Measured, with a listener beside it.
     useSoftTabs: true,
-    tabSize: INDENT.length,
+    // **Two ambient globals, with defaults, and this is a seam being stated
+    // rather than a convenience.** `INDENT` and `KEYMAPS` are declared by the
+    // editor-preferences block in `controls.py`, which the record page inlines
+    // and this surface simply assumed was on the page with it. It was, for as
+    // long as the record page was the only page that mounted a surface — and
+    // the moment the slide editor mounted one, `aceSurface` threw
+    // `ReferenceError: INDENT is not defined` on its second line. The call sits
+    // behind a `window.aceSurface &&` guard, so the box silently stayed a
+    // `<textarea>` and the whole page script died with it.
+    //
+    // The defaults are what the preferences default to, so a page that supplies
+    // the block behaves exactly as it did and a page that does not still gets an
+    // editor. `typeof` and not `?? `: on the record page these are `let`
+    // bindings in this same lexical scope, and a bare read before they are
+    // initialised is a TDZ throw rather than `undefined`.
+    tabSize: (typeof INDENT === 'string' ? INDENT : '  ').length,
     wrap: true,
     showPrintMargin: false,
     // The default is a `<textarea>` 2.5x1 CSS px at the caret with opacity 0,
@@ -198,8 +213,25 @@ function aceSurface(area, seeded) {
     placeholder: '',
   });
   editor.renderer.setScrollMargin(0, 0);
-  if (EDITOR.keymap !== 'default') {
-    editor.setKeyboardHandler(EDITOR.keymap === 'vim' ? 'ace/keyboard/vim' : null);
+  // The third and last ambient read — see the note on `tabSize` above for what
+  // these are and why they are defaulted. `EDITOR` is the preferences object
+  // `controls.py` builds; a page without that block has no stored keymap, which
+  // is the same thing as the default one.
+  //
+  // Enumerated by parsing this file rather than by grepping it: a first pass
+  // counted the WORD "EDITOR" in the prose above and concluded it was a comment,
+  // which is how `INDENT` was fixed and this was not, and cost a second round of
+  // exactly the same failure. Comments stripped, then identifiers — ask the
+  // question in the medium where the answer lives.
+  // `{keymap: 'default'}` and not `{}`: the guard asks whether the keymap is
+  // something other than the default, and `{}.keymap` is `undefined`, which is
+  // not `'default'` — so the empty object sent a page with no preferences INTO
+  // the branch and threw on the very next line. The stand-in has to be the
+  // default itself, not the absence of one. Measured in Chrome; the first
+  // version of this line shipped the same ReferenceError it was written to fix.
+  const KEPT = typeof EDITOR === 'undefined' ? {keymap: 'default'} : EDITOR;
+  if (KEPT.keymap !== 'default') {
+    editor.setKeyboardHandler(KEPT.keymap === 'vim' ? 'ace/keyboard/vim' : null);
   }
   editor.textInput.getElement().setAttribute('aria-label', area.getAttribute('aria-label') || '');
 
@@ -513,7 +545,7 @@ function aceSurface(area, seeded) {
     // five removed commands were removed for — `ace/keyboard/vim` is the one
     // that is already defined here, by the second file, and every other name
     // would fetch.
-    keymaps: KEYMAPS,
+    keymaps: typeof KEYMAPS === 'undefined' ? ['default'] : KEYMAPS,
     setKeymap(name) {
       editor.setKeyboardHandler(name === 'vim' ? 'ace/keyboard/vim' : null);
       // And the claimed keys go back on, which is not a courtesy: Ace's

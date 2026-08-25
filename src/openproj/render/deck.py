@@ -251,6 +251,19 @@ _DECK_STYLE = """
 .sized .slide {
   width: 1280px; height: 720px; max-width: none; min-height: 0;
   padding: 3rem 3.5rem;
+  /* **The padding is INSIDE the canvas**, and this line is the whole of a defect
+     that shipped. Without it the box is content-box — 1280 + 2x3.5rem wide and
+     720 + 2x3rem tall — so the sheet a reader sees is 1392x816 while every
+     number computed against it says 1280x720. Measured on the deployed page:
+     presenting at `--show: 1` in a 1280px viewport drew a 1392px slide, which is
+     112px of white sheet cut off at the edges — jcanton, 2026-08-25, on Present
+     "cutting out the white margins from the slides". Every other scale on the
+     page was ~8.75% out for the same reason.
+
+     A fixed canvas that does not include its own padding is not a fixed canvas;
+     it is a fixed content area with an unstated margin, which is the thing
+     `1280x720` is written down to stop being ambiguous about. */
+  box-sizing: border-box;
   zoom: var(--fit, 1);
   /* The clip. Without it the fixed height is a suggestion and a long code block
      hangs out of the border, which is the drawing this rule exists to prevent. */
@@ -337,37 +350,72 @@ _DECK_STYLE = """
    one: a rasterised thumbnail is a second rendering that goes stale silently,
    and this page's whole argument is against a second copy of anything. */
 .deckwrap { display: flex; gap: 1.25rem; align-items: flex-start; }
+/* Capped at the measure by the script, so the column is wider than the sheet on
+   a big screen — centred, the way it was when `max-width: 62rem` did the
+   capping. */
 .sheets { flex: 1 1 auto; min-width: 0; }
+.sized .sheets .slide { margin-left: auto; margin-right: auto; }
 .rail {
   flex: none; width: 13rem;
   position: sticky; top: 1rem; max-height: calc(100vh - 2rem);
   overflow-y: auto; overscroll-behavior: contain;
+  /* The gutter the slide numbers sit in, on the RAIL and not on the list inside
+     it. `overflow-y: auto` makes this a scroll container, and a scroll container
+     clips both axes — so a number positioned into negative space beside the list
+     was simply not painted. Here the number is inside the padding box and
+     `fit()` subtracts this same padding when it works out how wide a thumbnail
+     may be, which is why the padding belongs on the element that function
+     measures rather than on the `<ol>`. */
+  padding-left: 1.3rem;
 }
 .rail ol { list-style: none; margin: 0; padding: 0; counter-reset: slide; }
-.rail li {
+/* **`#thumbs > li` and never `.rail li`.** A thumbnail holds a CLONE of the
+   whole slide, and a slide's points are `<li>` elements — so a descendant
+   selector matched every checklist item in every thumbnail as though it were a
+   thumbnail itself. Each one took a border, a black number badge and a place in
+   the counter: the rail read 1, 2, 3, 4, 5, 6, 7, 8, 15, 20, 21 for eleven
+   slides, because slide 8 carried six points and slide 15 five more. The number
+   beside a thumbnail is the thing a presenter says out loud — "go back two" —
+   so a rail that counts a checklist is worse than a rail with no numbers.
+
+   The child combinator is the fix and the guard at once: `#thumbs` has exactly
+   one kind of child, and nothing inside a cloned slide can ever be one. */
+/* No `overflow: hidden` here, and that is the second half of getting the number
+   into the gutter. It was on this element to clip the scaled slide to the
+   rounded corner — and it clipped the row's OWN `::before` with it, which is
+   absolutely positioned into negative space beside it, so the number was laid
+   out correctly and painted nowhere. The clip belongs on the thing being
+   clipped: `.sized .slide` already carries `overflow: hidden`, and the corner
+   radius moves down with it. */
+#thumbs > li {
   position: relative; margin: 0 0 .5rem; border: 1px solid var(--line);
-  border-radius: 4px; overflow: hidden; cursor: grab; background: var(--paper);
+  border-radius: 4px; cursor: grab; background: var(--paper);
 }
 /* The number, which is what a presenter says out loud ("go back two"). Drawn by
    the stylesheet off a counter rather than written into each thumbnail, so it
    renumbers itself the moment a drag reorders the list — a number the script had
    to rewrite is a number that would be wrong for the frame after every drop. */
-.rail li::before {
+/* In the gutter beside the thumbnail, not on top of it. Drawn over the sheet it
+   sat across the first words of every slide's title — which is the one line of a
+   thumbnail anybody reads to find the slide they want, so the number was
+   covering the thing it exists to help you find. The rail's `padding-left` is
+   the room it moved into. */
+#thumbs > li::before {
   counter-increment: slide; content: counter(slide);
-  position: absolute; top: 0; left: 0; z-index: 2;
+  position: absolute; top: 0; left: -1.3rem; z-index: 2;
   font-size: 10px; font-family: var(--font-mono); line-height: 1;
-  padding: 3px 5px; background: var(--paper-ink); color: var(--paper);
-  border-bottom-right-radius: 4px;
+  width: 1.3rem; text-align: center;
+  padding: 3px 0; color: var(--muted);
 }
-.rail li[aria-current="true"] { outline: 2px solid var(--accent); outline-offset: 1px; }
+#thumbs > li[aria-current="true"] { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Being dragged, and where it would land. Both are `opacity` and a rule rather
    than a movement: the app animates in exactly two places and
    `test_the_app_moves_in_two_places` is the inventory of them, so a rail that
    eased its rows into position would be a third. A drag is already continuous
    feedback — the thing under the cursor IS the animation — and adding a
    transition to it would fight the pointer rather than follow it. */
-.rail li.dragging { opacity: .4; cursor: grabbing; }
-.rail li.over { border-color: var(--accent); }
+#thumbs > li.dragging { opacity: .4; cursor: grabbing; }
+#thumbs > li.over { border-color: var(--accent); }
 /* The slide inside a thumbnail: inert, unclickable, and scaled by the SAME rule
    the page column uses. `--fit` is a custom property and custom properties
    inherit, so the rail simply declares its own value and `.sized .slide`'s
@@ -376,17 +424,17 @@ _DECK_STYLE = """
    written second. That tie is this repository's characteristic failure and it
    was in the first draft of this block. */
 .rail { --fit: .14; }
-.rail .slide { margin: 0; border: 0; border-radius: 0; pointer-events: none; }
+.rail .slide { margin: 0; border: 0; border-radius: 3px; pointer-events: none; }
 /* Dropped from the deck: greyed rather than hidden, on the rail and on the page,
    because a slide nobody can see is a slide nobody can put back. Presentation
    mode is where it is actually absent. */
-.rail li.skipped, .slide.skipped { opacity: .38; }
+#thumbs > li.skipped, .slide.skipped { opacity: .38; }
 .slide.skipped { filter: grayscale(1); }
 /* Too much content for a fixed canvas, said where the author is rather than
    where the room is. The mark is on the rail and on the sheet in the editor's
    preview; it is deliberately NOT drawn in presentation mode, where it would be
    furniture on a wall, and not in print, which spills honestly instead. */
-.rail li.spills::after, .sized .slide.spills::after {
+#thumbs > li.spills::after, .sized .slide.spills::after {
   content: "does not fit"; position: absolute; z-index: 2;
   bottom: 0; right: 0; font-size: 10px; line-height: 1; padding: 3px 5px;
   background: var(--paper-warn); color: var(--paper);
@@ -494,11 +542,33 @@ const slides = () => [...SHEETS.querySelectorAll('.slide')];
 // it cannot name. Until this runs the page carries the fluid `min-height` rule,
 // which is a complete slide rather than a broken one — the reason it is two
 // rules and not one.
+// The widest a slide is drawn on the page, in its own pixels. 62rem is what
+// `.slide`'s `max-width` was before the canvas became fixed, so a deck on a wide
+// screen keeps the measure it always had instead of growing to fill the window —
+// a slide scaled ABOVE 1 is a slide drawn bigger than it was designed, which is
+// a blurrier one, not a better one.
+const SHEET_MAX = 62 * 16;
+
 function fit() {
   WRAP.classList.add('sized');
-  const room = SHEETS.clientWidth;
+  // **Measured on a box whose width does not depend on the answer.** The rail's
+  // scale was computed from `THUMBS.clientWidth`, and the thumbnails' width is
+  // set BY that scale — so every call multiplied its own previous output.
+  // Measured on the deployed page: six resize events took `--fit` from 0.169 to
+  // 0.291 and a thumbnail from 237px to 408px inside a 193px rail, growing about
+  // 10% each time and never coming back. Any event that reaches this function —
+  // a resize, `fonts.ready`, a live refresh, a click that lands one — pushed it
+  // further, which is what jcanton saw as "clicking on one thumbnail zooms in
+  // irreversibly on the page".
+  //
+  // `RAIL` is `width: 13rem; flex: none`, so its width is a stylesheet fact and
+  // not a consequence of what is inside it. `clientWidth` less the padding is
+  // the room a thumbnail actually has.
+  const room = Math.min(SHEETS.clientWidth, SHEET_MAX);
   if (room > 0) SHEETS.style.setProperty('--fit', String(room / SLIDE_W));
-  const rail = THUMBS.clientWidth;
+  const pad = parseFloat(getComputedStyle(RAIL).paddingLeft) +
+              parseFloat(getComputedStyle(RAIL).paddingRight);
+  const rail = RAIL.clientWidth - (pad || 0);
   if (rail > 0) RAIL.style.setProperty('--fit', String(rail / SLIDE_W));
   marked();
   if (presenting()) show(at);
@@ -1348,4 +1418,9 @@ def render_deck(
         # Same reasoning as `/cycle/<n>`: the item that got you here stays lit.
         "cycles",
         index.unreadable,
+        # But it calls ITSELF the deck when a slide editor asks where it came
+        # from. The nav word would be "Cycles", which points at a listing this
+        # page is not — and "← deck 37" is what somebody who walked here from the
+        # rail is looking for.
+        origin=f"deck {number}",
     )

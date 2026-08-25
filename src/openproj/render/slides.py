@@ -39,7 +39,7 @@ from ..index import Index
 from ..model import Record, lead_text
 from ..vendor import _ace
 from .deck import _DECK_STYLE, _deck_view, _said, _seeded, choosable, slide_html
-from .detail import _body_html, _fact_rows, _progress_view
+from .detail import _body_html, _fact_rows, _progress_view, _slidebar
 from .editor import _ACE_SURFACE, _ace_wanted
 from .env import _fragment
 from .markdown import _inlined_assets
@@ -113,16 +113,59 @@ def _place(index: Index, record: Record) -> int | None:
 
 
 _SLIDE = """
-<p class="back deckbar">
-  {#- Back to the deck this slide is IN, which is where somebody arrived from
-      and the only place the slide means anything. A record with no cycle has no
-      deck to go back to and gets the record instead — a dead link is worse than
-      a different one. -#}
-  {% if e.cycle and links.deck %}<a href="{{ links.deck }}{{ e.cycle }}">← deck {{ e.cycle }}</a>
-  {% else %}<a href="{{ links.record }}{{ e.id }}">← {{ e.title }}</a>{% endif %}
-</p>
+{#- Where you came FROM, and not where this slide happens to live. It hardcoded
+    "← deck N", which is right when you arrived from the deck and a lie when you
+    arrived from Table or from Records — jcanton, 2026-08-25. `class="origin"` is
+    the hook the shell's own back-link script already looks for: a page rendered
+    without an origin name of its own reads the stamp this tab left on the way in
+    and rewrites both the address and the label. One mechanism for one question,
+    and this page had invented a second. -#}
+<p class="back"><a class="origin" href="{{ links.records }}">← all records</a></p>
 
-<article class="slideedit" data-id="{{ e.id }}">
+<article class="record slideedit" data-id="{{ e.id }}">
+  {#- The same row of controls the record page carries, because this IS a view of
+      that record and jcanton was explicit that the bar must not vanish when you
+      reach it: "the top editor bar with the icons for the four views and similar
+      have disappeared. that should not happen".
+
+      The three segments are LINKS here rather than the buttons they are on the
+      record page. There they toggle a class on an article already on screen;
+      here the document they lead to is a different page, so the thing that gets
+      you there is a link — `_VIEW_SEGMENTS`' buttons would have been three
+      controls that do nothing at all.
+
+      `?edit` and `?both` are FLAGS and not values, because that is what the
+      record page reads: `VIEW_ASKED.has(name)`, off an address the observed
+      HackMD note spells `?both=`. Preview is the bare address, since it is the
+      page's own landing state. Written the way the reader already parses it
+      rather than in a second spelling this page would have had to teach it.
+
+      **No Delete here.** The row on the record page carries one and this one
+      does not, which is a difference worth stating: deleting is a flow — a
+      confirmation row, a second press, a redirect — that lives in `detail.py`
+      with the record it is about, and a button here would either be dead or be
+      that whole flow copied. A control whose only answer is a refusal is a dead
+      end somebody can only find by pressing it, which is the argument that
+      already kept a Delete off the create form. -#}
+  {% if editable %}
+  <p class="editbar">
+    <span id="views" class="views" role="group" aria-label="How the document is shown">
+      <a class="seg" href="{{ links.record }}{{ e.id }}?edit" aria-pressed="false"
+         aria-label="Write" title="Write">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 20h4L19.2 8.8a2.55 2.55 0 0 0-3.6-3.6L4.4 16.4 4 20Z"/></svg></a>
+      <a class="seg" href="{{ links.record }}{{ e.id }}?both" aria-pressed="false"
+         aria-label="Write and preview" title="Write and preview">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="3" y="5" width="18" height="14" rx="1.6"/><path d="M12 5v14"/></svg></a>
+      <a class="seg" href="{{ links.record }}{{ e.id }}" aria-pressed="false"
+         aria-label="Preview" title="Preview">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M2.5 12S6 6.2 12 6.2 21.5 12 21.5 12 18 17.8 12 17.8 2.5 12 2.5 12Z"/>
+        <circle cx="12" cy="12" r="2.7"/></svg></a>
+    </span>{{ slidebar }}
+  </p>
+  {% endif %}
   <h1>{{ e.title }}</h1>
   {#- Whether this slide will actually be DRAWN, said before anybody spends ten
       minutes on it. `_deck_view` takes leaves only and takes them from one
@@ -293,6 +336,23 @@ _SLIDE_STYLE = """
    mark is how they find out there is something to say. */
 .choice .tag.new { color: var(--warn); border-color: var(--warn); }
 
+/* **The prose box is visible here without an editing session**, and it needs a
+   rule because this article wears `record`. That class is what gives the page
+   `--writing` and the editbar its styling, and it brings `styles.py`'s
+   `.field { display: none }` with it — the record form's fields are hidden until
+   `.record.editing` turns them on, which is right for a page whose facts column
+   swaps values for controls and wrong for this one, where the box IS the page.
+   Measured in Chrome: the prose box and the Ace surface mounted into it both
+   computed `display: none` and laid out 0x0, so the middle pane simply ended
+   after the checkboxes.
+
+   `:not([hidden])` keeps the attribute working, and that is not decoration: Ace
+   hides the original `<textarea>` with `hidden` when it mounts, and a rule that
+   overrode it would draw the plain box underneath the editor that replaced it.
+   (0,3,0) against the bare `.field`'s (0,1,0), so it wins on weight rather than
+   on which stylesheet happens to be inlined second. */
+.slideedit .field:not([hidden]) { display: block; }
+
 /* The preview is the deck's own slide at the width of this column. `.sized` is
    the deck stylesheet's fixed-canvas switch, so this pane gets the same 1280x720
    geometry, the same clip and the same `.spills` mark as the projector — which
@@ -320,10 +380,23 @@ const BASE = document.getElementById('base');
 // navigation writes the box and leaves `defaultValue` alone, so Reset would
 // have put back something the reader never saw. Same decision, same reason, as
 // the record editor's `BASELINE`.
-const BASELINE = JSON.stringify(state());
 // Ace, where the page was given it. The plain box stays in the DOM and stays
-// the thing `state()` reads, exactly as it does on the record page — one place
-// knows a textarea has a `.value`, and it is not this file.
+// the thing `state()` falls back to, exactly as it does on the record page —
+// one place knows a textarea has a `.value`, and it is not this file.
+//
+// **Before `BASELINE`, and that ordering is the whole of a defect this shipped
+// with.** `BASELINE` calls `state()`, which read `typeof text === 'function'`
+// while `text` was still in its temporal dead zone — and `typeof` on a `const`
+// in TDZ THROWS rather than answering "undefined". The ReferenceError landed on
+// the first executable line of the block, so nothing after it ever ran: no
+// checkbox listener, no Save, no Reset, no preview. `AGENTS.md` names this exact
+// tell — "`typeof x` throwing TDZ on a `let` is the tell: execution never
+// reached that line" — and it was written about the last time this happened.
+//
+// The `typeof` guard is gone with it. It was papering over the ordering rather
+// than defending against anything: `text` is declared right here, and a guard
+// that can only be false while the code is broken is a guard that hides the
+// break.
 const SURFACE = window.aceSurface && MAY_WRITE ? aceSurface(PROSE, PROSE.value) : null;
 const text = () => SURFACE ? SURFACE.text() : PROSE.value;
 
@@ -339,9 +412,15 @@ function state() {
     lead: on('lead'),
     sections: [...ARTICLE.querySelectorAll('.sec')]
       .filter(box => box.checked).map(box => box.value),
-    body: typeof text === 'function' ? text() : PROSE.value,
+    body: text(),
   };
 }
+
+// Taken AFTER `text` exists, for the reason written above it. Never
+// `PROSE.defaultValue`: a browser restoring a form on a back navigation writes
+// the box and leaves `defaultValue` alone, so Reset would put back something the
+// reader never saw — the decision `BASELINE` on the record page records.
+const BASELINE = JSON.stringify(state());
 
 function dirty() { return JSON.stringify(state()) !== BASELINE; }
 
@@ -526,16 +605,43 @@ def render_slide_editor(
     return _page(
         f"openproj — {record.title}: the slide",
         _fragment(
-            _SLIDE + _SLIDE_SCRIPT,
+            _SLIDE,
             e=view,
             links=links,
             editable=editable,
             base_commit=base_commit or "",
+            slidebar=_slidebar(record.id, links, here=True),
         )
-        + (_ace() if ace else Markup(""))
-        + (_ACE_SURFACE if ace else Markup("")),
+        # **The library, then the surface, then this page's own script**, and
+        # that order is load-bearing rather than tidy. These are classic scripts
+        # and classic scripts run in document order, so a page script that asks
+        # for `aceSurface` before `_ACE_SURFACE` has been parsed finds nothing —
+        # measured: the box silently stayed a `<textarea>` and every Ace feature
+        # was absent with no error anywhere, because the call is behind a
+        # `window.aceSurface &&` guard that answered honestly.
+        #
+        # `_ace()` answers the BYTES of ace.js and not a script element, which is
+        # the other half of the same defect: the record page wraps it
+        # (`{% if ace %}<script>{{ ace }}</script>`) and this appended it bare,
+        # so the whole library, licence comment first, rendered as visible text
+        # at the foot of the page. `_ACE_SURFACE` brings its own `<style>` and
+        # `<script>` and goes in as it is.
+        + (Markup("<script>{}</script>").format(_ace()) if ace else Markup(""))
+        + (_ACE_SURFACE if ace else Markup(""))
+        + _fragment(
+            _SLIDE_SCRIPT,
+            e=view,
+            links=links,
+            editable=editable,
+        ),
         _DETAIL_STYLE + _DECK_STYLE + _SLIDE_STYLE,
         links,
-        "records",
+        # `detail`, the same key the record page passes, and the choice matters
+        # for more than the nav mark: `detail` is not a nav item, so `_page`
+        # computes no origin, so this page READS the stamp instead of writing
+        # one. It passed `records` and therefore stamped itself as "all records"
+        # — which lit Records in the nav and, worse, overwrote the very stamp its
+        # own back link was supposed to be reading.
+        "detail",
         index.unreadable,
     )
