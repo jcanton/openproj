@@ -2672,6 +2672,13 @@ function attachBodyCompletion(surface) {
     else settled = {from: token.from, typed: put};
   }
 
+  // The editor scrolling moves the caret and does not move this list, and Ace's
+  // scrolling is its OWN — it positions layers rather than scrolling an element,
+  // so no DOM `scroll` event fires and the `park` follow handler above never
+  // hears it. Measured: a list drawn and then scrolled past sat 80px up and to
+  // the left of the caret it belonged to, on one run in three. `onScroll` is the
+  // surface's answer to exactly this question and both surfaces have it.
+  surface.onScroll(() => { if (!list.hidden) place(); });
   surface.onInput(open);
   // A caret that leaves the token closes the list, and one that moves inside it
   // refilters — `open` answers both, because `bodyToken` is what decides.
