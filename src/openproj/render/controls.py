@@ -2235,6 +2235,72 @@ function attachUploads(surface, status) {
   });
 }
 
+// --- what is open right now, as against what the corpus cites --------------
+//
+// jcanton, 2026-08-25: "would it be possible to have a page connect to the
+// network to get the actual list of PRs from the repos?" The completion has
+// always offered what some record already names, which answers "which of the
+// ones we have written down" and never "which are open right now".
+//
+// **The page does not connect to the network, and that rule did not move.**
+// `/api/prs` is same-origin, on this server, which then asks GitHub with the
+// repositories the PLAN names and a five-minute cache in front of them. Every
+// page here is still inlined and still reaches no third-party host; what changed
+// is that one of this app's own routes has something new to say.
+//
+// Asked ONCE per page and only when a pull request is actually being typed —
+// not at load, where it would be a network call on every record anybody opened
+// for a completion most of them never use.
+let PRS_ASKED = false;
+let PRS_SETTLED = false;
+const PRS_WAITING = [];
+
+function widenPullRequests(redraw) {
+  // A rendered file has no server to ask. `SUGGEST.live` is the server saying
+  // so, rather than a failed fetch saying it a moment later.
+  if (!SUGGEST.live || PRS_SETTLED) return;
+  if (redraw) PRS_WAITING.push(redraw);
+  if (PRS_ASKED) return;
+  PRS_ASKED = true;
+  fetch('/api/prs', {headers: {accept: 'application/json'}})
+    .then(answer => (answer.ok ? answer.json() : {prs: []}))
+    .then(said => foldInPullRequests(said.prs || []))
+    // Every refusal is the same answer: the corpus's list, which is already on
+    // the page. A completion that is briefly narrower is a completion; an error
+    // in a popup is not.
+    .catch(() => {})
+    .finally(() => {
+      PRS_SETTLED = true;
+      // Spliced, so a redraw that arrives after this cannot be queued behind a
+      // promise nothing will settle — the guard at the top sends it straight
+      // back, because by then the list it wanted is already merged.
+      for (const again of PRS_WAITING.splice(0)) again();
+    });
+}
+
+// Folded into the list rather than replacing it, and the ORDER is the argument:
+// a reference some record already cites is one this plan has a reason to mention
+// again, so it keeps its place at the front and only gains the title it never
+// had. Everything else is appended — the filter runs over the whole list and
+// slices eight, so an open pull request nobody has cited yet is one narrowing
+// keystroke away.
+function foldInPullRequests(live) {
+  const held = new Map(SUGGEST.prs.map(one => [one.value, one]));
+  for (const one of live) {
+    const repo = one.value.split('#')[0] + '#';
+    if (!held.has(repo)) {
+      const bare = {value: repo, label: 'any pull request'};
+      held.set(repo, bare);
+      SUGGEST.prs.unshift(bare);
+    }
+    const already = held.get(one.value);
+    // A cited reference has no label — the corpus knows the number and not what
+    // it is called — so this is the half the network was asked for.
+    if (already) already.label = already.label || one.label;
+    else { held.set(one.value, one); SUGGEST.prs.push(one); }
+  }
+}
+
 // Type-to-filter, not a picker beside the field. A datalist only completes a whole
 // value, so on a comma-separated field it stops helping after the first name — and
 // a separate "add" control is a second place to look for one job.
@@ -2366,6 +2432,10 @@ function attachSuggest(input) {
   }
 
   function open() {
+    // The one field whose vocabulary is not only the corpus's. Asked here rather
+    // than at attach time: this runs when somebody starts typing into the box,
+    // which is exactly when the answer is about to be looked at.
+    if (input.dataset.suggest === 'prs') widenPullRequests(open);
     const needle = typed();
     const matches = source
       .filter(item => (item.value + ' ' + item.label).toLowerCase().includes(needle))
@@ -2528,7 +2598,12 @@ function bodyToken(text, at) {
   const ref = openRef(text, at);
   if (ref) {
     return {
+      // Not a snapshot: `foldInPullRequests` grows this array in place, so a
+      // popup that opened before the answer landed reads the wider list on the
+      // next keystroke without being handed it.
       source: SUGGEST.prs || [],
+      // The one shape whose vocabulary the server can widen.
+      live: true,
       from: ref.from,
       typed: ref.typed,
       lead: item => item.value,
@@ -2597,7 +2672,12 @@ function attachBodyCompletion(surface) {
 
   function open() {
     const token = bodyToken(surface.text(), surface.caret().from);
-    if (!token || !token.source.length) return close();
+    if (!token) return close();
+    // `C2SM/icon` is somebody reaching for a pull request, which is the moment
+    // to find out which ones are open. The list it merges into is the one this
+    // call is about to read, so a redraw is asked for.
+    if (token.live) widenPullRequests(open);
+    if (!token.source.length) return close();
     if (settled && settled.from === token.from && settled.typed === token.typed) {
       return close();
     }
@@ -2912,7 +2992,7 @@ def _pr_sort(ref: str) -> tuple[str, int]:
     return repo, int(number) if number.isdigit() else 0
 
 
-def _suggestions(index: Index, linkable: bool = False) -> dict:
+def _suggestions(index: Index, linkable: bool = False, live: bool = False) -> dict:
     """What already exists, offered rather than remembered.
 
     A reviewer who is not in this list is a typo far more often than a new
@@ -2964,6 +3044,12 @@ def _suggestions(index: Index, linkable: bool = False) -> dict:
             {"value": i, "label": e.title} for i, e in sorted(index.plan.items())
         ],
         "tags": [{"value": t, "label": ""} for t in sorted(tags)],
+        # Whether there is a server behind this page to ask what is open right
+        # now. False on a rendered file, where `/api/prs` is a path to nothing —
+        # said here rather than discovered by a fetch that fails, because a
+        # completion is not the place to learn what kind of copy of the page you
+        # are looking at.
+        "live": live,
         # Every record, plan and inbox, for the one control that completes a
         # LINK rather than a field — jcanton, 2026-08-25, asked for issues and
         # notes to be linkable from a shaping document, which is the ordinary
@@ -3148,18 +3234,21 @@ def _facets_html(
     )
 
 
-def _combobox_html(index: Index | None, linkable: bool = False) -> Markup:
+def _combobox_html(
+    index: Index | None, linkable: bool = False, live: bool = False
+) -> Markup:
     """The suggestion data and the widget that filters it, for any page with inputs.
 
     `linkable` is "this page has a document being written in it", which is the
-    record page and the create form and nothing else. It decides one key of the
-    blob — see `_suggestions`.
+    record page and the create form and nothing else. `live` is "there is a
+    server behind this page", which is every served page and no rendered file.
+    Each decides one key of the blob — see `_suggestions`.
     """
     data = (
-        _suggestions(index, linkable)
+        _suggestions(index, linkable, live)
         if index
         else {"people": [], "records": [], "tags": [], "prs": [], "cycles": [],
-              "linkable": []}
+              "linkable": [], "live": False}
     )
     return _fragment(
         _COMBOBOX, suggest=data, max_body_bytes=MAX_BODY_BYTES, history_art=HISTORY_MARKS

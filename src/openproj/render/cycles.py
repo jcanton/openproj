@@ -1589,7 +1589,7 @@ def render_cycle(
         links=links,
         editable=base_commit is not None,
         base_commit=base_commit or "",
-        combobox=_combobox_html(index),
+        combobox=_combobox_html(index, live=base_commit is not None),
     )
     return _page(
         f"openproj — cycle {number}",

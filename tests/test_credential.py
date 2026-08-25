@@ -11,11 +11,12 @@ import base64
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from openproj.github import GitHubApp, app_jwt
+from openproj.github import GitHubApp, app_jwt, open_pull_requests
 
 
 @pytest.fixture(scope="module")
@@ -186,3 +187,89 @@ def test_the_startup_refusal_says_which_variable_is_unset(tmp_path: Path, monkey
     assert "OPENPROJ_INSTALLATION_ID" in str(refusal.value)
     assert "OPENPROJ_APP_KEY" in str(refusal.value)
     assert "OPENPROJ_APP_ID" not in str(refusal.value), "that one is set"
+
+
+def _pulls(number: int, title: str) -> dict:
+    return {"number": number, "title": title, "state": "open", "user": {"login": "x"}}
+
+
+def test_the_open_pull_requests_are_read_down_to_what_a_completion_needs():
+    """A number and a title, and nothing else off the answer.
+
+    GitHub sends forty fields about a pull request. The completion needs the
+    number nobody remembers and the title that finds it; every other one is bytes
+    on a page and a field to keep in step with an API somebody else versions.
+
+    One page of a hundred, most recently updated first, and no `Link` following —
+    a popup offers eight rows and filters as somebody types, so a loop over a
+    paginated list is a request count nobody predicted against a rate limit
+    somebody else shares.
+    """
+    asked = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(request)
+        return httpx.Response(200, json=[_pulls(1403, "Halo exchange"), _pulls(9, "Two")])
+
+    got = open_pull_requests(
+        "C2SM/icon4py", transport=httpx.MockTransport(answer)
+    )
+
+    assert got == [
+        {"number": 1403, "title": "Halo exchange"},
+        {"number": 9, "title": "Two"},
+    ]
+    assert len(asked) == 1, "one page, one call"
+    query = dict(asked[0].url.params)
+    assert query == {
+        "state": "open", "per_page": "100", "sort": "updated", "direction": "desc"
+    }, query
+    assert asked[0].url.path == "/repos/C2SM/icon4py/pulls"
+    assert "authorization" not in asked[0].headers, "asked as somebody with no App"
+
+
+def test_a_token_the_code_repository_refuses_falls_back_to_asking_anonymously(
+    pem: str, monkeypatch
+):
+    """The App's installation is scoped to the PLAN repository, and that
+    narrowness is the whole argument for using an App at all.
+
+    So a token minted for it is refused by `C2SM/icon4py` unless somebody has
+    installed the App there too — and both deployments have to work: the one
+    where they have (5,000 requests an hour, private repositories) and the one
+    where they have not (the anonymous limit, public ones).
+
+    A 500 is deliberately NOT retried: a second identical request does not
+    improve a server error, and the caller treats a refusal as "offer what the
+    corpus cites" either way.
+    """
+    monkeypatch.setattr(GitHubApp, "_mint", lambda self, now: ("installation-token", now + 3600))
+    seen: list[str | None] = []
+
+    def refuse_then_answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("authorization"))
+        if request.headers.get("authorization"):
+            return httpx.Response(404, json={"message": "Not Found"})
+        return httpx.Response(200, json=[_pulls(1403, "Halo exchange")])
+
+    app = GitHubApp("1", "2", pem, transport=httpx.MockTransport(refuse_then_answer))
+    assert open_pull_requests("C2SM/icon4py", app) == [
+        {"number": 1403, "title": "Halo exchange"}
+    ]
+    assert seen == ["Bearer installation-token", None], seen
+
+    # The App's own transport is honoured without being handed over a second
+    # time — two names for one seam is two ways for a test to think it had
+    # stubbed the network.
+    server_error = []
+
+    def broken(request: httpx.Request) -> httpx.Response:
+        server_error.append(request.headers.get("authorization"))
+        return httpx.Response(500, text="no")
+
+    app.transport = httpx.MockTransport(broken)
+    with pytest.raises(httpx.HTTPStatusError):
+        open_pull_requests("C2SM/icon4py", app)
+    assert server_error == ["Bearer installation-token"], (
+        f"a 500 was retried anonymously: {server_error}"
+    )

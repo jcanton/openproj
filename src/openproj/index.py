@@ -259,6 +259,10 @@ class Index(BaseModel):
     # The roster from config/people.yaml, so a cycle nobody has been bet into yet
     # still has names to set availability against.
     known_people: list[str] = []
+    # The repositories this plan's work happens in, carried for the reason the
+    # roster is: a renderer is handed an index and never a Config, and the pull
+    # request completion has to know which repositories to ask about.
+    repositories: list[str] = []
     # The icon each person picked for themselves, login to icon name, from
     # `people/<login>.md`. The choice and not the record: the one page that draws
     # these wants the mark beside a name, and an index carrying the whole record
@@ -646,6 +650,7 @@ def build_index(
         nominal_availability=config.nominal_availability,
         cooldown_weeks=config.cooldown_weeks,
         known_people=config.known_people,
+        repositories=config.repositories,
         icons={
             login: person.icon for login, person in config.people.items() if person.icon
         },

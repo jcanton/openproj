@@ -103,6 +103,20 @@ inside a block half the readers never match. The five status fills are a *lumina
 five hues at one lightness: hue is the channel a dichromat loses, and on the graph and the timeline
 the fill used to be the only channel there was.
 
+**A page reaches this server and nothing else — and the server may reach GitHub.**
+The two halves of that are one rule and they are worth writing apart. `connect-src
+'self'` is the whole of what a page may talk to, which is why the live update, the
+preview and `/api/prs` are all this app's own routes; a page that fetched
+api.github.com would be a page whose content depends on a host we do not serve, and
+`test_no_page_reaches_the_network` is the tripwire. The SERVER already talks to
+GitHub — it pushes the plan with an App token — so "which pull requests are open
+right now" is answered where the credential already lives, behind a five-minute
+cache, over the repositories `config/defaults.yaml` names and no others.
+**That route takes no input on purpose**: a `?repo=` parameter would make this a
+proxy that fetches any path on api.github.com that anybody can name, from an IP
+inside the project, with our token on it. The allowlist is a file somebody
+committed to the plan.
+
 **No npm, no build step, no CDN.** A Node toolchain that rots is the most common way a small
 internal tool becomes unbuildable in two years. Libraries are vendored, checksummed and inlined
 (`static/VENDOR.md`); the typeface is a `data:` URI, and because every rendered page is therefore a
