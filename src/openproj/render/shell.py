@@ -2679,6 +2679,7 @@ def _page(
     links: Links = STATIC,
     current: str = "",
     unreadable: Sequence[Unreadable] = (),
+    origin: str | None = None,
 ) -> str:
     """Autoescaping protects record titles inside the inner templates; the already
     rendered body and stylesheet are marked safe here so the shell does not escape
@@ -2748,7 +2749,17 @@ def _page(
         # a name leaves it behind, a page without one picks it up. `current` and
         # not the route, because `/cycle/37` and `/deck/37` are both Cycles and
         # neither of them is the href of the link that leads there.
-        origin=next((_BACK_LABEL.get(key, label) for key, label in _NAV if key == current), ""),
+        # What this page calls itself when a record page later asks where it was
+        # opened from. Normally the nav's own word for whichever item is marked;
+        # `origin` overrides it for a page that IS somewhere to come back from
+        # but shares its nav item with another — the deck marks Cycles, and a
+        # back link reading "← Cycles" while pointing at `/deck/37` names the
+        # wrong place. A page that is only ever reached FROM somewhere passes
+        # neither and reads the stamp instead.
+        origin=(
+            origin if origin is not None
+            else next((_BACK_LABEL.get(key, label) for key, label in _NAV if key == current), "")
+        ),
         origin_path=_ORIGIN_PATH,
         # The shell writes the chip and legend rules for every status, so a
         # status added to the model cannot arrive with three of its four tokens

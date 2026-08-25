@@ -811,13 +811,40 @@ article.record .editbar { margin-bottom: .4rem; }
    An anchor styled as a control, so it keeps the one behaviour a button cannot
    have: middle-click, Cmd-click and "open in new tab" all work, which is what
    somebody comparing a record against its slide will reach for. */
-article.record .editbar .slide-view {
-  margin: 0 .75rem; padding: .3rem .6rem; vertical-align: middle;
+/* An icon, like the three beside it, and a rectangle of its own so it is not
+   mistaken for a fourth state of the switcher. The margin is the gap jcanton
+   asked for in as many words — "little space [slide] little space [delete]" —
+   and it is what says these are three separate things and not one control with
+   five parts.
+
+   `.seg` is on it so the SVG below is sized by the same rule the three segments
+   use; everything the group's box supplies — the shared border, the zeroed
+   corners — is re-declared here, because `.views .seg` cannot reach an element
+   outside `.views`. An earlier version borrowed the class and nothing else, and
+   drew a word floating between two bordered things. */
+.editbar .slide-view {
+  display: inline-flex; align-items: center; vertical-align: middle;
+  margin: 0 .75rem; padding: .3rem .55rem;
   border: 1px solid var(--line-strong); border-radius: 3px;
   background: var(--surface); color: var(--muted);
-  font: inherit; line-height: 1; text-decoration: none;
+  line-height: 0; text-decoration: none;
 }
-article.record .editbar .slide-view:hover { color: var(--accent); }
+.editbar .slide-view:hover { color: var(--accent); }
+/* On the slide page this IS the view you are in, and it says so the way the
+   three segments say it. Same declaration as `.views .seg[aria-pressed="true"]`
+   and deliberately not a second colour: one pressed look for one row of
+   controls. */
+.editbar .slide-view[aria-pressed="true"] {
+  background: var(--accent); color: var(--on-accent); border-color: var(--accent);
+}
+/* An SVG that nothing sizes lays out at 0x0, and this application has shipped
+   two empty boxes where a check and a cross should have been. The three
+   segments are sized by `.views .seg svg`, which does not reach here. */
+.editbar .slide-view svg {
+  display: block; width: 15px; height: 15px; fill: none;
+  stroke: currentColor; stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round;
+}
 article.record .commitbar { margin-top: 0; }
 /* The bar's BOX is on the page before the session that fills it — jcanton,
    2026-08-24: "page elements should not move or appear/disappear when

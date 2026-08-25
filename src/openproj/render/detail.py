@@ -82,6 +82,34 @@ _VIEW_SEGMENTS = (
 )
 
 
+# The way to this record's slide, drawn as an icon like the three beside it.
+#
+# jcanton, 2026-08-25: "the [slide] button should be an icon like the other three
+# modes, possibly a play symbol". A play triangle, because what this leads to is
+# the thing you stand up and present — the same symbol the Present button on the
+# deck would wear, and the one symbol on this row that means "and then show it"
+# rather than "and here is how to look at it".
+#
+# **Outside the `role="group"`, and that is the whole point of the gap.** The
+# three segments are one control in one bordered box: three states of one
+# document. A slide is not a state of this document, it is a different document
+# built out of it, so a fourth segment inside that box would say something false
+# about both. It wears the icon so the row reads as a row of icons, and it keeps
+# its own rectangle and its own spacing so nobody mistakes it for a fourth state.
+#
+# `aria-pressed` rather than a link that looks pressed: on the slide page this IS
+# the current view, and a control that says which one you are in is what the
+# three beside it already do.
+def _slidebar(record_id: str, links: Links, here: bool = False) -> Markup:
+    return Markup(
+        '<a class="seg slide-view" href="{}{}?view=slide" aria-pressed="{}"'
+        ' aria-label="Slide" title="Slide  the slide this record makes in its'
+        ' cycle\u2019s review deck">'
+        '<svg viewBox="0 0 24 24" aria-hidden="true">'
+        '<path d="M8 5.5v13l11-6.5-11-6.5Z"/></svg></a>'
+    ).format(links.record, record_id, "true" if here else "false")
+
+
 def _viewbar(editing: bool) -> Markup:
     """The bar of controls that says how, and in what, this document is shown.
 
@@ -891,9 +919,7 @@ _DETAIL = """
 
       Absent while creating, because a record that does not exist yet is bet
       into no cycle and appears on no deck. -#}
-  <p class="editbar">{{ viewbar }}{% if not creating %}
-    <a class="slide-view" href="{{ links.record }}{{ e.id }}?view=slide"
-       title="The slide this record makes in its cycle's review deck">Slide</a>
+  <p class="editbar">{{ viewbar }}{% if not creating %}{{ slidebar }}
     <button type="button" class="delete">Delete</button>{% endif %}</p>
   {% endif %}
   {#- Save, Reset and the count of what is unsaved, directly under the button
@@ -1281,20 +1307,27 @@ grip.onpointerdown = event => {
   grip.setPointerCapture(event.pointerId);
   grip.classList.add('dragging');
   const move = e => {
-    // The column is centred inside a full-width article, so one pixel of
-    // pointer is TWO of width: the box grows from both edges at once and the
-    // right edge under the pointer only moves half of what the width does.
+    // The column is PINNED LEFT, so the width is simply how far the pointer is
+    // from its left edge. One pixel of pointer is one pixel of width.
     //
-    // Doubled against the ARTICLE's centre and not the window's. Those were the
-    // same number while the article was the centred box; since 2026-08-24 the
-    // article is the page's width, so the window's centre is only still right by
-    // accident — it stops being right the moment anything gives the article a
-    // margin or a scrollbar takes a side. Measured from the box that actually
-    // contains the column.
+    // This doubled the distance from the article's CENTRE until 2026-08-25, and
+    // that was right for exactly as long as `.panes` was a centred box. It
+    // stopped being centred in v0.27.0 — `margin-inline: 0`, from jcanton's
+    // "let's left align everything in the editor" — and the drag never followed,
+    // so the two halves of one fact disagreed in two files. Measured on the
+    // deployed page at a 1280px window: `.panes` runs 20 to 1044, and merely
+    // GRABBING the grip without moving it computed 808px against a real width of
+    // 1024, so the box jumped 216px narrower on pointerdown. Anywhere left of
+    // the article's centre the doubling goes negative and clamps to the 320
+    // floor, which is the whole page collapsing into a column — jcanton,
+    // 2026-08-25: "if I touch the bar everything is squished to the left side".
+    //
+    // The lesson is the one this file keeps paying for: an invariant written in
+    // a stylesheet and in a script is an invariant guarded in one of them.
     const article = shown();
     if (!article) return;
     const box = article.getBoundingClientRect();
-    const width = Math.max(320, (e.clientX - (box.left + box.width / 2)) * 2);
+    const width = Math.max(320, e.clientX - box.left);
     root.style.setProperty('--measure', width + 'px');
     place();
     // The one control whose entire job is to change the width of the box has to
@@ -1317,6 +1350,26 @@ grip.onpointerdown = event => {
   };
   addEventListener('pointermove', move);
   addEventListener('pointerup', stop);
+};
+
+// Double-click to put the measure back. jcanton, 2026-08-25: "the setting for
+// the pane width is also stored somewhere permanently but not in the address
+// bar, how can one reset it?" — and the honest answer was `localStorage` and
+// devtools, which is not an answer a reader has. A stored preference with no way
+// back is a trap, and the trap was reachable in one gesture while the drag
+// maths above were wrong.
+//
+// The property is REMOVED rather than set to the default: `--measure`'s default
+// lives in `styles.py` as the fallback in `var(--measure, 64rem)`, and writing
+// `64rem` here would be that number in a second place — the drift this
+// repository has paid for more than once. Removing it hands the question back to
+// the stylesheet, which is the one place that answers it.
+grip.ondblclick = () => {
+  root.style.removeProperty('--measure');
+  remembered.forget('openproj:measure');
+  place();
+  dispatchEvent(new Event('openproj:editing'));
+  announce('Column width reset');
 };
 </script>
 {#- The second editor, and 594 KB of it. It is what a writer gets unless the
@@ -1579,12 +1632,21 @@ function showEditing(editing) {
   // editbar and the way OUT is the same switcher or Escape; neither is a button
   // in this bar, and Reset stopped being one on 2026-08-25 (see the markup).
   document.getElementById('reset').hidden = !editing;
-  // Delete leaves while an edit is open. Two destructive-ish answers to "I am
-  // done with this record" on one line is one too many, and the one that throws
-  // the record away should not be a slip of the hand from the one that keeps it.
-  // It comes back when the edit ends, by either door.
-  const remove = document.querySelector('.editbar button.delete');
-  if (remove) remove.hidden = editing;
+  // **Delete stays.** It used to leave while an edit was open, on the argument
+  // that two destructive-ish answers to "I am done with this record" on one line
+  // is one too many. jcanton, 2026-08-25: "the [delete] button only shows up in
+  // the preview mode, not in edit and side-by-side. it should be there too."
+  //
+  // The argument it replaces was already weaker than it read. Delete asks before
+  // it acts — `.asking` and a second press on "Delete it" — so it was never one
+  // slip of the hand from anything; what the hiding actually bought was a
+  // control that moved, which is the thing this page spent 2026-08-24 removing
+  // everywhere else. And the reason it was tolerable then is gone: the row now
+  // carries Slide between the switcher and Delete, so nothing shifts when a
+  // session opens either way.
+  //
+  // Kept as a line rather than deleted, because "Delete is always on the bar" is
+  // a decision and the next reader should find it stated where the toggle was.
   dirty();
   // The room's bands are measured against a box that has a size. The socket
   // opens on load and the roster arrives while the page is still in read mode,
@@ -2933,6 +2995,10 @@ def render_detail(
         required=_REQUIRED_JS,
         hill=_HILL_JS,
         viewbar=_viewbar(_editing_possible(base_commit, may_write)),
+        # Empty while creating, where there is no record yet to have a slide of
+        # — the template already guards it, and passing the control anyway would
+        # mean a link to `/detail/?view=slide`.
+        slidebar=_slidebar(only, links) if only else Markup(""),
         # The machine drives the segments; a non-writer has neither, or the
         # script would throw on `getElementById` of a control `_viewbar`
         # deliberately withheld.
