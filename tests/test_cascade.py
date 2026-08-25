@@ -882,7 +882,7 @@ def test_the_view_classes_do_not_beat_the_editing_class(detail: Sheet):
     # written in.
     split = PAGE + [el("article", "record editing view-both"), el("div", "panes")]
     ordinary = PAGE + [el("article", "record editing view-edit"), el("div", "panes")]
-    assert detail.value(split, "width") == "calc(2 * var(--measure, 64rem) - 21rem)", (
+    assert detail.value(split, "width") == "calc(2 * var(--measure) - 21rem)", (
         says(detail, split, "width")
     )
     won = detail.winner(split, "width")
@@ -891,7 +891,7 @@ def test_the_view_classes_do_not_beat_the_editing_class(detail: Sheet):
     assert won.specificity > base.specificity, (
         "the split's width is winning on order, not weight\n" + says(detail, split, "width")
     )
-    assert detail.value(ordinary, "width") == "var(--measure, 64rem)", (
+    assert detail.value(ordinary, "width") == "var(--measure)", (
         says(detail, ordinary, "width")
     )
     # `max-width: 100%` still reaches the split off the base rule — it is what
@@ -916,7 +916,7 @@ def test_the_view_classes_do_not_beat_the_editing_class(detail: Sheet):
     # declaration is UNCONTESTED, not merely winning, and a second rule arriving
     # from anywhere is the thing that comment would stop being true about.
     bar = PAGE + [el("article", "record"), el("div", "", id="promote")]
-    assert detail.value(bar, "width") == "var(--measure, 64rem)", says(detail, bar, "width")
+    assert detail.value(bar, "width") == "var(--measure)", says(detail, bar, "width")
     assert detail.value(bar, "max-width") == "100%", says(detail, bar, "max-width")
     assert [reach.selector for reach in detail.selectors_reaching(bar, "width")] == [
         "#promote"

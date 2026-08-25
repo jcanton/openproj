@@ -2557,11 +2557,20 @@ def test_the_width_handle_finds_the_pane_in_every_view(client: TestClient, tmp_p
 
     Since a session is the same page (2026-08-24), the handle stays through
     `edit` too: the column's edge IS the measure there, so dragging it means
-    what it means on the landing. The one view without it is the split, where
-    the column is one measure plus one body wide — a grip on that edge would
-    move the measure twice the drag — and where the splitter is the view's own
-    width control: two handles that both change widths on one screen are two
-    controls nobody can tell apart.
+    what it means on the landing.
+
+    **And through the split, since 2026-08-25.** It was hidden there because the
+    split's column is one measure plus one body wide, so "a grip on that edge
+    would move the measure twice the drag". That was arithmetic and it is done
+    now: the drag divides the pointer's movement by however many measures the
+    column is made of, and a hundred pixels of pointer is a hundred pixels of
+    column in every view. jcanton, 2026-08-25, wanting to size the pair rather
+    than only the join between them.
+
+    The fear that two handles "are two controls nobody can tell apart" did not
+    survive use either: `#splitter` moves the boundary BETWEEN the panes and this
+    moves the outside edge of both, which is the pair every editor with a split
+    has.
 
     The column is `.panes` and not `article.record` since the header took the
     page's width: the article's right edge is now the window's, `spare` would be
@@ -2581,9 +2590,16 @@ def test_the_width_handle_finds_the_pane_in_every_view(client: TestClient, tmp_p
     assert not edit["hidden"], "no width handle in the edit view, whose width is the measure"
     assert edit["onEdge"] and edit["spare"] > 20, edit
 
-    assert got["inView"]["both"]["hidden"], (
-        "a second width handle beside the splitter in the split view"
-    )
+    both = got["inView"]["both"]
+    assert not both["hidden"], "no width handle in the split view"
+    # `>= 20` here and `> 20` above, and the difference is the split's own shape
+    # rather than a slacker test: `.panes` carries `max-width: 100%`, and the
+    # split asks for one measure plus one body, which at this window is more than
+    # there is. So the column sits AT the article's edge and the spare is exactly
+    # the body's padding. What the number is guarding against is the handle
+    # parking against the edge of the SCREEN, which is what it did when it was
+    # measured against a hidden element — that reads 0, not 20.
+    assert both["onEdge"] and both["spare"] >= 20, both
 
     assert not got["back"]["hidden"] and got["back"]["onEdge"], (
         "the handle did not come back with the column"
@@ -2844,10 +2860,17 @@ def test_the_facts_column_does_not_move_when_the_join_between_the_panes_does(
     assert got["stored"]["split"] > 1, got["stored"]
     assert got["stored"]["mode"] == "both"
 
-    # The other width handle is not on the screen at the same time. `#grip`
-    # drags the reading measure and the split's edge is not the measure — see
-    # `place` — so the page never shows two controls that both change widths.
-    assert got["grip"], "the width grip is on screen beside the pane splitter"
+    # Both handles are on screen, and that is the arrangement now rather than the
+    # thing this line refused. `#splitter` moves the boundary BETWEEN the two
+    # panes and `#grip` moves the outside edge of both — the pair every editor
+    # with a split has, and what jcanton asked for on 2026-08-25: "I can only
+    # resize the edit pane wrt the preview pane but not all together".
+    #
+    # What kept them apart was arithmetic, not confusion: the split's column is
+    # one measure plus one body wide, so the grip used to move the measure twice
+    # the drag. It divides by that factor now. `got["grip"]` reports the grip
+    # HIDDEN, so this asserts it is not.
+    assert not got["grip"], "the width grip left the page when the split opened"
 
 
 @pytest.mark.parametrize("where", ["/detail/{task}", "/new?kind=issue", "/new?kind=note", "/new"])

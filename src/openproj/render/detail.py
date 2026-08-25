@@ -1298,6 +1298,55 @@ function shown() {
 // that sits on one box and resizes another.
 function column(article) { return article.querySelector('.panes'); }
 
+// `--measure` in PIXELS, whatever it is written in.
+//
+// `getComputedStyle(root).getPropertyValue('--measure')` answers the token — a
+// custom property's computed value is not resolved against the font size, so an
+// unset one reads `64rem` and `parseFloat` of that is 64. The drag took that as
+// a width and every pull collapsed the column to its 320px floor. Measured on
+// the first run of this code: a drag asking for 620px of column landed at 320.
+//
+// A probe resolves it, because a real element's width does get resolved. One
+// element, made once, never painted: `visibility: hidden` rather than
+// `display: none`, which would give it no layout to measure at all.
+let probe = null;
+function measureNow() {
+  if (!probe) {
+    probe = document.createElement('div');
+    probe.style.cssText =
+      'position:absolute;visibility:hidden;height:0;pointer-events:none;width:var(--measure)';
+    document.body.append(probe);
+  }
+  return probe.getBoundingClientRect().width;
+}
+
+// What the column WOULD be at the current measure, with nothing capping it.
+//
+// The rendered column cannot answer that: `.panes` carries `max-width: 100%`,
+// so at a window narrower than the split view asks for it sits at the article's
+// width and stops being a function of `--measure` at all. Dragging then moved
+// the measure and changed nothing on screen — measured in the split at a 1225px
+// article, where the column reads 1225 while the expression behind it wants
+// 1712.
+//
+// A second probe answers it, and answers it without this file having to know the
+// `21rem` the split subtracts: it is a real `.panes` inside the article, so the
+// same rules match it, with only the cap taken off. The stylesheet stays the one
+// place the geometry is written.
+let widthProbe = null;
+function columnNow(article) {
+  if (!widthProbe) {
+    widthProbe = document.createElement('div');
+    widthProbe.className = 'panes';
+    widthProbe.style.cssText =
+      'position:absolute;visibility:hidden;height:0;pointer-events:none;max-width:none';
+    article.append(widthProbe);
+  } else if (widthProbe.parentElement !== article) {
+    article.append(widthProbe);
+  }
+  return widthProbe.getBoundingClientRect().width;
+}
+
 function place() {
   const article = shown();
   // **On the page in every view, the split included.** It was hidden there, on
@@ -1353,10 +1402,9 @@ grip.onpointerdown = event => {
     // the column is made of. One number, read off the view the script already
     // branches on, and the `21rem` never has to be known here at all.
     const per = article.classList.contains('view-both') ? 2 : 1;
-    const column_ = column(article).getBoundingClientRect();
-    const now = parseFloat(getComputedStyle(root).getPropertyValue('--measure'));
+    const now = measureNow();
     const wanted = Math.max(320, e.clientX - box.left);
-    const width = Math.max(320, now + (wanted - column_.width) / per);
+    const width = Math.max(320, now + (wanted - columnNow(article)) / per);
     root.style.setProperty('--measure', width + 'px');
     place();
     // The one control whose entire job is to change the width of the box has to
