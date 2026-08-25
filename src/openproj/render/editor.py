@@ -536,23 +536,32 @@ function aceSurface(area, seeded) {
 
     // Where the caret is drawn, as a viewport rectangle.
     //
-    // **Ace's own cursor element, asked for its box.** Not
-    // `textToScreenCoordinates`, whose `pageX`/`pageY` are computed from
-    // `scroller.getBoundingClientRect()` and are therefore viewport numbers
-    // wearing page names — a difference invisible until somebody scrolls the
-    // page. And not the scroller's rect plus a screen row times a line height
-    // worked out here, which is the post-processing `AGENTS.md` records the
-    // graph paying for: the library has already drawn this caret in the right
-    // place, so the question is answered by asking the drawing.
+    // **Ace's own arithmetic, not this file's and not the drawing's.**
+    // `textToScreenCoordinates` is one line of `static/ace.js` and it is worth
+    // reading rather than trusting the names in it: it answers
+    // `scroller.getBoundingClientRect().left + padding + column * characterWidth
+    // - scrollLeft`, so `pageX` and `pageY` are VIEWPORT numbers wearing page
+    // names. That is what this returns, and it is why nothing here adds a scroll
+    // offset.
+    //
+    // This asked the drawn `.ace_cursor` element for its box instead, on the
+    // argument that the library has already put the caret in the right place and
+    // the drawing is the honest thing to ask. It is, and it is not always THERE:
+    // the element has no rects until Ace has rendered a frame, and the popup
+    // opens on the keystroke that made the frame necessary. The fallback then
+    // handed back the scroller's own top-left, so the list drew 84px left of the
+    // caret and 80px above it — once, on CI, on a run whose only change was a
+    // version number. A branch that silently answers about a different box is
+    // the shape of defect this repository keeps paying for; the arithmetic
+    // above needs no frame and has no second answer.
     caretBox() {
-      const drawn = host.querySelector('.ace_cursor');
-      // No cursor drawn is ordinary rather than an error — Ace does not draw
-      // one until the editor has been focused. The scroller's own top-left is
-      // where a caret would be, which is where a popup belongs until there is
-      // one to sit under.
-      const box = (drawn && drawn.getClientRects().length
-                   ? drawn : editor.renderer.scroller).getBoundingClientRect();
-      return {left: box.left, top: box.top, bottom: box.bottom};
+      const at = editor.getCursorPosition();
+      const drawn = editor.renderer.textToScreenCoordinates(at.row, at.column);
+      return {
+        left: drawn.pageX,
+        top: drawn.pageY,
+        bottom: drawn.pageY + editor.renderer.lineHeight,
+      };
     },
 
     // Keys, claimed before Ace's command table sees them. `claim` is handed the
