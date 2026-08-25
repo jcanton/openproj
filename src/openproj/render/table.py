@@ -7,7 +7,13 @@ from markupsafe import Markup
 from ..index import Index
 from ..model import KINDS as KIND_LADDER
 from ..model import PARENT_KINDS, required_at, unread_fields
-from .controls import _FILTER_JS, _NO_ASIDE, _combobox_html, _facets_html
+from .controls import (
+    _FILTER_JS,
+    _NO_ASIDE,
+    _combobox_html,
+    _facets_html,
+    _summary_html,
+)
 from .env import _compiled
 from .rows import _row
 from .shell import STATIC, Links, _page, _titles
@@ -189,31 +195,15 @@ _TABLE = """
 {#- The instruction went to `#controls .aside`, which is where the graph and the
     timeline already say what their view can do. It was here because it belonged
     beside the button it shared a subject with; with the button gone it belonged
-    beside the box every one of these pages puts its own sentence next to. -#}
-{#- What is left is the count, and it keeps this row rather than owning one below
-    it — the same move the graph and the timeline make, where it rides the key's
-    row. `#state` is beside it because a save's receipt belongs where the count it
-    changes is. -#}
-<p class="editbar"><span id="state" role="status"></span><span id="summary">
-  {#- Two numbers, because the count is of problems and the link filters
-      records: "3 blocking problems" opening a table of 2 rows is the exact way
-      a count stops being believed. The second number is the one the link keeps
-      its promise about. -#}
-  <a id="blockers" href="?predicate=has_blocker"><strong id="blocker-count">{{ blockers
-    }}</strong> <span id="blocker-word">blocking problem{{
-    "" if blockers == 1 else "s" }}{% if blockers %} on {{ blocked }} {{
-    "record" if blocked == 1 else "records" }}{% endif %}</span></a> ·
-  {# Both numbers are written by the script as well as rendered here. The second
-     used to be the template's alone, which was true until the page could add a
-     row to the plan without reloading: creating one read "18 of 17 shown", and a
-     count that contradicts itself inside one sentence is the whole of what a
-     count is for.
-     Neither delimiter here strips the whitespace around it, unlike every other
-     comment in this file: the separator above is a lone middle dot at the end of
-     its line, and eating that newline glued it to the digit — the bar read
-     "0 blocking problems ·9". A comment must not be able to do that. #}
-  <span id="shown" class="num">{{ payload.rows|length }}</span> of <span
-    id="total">{{ payload.rows|length }}</span> shown</span></p>
+    beside the box every one of these pages puts its own sentence next to.
+
+    **And the row that held them is gone with them.** It kept the blocker count
+    and the save receipt for one day, which left a `<p>` of furniture above the
+    controls holding one sentence at the right-hand end and nothing at the left —
+    jcanton, 2026-08-25: "there's now empty vertical space in the table view, for
+    the 'blocking problem and N of M shown'; move this to the search box line".
+    Both went into `#controls .searching` through `_summary_html`, which is the
+    same box and the same wording the graph and the timeline now use. -#}
 {{ facets }}
 {#- role="grid" only where the cells are editable. It is a claim about who owns
     the arrow keys — a screen reader hands them to the page inside a grid and
@@ -3117,17 +3107,6 @@ frozenEdge();
 
 
 _TABLE_STYLE = _SCROLL_STYLE + """
-/* The far end of the edit bar. `margin-left: auto` and not `space-between`,
-   because on a rendered file the bar holds nothing else — the count stays at the
-   right rather than sliding to the left when the controls beside it are gone. */
-.editbar #summary { margin: 0 0 0 auto; text-align: right; }
-/* The whole phrase, not the digit: "1 blocking problems" in danger red with the
-   count black beside it read as two separate facts. And the colour has to mean
-   something — at zero it is muted, because danger nobody can act on is danger
-   nobody reads. */
-#blockers { color: var(--sev-blocker); text-decoration: none; }
-#blockers:hover { text-decoration: underline; }
-#blockers.none { color: var(--muted); }
 th[data-sort] { cursor: pointer; user-select: none; }
 /* (0,1,1) over the shared block's bare `th` at (0,0,1): the sorted column keeps
    its emphasis whichever order the two blocks are inlined in. */
@@ -3761,21 +3740,8 @@ def render_table(
     may_write: bool = False,
 ) -> str:
     payload = _payload(index)
-    # Plan blockers only, like the payload above: the count links to a filter
-    # over the plan, and a blocker on an issue would inflate a number whose
-    # filter can never show the row — the count-versus-filter mismatch this
-    # page was already fixed for once.
-    blocking = [
-        p for p in index.problems
-        if p.severity == "blocker" and p.record_id in index.plan
-    ]
     body = _compiled(_TABLE).render(
         payload=payload,
-        blockers=len(blocking),
-        # The population `?predicate=has_blocker` matches. One record can carry
-        # three problems, so the count and the filter it links to were counting
-        # different things and the table opened shorter than the number promised.
-        blocked=len({p.record_id for p in blocking}),
         # "There is a server behind this page AND this person may write" — the
         # first half alone shipped, standing in for the second, so a signed-out
         # visitor got role="grid", the combobox, the draft row's `+`, and a 403
@@ -3814,6 +3780,9 @@ def render_table(
             index.facets,
             aside=_TABLE_HINT if base_commit is not None and may_write else _NO_ASIDE,
             titles=_titles(index),
+            # `state=True`: this is the one plan view with no commit bar, so the
+            # live region a save writes its receipt into belongs here.
+            summary=_summary_html(index, len(payload["rows"]), state=True),
         ),
         filters=_FILTER_JS,
         combobox=_combobox_html(index),

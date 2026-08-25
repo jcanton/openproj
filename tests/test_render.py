@@ -3936,9 +3936,10 @@ return {
   search: line(document.getElementById('q')),
   aside: line(document.querySelector('#controls .aside')),
   key: line(document.querySelector('.keyrow .legend')),
+  keyTwo: line(document.querySelector('.keyrow .legend + .legend')),
   keys: line(document.querySelector('.keys')),
   count: line(document.getElementById('summary')),
-  editbar: line(document.querySelector('.editbar')),
+  blockers: line(document.getElementById('blockers')),
   controlsRight: Math.round(controls.getBoundingClientRect().right),
 };
 """
@@ -3961,23 +3962,19 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
     all — a sentence about how to move the drawing, and a count of what is in it —
     and each was a full row wide to hold twelve words.
 
-    One pattern on all three views. The instruction rides at the far end of the
-    search box's line, which is the row that exists on every view that filters
-    anything. The count rides at the far end of the last row before the thing it
-    counts: the key's row where there is a key, and the page's own control row
-    where there is not.
+    **One row on all three views, and one row is now the whole claim.** jcanton,
+    2026-08-25: "these three should actually share the nav+login+theme, search
+    box+description (to each its own)+problems+N/M shown, and filter rows". Until
+    that day each view had answered the question its own way — the table in a
+    `<p>` of its own above the controls, the graph in the corner of the canvas,
+    the timeline beside its key — which is three answers, three places to look,
+    and three things to keep in step. They are one fragment now
+    (`_summary_html`), in one slot, so what this test says of each view it says
+    in the same words.
 
-    The table's instruction was the exception and stopped being one on
-    2026-08-25: it was inline beside New record, which was a control and not a
-    sentence, and when jcanton took that button off the page ("we already have
-    the + new row at the bottom") the sentence had nothing left to share a row
-    with. It is in `#controls .aside` now, which is the same slot the graph's
-    pan/zoom line and the timeline's window line ride in — one pattern on all
-    three views rather than two-and-an-argument.
-
-    The heading is still first in the list and is now `.sr-only` — the seventh of
-    the six rows going. It is `position: absolute`, so it is out of flow and the
-    rows below it start where the nav ends; the test named below is the one that
+    The heading is still first in the list and is `.sr-only` — the seventh of the
+    six rows going. It is `position: absolute`, so it is out of flow and the rows
+    below it start where the nav ends; the test named below is the one that
     measures that, and this one only has to know the heading did not turn back
     into something a reader can see.
 
@@ -3991,67 +3988,71 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
     # Named, because the next thing anybody adds here is the row this is guarding
     # against.
     assert got["rows"] == {
-        # The graph has neither a key row nor a count row: both ride over the
-        # drawing in its top-right corner, which is the same rule as the others
-        # — a sentence about the view must not cost the view a row — taken one
-        # step further on the view where a row is worth the most.
-        #
-        # `div.commitbar` is a row and belongs here for the same reason
-        # `p.editbar` does on the table: this rule is about SENTENCES, and a row
-        # of controls is the thing a sentence was being asked to stop displacing.
-        # It moved above the canvas on 2026-08-20 so that every page keeps the
-        # control that commits it in one place, and it cost the drawing nothing —
-        # `--room` went 595px to 607px at 1400x900, because up here its top margin
-        # collapses with the filter row's and below the canvas it did not.
+        # `div.commitbar` is a row of CONTROLS, which is the thing a sentence was
+        # being asked to stop displacing rather than an instance of it. It moved
+        # above the canvas on 2026-08-20 so that every page keeps the control that
+        # commits it in one place, and it cost the drawing nothing — `--room` went
+        # 595px to 607px at 1400x900, because up here its top margin collapses
+        # with the filter row's and below the canvas it did not.
         "graph": ["h1.sr-only", "div#controls", "div#commitbar.commitbar"],
-        "table": ["h1.sr-only", "p.editbar", "div#controls"],
-        "timeline": ["h1.sr-only", "div#controls", "form.tl-controls",
-                     "ul.legend", "div.keyrow"],
+        # The table's `p.editbar` is gone: it held the count and the save receipt
+        # for one day, which is a row of furniture with one sentence at its right
+        # end and nothing at its left.
+        "table": ["h1.sr-only", "div#controls"],
+        # And the timeline's two keys are one row rather than two — status on the
+        # left, marks on the right.
+        "timeline": ["h1.sr-only", "div#controls", "form.tl-controls", "div.keyrow"],
     }[view], got["rows"]
 
-    if view == "table":
-        # No key to hang it on, so the count goes to the far end of the row the
-        # page's own controls stand in.
-        assert _shares_a_line(got["count"], got["editbar"])
-    elif view == "graph":
-        # Over the drawing, not above it. What matters is that neither the key
-        # nor the count is in the flow between the controls and the canvas —
-        # which the row list above has already said — and that they are inside
-        # the box they describe rather than floating somewhere else on the page.
+    # The same three claims on every view, which is what "share the bar" means.
+    assert got["aside"], "the view says nothing about itself"
+    assert _shares_a_line(got["aside"], got["search"]), (
+        f"the instruction is at {got['aside']} and the search box at {got['search']}"
+    )
+    assert _shares_a_line(got["count"], got["search"]), (
+        f"the count is at {got['count']} and the search box at {got['search']}"
+    )
+    assert got["blockers"], "the view does not say what is wrong with the plan"
+    assert _shares_a_line(got["blockers"], got["count"])
+    # Flush with the right edge of the bar above it.
+    assert got["count"]["right"] == got["controlsRight"], (
+        f"the count ends at {got['count']['right']} and the bar at {got['controlsRight']}"
+    )
+    # The instruction keeps the search box's line — that is what stops it costing
+    # a row above the drawing — but it reads left to right like the sentence on
+    # every other page, rather than being pushed to the far end and set
+    # right-aligned. Asked for on 2026-08-17, having been the one thing about
+    # these two views that did not match the rest of the site.
+    assert got["aside"]["right"] < got["controlsRight"], (
+        f"the instruction ends at {got['aside']['right']} and the bar at "
+        f"{got['controlsRight']}: it is still pinned to the right edge"
+    )
+
+    if view == "graph":
+        # The key is still over the drawing rather than above it, which is the
+        # same rule taken one step further on the view where a row is worth the
+        # most. The count used to ride with it and does not any more.
         assert got["keys"], "the keys are gone from the graph"
         assert got["keys"]["top"] >= got["boxTop"], (
             f"the keys are at {got['keys']['top']} and the drawing starts at "
             f"{got['boxTop']}: they are still costing the view a row"
         )
-        assert _shares_a_line(got["count"], got["keys"]) or (
-            got["count"]["top"] >= got["boxTop"]
-        ), "the count left the drawing"
-        assert got["aside"], "the view says nothing about itself"
-        assert _shares_a_line(got["aside"], got["search"])
-    else:
-        assert got["aside"], "the view says nothing about itself"
-        assert _shares_a_line(got["aside"], got["search"]), (
-            f"the instruction is at {got['aside']} and the search box at {got['search']}"
+        assert got["count"]["bottom"] <= got["boxTop"], (
+            "the count is still drawn over the canvas as well as in the bar"
         )
-        assert _shares_a_line(got["count"], got["key"]), (
-            f"the count is at {got['count']} and the key at {got['key']}"
+    if view == "timeline":
+        # Both keys on one line, and the second hangs off the right end —
+        # jcanton, 2026-08-25: "left-aligned for status and right aligned the
+        # others".
+        assert got["key"], "the timeline lost its key"
+        assert got["keyTwo"], "the timeline's second key is not beside the first"
+        assert _shares_a_line(got["key"], got["keyTwo"]), (
+            f"the two keys are on two rows: {got['key']} and {got['keyTwo']}"
         )
-        # It keeps the search box's line — that is what stops it costing a row
-        # above the drawing — but it reads left to right like the sentence on
-        # every other page, rather than being pushed to the far end and set
-        # right-aligned. Asked for on 2026-08-17, having been the one thing about
-        # these two views that did not match the rest of the site.
-        assert got["aside"]["right"] < got["controlsRight"], (
-            f"the instruction ends at {got['aside']['right']} and the bar at "
-            f"{got['controlsRight']}: it is still pinned to the right edge"
+        assert got["keyTwo"]["right"] == got["controlsRight"], (
+            f"the second key ends at {got['keyTwo']['right']} and the bar at "
+            f"{got['controlsRight']}: it is not right-aligned"
         )
-
-    if view == "graph":
-        return
-    # Flush with the right edge of the bar above it, on every view that has one.
-    assert got["count"]["right"] == got["controlsRight"], (
-        f"the count ends at {got['count']['right']} and the bar at {got['controlsRight']}"
-    )
 
 
 # What the nav and the box that fills the window are actually at, in the browser.

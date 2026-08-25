@@ -1025,6 +1025,23 @@ dt:has(+ dd .hill) { align-self: start; }
    the other three share, so this is theirs. `#shown` was three copies of `.num`
    under a different name; it wears `.num` now. */
 #summary { color: var(--muted); font-size: 13px; margin: .5rem 0 .25rem; }
+/* Except in the control bar, where it is the far end of the search box's line
+   rather than a line of its own — the three plan views put it there on
+   2026-08-25. `margin-left: auto` is what makes it the far end; the zeros are
+   what stop it making the row taller than the box in it, the same reason
+   `.keyrow`'s children lose theirs. */
+#controls .searching #summary { margin: 0 0 0 auto; text-align: right; }
+/* The whole phrase, not the digit: "1 blocking problems" in danger red with the
+   count black beside it read as two separate facts. And the colour has to mean
+   something — at zero it is muted, because danger nobody can act on is danger
+   nobody reads.
+   In the shell since 2026-08-25, because the sentence is on three views now and
+   it was in the table's own stylesheet: the graph and the timeline drew it as an
+   ordinary blue underlined link, which is the drift a shared fragment styled by
+   one page's sheet always ends in. */
+#blockers { color: var(--sev-blocker); text-decoration: none; }
+#blockers:hover { text-decoration: underline; }
+#blockers.none { color: var(--muted); }
 #state { color: var(--muted); font-size: 12px; }
 /* One meter for the whole app: weeks bet against weeks available. It was a rule
    on the cycle page until the cycles index and then the people page needed the
@@ -1268,8 +1285,13 @@ table.tight-priority td[data-col="priority"] .chip.pri { padding: .1rem .3rem; }
 /* Both children carry their own vertical margin for the rows they used to be.
    Inside a flex row those do not collapse, so the row would be as tall as the
    two of them stacked. */
-.keyrow > .legend, .keyrow > #summary { margin: 0; }
-.keyrow > #summary { margin-left: auto; text-align: right; }
+.keyrow > .legend { margin: 0; }
+/* The SECOND key hangs off the right end — jcanton, 2026-08-25, of the
+   timeline's two: "left-aligned for status and right aligned the others". Written
+   as an adjacent sibling and not as `:last-child`, which is also the FIRST child
+   on a row that has only one key and would push a lone legend to the right edge
+   for no reason anybody asked for. */
+.keyrow > .legend + .legend { margin-left: auto; }
 /* The row a page's own controls stand in — grep `class="editbar`: the table's
    create link, the record page's Delete-and-views row in both modes, the cycle
    page's "add somebody" and its goal bar, the one row of the cycles index's

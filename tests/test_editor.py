@@ -293,75 +293,158 @@ def test_the_bar_says_how_much_is_unsaved(page: str):
     assert ".commitbar.dirty { border-color: var(--warn); }" in page
 
 
-def test_cancel_puts_the_fields_back(page: str, tmp_path: Path):
-    """Cancel cancels, and the bar stops counting a field nothing is holding.
+def test_reset_puts_the_record_back_and_stays_in_the_editor(page: str, tmp_path: Path):
+    """Reset undoes, and it is the only thing it does.
 
-    It used to put nothing back: it dropped the stored draft and left every typed
-    value sitting in its control, so the page returned to a read view showing the
-    old value while the commit bar went on reporting "1 unsaved change" — and the
-    count cleared only on a reload, which is also the moment that value was
-    silently lost. jcanton, 2026-08-22.
+    jcanton, 2026-08-25: "the 'Cancel' button exits editing and goes to preview,
+    even if there's no edit to cancel. maybe we should change its function: call
+    it 'reset' and it undoes unsaved changes but doesn't change view to preview?"
 
-    The fields and not the document: the text stays in the box on purpose, which
-    `test_cancelling_a_restored_draft_keeps_the_commit_it_was_written_against`
-    below asks for by name. So the bar may still be up after a cancel over a body
-    somebody is part way through, and there it is telling the truth.
+    Cancel named an ending and did two things — put the fields back AND leave the
+    session — so the only control that undid an edit was also the only control
+    that closed the box. This asserts they are separated: the field goes back,
+    the document goes back, the bar stops counting, and the article is still
+    editing when it is over.
+
+    The document is the half Cancel deliberately did not touch, and the reason it
+    does now is the name: a Reset that leaves the longest thing on the page
+    exactly as it was is a button that lies. It goes back through
+    `SURFACE.splice`, so it is one undo step away — see the comment on
+    `resetEdits`, and `test_reset_puts_the_base_back_with_the_text` for the
+    commit that has to go with it.
 
     Asked of the browser rather than of the source, because what went wrong was a
     value left in a box and a box is a thing only a browser has.
     """
     found = measured_in(
-        chrome(), page, tmp_path / "cancel.html", 1100,
+        chrome(), page, tmp_path / "reset.html", 1100,
         """
         const bar = document.getElementById('commitbar');
         const owner = document.querySelector('[name=owner]');
+        const body = document.querySelector('[name=body]');
+        const article = document.querySelector('article.record');
         flipEditing();
         await new Promise(settled => setTimeout(settled, 40));
-        const was = owner.value;
+        const was = {owner: owner.value, body: body.value};
+        const quiet = document.getElementById('reset').disabled;
         owner.value = 'somebody-else';
         owner.dispatchEvent(new Event('input', {bubbles: true}));
+        body.value = body.value + '\nA paragraph nobody committed.';
+        body.dispatchEvent(new Event('input', {bubbles: true}));
         const typed = {said: document.getElementById('unsaved').textContent,
-                       hidden: bar.hidden};
-        document.getElementById('cancel').click();
-        await new Promise(settled => setTimeout(settled, 40));
-        return {was, typed, owner: owner.value, hidden: bar.hidden,
+                       hidden: bar.hidden,
+                       disabled: document.getElementById('reset').disabled};
+        document.getElementById('reset').click();
+        await new Promise(settled => setTimeout(settled, 60));
+        return {was, quiet, typed, owner: owner.value, body: body.value,
+                editing: article.classList.contains('editing'),
+                view: [...article.classList].filter(c => c.startsWith('view-')),
+                disabled: document.getElementById('reset').disabled,
                 said: document.getElementById('unsaved').textContent,
                 announced: document.getElementById('state').textContent};
         """,
         height=1200, patience=2500,
     )
-    # The change was real and counted while it was being made.
-    assert found["typed"] == {"said": "1 unsaved change", "hidden": False}
-    # And is gone afterwards, from the box as well as from the bar.
-    assert found["owner"] == found["was"], "Cancel left the typed value in the control"
-    assert found["hidden"], "the commit bar is still on screen over a page nobody is editing"
-    assert found["said"] == "Nothing to save"
+    # Nothing typed yet, so there is nothing to undo and the control says so.
+    assert found["quiet"] is True, "Reset is pressable over a record nobody has typed into"
+    # The changes were real and counted while they were being made.
+    assert found["typed"] == {
+        "said": "2 unsaved changes", "hidden": False, "disabled": False,
+    }
+    # And are gone afterwards, from the boxes as well as from the bar.
+    assert found["owner"] == found["was"]["owner"], "Reset left the typed value in the control"
+    assert found["body"] == found["was"]["body"], "Reset left the typed paragraph in the box"
+    assert found["said"] == "Nothing changed yet"
+    assert found["disabled"] is True, "Reset is still pressable with nothing left to undo"
+    # And the whole of what jcanton asked for: it did not throw you out.
+    assert found["editing"], "Reset ended the editing session it was asked to leave alone"
+    assert found["view"] == ["view-edit"], (
+        f"Reset changed which view the editor is in: {found['view']}"
+    )
     # Said out loud. The three worst rounds this repository has had each destroyed
     # somebody's writing without a word, and discarding an edit is that shape — the
     # difference has to be that this one says what it did.
-    assert found["announced"] == "Edit cancelled, 1 change discarded"
+    assert found["announced"] == "Reset, 2 unsaved changes discarded"
 
 
-def test_cancelling_an_edit_nobody_made_says_nothing(page: str, tmp_path: Path):
-    """Opening an edit and closing it again is not an event.
+def test_reset_puts_the_base_back_with_the_text(client: TestClient):
+    """The commit a restored draft moved backwards goes forward again with it.
 
-    An announcement for a discard of nothing is the sort of line that teaches
-    people to stop reading the live region the real ones arrive in.
+    A draft written against an older commit moves `BASE.value` back to that
+    commit, and what justifies the move is that the older TEXT is in the box.
+    Reset puts the server's text back — so leaving the base behind would leave
+    the page holding today's document against yesterday's commit, which is the
+    exact mismatch compare-and-swap exists to catch, arranged by the button that
+    was supposed to tidy up.
+
+    `defaultValue` is the attribute the server wrote and no `.value` assignment
+    touches it, which is why the commit this page was rendered at is still there
+    to be put back.
+    """
+    from test_injection import run_js
+
+    first = head(client)
+    save(client, TASK, {}, body="Somebody else's paragraph.\n")
+    second = head(client)
+    assert first != second
+
+    reopened = client.get(f"/detail/{TASK}{PLAIN}").text
+    assert f'name="base_commit" value="{second}"' in reopened
+    key = f"openproj:draft:2:{TASK}"
+    draft = {"base": first, "text": "Half a paragraph, written before the other one.\n"}
+    after = run_js(
+        reopened,
+        "(() => {"
+        "  const base = () => document.querySelector('[name=base_commit]').value;"
+        "  const restored = base();"
+        "  document.getElementById('reset').click();"
+        "  return {restored, after: base(),"
+        "          body: document.querySelector('[name=body]').value}; })()",
+        page=True,
+        storage={key: json.dumps(draft)},
+    )
+    assert not after["errors"], after["errors"]
+    got = after["value"]
+    assert got["restored"] == first, "the draft did not move the base back to begin with"
+    assert got["after"] == second, (
+        "Reset put the server's text back and left the draft's older commit under "
+        "it, so the page is holding today's document against yesterday's base"
+    )
+    assert draft["text"] not in got["body"], "Reset left the draft's text in the box"
+    assert key not in after["stored"], "Reset left the draft in storage"
+
+
+def test_resetting_an_edit_nobody_made_is_refused_rather_than_silent(
+    page: str, tmp_path: Path
+):
+    """Opening an edit and pressing Reset is not an event — and it is not a
+    press either.
+
+    This used to be a Cancel that quietly closed the editor, which is what
+    jcanton reported: "it exits editing and goes to preview, even if there's no
+    edit to cancel". The control is disabled while there is nothing to undo, so
+    the press cannot happen; the announcement below is what it says if anything
+    ever calls the handler anyway, because a control that answers by doing
+    nothing is indistinguishable from one that is broken.
     """
     found = measured_in(
         chrome(), page, tmp_path / "quiet.html", 1100,
         """
         flipEditing();
         await new Promise(settled => setTimeout(settled, 40));
-        document.getElementById('cancel').click();
+        const button = document.getElementById('reset');
+        const disabled = button.disabled;
+        resetEdits();
         await new Promise(settled => setTimeout(settled, 40));
-        return {announced: document.getElementById('state').textContent,
-                hidden: document.getElementById('commitbar').hidden};
+        return {disabled, announced: document.getElementById('state').textContent,
+                editing: document.querySelector('article.record')
+                  .classList.contains('editing')};
         """,
         height=1200, patience=2500,
     )
-    assert found["announced"] == ""
-    assert found["hidden"]
+    assert found["disabled"] is True
+    assert found["announced"] == "Nothing to reset"
+    assert found["editing"], "a reset of nothing still ended the session"
 
 
 def test_the_status_a_row_is_set_to_says_what_it_will_be_refused_without(page: str):
@@ -1056,16 +1139,23 @@ def test_a_restored_draft_is_saved_against_the_commit_it_was_drafted_against(
     assert "by bo" not in file_at(repo_path, git_head(repo_path), PATH)
 
 
-def test_cancelling_a_restored_draft_keeps_the_commit_it_was_written_against(
+def test_leaving_a_session_keeps_the_draft_and_the_commit_it_was_written_against(
     client: TestClient,
 ):
-    """Cancel drops the stored draft, not the base it arrived with.
+    """Leaving the editor discards nothing at all.
 
-    The text is still in the textarea after a cancel — Cancel hides the editor,
-    it does not put back what was there — so the page is still holding work
-    written against an older commit. Letting `base_commit` spring forward when
-    the storage entry goes would be the same silent overwrite by another route,
-    so this drives the button rather than reading the handler.
+    Until 2026-08-25 one of the three doors out — the Cancel button — put the
+    fields back and dropped the stored draft on its way, while Escape and the
+    view switcher left everything alone. One gesture with two meanings depending
+    on which door you used. Undoing is `resetEdits` now and it is a button that
+    says so; leaving is this, and what it leaves is everything: the text in the
+    box, the draft in storage, and the older commit that draft was written on top
+    of.
+
+    That last one is the invariant this test has always been about, and it did
+    not move. A page holding work written against an older commit has to go on
+    saying so, or `store.write` compares the two things that agree and commits a
+    body that silently throws away whoever saved in between.
     """
     from test_injection import run_js
 
@@ -1081,15 +1171,18 @@ def test_cancelling_a_restored_draft_keeps_the_commit_it_was_written_against(
         reopened,
         "(() => { flipEditing();"
         "  return [document.querySelector('[name=base_commit]').value,"
-        "          document.querySelector('[name=body]').value]; })()",
+        "          document.querySelector('[name=body]').value,"
+        "          document.querySelector('article.record')"
+        "            .classList.contains('editing')]; })()",
         page=True,
         storage={key: json.dumps(draft)},
     )
-    base, body = after["value"]
+    base, body, editing = after["value"]
 
-    assert key not in after["stored"], "cancelling left the draft in storage"
-    assert body == draft["text"], "the text a cancel leaves in the box"
-    assert base == first, "cancelling put the page's own commit back under older text"
+    assert not editing, "the door did not close"
+    assert key in after["stored"], "leaving the editor threw away the unsaved draft"
+    assert body == draft["text"], "the text leaving the editor keeps in the box"
+    assert base == first, "leaving put the page's own commit back under older text"
 # --- writing in the body ----------------------------------------------------
 
 
@@ -2261,7 +2354,7 @@ document.getElementById('view-edit').click();
 area.value = area.value + marker;
 area.dispatchEvent(new Event('input', {bubbles: true}));
 await new Promise(go => setTimeout(go, 80));
-document.getElementById('cancel').click();
+flipEditing();
 await new Promise(go => setTimeout(go, 80));
 return {
   landed: [...article.classList].filter(c => c === 'full' || c.startsWith('view-')).sort(),
@@ -3675,7 +3768,7 @@ for (const [name, id] of [['edit', 'view-edit'], ['both', 'view-both']]) {
   // The segment is the door: pressing it opens the session in that view.
   document.getElementById(id).click();
   const inside = shape();
-  document.getElementById('cancel').click();
+  flipEditing();
   answers[name] = {inside, after: shape()};
 }
 return answers;
@@ -3997,7 +4090,7 @@ const themed = {
   was, now: document.documentElement.dataset.theme,
   named: theme.getAttribute('aria-label'),
 };
-document.getElementById('cancel').click();
+flipEditing();
 await new Promise(go => setTimeout(go, 200));
 return {before, inside, themed, after: shape()};
 """
@@ -4644,18 +4737,17 @@ const throttled = held();
 dispatchEvent(new Event('pagehide'));
 const flushed = held();
 
-// A draft that is committed or cancelled stops existing, and the receipt stops
+// A draft that is committed or reset stops existing, and the receipt stops
 // claiming it.
-document.getElementById('cancel').click();
+document.getElementById('reset').click();
 const after = {held: held(), receipt: receipt()};
 
 // And the burst that follows starts its own leading edge. Forgetting the draft
 // forgets both clocks: the one that says when a draft last landed, which the
 // receipt counts from, and the one the throttle measures the interval against.
-// Leaving the second set would hold the first character typed after a cancel
+// Leaving the second set would hold the first character typed after a reset
 // back by up to a whole interval, against a write that has nothing to do with it.
-flipEditing();
-type('written after the cancel');
+type('written after the reset');
 const restarted = held();
 return {first, throttled, flushed, after, restarted,
         every: document.getElementById('draftevery').textContent};
@@ -4824,7 +4916,7 @@ const atLoad = {view: mode(), full: article.classList.contains('full'),
                 editing: article.classList.contains('editing')};
 flipEditing();
 const afterEdit = {view: mode(), full: article.classList.contains('full')};
-document.getElementById('cancel').click();
+flipEditing();
 const afterCancel = {view: mode(), stored: JSON.parse(localStorage.getItem('openproj:editor:1'))};
 flipEditing();
 document.getElementById('view-edit').click();

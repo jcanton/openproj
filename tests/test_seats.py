@@ -1211,7 +1211,7 @@ addEventListener('load', () => setTimeout(() => {
   window.__atLoad = window.__sockets.length;
   flipEditing();
   window.__inSession = window.__sockets.length;
-  document.getElementById('cancel').click();
+  flipEditing();
   window.__afterCancel = window.__sockets.map(one => one.readyState);
   // Past the first reconnect backoff (500ms): a machine that reconnects after
   // the session ended shows up as a second socket here.
@@ -1261,7 +1261,7 @@ addEventListener('load', () => setTimeout(() => {
   // End a session and start the next one a click apart — before the ended
   // socket's close event, which is a queued task, has fired.
   flipEditing();
-  document.getElementById('cancel').click();
+  flipEditing();
   flipEditing();
   window.__now = window.__sockets.map(one => one.readyState);
   const stale = window.__sockets[0];
