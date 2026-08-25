@@ -5276,7 +5276,11 @@ _VIM_ON = r"""
   // the document put back between them so one mark cannot mask another.
   const started = SURFACE.text();
   for (const button of document.querySelectorAll('#marks .mark')) {
-    if (button.title === 'Image') continue;   // opens a file picker, writes nothing
+    // Opens a file picker and writes nothing. Skipped by CLASS: this read
+    // `button.title === 'Image'`, and the day that title grew a hint about
+    // sizing figures the match stopped holding — so the run opened a file
+    // dialog and then reported the button as one that does nothing.
+    if (button.classList.contains('upload')) continue;
     // Undo and redo write no markdown at all — they move a stack. Excluded here
     // rather than asserted as "wrote something", which they would pass by taking
     // back the mark before them and would therefore say nothing.

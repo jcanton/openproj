@@ -1925,6 +1925,15 @@ function attachEditing(surface, bar) {
         button.onmousedown = event => { event.preventDefault(); step(mark.history); };
         button.onclick = event => { if (event.detail === 0) step(mark.history); };
       } else if (mark.upload) {
+        // Named as what it IS, beside `hist`, and not left to be told apart by
+        // its copy. `test_the_toolbar_and_the_keymap_do_not_cancel_each_other`
+        // drives every button in this bar and asserts each writes markdown; it
+        // skipped this one — which opens a file dialog and writes nothing — by
+        // matching `button.title === 'Image'`, so the day the title grew the
+        // size hint the test drove a file picker and reported the button inert.
+        // A control identified by its human-facing words is a control that
+        // changes identity when somebody improves the words.
+        button.classList.add('upload');
         button.onclick = () => area.dispatchEvent(new Event('openproj:pick-image'));
       } else {
         button.onmousedown = event => { event.preventDefault(); applyMark(surface, mark); };
