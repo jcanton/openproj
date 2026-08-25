@@ -27,6 +27,7 @@ from test_store import commit_directly
 from openproj.index import apply_filters, build_index
 from openproj.model import edited_by_id, load_repo
 from openproj.render import ROUTES, _ago, render_records, render_static
+from openproj.render.tokens import _read_date
 from openproj.web import create_app
 
 # The task's path is the one the tests edit, so it gets a name. Every filename
@@ -502,10 +503,15 @@ def test_the_time_is_relative_when_recent_and_absolute_past_two_weeks():
     assert _ago(now - 86400, now) == "a day ago"
     assert _ago(now - 10 * 86400, now) == "10 days ago"
     assert _ago(now - 13 * 86400, now) == "13 days ago"
+    # Past the threshold it is a DATE, and a date is written the way every date
+    # on the site is written — jcanton, 2026-08-25: "all dates everywhere should
+    # be as in the table". `_read_date` is that one place; the ISO string is what
+    # a file holds and what an `<input type=date>` is handed.
     fortnight = now - 14 * 86400
-    absolute = datetime.fromtimestamp(fortnight, tz=UTC).date().isoformat()
+    absolute = _read_date(datetime.fromtimestamp(fortnight, tz=UTC).date().isoformat())
     assert _ago(fortnight, now) == absolute
-    ahead = datetime.fromtimestamp(now + 7200, tz=UTC).date().isoformat()
+    assert re.fullmatch(r"\d{2}\.\d{2}\.\d{4}", absolute), absolute
+    ahead = _read_date(datetime.fromtimestamp(now + 7200, tz=UTC).date().isoformat())
     assert _ago(now + 7200, now) == ahead
 
 

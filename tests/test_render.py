@@ -1119,7 +1119,13 @@ def test_a_cycle_number_is_offered_the_way_every_other_reference_is(seed_index: 
     ]
     dated = next(c for c in cycles if int(c["value"]) in seed_index.cycles)
     starts, ends = seed_index.cycles[int(dated["value"])]
-    assert dated["label"] == f"{starts} → {ends}"
+    # In the app's own format and not the file's: this label is read by somebody
+    # choosing a cycle from a popup, and every date beside it on that page is
+    # `dd.mm.YYYY`.
+    from openproj.render.tokens import _read_date
+
+    assert dated["label"] == f"{_read_date(starts)} → {_read_date(ends)}"
+    assert re.fullmatch(r"\d{2}\.\d{2}\.\d{4} → \d{2}\.\d{2}\.\d{4}", dated["label"])
 
 
 # --- the people page --------------------------------------------------------

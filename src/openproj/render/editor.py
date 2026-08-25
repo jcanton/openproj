@@ -1481,6 +1481,11 @@ const COEDIT = (() => {
       if (message.update) YJS.applyUpdate(doc, raw(message.update), 'remote');
       BASE.value = message.commit;
       ORIGINAL_BODY = text.toString();
+      // The pair, kept together: this commit is what that text now belongs to,
+      // and Reset restores the two of them. Moved here and not only in
+      // `BASE.value` because every member of the room reaches this line, not
+      // only the one who pressed Save — see `BASELINE`'s own comment.
+      BASELINE = message.commit;
       // Through the page's own `forgetDraft` and not a bare `remembered.forget`:
       // the room committing this document is one of the three ways a draft stops
       // existing, and a receipt left saying "draft saved 4s ago" over a draft

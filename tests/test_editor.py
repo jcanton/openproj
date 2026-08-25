@@ -274,7 +274,7 @@ def test_the_way_in_is_at_the_top_and_what_you_do_with_it_is_beside_it(page: str
     )
 
     bar = re.search(r'<div class="commitbar".*?</div>', page, re.S).group(0)
-    assert 'id="save"' in bar and 'id="cancel"' in bar
+    assert 'id="save"' in bar and 'id="reset"' in bar
     # The way in is the view switcher, and it is not one of the ways out: the
     # segments live on the editbar above the commit bar, never inside it.
     assert 'id="views"' not in bar, "the way in is one of the ways out"
@@ -336,7 +336,7 @@ def test_reset_puts_the_record_back_and_stays_in_the_editor(
         const quiet = document.getElementById('reset').disabled;
         owner.value = 'somebody-else';
         owner.dispatchEvent(new Event('input', {bubbles: true}));
-        body.value = body.value + '\nA paragraph nobody committed.';
+        body.value = body.value + '\\nA paragraph nobody committed.';
         body.dispatchEvent(new Event('input', {bubbles: true}));
         const typed = {said: document.getElementById('unsaved').textContent,
                        hidden: bar.hidden,
@@ -374,7 +374,7 @@ def test_reset_puts_the_record_back_and_stays_in_the_editor(
     assert found["announced"] == "Reset, 2 unsaved changes discarded"
 
 
-def test_reset_puts_the_base_back_with_the_text(client: TestClient):
+def test_reset_puts_the_base_back_with_the_text(client: TestClient, tmp_path: Path):
     """The commit a restored draft moved backwards goes forward again with it.
 
     A draft written against an older commit moves `BASE.value` back to that
@@ -384,12 +384,12 @@ def test_reset_puts_the_base_back_with_the_text(client: TestClient):
     exact mismatch compare-and-swap exists to catch, arranged by the button that
     was supposed to tidy up.
 
-    `defaultValue` is the attribute the server wrote and no `.value` assignment
-    touches it, which is why the commit this page was rendered at is still there
-    to be put back.
+    In Chrome and not in the node shim, although the shim can seed a draft: the
+    document goes back through `SURFACE.splice`, which routes a person's edit
+    through `execCommand` and a selection, and the shim has neither. It answered
+    that the reset had happened while leaving the draft's paragraph in the box —
+    a harness saying yes to a question about an editor it does not have.
     """
-    from test_injection import run_js
-
     first = head(client)
     save(client, TASK, {}, body="Somebody else's paragraph.\n")
     second = head(client)
@@ -399,28 +399,37 @@ def test_reset_puts_the_base_back_with_the_text(client: TestClient):
     assert f'name="base_commit" value="{second}"' in reopened
     key = f"openproj:draft:2:{TASK}"
     draft = {"base": first, "text": "Half a paragraph, written before the other one.\n"}
-    after = run_js(
+    seeded = _before_the_page_runs(
         reopened,
-        "(() => {"
-        "  const base = () => document.querySelector('[name=base_commit]').value;"
-        "  const restored = base();"
-        # `resetEdits()` and not a click: the shim has no `click()` on an
-        # element, and what is under test is what the handler does.
-        "  resetEdits();"
-        "  return {restored, after: base(),"
-        "          body: document.querySelector('[name=body]').value}; })()",
-        page=True,
-        storage={key: json.dumps(draft)},
+        f"try {{ localStorage.setItem({json.dumps(key)}, "
+        f"{json.dumps(json.dumps(draft))}); }} catch (e) {{}}",
     )
-    assert not after["errors"], after["errors"]
-    got = after["value"]
-    assert got["restored"] == first, "the draft did not move the base back to begin with"
-    assert got["after"] == second, (
+    got = measured_in(
+        chrome(), seeded, tmp_path / "base.html", 1100,
+        """
+        const base = () => document.querySelector('[name=base_commit]').value;
+        const body = () => document.querySelector('[name=body]').value;
+        await new Promise(settled => setTimeout(settled, 60));
+        const restored = {base: base(), body: body()};
+        document.getElementById('reset').click();
+        await new Promise(settled => setTimeout(settled, 60));
+        return {restored, base: base(), body: body(),
+                held: localStorage.getItem(""" + json.dumps(key) + """)};
+        """,
+        height=1200, patience=2500,
+    )
+
+    assert got["restored"]["base"] == first, (
+        "the draft did not move the base back to begin with, so this test is "
+        f"asking nothing: {got['restored']}"
+    )
+    assert draft["text"] in got["restored"]["body"], "the draft was never restored"
+    assert got["base"] == second, (
         "Reset put the server's text back and left the draft's older commit under "
         "it, so the page is holding today's document against yesterday's base"
     )
     assert draft["text"] not in got["body"], "Reset left the draft's text in the box"
-    assert key not in after["stored"], "Reset left the draft in storage"
+    assert got["held"] is None, "Reset left the draft in storage"
 
 
 def test_resetting_an_edit_nobody_made_is_refused_rather_than_silent(
@@ -4808,8 +4817,8 @@ def test_a_throttled_draft_is_still_written_before_the_tab_can_be_closed(
         f"the receipt still claims a draft that no longer exists: "
         f"{got['after']['receipt']!r}"
     )
-    assert got["restarted"] == "written after the cancel", (
-        "the first keystroke after a cancel was throttled against the write "
+    assert got["restarted"] == "written after the reset", (
+        "the first keystroke after a reset was throttled against the write "
         "before it, so a tab closed a second later holds nothing again — "
         f"{got['restarted']!r}"
     )

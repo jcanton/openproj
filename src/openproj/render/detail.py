@@ -1413,6 +1413,17 @@ for (const control of CONTROLS) ORIGINAL[control.name] = JSON.stringify(read(con
 // after that commit the saved text IS the baseline, and a `const` here left the
 // bar claiming one unsaved change forever over text that is already in git.
 let ORIGINAL_BODY = SURFACE.text();
+// And the commit that text belongs to, which is what Reset puts back.
+//
+// **Not `BASE.defaultValue`**, although the attribute the server wrote is right
+// there and never moves. It is right there and it is the wrong answer: the
+// room's `saved` handler moves BOTH `ORIGINAL_BODY` and `BASE.value` forward for
+// every member who did not press the button, so on their page "what the server
+// rendered" has been redefined and the attribute is a commit that is no longer
+// HEAD. Restoring to it would move that member's base BACKWARDS and turn their
+// next save into a conflict. This pairs with `ORIGINAL_BODY` and is written
+// wherever that is.
+let BASELINE = BASE.value;
 
 function changed() {
   const fields = {};
@@ -1624,9 +1635,9 @@ function flipEditing() {
 //   server's text back and leave the older base, and the page is holding today's
 //   document against yesterday's commit — the exact mismatch the compare-and-swap
 //   exists to catch, arranged by the button that was supposed to tidy up.
-//   `defaultValue` is the attribute the server wrote, which `.value` assignments
-//   never touch, so the commit this page was rendered at is still there to be
-//   put back.
+//   `BASELINE` is the commit `ORIGINAL_BODY` belongs to and is written wherever
+//   that is; see its own comment for why the attribute the server wrote is the
+//   wrong thing to restore from.
 //
 // And the draft goes, because after this there is nothing unsaved for it to
 // hold. Nothing here ends the session: the switcher and Escape do that, and both
@@ -1645,7 +1656,7 @@ function resetEdits() {
     undone += 1;
     SURFACE.splice(0, written.length, ORIGINAL_BODY);
   }
-  BASE.value = BASE.defaultValue;
+  BASE.value = BASELINE;
   forgetDraft();
   // A value assigned by script fires nothing. Two announcements, because two
   // different things are listening for two different facts: `input` on the form

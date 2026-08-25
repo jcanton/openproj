@@ -2335,9 +2335,15 @@ def test_the_blocking_count_is_a_link_that_pluralises_and_mutes_at_zero(page: st
     # Muted from the SERVER as well as from the script, since the fragment is
     # shared with two views whose scripts never write this: a page that is right
     # only once its JavaScript has run is a page that is wrong for a moment.
-    assert re.search(r'<a id="blockers" class="none"', page), (
-        "this corpus has no blocking problem and the link is not muted"
+    # This corpus HAS a blocking problem, so the class must be absent here — and
+    # present on a plan that has none, which is the half a fixture cannot show.
+    assert 'class="none"' not in page.split('id="blockers"')[1][:60], (
+        "the link is muted over a plan that has a blocking problem in it"
     )
+    from openproj.render.controls import _summary_html
+
+    quiet = str(_summary_html(build_index([], Config(), date(2026, 8, 17)), 0))
+    assert '<a id="blockers" class="none"' in quiet, quiet
 
     body = script(page)
     assert "blocking problem${BLOCKERS === 1 ? '' : 's'}" in body
