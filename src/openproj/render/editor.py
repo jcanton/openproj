@@ -517,11 +517,10 @@ function aceSurface(area, seeded) {
     setKeymap(name) {
       editor.setKeyboardHandler(name === 'vim' ? 'ace/keyboard/vim' : null);
       // And the claimed keys go back on, which is not a courtesy: Ace's
-      // `setKeyboardHandler` REPLACES the last handler on its stack, and the
-      // one `keys` below adds is the last handler on its stack. Without this
-      // line, choosing vim takes Return and the arrows away from the link
-      // popup and nothing anywhere says so.
-      if (claimed) editor.keyBinding.addKeyboardHandler(claimed);
+      // `setKeyboardHandler` pops every handler above its default one before
+      // adding the new keymap, so a keymap change takes the link popup's keys
+      // away and nothing anywhere says so.
+      if (claimed) editor.keyBinding.addKeyboardHandler(claimed, 1);
     },
 
     // --- completing a link to another record ---------------------------------
@@ -576,6 +575,23 @@ function aceSurface(area, seeded) {
     // `hashId === 0` is "no modifiers", which is the whole of what this claims:
     // a printable character arrives as `-1` and every chord as a bitmask, and
     // both of those belong to the editor.
+    //
+    // **Index 1 and never the end**, which is read off Ace's own source rather
+    // than guessed. `$handlers` is `[commands, ...keymaps]`, it is walked from
+    // the END down, and `getKeyboardHandler()` is defined as the last entry —
+    // so pushing this on top made `editor.getKeyboardHandler()` answer with
+    // this object instead of with the vim keymap somebody had just chosen,
+    // which is a lie about a public API and was three red tests. At index 1 the
+    // keymap stays last and stays the answer, this sits between it and the
+    // command table, and the order that follows is the honest one: vim's
+    // bindings get first refusal, then the popup, then everything Ace binds by
+    // default.
+    //
+    // With no keymap chosen this IS the last handler and
+    // `editor.getKeyboardHandler()` answers with it rather than with the
+    // command table. Written down rather than worked around: nothing in Ace
+    // reads that value except `setKeyboardHandler`'s own early return, which
+    // only costs it the work it was about to skip.
     keys(claim) {
       claimed = {
         handleKeyboard(data, hashId, keyString) {
@@ -583,7 +599,7 @@ function aceSurface(area, seeded) {
           return {command: {exec: () => true}};
         },
       };
-      editor.keyBinding.addKeyboardHandler(claimed);
+      editor.keyBinding.addKeyboardHandler(claimed, 1);
     },
 
     scrolled: () => session.getScrollTop(),

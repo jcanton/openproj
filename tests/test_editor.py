@@ -6904,7 +6904,6 @@ def test_only_a_page_with_a_document_carries_the_list_of_linkable_records(
     document being written ask for it.
     """
     import json
-    import re
 
     def blob(page: str) -> dict:
         found = re.search(
@@ -6913,24 +6912,36 @@ def test_only_a_page_with_a_document_carries_the_list_of_linkable_records(
         assert found, "the page carries no suggestion blob"
         return json.loads(found.group(1))
 
-    detail = blob(client.get(f"/detail/{TASK}").text)
-    kinds = {value["value"].split("-")[0] for value in detail["linkable"]}
-    assert {"issue", "note"} <= kinds, (
-        f"the link list holds no inbox record, so the widening did nothing: {sorted(kinds)}"
-    )
-    assert len(detail["linkable"]) > len(detail["records"]), (
-        "the link list is no wider than the plan-only one it was widened from"
-    )
-    assert not [
-        value for value in detail["records"]
-        if value["value"].startswith(("issue-", "note-"))
-    ], "an inbox record reached the list that completes `parent` and `depends_on`"
+    # The corpus this file serves is five planned records and nothing else, so
+    # the inbox half of the claim is seeded here rather than assumed — through
+    # the write path, which is also what proves the list follows the plan rather
+    # than a snapshot of it.
+    made = client.post("/api/record", json={
+        "base_commit": head(client),
+        "body": "Somebody noticed this in a meeting.\n",
+        "fields": {"kind": "note", "title": "A note worth citing", "written_by": "ann"},
+    })
+    assert made.status_code == 201, made.text
+    noted = made.json()["id"]
 
-    table = blob(client.get("/table").text)
-    assert "linkable" not in table, (
+    detail = blob(client.get(f"/detail/{TASK}").text)
+    linkable = {value["value"] for value in detail["linkable"]}
+    assert noted in linkable, (
+        f"the link list holds no inbox record, so the widening did nothing: {sorted(linkable)}"
+    )
+    assert {value["value"] for value in detail["records"]} < linkable, (
+        "the link list is not wider than the plan-only one it was widened from"
+    )
+    assert noted not in {value["value"] for value in detail["records"]}, (
+        "an inbox record reached the list that completes `parent` and `depends_on`"
+    )
+
+    table = client.get("/table").text
+    assert "linkable" not in blob(table), (
         "the table's blob carries the link list, so every inbox id it names is in "
         "the bytes of a plan page"
     )
+    assert noted not in table, "an inbox id reached a plan page"
 
 
 _COMPLETING_A_LINK = r"""
@@ -6952,8 +6963,10 @@ _COMPLETING_A_LINK = r"""
   editor.focus();
   editor.navigateFileEnd();
   // Typed through the editor, so the popup opens the way it does for a person
-  // rather than because a test called the function that draws it.
-  editor.insert('\nSee [Port');
+  // rather than because a test called the function that draws it. The bracket
+  // alone first: nothing typed yet is when the whole plan is on offer, and it is
+  // what makes the narrowing below a comparison rather than a single number.
+  editor.insert('\nSee [');
   await new Promise(r => setTimeout(r, 250));
   const opened = shown();
   const placed = (() => {
@@ -6963,6 +6976,16 @@ _COMPLETING_A_LINK = r"""
     const box = list.getBoundingClientRect(), at = caret.getBoundingClientRect();
     return {left: Math.round(box.left - at.left), under: Math.round(box.top - at.bottom)};
   })();
+
+  // And then the title, which is what the completion is on.
+  editor.insert('Verify');
+  await new Promise(r => setTimeout(r, 250));
+  const narrowed = shown();
+
+  // Back to the whole plan, so the arrow below has more than one row to move
+  // between whatever the corpus happens to hold.
+  for (let i = 0; i < 6; i++) editor.remove('left');
+  await new Promise(r => setTimeout(r, 250));
 
   // Down moves the highlight and the key does not reach the document.
   const wasLines = editor.session.getLength();
@@ -7014,11 +7037,17 @@ def test_the_second_editor_completes_a_link_to_a_record(
         query="?editor=ace", patience=6800,
     )
 
-    assert got["opened"], (
-        f"typing `[Port` opened no list of records: {got}"
+    assert got["opened"] and len(got["opened"]) > 1, (
+        f"typing `[` opened no list of records: {got}"
     )
     assert all(value.split("-")[0] in {"prod", "proj", "pitch", "task", "issue", "note"}
                for value in got["opened"]), got["opened"]
+    # The completion is on the TITLE, which is the half of the ask that a list
+    # of everything cannot show: `Verify` is a word in one record's name and in
+    # no record's id.
+    assert got["narrowed"] == ["pitch-b20000"], (
+        f"typing a title did not narrow the list to the record it names: {got['narrowed']}"
+    )
     assert got["placed"] and abs(got["placed"]["left"]) <= 2, (
         f"the list is not under the caret it completes: {got['placed']}"
     )
