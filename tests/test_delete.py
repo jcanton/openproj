@@ -370,13 +370,25 @@ return {before, editing, after: !remove.hidden};
 """
 
 
-def test_delete_leaves_while_an_edit_is_open(index: Index, tmp_path: Path):
-    """Two answers to "I am done with this record" on one line is one too many.
+def test_delete_stays_while_an_edit_is_open(index: Index, tmp_path: Path):
+    """Delete is on the bar in every view, and it does not move.
 
-    Delete now sits beside Edit, which is where it belongs — and the moment Edit
-    becomes Save and Cancel, the button that throws the record away is a slip of
-    the hand from the two that keep it. It comes back when the edit ends, by
-    either door.
+    This asserted the opposite until 2026-08-25, on the argument that two answers
+    to "I am done with this record" on one line is one too many — so Delete left
+    the moment a session opened and came back when it closed. jcanton, having
+    used it: "the [delete] button only shows up in the preview mode, not in edit
+    and side-by-side. it should be there too."
+
+    The argument it replaces was weaker than it read. Delete asks before it acts
+    — a confirmation row and a second press on "Delete it" — so it was never one
+    slip of the hand from anything; what the hiding bought was a control that
+    appears and disappears, which is the thing this page spent 2026-08-24
+    removing everywhere else. And the shift it used to cause is gone anyway: the
+    row now carries Slide between the switcher and Delete.
+
+    Kept as a test rather than deleted, because "Delete is always on the bar" is
+    a decision, and the next person to reach for the old behaviour should find it
+    refused here rather than absent.
     """
     record_id = one_task(index)
     page = render_detail(index, ROUTES, only=record_id, base_commit=HEAD, may_write=True)
@@ -384,5 +396,5 @@ def test_delete_leaves_while_an_edit_is_open(index: Index, tmp_path: Path):
     got = measured_in(chrome(), page, tmp_path / "editing.html", 1200, _WHILE_EDITING)
 
     assert got["before"] is True, "there was no Delete to begin with"
-    assert got["editing"] is False, "Delete stayed out while the record was being edited"
-    assert got["after"] is True, "and it never came back"
+    assert got["editing"] is True, "Delete left the bar when the edit opened"
+    assert got["after"] is True, "and it was gone after the edit closed"
