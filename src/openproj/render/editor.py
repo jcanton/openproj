@@ -1407,11 +1407,15 @@ const COEDIT = (() => {
       // commit holds text that is already in every one of these editors, so the
       // shell's "somebody else changed this" banner is wrong about all of them.
       dispatchEvent(new CustomEvent('openproj:ours', {detail: message.commit}));
-      // And the tab that pressed Save leaves edit mode, which is what pressing
-      // it means — by reloading, exactly as the path without a room does. Only
-      // the tab that asked: everybody else in the room is still typing, and a
-      // commit somebody else made is not a reason to close the box in front of
-      // you.
+      // And the tab that pressed Save reloads, exactly as the path without a
+      // room does. Only the tab that asked: everybody else in the room is still
+      // typing, and a commit somebody else made is not a reason to reload the
+      // page in front of you.
+      //
+      // The reload used to be how the editor CLOSED as well, and it is not any
+      // more: `keepView` below carries the mode across it, so Save commits and
+      // leaves you where you were writing. Pressing Save is a statement about
+      // the document and never about whether you are finished with it.
       //
       // This used to close the editor without reloading, on the grounds that the
       // document is already what everybody in the room has. That was right about
@@ -1422,6 +1426,9 @@ const COEDIT = (() => {
       // room says nothing about the one part of the page that is not an editor.
       if (mine) {
         remembered.set(SAID, said);
+        // And it comes back into the view it left from, which is the one thing
+        // the reload used to throw away. See `keepView` in `_VIEWS`.
+        keepView();
         location.reload();
       }
       return;

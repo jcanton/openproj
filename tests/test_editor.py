@@ -3747,6 +3747,115 @@ return answers;
 """
 
 
+# A save made from the split view, driven through the page's own `save()`. The
+# body is changed first because `save()` answers "nothing changed" and returns
+# without writing anything otherwise — a green run over a save that never
+# happened is exactly the vacuous pass this file keeps finding.
+_SAVING_FROM_A_VIEW = """
+(async () => {
+  document.getElementById('view-both').click();
+  const box = document.querySelector('[name=body]');
+  box.value = 'A paragraph typed in the split view.\\n';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  await save();
+  return {view: VIEW, reloads: __reloads()};
+})()
+"""
+
+# What the page does with the word the save before it left behind.
+_WHERE_IT_LANDS = """
+(() => {
+  const article = document.querySelector('article.record');
+  return {classes: [...article.classList].filter(c => c.startsWith('view-')
+                                                      || c === 'editing').sort(),
+          view: VIEW};
+})()
+"""
+
+
+def test_saving_keeps_the_view_it_was_saved_from(client: TestClient):
+    """jcanton, 2026-08-25: "currently clicking save in the editor exits edit
+    mode and sends you back to preview, let's change that and stay in whatever
+    mode the user is in (edit or side-by-side)".
+
+    The reload itself is not the thing to remove — the read view under the box is
+    HTML the server rendered at the commit the page loaded at, and a save that
+    does not reload leaves the document and the facts as they were. What the
+    reload threw away was the mode, and this drives both halves of carrying it
+    across: the save writes the word, and the page that comes up reads it.
+
+    Driven rather than read off the source, because the two halves are in two
+    script blocks that never run in the same order they are written in, and a
+    grep for `keepView` would pass on a page where nothing calls it.
+    """
+    from test_injection import run_js
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+
+    saving = run_js(
+        page, _SAVING_FROM_A_VIEW, page=True,
+        replies=[{"status": 200, "json": {"commit": "0" * 40}}],
+    )
+    assert not saving["errors"], saving["errors"]
+    assert saving["value"]["reloads"] == 1, (
+        f"the save did not reload, so this test drove nothing: {saving['value']}"
+    )
+    assert saving["tabbed"].get("openproj:resumed") == "both", (
+        "a save from the split view left nothing behind saying so, so the page "
+        f"it reloads into cannot come back to it: {saving['tabbed']}"
+    )
+
+    # And the page that comes up. Not the same run — a reload is a new document
+    # with a new script, which is the whole reason this goes through the tab's
+    # own store rather than through a variable.
+    landed = run_js(
+        page, _WHERE_IT_LANDS, page=True, session={"openproj:resumed": "both"}
+    )
+    assert not landed["errors"], landed["errors"]
+    assert landed["value"]["classes"] == ["editing", "view-both"], (
+        f"the reloaded page did not come back into the split: {landed['value']}"
+    )
+    assert "openproj:resumed" not in landed["tabbed"], (
+        "the word survived the page that read it, so the next record this tab "
+        "opens will open as an editor"
+    )
+
+    # The control, and it is what every load that did not just save gets: no
+    # word, no session, the landing. Without this the test above passes on a
+    # page that opens the split for everybody.
+    ordinary = run_js(page, _WHERE_IT_LANDS, page=True)
+    assert ordinary["value"]["classes"] == ["view-view"], (
+        f"a page nobody saved from opened in a session: {ordinary['value']}"
+    )
+
+
+def test_a_link_beats_the_view_a_save_left_behind_and_still_spends_it(
+    client: TestClient,
+):
+    """The one-shot is read before the branch that might not want it.
+
+    `?view` is somebody handing you a way of looking at this document and it wins
+    — that rule is older than this key. What the rule cannot be allowed to do is
+    leave the word in the tab: a save whose landing was overruled by a link would
+    otherwise open an editor over the NEXT record this tab visits, which is the
+    sticky-at-load behaviour the load branch is written to avoid.
+    """
+    from test_injection import run_js
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    got = run_js(
+        page, _WHERE_IT_LANDS, page=True,
+        session={"openproj:resumed": "both"}, here=f"/detail/{TASK}?view",
+    )
+    assert not got["errors"], got["errors"]
+    assert got["value"]["classes"] == ["view-view"], (
+        f"the link did not win the argument with the saved view: {got['value']}"
+    )
+    assert "openproj:resumed" not in got["tabbed"], (
+        "the saved view lost the argument and stayed in the tab anyway"
+    )
+
+
 def test_the_room_s_own_save_ends_the_session_by_leaving_the_page():
     """How a room's save ends the session, read out of the product.
 
@@ -3760,6 +3869,12 @@ def test_the_room_s_own_save_ends_the_session_by_leaving_the_page():
 
     The claim below — that ending a session by any door leaves the surface — is
     unchanged and still worth driving: Cancel and the view toggle are doors too.
+
+    Since 2026-08-25 the reload is no longer how the session ENDS: `keepView`
+    carries the mode across it, so a save from the split view comes back into the
+    split (`test_saving_keeps_the_view_it_was_saved_from`). What this test says is
+    narrower than its name and always was — the branch reloads, and it does not
+    grow a fourth copy of leaving the surface — and both are still true.
     """
     from openproj.render import _COEDIT
 
@@ -4051,6 +4166,99 @@ def test_opening_a_session_moves_nothing_above_the_document(
             f"in the {view} view the switcher does not start where the nav "
             f"starts: {views} against {nav}"
         )
+
+
+# Where the column STARTS, which every test above this one is blind to: they
+# compare a box against itself in three views, and a box that is in the same
+# wrong place in all three passes every one of them. The header moved to the
+# page's left padding on 2026-08-24 and the document below it stayed centred,
+# which is the shape jcanton looked at on 2026-08-25 — "you were right that left
+# aligning the edit header and centering the body and fields looks awkward. let's
+# left align everything in the editor".
+_THE_COLUMN_STARTS_LEFT = _STUB_PREVIEW + """
+const box = sel => {
+  const b = document.querySelector(sel).getBoundingClientRect();
+  return {left: Math.round(b.left), width: Math.round(b.width)};
+};
+// The document's own column and the box inside it: `.panes` is the measure and
+// `.panes > .main` is the document that rides it.
+const COLUMN = ['.panes', '.panes > .main'];
+const seen = () => ({
+  nav: box('body > nav'),
+  h1: box('article.record h1'),
+  ...Object.fromEntries(COLUMN.map(sel => [sel, box(sel)])),
+});
+// Measured on the landing alone, because `.record.editing #promote` takes the
+// bar off the page for the whole of a session — a rect of zeroes in the other
+// two views would be a measurement of nothing dressed as a failure.
+const landing = {...seen(), promote: box('#promote')};
+document.getElementById('view-edit').click();
+await new Promise(go => setTimeout(go, 150));
+const writing = seen();
+document.getElementById('view-both').click();
+await new Promise(go => setTimeout(go, 150));
+const split = seen();
+return {landing, writing, split, column: COLUMN};
+"""
+
+
+def test_the_document_starts_where_its_own_title_starts(
+    client: TestClient, tmp_path: Path
+):
+    """One left edge for the whole page, in all three views.
+
+    The measure below the line is unchanged — the column is still `--measure`
+    wide and still grows by one body in the split — and only where it begins has
+    moved. Centred, it began 168px in from the title above it at 1400px, and it
+    began somewhere different in the split, because a centred box whose width
+    changes has a left edge that changes with it: opening side-by-side slid the
+    document's first character half a body width left while the header it sits
+    under held still. Both are the same defect and this asserts them as one
+    number.
+
+    Asked on a NOTE and through the write path for the reason
+    `test_the_promotion_bar_keeps_the_column_it_sits_under` is: `#promote` is
+    drawn on a promotable record and a task is not one, and it is the third box
+    that has to share this edge — on the landing, which is the only view it is
+    on the page in.
+
+    1400px, because it is the window where the column and the page are different
+    widths — at 700 the measure is capped by `max-width: 100%` and every box
+    here starts at the same place whatever the rule says, which is a green test
+    that has looked at nothing.
+    """
+    made = client.post("/api/record", json={
+        "base_commit": head(client),
+        "body": "The seam is not where we thought it was.",
+        "fields": {"kind": "note", "title": "A note whose column starts left"},
+    })
+    assert made.status_code == 201, made.text
+    page = client.get(f"/detail/{made.json()['id']}{PLAIN}").text
+    assert '<div id="promote">' in page, "the note's page has no promotion bar to measure"
+
+    got = measured_in(
+        chrome(), page, tmp_path / "column-left.html", 1400,
+        _THE_COLUMN_STARTS_LEFT, patience=3000,
+    )
+    assert got["landing"][".panes"]["width"] < got["landing"]["nav"]["width"], (
+        "the column is already the page's width at 1400px, so this test cannot "
+        f"tell left from centred: {got['landing']}"
+    )
+    for view in ("landing", "writing", "split"):
+        nav = got[view]["nav"]
+        assert got[view]["h1"]["left"] == nav["left"], (
+            f"in the {view} view the title is not at the page's left edge: "
+            f"{got[view]['h1']} against {nav}"
+        )
+        for name in got["column"]:
+            assert got[view][name]["left"] == nav["left"], (
+                f"in the {view} view {name} does not start where the title and "
+                f"the nav start: {got[view][name]} against {nav}"
+            )
+    assert got["landing"]["promote"]["left"] == got["landing"]["nav"]["left"], (
+        "the promotion bar under the document does not start where the document "
+        f"does: {got['landing']['promote']} against {got['landing']['nav']}"
+    )
 
 
 # The other side of the line jcanton drew, and the box that is not `.panes`.
