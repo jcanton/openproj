@@ -7034,7 +7034,8 @@ _COMPLETING_A_LINK = r"""
   // single key away from writing.
   const tookWhenClosed = key(13);
 
-  return {opened, placed, highlighted, tookDown, tookReturn, closed, tookWhenClosed,
+  return {opened, narrowed, placed, highlighted, tookDown, tookReturn, closed,
+          tookWhenClosed,
           lines: [wasLines, editor.session.getLength()],
           tail: written.slice(written.lastIndexOf('\nSee '))};
 """
