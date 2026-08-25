@@ -13,7 +13,7 @@ from markdown_it.token import Token
 from markupsafe import Markup
 from mdit_py_plugins.tasklists import tasklists_plugin
 
-from ..model import Record, without_comments
+from ..model import ID_PATTERN, Record, without_comments
 from .shell import ROUTES, STATIC, Links
 
 # Commonmark, plus the two things people were already typing and getting back as
@@ -210,9 +210,49 @@ def _image(
     return RendererHTML.image(self, tokens, idx, options, env)
 
 
+def _link(
+    self: RendererHTML, tokens: Sequence[Token], idx: int, options: object, env: dict
+) -> str:
+    """A link whose target is a record id points at that record's page.
+
+    jcanton, 2026-08-25: "I'd like to have links to other records in the body of
+    a record". `[Port the transport](pitch-000001)` is what a person types, and
+    it is what the same characters mean in git and on GitHub — a relative link to
+    nothing there, and a link to the record here. Written that way round on
+    purpose: the alternative spellings all put this tool's URL shape inside the
+    plan's own files, and the plan outlives the tool.
+
+    **The prefix comes from `env`, exactly as `_image`'s does.** A served page
+    links to `/detail/<id>` and a rendered file to `detail.html#<id>`; one
+    renderer draws both, and the prefix is the only thing that differs.
+
+    **An allowlist, and the same one the validator uses.** `ID_PATTERN` is
+    public and is the single copy — it is what an id must match to be written and
+    what closes `<directory>/<id>.md` as a path — so this widens the day a rung
+    is added and never otherwise. Anything else is left exactly as it was
+    written: `https://…`, a mailto, `#anchor`, `./notes.md`, and a record id with
+    a fragment glued on are all somebody meaning something other than this.
+
+    **Whether the record EXISTS is deliberately not asked.** This renderer is
+    handed a body and a link prefix and never an index — the preview route has
+    one and `_markdown_line` on a deck slide does not — so the question could
+    only be answered on some of the pages that draw the same document. A link to
+    a record that has been deleted answers 404, which is the same thing
+    `_pr_link` does with a pull request nobody opened, and it is a broken link
+    rather than a page that renders differently depending on which view you are
+    in.
+    """
+    token = tokens[idx]
+    href = token.attrGet("href") or ""
+    if ID_PATTERN.match(href):
+        token.attrSet("href", env.get("links", STATIC).record + href)
+    return self.renderToken(tokens, idx, options, env)
+
+
 _MD.core.ruler.push("openproj_source_lines", _source_lines)
 _MD.core.ruler.push("openproj_pr_refs", _pr_refs)
 _MD.add_render_rule("image", _image)
+_MD.add_render_rule("link_open", _link)
 
 
 def _markdown(text: str, links: Links, assets: dict[str, str] | None = None) -> Markup:

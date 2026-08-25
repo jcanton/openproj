@@ -315,6 +315,11 @@ function aceSurface(area, seeded) {
   const indexOf = position => document_.positionToIndex(position);
   const positionOf = index => document_.indexToPosition(index);
 
+  // The keyboard handler `keys` adds, held because `setKeymap` has to put it
+  // back — see both. Null until something claims a key, which is every page
+  // that carries no link list.
+  let claimed = null;
+
   // **Ace's own change deltas, converted at the moment they arrive.** This is
   // the binding, and the whole reason it is not `typed()`'s prefix/suffix walk
   // is written in `docs/EDITOR.md`: `session.setValue` and `session.replace` are
@@ -511,6 +516,90 @@ function aceSurface(area, seeded) {
     keymaps: KEYMAPS,
     setKeymap(name) {
       editor.setKeyboardHandler(name === 'vim' ? 'ace/keyboard/vim' : null);
+      // And the claimed keys go back on, which is not a courtesy: Ace's
+      // `setKeyboardHandler` pops every handler above its default one before
+      // adding the new keymap, so a keymap change takes the link popup's keys
+      // away and nothing anywhere says so.
+      if (claimed) editor.keyBinding.addKeyboardHandler(claimed, 1);
+    },
+
+    // --- completing a link to another record ---------------------------------
+    //
+    // Two members, one caller — `attachBodyCompletion` in the shared block — and
+    // they are Ace's alone. jcanton, 2026-08-25, asked for the completion in
+    // "only ace editor", and the first of them is why that is the sensible
+    // half: a textarea can only answer "where is the caret drawn" through the
+    // mirror, and this file's own history says a mirror is where the answers go
+    // quietly wrong. A surface without these is handled the way one without
+    // `onSplice` is — the caller looks, and there is no flag beside the absence
+    // saying the same thing a second time.
+
+    // Where the caret is drawn, as a viewport rectangle.
+    //
+    // **Ace's own cursor element, asked for its box.** Not
+    // `textToScreenCoordinates`, whose `pageX`/`pageY` are computed from
+    // `scroller.getBoundingClientRect()` and are therefore viewport numbers
+    // wearing page names — a difference invisible until somebody scrolls the
+    // page. And not the scroller's rect plus a screen row times a line height
+    // worked out here, which is the post-processing `AGENTS.md` records the
+    // graph paying for: the library has already drawn this caret in the right
+    // place, so the question is answered by asking the drawing.
+    caretBox() {
+      const drawn = host.querySelector('.ace_cursor');
+      // No cursor drawn is ordinary rather than an error — Ace does not draw
+      // one until the editor has been focused. The scroller's own top-left is
+      // where a caret would be, which is where a popup belongs until there is
+      // one to sit under.
+      const box = (drawn && drawn.getClientRects().length
+                   ? drawn : editor.renderer.scroller).getBoundingClientRect();
+      return {left: box.left, top: box.top, bottom: box.bottom};
+    },
+
+    // Keys, claimed before Ace's command table sees them. `claim` is handed the
+    // key's name and answers whether it took it.
+    //
+    // **A DOM `keydown` listener cannot do this**, and the reason is already
+    // written in `attachEditing`: Ace's `stopEvent` calls `stopPropagation` as
+    // well as `preventDefault`, so Return, Up and Down never reach a listener on
+    // this host at all — measured in Chrome, with a listener beside it, when Tab
+    // went the same way. `handleKeyboard` is the documented way in and is what
+    // Ace's own completion extension uses.
+    //
+    // Returning a command whose `exec` answers true is what consumes the key:
+    // Ace calls `event.stopEvent` only for a handler that says it did
+    // something, and returning nothing at all falls through to every handler
+    // under this one. A named `'null'` command was the other spelling and is
+    // not used — it carries `passEvent` in Ace's own table, which is the
+    // opposite of what this wants.
+    //
+    // `hashId === 0` is "no modifiers", which is the whole of what this claims:
+    // a printable character arrives as `-1` and every chord as a bitmask, and
+    // both of those belong to the editor.
+    //
+    // **Index 1 and never the end**, which is read off Ace's own source rather
+    // than guessed. `$handlers` is `[commands, ...keymaps]`, it is walked from
+    // the END down, and `getKeyboardHandler()` is defined as the last entry —
+    // so pushing this on top made `editor.getKeyboardHandler()` answer with
+    // this object instead of with the vim keymap somebody had just chosen,
+    // which is a lie about a public API and was three red tests. At index 1 the
+    // keymap stays last and stays the answer, this sits between it and the
+    // command table, and the order that follows is the honest one: vim's
+    // bindings get first refusal, then the popup, then everything Ace binds by
+    // default.
+    //
+    // With no keymap chosen this IS the last handler and
+    // `editor.getKeyboardHandler()` answers with it rather than with the
+    // command table. Written down rather than worked around: nothing in Ace
+    // reads that value except `setKeyboardHandler`'s own early return, which
+    // only costs it the work it was about to skip.
+    keys(claim) {
+      claimed = {
+        handleKeyboard(data, hashId, keyString) {
+          if (hashId !== 0 || !claim(keyString)) return;
+          return {command: {exec: () => true}};
+        },
+      };
+      editor.keyBinding.addKeyboardHandler(claimed, 1);
     },
 
     scrolled: () => session.getScrollTop(),
@@ -1407,11 +1496,15 @@ const COEDIT = (() => {
       // commit holds text that is already in every one of these editors, so the
       // shell's "somebody else changed this" banner is wrong about all of them.
       dispatchEvent(new CustomEvent('openproj:ours', {detail: message.commit}));
-      // And the tab that pressed Save leaves edit mode, which is what pressing
-      // it means — by reloading, exactly as the path without a room does. Only
-      // the tab that asked: everybody else in the room is still typing, and a
-      // commit somebody else made is not a reason to close the box in front of
-      // you.
+      // And the tab that pressed Save reloads, exactly as the path without a
+      // room does. Only the tab that asked: everybody else in the room is still
+      // typing, and a commit somebody else made is not a reason to reload the
+      // page in front of you.
+      //
+      // The reload used to be how the editor CLOSED as well, and it is not any
+      // more: `keepView` below carries the mode across it, so Save commits and
+      // leaves you where you were writing. Pressing Save is a statement about
+      // the document and never about whether you are finished with it.
       //
       // This used to close the editor without reloading, on the grounds that the
       // document is already what everybody in the room has. That was right about
@@ -1422,6 +1515,9 @@ const COEDIT = (() => {
       // room says nothing about the one part of the page that is not an editor.
       if (mine) {
         remembered.set(SAID, said);
+        // And it comes back into the view it left from, which is the one thing
+        // the reload used to throw away. See `keepView` in `_VIEWS`.
+        keepView();
         location.reload();
       }
       return;

@@ -19,6 +19,7 @@ from openproj.index import Index, build_index
 from openproj.model import Config, load_repo
 from openproj.render import (
     ROUTES,
+    STATIC,
     STATUS_GLYPH,
     STATUSES,
     preview_html,
@@ -2717,6 +2718,55 @@ def test_the_preview_shows_the_same_two_syntaxes_the_page_will(seed_index: Index
     assert ("s", "Dropped") in [(e.tag, e.text) for e in drawn]
 
 
+_LINKED = """A pitch worth reading: [Port the transport](pitch-000001).
+
+And [the docs](https://example.com/a), [a sibling](./notes.md), [an anchor](#top),
+[a fragment](task-abc123#progress) and `[not a link](task-abc123)` in a code span.
+"""
+
+
+def test_a_link_to_a_record_points_at_that_record_s_page(seed_index: Index):
+    """jcanton, 2026-08-25: "I'd like to have links to other records in the body
+    of a record".
+
+    `[Title](pitch-000001)` is what a person types, and it is a relative link to
+    nothing in git and on GitHub — which is the trade this takes deliberately, so
+    that the plan's own files do not carry this tool's URL shape. The prefix is
+    the renderer's, exactly as an asset's is: `/detail/<id>` where there is a
+    server and `detail.html#<id>` in the export, one renderer drawing both.
+
+    The four hrefs beside it are the allowlist said out loud. A record id with a
+    fragment glued on is somebody meaning an anchor and not a record, and the
+    code span is markdown-it's own guarantee rather than this rule's — a
+    `code_inline` token is never walked at all — which is why it is here: the PR
+    rule was written over finished HTML once and turned exactly this into a link.
+    """
+    served = {
+        (e.text, e.attrs.get("href")) for e in elements(preview_html(_LINKED))
+        if e.tag == "a"
+    }
+    assert ("Port the transport", "/detail/pitch-000001") in served, served
+    # Untouched, every one of them.
+    assert ("the docs", "https://example.com/a") in served
+    assert ("a sibling", "./notes.md") in served
+    assert ("an anchor", "#top") in served
+    assert ("a fragment", "task-abc123#progress") in served
+    assert not [href for _, href in served if href and href.endswith("#progress")
+                and href.startswith("/detail/")], served
+    # And the code span is text, not a link.
+    assert "not a link" not in {text for text, _ in served}, served
+
+    # The same document in the export, where the record page is a fragment of one
+    # file. Only the prefix differs, which is the whole claim.
+    exported = {
+        (e.text, e.attrs.get("href"))
+        for e in elements(preview_html(_LINKED, STATIC))
+        if e.tag == "a"
+    }
+    assert ("Port the transport", "detail.html#pitch-000001") in exported, exported
+    assert ("the docs", "https://example.com/a") in exported
+
+
 def test_a_rendered_block_carries_the_source_line_it_came_from(seed_index: Index):
     """The box and the document are two views of one text, and nothing in the
     browser can line them up unless the rendered half says where each piece was
@@ -3488,6 +3538,13 @@ def test_a_rendered_plan_offers_no_dead_control(rendered: Path, seed_index: Inde
     button back to the page you were already on; the hint beside it promised an
     editor with no server to save to; and every cycle card linked to a per-cycle
     page that `render_static` does not write.
+
+    The button is gone from the table altogether since 2026-08-25 — the `+` row
+    at the foot creates a record in place — so the first assertion below can no
+    longer fail and is kept only as the name of what must not come back. The
+    second is still live and moved with the sentence it is about: the hint is in
+    `#controls .aside` now, drawn only where `may_write` and a `base_commit`
+    both say there is a server behind the page.
     """
     table = read(rendered, "table.html")
     cycles = read(rendered, "cycles.html")
@@ -3910,10 +3967,13 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
     counts: the key's row where there is a key, and the page's own control row
     where there is not.
 
-    The table keeps its instruction where it is, and that is the pattern rather
-    than an exception to it: the rule is about rows, and "double-click a cell to
-    edit it" is already inline beside New record — the control it shares a subject
-    with — so it costs no row to move and no row to leave.
+    The table's instruction was the exception and stopped being one on
+    2026-08-25: it was inline beside New record, which was a control and not a
+    sentence, and when jcanton took that button off the page ("we already have
+    the + new row at the bottom") the sentence had nothing left to share a row
+    with. It is in `#controls .aside` now, which is the same slot the graph's
+    pan/zoom line and the timeline's window line ride in — one pattern on all
+    three views rather than two-and-an-argument.
 
     The heading is still first in the list and is now `.sr-only` — the seventh of
     the six rows going. It is `position: absolute`, so it is out of flow and the

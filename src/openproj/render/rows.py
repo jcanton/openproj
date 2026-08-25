@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..index import Index, _product_of, _project_of, predicates_of
-from ..model import Config, size_weeks, unread_fields
+from ..model import RUNG, Config, size_weeks, unread_fields
 
 
 def _reviewers_under(index: Index, record_id: str) -> list[str]:
@@ -43,6 +43,12 @@ def _row(index: Index, record_id: str) -> dict:
     # record and was drawn with both chips. `unread_fields` is the same list the
     # validator reports from and the editors decline to offer.
     unread = unread_fields(record.kind)
+    # Whether this rung is work at all, as against a grouping something is filed
+    # under. `unread_fields` answers per FIELD and progress is not a field — it
+    # is counted — so the ladder is asked directly for the one thing that decides
+    # it. See `progress` below.
+    works = RUNG[record.kind].schedules
+
     def read(name, value):
         return None if name in unread else value
     return {
@@ -100,15 +106,39 @@ def _row(index: Index, record_id: str) -> dict:
         # records, so a planned task whose hand-written `depends_on` names an
         # unplanned record keeps that edge — and the plan-only lookup was a
         # KeyError that 500ed /table over one hand-edited file.
-        "blocked_by": sum(
-            1
-            for blocker in index.blocked_by[record_id]
-            if index.records[blocker].status not in ("done", "shelved")
+        #
+        # And `None` — not `0` — on a rung that cannot depend on anything. The
+        # count is of `depends_on`, which is one of the fields `unread` already
+        # names for a product, so a `0` here was the table drawing a field the
+        # rest of this function had just refused to draw: jcanton, 2026-08-25,
+        # of the product row, "nor should any of the other cells contain
+        # anything (currently I see blockers and progress)". `stored()` in the
+        # table's script renders `null` as the empty cell and `0` as a nought,
+        # which is the whole of the difference on screen.
+        "blocked_by": read(
+            "depends_on",
+            sum(
+                1
+                for blocker in index.blocked_by[record_id]
+                if index.records[blocker].status not in ("done", "shelved")
+            ),
         ),
         # Two keys for one fact: the ratio is what a column sorts by, the text is
         # what it prints. Sorting on "7/12" as a string puts 10/12 before 7/12.
-        "progress": round(counted.fraction, 4) if counted else None,
-        "progress_text": counted.text if counted else "",
+        #
+        # Counted only for a rung that is work. `index.progress` rolls a
+        # container's children up in weeks, and it does that for a product too —
+        # correctly, since 2026-08-20, when a product holding a five-week project
+        # reported `0/0.5 wk` against a denominator nobody typed. Correct and
+        # still not this row's to draw: a product groups the codebases a plan
+        # spans, and "42% done" beside a codebase is a sentence about the plan
+        # wearing the name of the thing it is filed under. `Rung.schedules` is
+        # the ladder's own word for "the scheduler gives it dates", which is the
+        # same question as "is this work"; a seventh rung needs no edit here.
+        # The rollup itself is untouched — the deck, the record page and the
+        # column's own existence still read `index.progress`.
+        "progress": round(counted.fraction, 4) if counted and works else None,
+        "progress_text": counted.text if counted and works else "",
         "prs": read("prs", record.prs),
         "tags": record.tags,
         # Who reviews the work filed under this record, when it names nobody

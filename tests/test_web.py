@@ -1026,6 +1026,13 @@ def test_a_reader_is_offered_no_door_they_cannot_walk_through(repo_path: Path):
         assert not re.search(r'<a class="button[^"]*" href="[^"]*new[^"]*"', page.text), (
             f"{route} offers a signed-out reader a create button"
         )
+    # The table's door has not been a button since 2026-08-25 — it is the `+`
+    # row at the foot, built by the page's own script — so the loop above is
+    # true of it for the wrong reason and this is the assertion that means
+    # something there. Its twin is in `test_a_writer_is_offered_the_door`.
+    assert "function adderHtml" not in signed_out.get("/table").text, (
+        "/table offers a signed-out reader the row that creates a record"
+    )
 
     # And the form itself refuses, so a typed URL or an old bookmark does not
     # reach the hollow page either.
@@ -1035,12 +1042,21 @@ def test_a_reader_is_offered_no_door_they_cannot_walk_through(repo_path: Path):
 
 
 def test_a_writer_is_offered_the_door(client: TestClient):
-    """The other half, so the gate cannot be satisfied by drawing nothing."""
-    for route in ("/", "/issues", "/notes", "/table"):
+    """The other half, so the gate cannot be satisfied by drawing nothing.
+
+    Four routes and two doors. The three list pages link to `/new`; the table's
+    is the `+` row at the foot of the rows, which is built by `adderHtml` in its
+    own script and is why the button that used to sit above the table went —
+    jcanton, 2026-08-25: "we already have the + new row at the bottom".
+    """
+    for route in ("/", "/issues", "/notes"):
         page = client.get(route)
         assert re.search(r'<a class="button[^"]*" href="[^"]*new[^"]*"', page.text), (
             f"{route} does not offer a writer a create button"
         )
+    assert "function adderHtml" in client.get("/table").text, (
+        "/table does not offer a writer the row that creates a record"
+    )
     assert client.get("/new?kind=task").status_code == 200
 
 

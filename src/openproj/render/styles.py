@@ -675,20 +675,31 @@ article.record {
    the WINDOW — the facts would then take their 20rem column beside a document
    dragged down to 10rem, instead of stacking as they do at that measure today.
 
-   **Centred, and jcanton chose it knowing what it costs.** He asked for the
-   sizing below the line to be kept, and it is — `--measure` in the reading and
-   writing views, one measure plus one body in the split, exactly as before —
-   and then, asked directly whether the document should follow the header to the
-   page's left edge: "no, body centered / 'indented' should be good".
+   **Pinned left, which is the trade the comment above this one predicted being
+   taken.** The measure itself is untouched — `--measure` in the reading and
+   writing views, one measure plus one body in the split, exactly as it has
+   been — and only where the box starts has changed. It was centred for a day on
+   jcanton's own call ("no, body centered / 'indented' should be good"), asked
+   before either of us had looked at the result; he looked, 2026-08-25: "you
+   were right that left aligning the edit header and centering the body and
+   fields looks awkward. let's left align everything in the editor."
 
-   What that costs is written down rather than argued with, because it is the
-   half of his own complaint this does not fix: a centred box whose width changes
-   between views has a left edge that changes with it, so opening the split still
-   slides the document's first character half a body width left. The header above
-   it no longer moves, which is what he asked for and what the red lines in his
-   screenshots marked. Pinning this box left would have stopped the rest, at the
-   price of a document indented from its own title. That is the trade, and it is
-   one `margin-inline` away in either direction.
+   The cost the old note wrote down was "a document indented from its own
+   title", and that is the half of it that turned out to be backwards: the
+   header moved to the page's left padding on 2026-08-24, so left here is where
+   the title already is and the indent is what a centred box was paying. What it
+   buys is the other half of the complaint that started all of this — a centred
+   box whose width changes between views has a left edge that changes with it,
+   so opening the split used to slide the document's first character half a body
+   width left. At `margin-inline: 0` the first glyph of the document sits under
+   the first glyph of the title in all three views, and nothing on this page
+   moves sideways when the split opens.
+
+   `0` and not the declaration simply deleted: `margin-inline` is not a property
+   `.panes` would otherwise inherit anything for, but `article.record.view-both
+   .panes` sets a width and not a margin, and a reader who finds one rule saying
+   where this box starts learns more than one who finds none and has to work out
+   that `auto` was ever the alternative.
 
    The facts beside the document rather than stacked on top of it: the reader
    comes for the shaping doc and glances at the facts, and a screen-and-a-half of
@@ -696,7 +707,7 @@ article.record {
    and not a media query, because the width that decides this is the column's,
    which the reader sets with the grip — not the window's. */
 .panes {
-  width: var(--measure, 64rem); max-width: 100%; margin-inline: auto;
+  width: var(--measure, 64rem); max-width: 100%; margin-inline: 0;
   container-type: inline-size;
   display: grid; gap: 0 2.5rem;
   /* Both of these used to be inside the query below and neither may stay there,
@@ -787,8 +798,8 @@ article.record .editbar + .commitbar[hidden] { display: flex; visibility: hidden
    draws nothing. */
 article.record .editbar + .commitbar[hidden] button { display: inline-block; }
 /* `.editbar` is the shell's. It was written here, and the table — which wears the
-   class on the row holding its only create action — does not load this
-   stylesheet. */
+   class on the row that used to hold its create action and now holds only the
+   count — does not load this stylesheet. */
 
 dl { display: grid; grid-template-columns: 11rem minmax(0, 1fr); gap: .45rem 1rem; margin: 1rem 0; }
 dt { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
@@ -985,13 +996,15 @@ textarea.body-field { min-height: var(--writing, 60vh); resize: vertical; }
    the reading measure is the only width this box is ever drawn at.
    `max-width: 100%` for the same reason `.panes` carries it — a narrow window
    caps the measure rather than growing a horizontal scrollbar. And
-   `margin-inline: auto` for the same reason too, which is the whole of what
-   "keeps the column" means: this bar is drawn under the document and has to
-   start where the document starts, so it centres exactly as `.panes` does and
-   moves with it if that choice is ever revisited. Pinned left while the column
-   was centred it sat 168px to its left, which is what
-   `test_the_promotion_bar_keeps_the_column_it_sits_under` measured. */
-#promote { width: var(--measure, 64rem); max-width: 100%; margin-inline: auto;
+   `margin-inline` for the same reason too, which is the whole of what "keeps the
+   column" means: this bar is drawn under the document and has to start where the
+   document starts, so it is written with the same value `.panes` carries and it
+   moved with it when that value changed. Centred while the column was pinned
+   left it would sit 168px to its right — the same measurement
+   `test_the_promotion_bar_keeps_the_column_it_sits_under` makes, which is of the
+   two left edges against each other and not of either one against the page, so
+   it holds whichever way the pair is aligned. */
+#promote { width: var(--measure, 64rem); max-width: 100%; margin-inline: 0;
            display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap;
            border-top: 1px solid var(--line); margin-top: 1.5rem; padding-top: 1rem; }
 .record.editing #promote { display: none; }

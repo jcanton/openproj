@@ -25,7 +25,19 @@ from browser import chrome, measured_in
 from fastapi.testclient import TestClient
 from pages import elements
 from test_store import commit_directly
-from test_web import ANN, PATH, SECRET, SEED, TASK, file_at, git_head, head, save
+from test_web import (
+    ANN,
+    DONE,
+    OTHER,
+    PATH,
+    SECRET,
+    SEED,
+    TASK,
+    file_at,
+    git_head,
+    head,
+    save,
+)
 
 from openproj.auth import sign_session
 from openproj.web import SESSION_COOKIE, create_app
@@ -3747,6 +3759,123 @@ return answers;
 """
 
 
+# A save made from the split view, driven through the page's own `save()`. The
+# body is changed first because `save()` answers "nothing changed" and returns
+# without writing anything otherwise — a green run over a save that never
+# happened is exactly the vacuous pass this file keeps finding.
+_SAVING_FROM_A_VIEW = """
+(async () => {
+  chooseView('both');
+  const box = document.querySelector('[name=body]');
+  box.value = 'A paragraph typed in the split view.\\n';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  await save();
+  return {view: VIEW, reloads: __reloads()};
+})()
+"""
+
+# What the page does with the word the save before it left behind. Through `VIEW`
+# and `classList.contains`, which is what the page itself writes and reads: the
+# shim has no `click()` on an element and its `classList` is not iterable, and a
+# test that needs either is a test about the harness.
+_WHERE_IT_LANDS = """
+(() => {
+  const article = document.querySelector('article.record');
+  return {view: VIEW, editing: article.classList.contains('editing'),
+          split: article.classList.contains('view-both')};
+})()
+"""
+
+
+def test_saving_keeps_the_view_it_was_saved_from(client: TestClient):
+    """jcanton, 2026-08-25: "currently clicking save in the editor exits edit
+    mode and sends you back to preview, let's change that and stay in whatever
+    mode the user is in (edit or side-by-side)".
+
+    The reload itself is not the thing to remove — the read view under the box is
+    HTML the server rendered at the commit the page loaded at, and a save that
+    does not reload leaves the document and the facts as they were. What the
+    reload threw away was the mode, and this drives both halves of carrying it
+    across: the save writes the word, and the page that comes up reads it.
+
+    Driven rather than read off the source, because the two halves are in two
+    script blocks that never run in the same order they are written in, and a
+    grep for `keepView` would pass on a page where nothing calls it.
+
+    `chooseView` rather than a click on the segment: the node shim has no
+    `click()` on an element, and the segment is not what this is about —
+    `test_opening_a_session_moves_nothing_above_the_document` drives the buttons
+    in a real browser. What this needs is a live session in a named view, which
+    is what the function the button calls does.
+    """
+    from test_injection import run_js
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+
+    saving = run_js(
+        page, _SAVING_FROM_A_VIEW, page=True,
+        replies=[{"status": 200, "json": {"commit": "0" * 40}}],
+    )
+    assert not saving["errors"], saving["errors"]
+    assert saving["value"]["reloads"] == 1, (
+        f"the save did not reload, so this test drove nothing: {saving['value']}"
+    )
+    assert saving["tabbed"].get("openproj:resumed") == "both", (
+        "a save from the split view left nothing behind saying so, so the page "
+        f"it reloads into cannot come back to it: {saving['tabbed']}"
+    )
+
+    # And the page that comes up. Not the same run — a reload is a new document
+    # with a new script, which is the whole reason this goes through the tab's
+    # own store rather than through a variable.
+    landed = run_js(
+        page, _WHERE_IT_LANDS, page=True, session={"openproj:resumed": "both"}
+    )
+    assert not landed["errors"], landed["errors"]
+    assert landed["value"] == {"view": "both", "editing": True, "split": True}, (
+        f"the reloaded page did not come back into the split: {landed['value']}"
+    )
+    assert "openproj:resumed" not in landed["tabbed"], (
+        "the word survived the page that read it, so the next record this tab "
+        "opens will open as an editor"
+    )
+
+    # The control, and it is what every load that did not just save gets: no
+    # word, no session, the landing. Without this the test above passes on a
+    # page that opens the split for everybody.
+    ordinary = run_js(page, _WHERE_IT_LANDS, page=True)
+    assert ordinary["value"] == {"view": "view", "editing": False, "split": False}, (
+        f"a page nobody saved from opened in a session: {ordinary['value']}"
+    )
+
+
+def test_a_link_beats_the_view_a_save_left_behind_and_still_spends_it(
+    client: TestClient,
+):
+    """The one-shot is read before the branch that might not want it.
+
+    `?view` is somebody handing you a way of looking at this document and it wins
+    — that rule is older than this key. What the rule cannot be allowed to do is
+    leave the word in the tab: a save whose landing was overruled by a link would
+    otherwise open an editor over the NEXT record this tab visits, which is the
+    sticky-at-load behaviour the load branch is written to avoid.
+    """
+    from test_injection import run_js
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    got = run_js(
+        page, _WHERE_IT_LANDS, page=True,
+        session={"openproj:resumed": "both"}, here=f"/detail/{TASK}?view",
+    )
+    assert not got["errors"], got["errors"]
+    assert got["value"] == {"view": "view", "editing": False, "split": False}, (
+        f"the link did not win the argument with the saved view: {got['value']}"
+    )
+    assert "openproj:resumed" not in got["tabbed"], (
+        "the saved view lost the argument and stayed in the tab anyway"
+    )
+
+
 def test_the_room_s_own_save_ends_the_session_by_leaving_the_page():
     """How a room's save ends the session, read out of the product.
 
@@ -3760,6 +3889,12 @@ def test_the_room_s_own_save_ends_the_session_by_leaving_the_page():
 
     The claim below — that ending a session by any door leaves the surface — is
     unchanged and still worth driving: Cancel and the view toggle are doors too.
+
+    Since 2026-08-25 the reload is no longer how the session ENDS: `keepView`
+    carries the mode across it, so a save from the split view comes back into the
+    split (`test_saving_keeps_the_view_it_was_saved_from`). What this test says is
+    narrower than its name and always was — the branch reloads, and it does not
+    grow a fourth copy of leaving the surface — and both are still true.
     """
     from openproj.render import _COEDIT
 
@@ -4051,6 +4186,99 @@ def test_opening_a_session_moves_nothing_above_the_document(
             f"in the {view} view the switcher does not start where the nav "
             f"starts: {views} against {nav}"
         )
+
+
+# Where the column STARTS, which every test above this one is blind to: they
+# compare a box against itself in three views, and a box that is in the same
+# wrong place in all three passes every one of them. The header moved to the
+# page's left padding on 2026-08-24 and the document below it stayed centred,
+# which is the shape jcanton looked at on 2026-08-25 — "you were right that left
+# aligning the edit header and centering the body and fields looks awkward. let's
+# left align everything in the editor".
+_THE_COLUMN_STARTS_LEFT = _STUB_PREVIEW + """
+const box = sel => {
+  const b = document.querySelector(sel).getBoundingClientRect();
+  return {left: Math.round(b.left), width: Math.round(b.width)};
+};
+// The document's own column and the box inside it: `.panes` is the measure and
+// `.panes > .main` is the document that rides it.
+const COLUMN = ['.panes', '.panes > .main'];
+const seen = () => ({
+  nav: box('body > nav'),
+  h1: box('article.record h1'),
+  ...Object.fromEntries(COLUMN.map(sel => [sel, box(sel)])),
+});
+// Measured on the landing alone, because `.record.editing #promote` takes the
+// bar off the page for the whole of a session — a rect of zeroes in the other
+// two views would be a measurement of nothing dressed as a failure.
+const landing = {...seen(), promote: box('#promote')};
+document.getElementById('view-edit').click();
+await new Promise(go => setTimeout(go, 150));
+const writing = seen();
+document.getElementById('view-both').click();
+await new Promise(go => setTimeout(go, 150));
+const split = seen();
+return {landing, writing, split, column: COLUMN};
+"""
+
+
+def test_the_document_starts_where_its_own_title_starts(
+    client: TestClient, tmp_path: Path
+):
+    """One left edge for the whole page, in all three views.
+
+    The measure below the line is unchanged — the column is still `--measure`
+    wide and still grows by one body in the split — and only where it begins has
+    moved. Centred, it began 168px in from the title above it at 1400px, and it
+    began somewhere different in the split, because a centred box whose width
+    changes has a left edge that changes with it: opening side-by-side slid the
+    document's first character half a body width left while the header it sits
+    under held still. Both are the same defect and this asserts them as one
+    number.
+
+    Asked on a NOTE and through the write path for the reason
+    `test_the_promotion_bar_keeps_the_column_it_sits_under` is: `#promote` is
+    drawn on a promotable record and a task is not one, and it is the third box
+    that has to share this edge — on the landing, which is the only view it is
+    on the page in.
+
+    1400px, because it is the window where the column and the page are different
+    widths — at 700 the measure is capped by `max-width: 100%` and every box
+    here starts at the same place whatever the rule says, which is a green test
+    that has looked at nothing.
+    """
+    made = client.post("/api/record", json={
+        "base_commit": head(client),
+        "body": "The seam is not where we thought it was.",
+        "fields": {"kind": "note", "title": "A note whose column starts left"},
+    })
+    assert made.status_code == 201, made.text
+    page = client.get(f"/detail/{made.json()['id']}{PLAIN}").text
+    assert '<div id="promote">' in page, "the note's page has no promotion bar to measure"
+
+    got = measured_in(
+        chrome(), page, tmp_path / "column-left.html", 1400,
+        _THE_COLUMN_STARTS_LEFT, patience=3000,
+    )
+    assert got["landing"][".panes"]["width"] < got["landing"]["nav"]["width"], (
+        "the column is already the page's width at 1400px, so this test cannot "
+        f"tell left from centred: {got['landing']}"
+    )
+    for view in ("landing", "writing", "split"):
+        nav = got[view]["nav"]
+        assert got[view]["h1"]["left"] == nav["left"], (
+            f"in the {view} view the title is not at the page's left edge: "
+            f"{got[view]['h1']} against {nav}"
+        )
+        for name in got["column"]:
+            assert got[view][name]["left"] == nav["left"], (
+                f"in the {view} view {name} does not start where the title and "
+                f"the nav start: {got[view][name]} against {nav}"
+            )
+    assert got["landing"]["promote"]["left"] == got["landing"]["nav"]["left"], (
+        "the promotion bar under the document does not start where the document "
+        f"does: {got['landing']['promote']} against {got['landing']['nav']}"
+    )
 
 
 # The other side of the line jcanton drew, and the box that is not `.panes`.
@@ -6601,3 +6829,391 @@ def test_a_stranded_save_raises_the_alarm_on_a_tab_that_missed_every_frame(clien
     assert got["reloads"] == 0, (
         "nobody here pressed Save, so nothing above may tear the page down"
     )
+
+
+# --- linking one record from another's document ------------------------------
+
+
+# The two pure functions the completion is decided by, driven where they live.
+# Neither reaches the surface, so neither needs Ace — and both are exactly where
+# a wrong answer is silent: a popup that opens on a checklist's brackets, or a
+# title that closes the handle it was written into.
+_WHERE_A_LINK_OPENS = """
+(() => {
+  const asked = [
+    // The ordinary case: a bracket on this line, with a name half typed.
+    ['See [Port', 9],
+    // Closed, so the caret is past the handle rather than inside it.
+    ['See [Port]', 10],
+    ['See [Port](task-0a1001) and more', 32],
+    // An image is not a link and has nothing to offer.
+    ['![a figure', 10],
+    // A bracket on the line above is not one somebody is in the middle of
+    // writing. A checklist body is full of these.
+    ['- [x] shaped it\\nand now ', 24],
+    // Nothing typed yet, which is the moment the popup should open on.
+    ['[', 1],
+  ];
+  return {
+    handles: asked.map(([text, at]) => {
+      const found = openHandle(text, at);
+      return found === null ? null : [found.open, found.typed];
+    }),
+    // A title is document text and the two characters that end a handle are
+    // escaped rather than dropped.
+    texts: [
+      linkText({value: 'task-0a1001', label: 'Fix [the] bracket'}),
+      linkText({value: 'task-0a1001', label: 'A back\\\\slash'}),
+      linkText({value: 'task-0a1001', label: ''}),
+    ],
+    // And the other shape the body completes: a word with a slash or a hash in
+    // it. Ordinary prose has neither, which is the whole of why the trigger can
+    // be this cheap — and a word that has one and completes nothing closes the
+    // popup on the next keystroke rather than being guarded against here.
+    refs: [
+      ['See gt4py', 9],
+      ['See GridTools/', 14],
+      ['See C2SM/icon4py#14', 19],
+      ['a sentence ending in a full stop.', 33],
+      // Two words back is not the word being typed.
+      ['C2SM/icon4py#1403 and then', 26],
+    ].map(([text, at]) => {
+      const found = openRef(text, at);
+      return found === null ? null : found.typed;
+    }),
+  };
+})()
+"""
+
+
+def test_the_body_knows_which_reference_is_being_typed(client: TestClient):
+    """Where the completion decides to open, and what it writes.
+
+    Three one-line functions, all three silent when wrong. A popup that opened on
+    any `[` would open on every point of every checklist — `- [x]` is what a
+    pitch's Progress section is made of. A title carrying a `]` would close the
+    handle early and leave the rest of somebody's record name as prose beside a
+    broken link. And a PR trigger looser than "this word has a slash or a hash in
+    it" would put a popup over ordinary writing.
+    """
+    from test_injection import run_js
+
+    got = run_js(client.get(f"/detail/{TASK}{PLAIN}").text, _WHERE_A_LINK_OPENS, page=True)
+    assert not got["errors"], got["errors"]
+    assert got["value"]["handles"] == [
+        [4, "Port"],
+        None,
+        None,
+        None,
+        None,
+        [0, ""],
+    ], got["value"]["handles"]
+    assert got["value"]["texts"] == [
+        "Fix \\[the\\] bracket",
+        "A back\\\\slash",
+        # No title at all: the id, because a link with no text is a link nobody
+        # can see.
+        "task-0a1001",
+    ], got["value"]["texts"]
+    assert got["value"]["refs"] == [
+        None, "GridTools/", "C2SM/icon4py#14", None, None,
+    ], got["value"]["refs"]
+
+
+def test_only_a_page_with_a_document_carries_the_list_of_linkable_records(
+    client: TestClient,
+):
+    """The widening jcanton asked for, and the two places it must not reach.
+
+    He asked for it in `records`: "include all records in SUGGEST.records, put
+    issues and notes in there too and use that". `records` is what completes
+    `parent` and `depends_on` — offering an issue there offers an edge the model
+    refuses, which the comment beside that key has said since it was written —
+    and the same blob ships to /table, where an inbox id in the bytes is the leak
+    `test_exclusion.py` exists to catch. So the widening is a second key in the
+    same blob, built by the same function, and only the two pages that carry a
+    document being written ask for it.
+    """
+    import json
+
+    def blob(page: str) -> dict:
+        found = re.search(
+            r'<script id="suggest" type="application/json">(.*?)</script>', page, re.S
+        )
+        assert found, "the page carries no suggestion blob"
+        return json.loads(found.group(1))
+
+    # The corpus this file serves is five planned records and nothing else, so
+    # the inbox half of the claim is seeded here rather than assumed — through
+    # the write path, which is also what proves the list follows the plan rather
+    # than a snapshot of it.
+    made = client.post("/api/record", json={
+        "base_commit": head(client),
+        "body": "Somebody noticed this in a meeting.\n",
+        "fields": {"kind": "note", "title": "A note worth citing", "written_by": "ann"},
+    })
+    assert made.status_code == 201, made.text
+    noted = made.json()["id"]
+
+    detail = blob(client.get(f"/detail/{TASK}").text)
+    linkable = {value["value"] for value in detail["linkable"]}
+    assert noted in linkable, (
+        f"the link list holds no inbox record, so the widening did nothing: {sorted(linkable)}"
+    )
+    assert {value["value"] for value in detail["records"]} < linkable, (
+        "the link list is not wider than the plan-only one it was widened from"
+    )
+    assert noted not in {value["value"] for value in detail["records"]}, (
+        "an inbox record reached the list that completes `parent` and `depends_on`"
+    )
+
+    table = client.get("/table").text
+    assert "linkable" not in blob(table), (
+        "the table's blob carries the link list, so every inbox id it names is in "
+        "the bytes of a plan page"
+    )
+    assert noted not in table, "an inbox id reached a plan page"
+
+
+_COMPLETING_A_LINK = r"""
+  flipEditing();
+  await new Promise(r => setTimeout(r, 500));
+  const editor = SURFACE.editor;
+  const open = () => document.querySelector('ul.suggest:not([hidden])');
+  const shown = () => { const list = open(); return list
+    ? [...list.children].map(item => item.dataset.value) : null; };
+  // Ace's own entry point for a key, one level under the DOM:
+  // `keyBinding.onCommandKey` is what its `keydown` listener calls, and it
+  // answers whether some handler in the chain took the key. It is asked here
+  // rather than dispatching a `KeyboardEvent`, because `keyCode` is not
+  // settable through `KeyboardEventInit` in Chrome and a test that has to
+  // `defineProperty` its way past that is testing its own workaround.
+  const key = code => !!editor.keyBinding.onCommandKey(
+    {preventDefault() {}, stopPropagation() {}}, 0, code);
+
+  editor.focus();
+  editor.navigateFileEnd();
+  // Typed through the editor, so the popup opens the way it does for a person
+  // rather than because a test called the function that draws it. The bracket
+  // alone first: nothing typed yet is when the whole plan is on offer, and it is
+  // what makes the narrowing below a comparison rather than a single number.
+  editor.insert('\nSee [');
+  await new Promise(r => setTimeout(r, 250));
+  const opened = shown();
+  const placed = (() => {
+    const list = open();
+    const caret = document.querySelector('.acebox .ace_cursor');
+    if (!list || !caret) return null;
+    const box = list.getBoundingClientRect(), at = caret.getBoundingClientRect();
+    return {left: Math.round(box.left - at.left), under: Math.round(box.top - at.bottom)};
+  })();
+
+  // And then the title, which is what the completion is on.
+  editor.insert('Verify');
+  await new Promise(r => setTimeout(r, 250));
+  const narrowed = shown();
+
+  // Back to the whole plan, so the arrow below has more than one row to move
+  // between whatever the corpus happens to hold.
+  for (let i = 0; i < 6; i++) editor.remove('left');
+  await new Promise(r => setTimeout(r, 250));
+
+  // Down moves the highlight and the key does not reach the document.
+  const wasLines = editor.session.getLength();
+  const tookDown = key(40);
+  await new Promise(r => setTimeout(r, 60));
+  const highlighted = open()
+    ? [...open().children].findIndex(item => item.classList.contains('on')) : -1;
+
+  const tookReturn = key(13);
+  await new Promise(r => setTimeout(r, 200));
+  const written = SURFACE.text();
+  const closed = shown();
+  // And with nothing open, the same key is not claimed at all — which is the
+  // half that says this sits in front of Ace's command table without taking a
+  // single key away from writing.
+  const tookWhenClosed = key(13);
+
+  return {opened, narrowed, placed, highlighted, tookDown, tookReturn, closed,
+          tookWhenClosed,
+          lines: [wasLines, editor.session.getLength()],
+          tail: written.slice(written.lastIndexOf('\nSee '))};
+"""
+
+
+def test_the_second_editor_completes_a_link_to_a_record(
+    client: TestClient, tmp_path: Path
+):
+    """jcanton, 2026-08-25: "I'd like to have links to other records in the body
+    of a record, with autofill functioning when adding the link" — and, asked
+    which surface, "only ace editor. autofill the title with autocompletion and
+    then automatically place the (id)".
+
+    So: the popup completes on the title, and what it writes is `[Title](id)`.
+
+    In Chrome and not in the node shim, because every part of this is Ace's. The
+    popup is placed against Ace's own drawn cursor — the shim answers `[]` for
+    every `getClientRects` — and the keys are claimed through Ace's keyboard
+    chain, which is the whole reason the capability exists: `attachEditing`'s own
+    comment records that Ace's `stopEvent` calls `stopPropagation`, so Return and
+    the arrows never reach a DOM listener on the host.
+
+    `tookWhenClosed` is the assertion this feature could most easily be wrong in
+    the invisible direction. A handler that claims Return whenever it is on the
+    page takes the newline away from everybody writing, and nothing would say so
+    except somebody trying to start a paragraph.
+
+    The same popup completes a pull request reference — see
+    `test_the_second_editor_completes_a_pull_request_in_the_body`. One widget,
+    two things it recognises, and what it recognises them by is
+    `test_the_body_knows_which_reference_is_being_typed`.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "linking.html", 1400, _COMPLETING_A_LINK,
+        query="?editor=ace", patience=6800,
+    )
+
+    assert got["opened"] and len(got["opened"]) > 1, (
+        f"typing `[` opened no list of records: {got}"
+    )
+    assert all(value.split("-")[0] in {"prod", "proj", "pitch", "task", "issue", "note"}
+               for value in got["opened"]), got["opened"]
+    # The completion is on the TITLE, which is the half of the ask that a list
+    # of everything cannot show: `Verify` is a word in one record's name and in
+    # no record's id.
+    assert got["narrowed"] == ["pitch-b20000"], (
+        f"typing a title did not narrow the list to the record it names: {got['narrowed']}"
+    )
+    assert got["placed"] and abs(got["placed"]["left"]) <= 2, (
+        f"the list is not under the caret it completes: {got['placed']}"
+    )
+    assert 0 <= got["placed"]["under"] <= 8, (
+        f"the list is not against the caret's line: {got['placed']}"
+    )
+
+    assert got["tookDown"] and got["highlighted"] == 1, (
+        f"the arrow key did not move the highlight: {got}"
+    )
+    assert got["tookReturn"], "Return did not reach the popup"
+    assert got["closed"] is None, "the list stayed open after inserting"
+    assert got["lines"][0] == got["lines"][1], (
+        f"a claimed key reached the document as well: {got['lines']}"
+    )
+    assert re.fullmatch(
+        r"\nSee \[[^\]]+\]\((?:prod|proj|pitch|task|issue|note)-[0-9a-f]{6}\)",
+        got["tail"],
+    ), (
+        f"what was written is not a title and an id: {got['tail']!r}"
+    )
+    assert not got["tookWhenClosed"], (
+        "Return is claimed with no list open, so this popup has taken the newline "
+        "away from everybody writing a paragraph"
+    )
+
+
+_COMPLETING_A_PULL_REQUEST = r"""
+  flipEditing();
+  await new Promise(r => setTimeout(r, 500));
+  const editor = SURFACE.editor;
+  const open = () => document.querySelector('ul.suggest:not([hidden])');
+  const shown = () => { const list = open(); return list
+    ? [...list.children].map(item => item.dataset.value) : null; };
+  const key = code => !!editor.keyBinding.onCommandKey(
+    {preventDefault() {}, stopPropagation() {}}, 0, code);
+  const line = () => SURFACE.text().split('\n').pop();
+
+  editor.focus();
+  editor.navigateFileEnd();
+  // A word with no slash and no hash in it: prose, and nothing to complete.
+  editor.insert('\nSee gt4py');
+  await new Promise(r => setTimeout(r, 250));
+  const overProse = shown();
+
+  // The repository, half typed. Both what is in it: the bare `org/repo#`, which
+  // is the half nobody remembers, and the reference already cited in the plan.
+  for (let i = 0; i < 5; i++) editor.remove('left');
+  editor.insert('GridTools/');
+  await new Promise(r => setTimeout(r, 250));
+  const onRepo = shown();
+
+  // Taking the bare one leaves the number to be typed, so the popup stays.
+  const tookRepo = key(13);
+  await new Promise(r => setTimeout(r, 250));
+  const afterRepo = {line: line(), list: shown()};
+
+  editor.insert('1877');
+  await new Promise(r => setTimeout(r, 250));
+  const narrowed = shown();
+  const tookRef = key(13);
+  await new Promise(r => setTimeout(r, 250));
+  const afterRef = {line: line(), list: shown()};
+
+  // And the other repository, reached from the half of the name that is not the
+  // organisation — the list matches on the whole reference.
+  editor.insert(' and icon4py#');
+  await new Promise(r => setTimeout(r, 250));
+  const other = shown();
+  return {overProse, onRepo, tookRepo, afterRepo, narrowed, tookRef, afterRef, other};
+"""
+
+
+def test_the_second_editor_completes_a_pull_request_in_the_body(
+    client: TestClient, tmp_path: Path
+):
+    """jcanton, 2026-08-25, asked whether the autofill reaches pull requests from
+    the two repositories this plan is about — "ideally both in the PRs field as
+    well as in the body".
+
+    The field has completed them since `_suggestions` was written. The body
+    completed nothing, although `_pr_refs` has rendered `org/repo#123` in prose
+    as a link for just as long: the notation was readable and unwritable.
+
+    **What it offers is what the plan already cites**, and that is the whole
+    answer to "does it work for icon4py and gt4py". There is no live lookup —
+    every page here is inlined and reaches no network, which is the rule
+    `static/VENDOR.md` exists for — so a repository is offered once some record
+    names a pull request in it, and the bare `org/repo#` for each of those comes
+    with it. The two references below are put in through the write path rather
+    than by editing a fixture, because the write path is what a person uses.
+
+    `overProse` is the assertion this feature could most easily be wrong in the
+    annoying direction: a trigger that fired on any word would put a popup over
+    everybody's writing, and nothing but somebody complaining would say so.
+    """
+    for record, refs in (
+        (OTHER, ["C2SM/icon4py#1403"]),
+        (DONE, ["GridTools/gt4py#1877", "C2SM/icon4py#1521"]),
+    ):
+        written = client.patch(f"/api/record/{record}", json={
+            "base_commit": head(client), "fields": {"prs": refs}, "body": None,
+        })
+        assert written.status_code == 200, written.text
+
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "prs.html", 1400, _COMPLETING_A_PULL_REQUEST,
+        query="?editor=ace", patience=6800,
+    )
+
+    assert got["overProse"] is None, (
+        f"a word with no slash and no hash in it opened a popup: {got['overProse']}"
+    )
+    assert got["onRepo"] == ["GridTools/gt4py#", "GridTools/gt4py#1877"], got["onRepo"]
+    assert got["tookRepo"] and got["afterRepo"]["line"] == "See GridTools/gt4py#", (
+        f"taking the bare repository wrote something else: {got['afterRepo']}"
+    )
+    assert got["afterRepo"]["list"], (
+        "the popup closed on half a reference, so the number it left to be typed "
+        "has to be remembered rather than chosen"
+    )
+    assert got["narrowed"] == ["GridTools/gt4py#1877"], got["narrowed"]
+    assert got["tookRef"] and got["afterRef"] == {
+        "line": "See GridTools/gt4py#1877", "list": None,
+    }, got["afterRef"]
+    # The bare `org/repo#` leads, because `icon4py#` is a substring of it too —
+    # and it is the entry that is worth the most when the number is the part
+    # nobody has memorised.
+    assert got["other"] == [
+        "C2SM/icon4py#", "C2SM/icon4py#1521", "C2SM/icon4py#1403",
+    ], f"the other repository's references are not offered: {got['other']}"

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from markupsafe import Markup
+
 from ..index import Index
 from ..model import KINDS as KIND_LADDER
 from ..model import PARENT_KINDS, required_at, unread_fields
-from .controls import _FILTER_JS, _combobox_html, _facets_html
+from .controls import _FILTER_JS, _NO_ASIDE, _combobox_html, _facets_html
 from .env import _compiled
 from .rows import _row
 from .shell import STATIC, Links, _page, _titles
@@ -45,6 +47,16 @@ _TABLE_WHY = {
     "progress": "Counted from the task list in the body. Tick the boxes there.",
 }
 _TABLE_DERIVED = tuple(_TABLE_WHY)
+
+# What this view can be done to, said once, beside the search box. Three gestures
+# in one line because a page that teaches them one at a time teaches the third to
+# nobody: a drag has no name written on it anywhere, and the grip beside an id is
+# 8px of dotted rule. The `+` row at the foot of the table says what it is by
+# being a control, so it is the one that needs no sentence.
+_TABLE_HINT = Markup(
+    '<p class="hint">double-click a cell, or press Enter on it, to edit it · '
+    "drag a row by the grip beside its id onto another to file it there</p>"
+)
 
 # Every column the table draws, in the order it draws them, and whether it sorts.
 # One list rather than three: the header row, the `keys` the cells are built from
@@ -119,6 +131,13 @@ def _payload(index: Index) -> dict:
         "required": {kind: required_at(kind) for kind in _KIND_MODELS},
         # What a row that does not exist yet can be typed into, per kind.
         "new_row": _new_row_fields(),
+        # And which fields a row that already exists must not be typed into,
+        # per kind, from the same `unread_fields` the map above is built from
+        # and the validator reports from. The draft row asked this question and
+        # a stored row did not: a product's status cell was empty (`_row`
+        # withholds the value) and still opened an editor that committed
+        # `status` onto a record with no such field.
+        "unread": {kind: unread_fields(kind) for kind in _KIND_MODELS},
         # And what it holds before anybody types anything, read off the model
         # rather than written down here. The row being filled in shows the status
         # and the priority it will be created with: a blank cell that turns into
@@ -151,25 +170,31 @@ def _payload(index: Index) -> dict:
 _TABLE = """
 {#- Announced, not drawn: the lit nav item says this already. See `.sr-only`. -#}
 <h1 class="sr-only">Table</h1>
-{#- Both of these used to be on the rendered files too, where `links.new` is the
-    empty string — so the button was a link back to the page you were already on,
-    and the hint promised an editor that has no server to save to. A read-only
-    export must not offer a control that cannot work: the first time one of them
-    does nothing is the moment the rest of the page stops being believed. -#}
-{#- The count rides at the far end of this row rather than owning one below it,
-    which is the same move the graph and the timeline make — there it is the key's
-    row, here it is the page's own controls, because the table has no key and this
-    is the last row it has to offer. The instruction beside New record was already
-    inline and already costs nothing, so it stays where it is: it belongs next to
-    the control it shares a subject with. -#}
-{#- Three gestures in one line, because a page that teaches them one at a time
-    teaches the third to nobody: a drag has no name written on it anywhere, and
-    the grip beside an id is 8px of dotted rule. The `+` row at the bottom says
-    what it is by being a control. -#}
-<p class="editbar">{% if editable %}<a class="button" href="{{ links.new }}">New record</a>
-   <span class="hint">double-click a cell, or press Enter on it, to edit it ·
-     drag a row by the grip beside its id onto another to file it there</span>
-   {% endif %}<span id="state" role="status"></span><span id="summary">
+{#- **No New record button here, and no instruction beside it.** Both were in
+    this row until 2026-08-25; jcanton: "the new record button on top of the table
+    should be removed: we already have the + new row at the bottom; move the
+    description ... next to the search box so the page is consistent with the
+    timeline and graph pages".
+
+    The button was the older of two ways to bring a record into existence and the
+    weaker one: it leaves the table for a form, where the `+` row at the foot
+    creates one in place, with the plan still on screen. Two controls for one job,
+    one of them a page away, is the shape a table grows when a feature arrives
+    beside the thing it replaces rather than in it. `/new` is still a route and
+    the records list still links to it (`records.py`, per kind) — this page is
+    simply not where that door belongs, because it has one of its own inside the
+    rows. The `+` row is drawn under the empty states too, so a plan with nothing
+    in it still shows the way to put something in it. -#}
+
+{#- The instruction went to `#controls .aside`, which is where the graph and the
+    timeline already say what their view can do. It was here because it belonged
+    beside the button it shared a subject with; with the button gone it belonged
+    beside the box every one of these pages puts its own sentence next to. -#}
+{#- What is left is the count, and it keeps this row rather than owning one below
+    it — the same move the graph and the timeline make, where it rides the key's
+    row. `#state` is beside it because a save's receipt belongs where the count it
+    changes is. -#}
+<p class="editbar"><span id="state" role="status"></span><span id="summary">
   {#- Two numbers, because the count is of problems and the link filters
       records: "3 blocking problems" opening a table of 2 rows is the exact way
       a count stops being believed. The second number is the one the link keeps
@@ -469,12 +494,23 @@ function shown(row, key) {
   // are separable but not nameable — the graph has said `»` for in-progress since
   // the day it was drawn and the table said nothing, so the two views keyed one
   // fact differently.
+  //
+  // Guarded on the value, exactly as `priority` below is, and it was the one of
+  // the pair that was not: a rung that reads no status arrives with `null` here
+  // (`unread_fields`, applied in `_row`), and an unguarded chip drew the ladder's
+  // ground colour behind an empty word — a product wearing a status it does not
+  // have and cannot be given. jcanton, 2026-08-25: "a product has no status, but
+  // in the table the status cell has a chip with background and color, that
+  // should not be there".
   if (key === 'status')
-    return `<span class="chip ${stClass(row.status)}">` +
-      `<span class="chipmark" aria-hidden="true">${esc(GLYPHS[row.status] || '')}</span>` +
-      // The word in its own element so a narrow column can drop it and keep the
-      // mark. A bare text node cannot be hidden without hiding the mark with it.
-      `<span class="chipword">${esc(human(row.status))}</span></span>`;
+    return row.status
+      ? `<span class="chip ${stClass(row.status)}">` +
+        `<span class="chipmark" aria-hidden="true">${esc(GLYPHS[row.status] || '')}</span>` +
+        // The word in its own element so a narrow column can drop it and keep
+        // the mark. A bare text node cannot be hidden without hiding the mark
+        // with it.
+        `<span class="chipword">${esc(human(row.status))}</span></span>`
+      : '';
   // Bars and the word. The bars are what the eye picks out of a column of
   // fifteen rows; the word is what settles which rung it is. Priority was text
   // alone here while the graph drew it as line thickness — one fact, two views,
@@ -627,10 +663,16 @@ function cell(row, key, place) {
   // link keeps the whole of the cell's content box: the indent is padding on the
   // cell, which is what puts it in the fit's measurement of the column.
   const rungs = key === 'title' && place ? place.rungs.join(' ') : '';
-  const body = treeHtml(rungs) + (CLAMPED.has(key)
-    ? `<span class="clamped">${shown(row, key)}${glyph}</span>`
-    : shown(row, key) + glyph);
-  const editable = EDITABLE && key in EDITABLE;
+  // Nothing to clamp is nothing to wrap. The four clamped columns wrapped
+  // unconditionally, so every row with no assignees, no reviewers, no PRs and no
+  // tags carried four empty `<span class="clamped">`s — inert, and a lie to
+  // anything that asks what a cell holds: a product row that reads as empty was
+  // drawing four of them, which is how `test_a_products_row_is_empty_...` found
+  // this while looking for a chip.
+  const inner = shown(row, key) + glyph;
+  const body = treeHtml(rungs)
+    + (CLAMPED.has(key) && inner ? `<span class="clamped">${inner}</span>` : inner);
+  const editable = EDITABLE && key in EDITABLE && reads(row, key);
   // One class list rather than three returns. The tags clamp used to be written
   // only into the editable branch, so on a rendered file the column kept the
   // reveal button and showed every tag beside it anyway.
@@ -1046,6 +1088,22 @@ let WRITING = null;
 // simply stay empty.
 const UNLANDED = new Map();
 const STRANDED = new Map();
+
+// Which fields a row's own kind does not read. `_row` already withholds their
+// VALUES, so the cells were empty; what they still carried was an editor. A
+// product's status cell was blank, double-clickable, tooltipped "Double-click to
+// edit status", and on Enter it wrote `status` into a file whose model has no
+// such field — a write the validator then reports as a blocker on a record
+// nobody meant to break. The draft row has declined to offer these since
+// `_new_row_fields` was written; a stored row is the copy that did not.
+//
+// Outside the `editable` branch below because a rendered file has no `EDITABLE`
+// at all and `cellHtml` reads both: one of them being null is what makes every
+// cell plain text there, and this must not throw before it gets there.
+const UNREAD = DATA.unread || {};
+// One question, asked in the one place that decides whether a cell has an editor
+// and in the tooltip that promises one.
+const reads = (row, key) => !(UNREAD[row.kind] || []).includes(key);
 
 {% if not editable %}
 // A rendered file has no server to save to, so the table is a table.
@@ -3742,7 +3800,21 @@ def render_table(
         # in the language the rest of this file's drawings are written in.
         marks=DRAFT_MARKS,
         why=_TABLE_WHY,
-        facets=_facets_html(index.facets, titles=_titles(index)),
+        # The sentence about this view, in the slot the graph and the timeline
+        # already put theirs in — jcanton, 2026-08-25, asking for the table to be
+        # "consistent with the timeline and graph pages". It moved out of the row
+        # above with the New record button it was written beside.
+        #
+        # Only where the gestures exist. On a rendered file there is no server to
+        # save to and no editor to double-click into, so the sentence would
+        # promise two things the page cannot do — the same rule the button it
+        # sat next to was already held to, and the reason both were inside an
+        # `{% if editable %}` rather than in the markup unconditionally.
+        facets=_facets_html(
+            index.facets,
+            aside=_TABLE_HINT if base_commit is not None and may_write else _NO_ASIDE,
+            titles=_titles(index),
+        ),
         filters=_FILTER_JS,
         combobox=_combobox_html(index),
     )

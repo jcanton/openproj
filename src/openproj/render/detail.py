@@ -712,6 +712,53 @@ BODY.addEventListener('openproj:escaped', event => {
 const VIEW_ASKED = new URLSearchParams(location.search);
 const VIEW_LINKED = VIEWS.find(name => VIEW_ASKED.has(name)) || null;
 
+// --- the view a Save comes back into -----------------------------------------
+//
+// Both save paths end in `location.reload()`, and they have to: the read view
+// under the box is HTML the server rendered at the commit this page LOADED at,
+// so closing the editor without reloading leaves the document and the facts as
+// they were until somebody refreshes. What the reload cost was the mode —
+// nothing in the reloaded page says a session was open, so every Save landed on
+// the preview. jcanton, 2026-08-25: "currently clicking save in the editor exits
+// edit mode and sends you back to preview, let's change that and stay in
+// whatever mode the user is in (edit or side-by-side)".
+//
+// **A one-shot handed across the reload, not the stored preference.**
+// `EDITOR.mode` is what a session opens in and is deliberately not applied at
+// load (see the branch below) — reading it here would open a session on every
+// record anybody visited after once pressing the split. This says something
+// narrower and true of exactly one page load: the page before this one was in a
+// session, in this tab, and it reloaded itself.
+//
+// **In `forThisTab` and not in `remembered`.** The reload is this tab's; a save
+// here must not open an editor in the other tab that happens to load a record
+// next. That is the one thing this key does differently from `SAID` beside it.
+const RESUMED = 'openproj:resumed';
+
+// Read once and forgotten, before the branch rather than inside it: a link wins
+// the argument below, and a one-shot that survives losing it fires on the next
+// page this tab opens instead.
+const RESUMING = (() => {
+  const held = forThisTab.get(RESUMED);
+  forThisTab.forget(RESUMED);
+  // Only the two session views. `view` is the landing and is what a page does
+  // anyway, and anything else is a hand-edited entry.
+  return held === 'edit' || held === 'both' ? held : null;
+})();
+
+// Called by both save paths immediately before their reload, and by nothing
+// else. Declared here, beside the key and the branch that reads it, so the two
+// halves of this cannot drift; the scripts that call it run earlier on the page
+// and later in time, which is the same arrangement `SAID` already has with the
+// room's save.
+//
+// The create form is deliberately not a caller. Its Save navigates to a record
+// that did not exist a moment ago rather than reloading the page you were on,
+// and landing on it in the read view is how you check what you just made.
+function keepView() {
+  if (VIEW === 'edit' || VIEW === 'both') forThisTab.set(RESUMED, VIEW);
+}
+
 // And then the remembered one, which is the second half of the preference this
 // stage carries. Two decisions in it, and both are arguments rather than
 // defaults:
@@ -730,6 +777,10 @@ if (VIEW_LINKED) {
   // the session they are views of — including for the editor switch, which
   // re-adds the flag when it reloads so the session survives the navigation.
   showView(VIEW_LINKED);
+} else if (RESUMING) {
+  // This tab saved and reloaded itself a moment ago. It goes back into the view
+  // it was in, which is the whole of what `keepView` above wrote down.
+  showView(RESUMING);
 } else if (VIEW_ARTICLE.classList.contains('editing')) {
   // A session that existed before this script ran: a restored draft — the one
   // place where landing does not mean sessionless — or the create form, which
@@ -1279,6 +1330,13 @@ const TITLED = document.querySelector('.title-field');
 const SURFACE = bodySurface(BODY);
 attachUploads(SURFACE, document.getElementById('upload'));
 attachEditing(SURFACE, document.getElementById('marks'));
+// A `[` in the document offers the records it could point at, and a word with a
+// slash or a hash in it offers the pull requests. No element of its own: the
+// popup hangs off the body and the caret it sits under is the surface's to
+// report, so this one takes the surface and nothing else. It returns without
+// drawing anything on the plain box, which has no caret to report — see
+// `attachBodyCompletion`.
+attachBodyCompletion(SURFACE);
 attachGutter(SURFACE, document.getElementById('gutter-note'));
 attachStatus(SURFACE, document.getElementById('statusbar'));
 // The commit this page was rendered at, and what every save is compared against.
@@ -1686,6 +1744,8 @@ async function save() {
     if (!response.ok) { announce(refusal(answer, response.status)); return; }
     committed = answer.commit;
     forgetDraft();
+    // The mode survives the reload the commit needs. See `keepView` in `_VIEWS`.
+    keepView();
     location.reload();
   } catch (error) {
     // The same missing `catch` as the uploader's, and worse, because this is the
@@ -2788,7 +2848,9 @@ def render_detail(
         may_write=may_write,
         base_commit=base_commit or "",
         statuses=STATUSES,
-        combobox=_combobox_html(index),
+        # `linkable=True`: this is a page with a document being written in it, so
+        # the blob carries the list `attachBodyCompletion` completes records from.
+        combobox=_combobox_html(index, linkable=True),
         required=_REQUIRED_JS,
         hill=_HILL_JS,
         viewbar=_viewbar(_editing_possible(base_commit, may_write)),
