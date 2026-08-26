@@ -2728,17 +2728,25 @@ function drawnColumns(natural, keys, room) {
   // still were wider than the box they hold still inside, so scrolling right
   // moved nothing into view because there was no view left to move it into.
   //
-  // So the rule is about the reader and not about the fit: **what holds still may
-  // not take more than half of what there is.** Above that there is more frozen
-  // than scrollable and the sideways scroll stops being worth doing. Half is a
-  // judgement and it is the only one here; everything else is measurement.
+  // So the rule is about the reader and not about the fit: **what holds still
+  // must leave at least a third of the box to scroll into.** Below that the
+  // frozen pair has stopped being a way to keep your place and become the view.
+  // The fraction is the only judgement here; everything else is measurement.
+  //
+  // Two thirds and not half, and CI is why the number is written down rather
+  // than chosen. At half, a 700px window sheds the id: the pair is 372px of 660
+  // and `test_the_header_and_the_frozen_pair_hold_when_the_rows_are_tall` drives
+  // exactly that window, so a test about scrolling a tall table failed on a
+  // column that had gone. Nothing was wrong at 700 — 372 of 660 leaves 288px to
+  // scroll into, which is four columns. At two thirds the rule bites below about
+  // 558px of room, which is a window under 600.
   //
   // Asked of the same `minimumWidth` the fit is decided by, so the pair is
   // measured the way it will be drawn — the title on its floor where the room is
   // tight, and at its natural width where it is not.
   const frozen = drawn.filter(one => FROZEN.includes(one[0]));
-  if (minimumWidth(frozen.map(one => one[1]), frozen.map(one => one[0]), room) > room / 2)
-    drawn = drawn.filter(one => one[0] !== 'id');
+  const held = minimumWidth(frozen.map(one => one[1]), frozen.map(one => one[0]), room);
+  if (held > room * 2 / 3) drawn = drawn.filter(one => one[0] !== 'id');
   return drawn;
 }
 

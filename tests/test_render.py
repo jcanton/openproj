@@ -4074,8 +4074,13 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
         # end and nothing at its left.
         "table": ["h1.sr-only", "div#controls"],
         # And the timeline's two keys are one row rather than two — status on the
-        # left, marks on the right.
-        "timeline": ["h1.sr-only", "div#controls", "form.tl-controls", "div.keyrow"],
+        # left, marks on the right. Both of the timeline's own rows are inside a
+        # `<details>` now: the count of rows is unchanged and so is what is in
+        # them, because these are `open` at every width above 40rem and this is
+        # measured at 1400. What a phone does with them is
+        # `test_what_a_phone_folds_away_is_open_on_anything_wider`.
+        "timeline": ["h1.sr-only", "div#controls",
+                     "details.windowfold", "details.keyfold"],
     }[view], got["rows"]
 
     # The same three claims on every view, which is what "share the bar" means.
@@ -5552,9 +5557,9 @@ def test_what_the_table_freezes_leaves_something_to_scroll_into(
     Two things fixed it and both are arithmetic rather than a breakpoint. The
     title's floor is the smaller of 250 and 45% of the room, so the column that
     holds a sentence stops demanding three quarters of a phone. And the id sheds
-    when the frozen pair would take more than half the box — which is a different
-    question from the one the other four shed on, and is why it is not in that
-    loop.
+    when the frozen pair would leave under a third of the box to scroll into —
+    which is a different question from the one the other four shed on, and is why
+    it is not in that loop.
 
     Asked at 900 as well, and that is not decoration: the rule has to be one a
     laptop never meets. At 900 the pair is 372 of 860 and the id stays, which is
@@ -5569,9 +5574,9 @@ def test_what_the_table_freezes_leaves_something_to_scroll_into(
         browser, one, tmp_path / "frozen-900", _FROZEN, width=900)["table"]
 
     for got in (phone, laptop):
-        assert got["frozen"] <= got["box"] / 2, (
+        assert got["frozen"] <= got["box"] * 2 / 3, (
             f"at {got['viewport']}px the table freezes {got['frozen']}px of a {got['box']}px "
-            f"box, so more of the window holds still than scrolls"
+            f"box, so under a third of it is left to scroll into"
         )
         assert "title" in got["drawn"], (
             f"at {got['viewport']}px the table sheds the column that names the row"
