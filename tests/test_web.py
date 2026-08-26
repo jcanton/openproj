@@ -5513,3 +5513,153 @@ def test_a_repository_that_is_not_an_owner_and_a_repo_is_refused_and_named(
         assert "config/defaults.yaml" in page.text, (
             "the file was dropped and the page does not say so"
         )
+
+
+def save_many(client: httpx.Client, ids: list[str], fields: dict, *, base=None):
+    """One gesture is one PATCH is one commit, however many records it names."""
+    return client.patch(
+        "/api/records",
+        json={"base_commit": base or head(client), "ids": ids, "fields": fields},
+    )
+
+
+def test_a_column_written_across_a_selection_is_one_commit(
+    client: httpx.Client, repo_path: Path
+):
+    """jcanton, 2026-08-26, on editing the same cell in several rows at once, and
+    then on what that should leave behind: "one commit for the whole edit".
+
+    A `git log` on a plan is the team's record of decisions, and it is the reason
+    promotion and the cascading delete are one commit each. Six commits saying
+    "status ready" describe six decisions that were never made — somebody made
+    one, about six records, and the history should be able to say so.
+
+    Asserted on the repository and not on the answer: three files in one commit
+    with one parent is the claim, and a route that looped over the singular PATCH
+    would answer 200 with a sha just the same.
+    """
+    before = git_head(repo_path)
+    ids = [PROJECT, PITCH, OTHER]
+    answer = save_many(client, ids, {"priority": "very_high"})
+    assert answer.status_code == 200, answer.text
+
+    after = git_head(repo_path)
+    assert after != before
+    commit = commit_at(repo_path, after)
+    assert len(commit.parents) == 1, "a bulk write is one commit, not a merge"
+    assert str(commit.parents[0].id) == before, "and it is written on the commit it was sent"
+    touched = {
+        delta.new_file.path
+        for delta in commit.tree.diff_to_tree(commit.parents[0].tree).deltas
+    }
+    assert len(touched) == len(ids), f"one commit should hold {len(ids)} files, held {touched}"
+    for record_id in ids:
+        path = next(one for one in touched if record_id in one)
+        assert "priority: very_high" in file_at(repo_path, after, path), record_id
+    # The message names the count and the field, and the field name comes from
+    # the model's own order rather than from the payload — see `_named`.
+    assert commit.message.splitlines()[0] == f"{len(ids)} records: priority"
+
+
+def test_a_bulk_write_that_would_refuse_any_record_writes_none(
+    client: httpx.Client, repo_path: Path
+):
+    """The half-done state is the whole reason this route exists rather than a
+    loop over the singular one, so it is the thing to test hardest.
+
+    A selection with one impossible record in it — a status no vocabulary
+    defines — must leave the repository exactly where it was. Written as a loop,
+    the records before the bad one are already committed on a protected branch by
+    the time it refuses, and nothing on the client can say which those were.
+    """
+    before = git_head(repo_path)
+    answer = save_many(client, [PROJECT, PITCH], {"status": "nonsense"})
+    assert answer.status_code == 422, answer.text
+    assert git_head(repo_path) == before, "a refused bulk write moved the plan"
+
+    # And the same for a record that is not there at all: the 404 is about one id
+    # and the other one must not have been written on its way to finding out.
+    answer = save_many(client, [PROJECT, "task-ffffff"], {"priority": "low"})
+    assert answer.status_code == 404
+    assert git_head(repo_path) == before, "a 404 on one id still wrote another"
+    assert "task-ffffff" in answer.json()["detail"]
+
+
+def test_a_bulk_write_merges_around_an_edit_it_does_not_overlap(
+    client: httpx.Client, repo_path: Path
+):
+    """`base_commit` makes every write here a compare-and-swap, and a bulk write
+    touches more files than any other — so it has the most to lose from a plan
+    that moved while the page was open.
+
+    It loses nothing, and that is the store's design rather than this route's:
+    `write_all` swaps per path and `_merge` reconciles per FIELD, so somebody
+    changing an owner while this page was open does not turn a bulk priority edit
+    into a conflict. Written down here because the first draft of this test
+    assumed the opposite and the route was right — two people editing two
+    different columns is exactly what field-level merge exists to make invisible.
+    """
+    base = head(client)
+    assert save(client, PITCH, {"owner": "cy"}).status_code == 200
+
+    answer = save_many(client, [PROJECT, PITCH], {"priority": "very_low"}, base=base)
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["outcome"] == "merged"
+
+    at = git_head(repo_path)
+    kept = file_at(repo_path, at, f"pitches/{PITCH}.md")
+    assert "owner: cy" in kept, "the bulk write overwrote somebody else's column"
+    assert "priority: very_low" in kept, "and it did not write its own"
+
+
+def test_a_bulk_write_refuses_when_it_overlaps_the_same_field(
+    client: httpx.Client, repo_path: Path
+):
+    """The other half: a genuine overlap, on the same field of the same record,
+    refuses — and refuses for the WHOLE selection.
+
+    That is what a bulk write has that a loop over the singular route cannot
+    have. Written as a loop, the records before the conflicting one are already
+    committed on a protected branch by the time it refuses, and nothing on the
+    client can say which those were.
+    """
+    base = head(client)
+    assert save(client, PITCH, {"priority": "medium"}).status_code == 200
+    moved = git_head(repo_path)
+
+    answer = save_many(client, [PROJECT, PITCH], {"priority": "very_low"}, base=base)
+    assert answer.status_code == 409, answer.text
+    assert answer.json()["outcome"] == "conflict"
+    assert git_head(repo_path) == moved, "a conflicting bulk write committed anyway"
+    # Nothing half-applied. The record nobody else touched is in the same
+    # selection and must be untouched too.
+    assert "priority: very_low" not in file_at(repo_path, moved, f"projects/{PROJECT}.md")
+
+
+def test_a_bulk_write_refuses_more_records_than_a_gesture_can_mean(client: httpx.Client):
+    """A bound and not a policy. The gesture that reaches this route is a
+    cmd-click selection in a table, so the realistic number is two to twenty;
+    what this stops is a payload naming every record in the plan and holding the
+    single writer lock while every one of them is read, patched and parsed.
+
+    Refused out loud and naming the number, because a silent truncation would
+    write *some* of the selection — which is the half-done state the route is
+    built around not having.
+    """
+    from openproj.web import MAX_BULK_RECORDS
+
+    answer = save_many(
+        client, [f"task-{n:06d}" for n in range(MAX_BULK_RECORDS + 1)], {"priority": "low"}
+    )
+    assert answer.status_code == 422
+    assert str(MAX_BULK_RECORDS) in answer.json()["detail"]
+
+
+def test_a_bulk_write_needs_a_writer_like_every_other_door(secure_client: httpx.Client):
+    """Reads are public here by design and writes are not, and a new write door is
+    a new place to forget that. `writer()` is the first line of the route for the
+    same reason it is the first line of the other four."""
+    answer = secure_client.patch(
+        "/api/records", json={"base_commit": "0" * 40, "ids": [PROJECT], "fields": {}}
+    )
+    assert answer.status_code == 401, answer.text
