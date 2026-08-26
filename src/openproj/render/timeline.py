@@ -367,6 +367,19 @@ _TIMELINE = """
 {#- Announced, not drawn: the lit nav item says this already. See `.sr-only`. -#}
 <h1 class="sr-only">Timeline</h1>
 {{ facets }}
+{#- **The window controls fold too, and that is the third fold on this page.**
+    From, to, zoom, Apply and Reset are 98px at a 390px viewport, above a chart
+    that had 310 left after the filter bar and the key were folded. Three handles
+    at 31px each is 93px of furniture where there were 392, and the drawing goes
+    from a sixth of the window to more than half of it.
+
+    Three and not one, because they are three different questions and folding
+    them together would mean opening the key to change the zoom. `Window` names
+    what it holds the way `Filters` and `Key` do — what these controls set is
+    which slice of the calendar is on screen, which is the word the aside beside
+    the search box already uses. -#}
+<details class="windowfold" open>
+<summary>Window</summary>
 <form class="tl-controls" method="get" action="{{ links.timeline }}">
   {#- Prefilled with the window on screen, not the one that was asked for. Two
       empty boxes under a sentence reading "Showing 2026-02-02 to 2026-11-27" ask
@@ -391,6 +404,7 @@ _TIMELINE = """
   <span class="acts"><button type="submit" class="button primary">Apply</button>
     <a class="button reset" href="{{ links.timeline }}">Reset</a></span>
 </form>
+</details>
 {#- **One row, both keys.** Statuses lead on the left and the marks hang off the
     right end — jcanton, 2026-08-25: "the timeline can then have its legend on one
     line only: left-aligned for status and right aligned the others". They are two
@@ -407,6 +421,19 @@ _TIMELINE = """
     the stroke every bar carries — and an SVG stroke is centred on the edge, so a
     rect filling its own viewBox would have had half of its border clipped
     away. -#}
+{#- **The key folds on a phone, the same way the filters do.** Eleven markings
+    wrap to four rows at a 390px viewport — 106px above a chart that has 310 —
+    and a legend is a thing you consult once and then stop reading, which is the
+    opposite of the plot it explains. `<details open>` for the same reason the
+    filter bar is one: the fold is taken away by the script and only below 40rem,
+    so a reader without JavaScript keeps the key it has always had.
+
+    The summary says `Key` and carries no count, and that is the difference from
+    the filter bar's: a folded filter is state the page is in and has to confess
+    to, a folded key is a reference that says the same thing whenever it is
+    opened. -#}
+<details class="keyfold" open>
+<summary>Key</summary>
 <div class="keyrow">
 <ul class="legend" aria-label="What a bar's colour and mark mean">
   {% for status in statuses %}
@@ -429,6 +456,7 @@ _TIMELINE = """
   <li><span class="swatch band"></span>a cycle, build and cooldown</li>
 </ul>
 </div>
+</details>
 {#- `data-fills`: the box the shell measures the window into, capped rather than
     filled — a plan with three bars is three bars tall. -#}
 <div class="tl" data-fills{% if not t.bars %} hidden{% endif %}>

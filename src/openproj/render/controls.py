@@ -55,6 +55,27 @@ _FACETS = """
       `_summary_html`. -#}
   {{ summary }}
   </div>
+  {#- **The bar folds on a phone, and it is a `<details>` so that the browser
+      does the folding.** Eleven fields wrap to six rows at a 390px viewport: 188
+      pixels, on all three plan views, above a box that had 371, 314 and 150 left
+      respectively. The filters are the second thing a reader wants and the plan
+      is the first, and on a laptop that ordering costs nothing because both fit.
+
+      `open` in the markup and closed by the script, rather than the other way
+      round. A reader with no JavaScript gets the bar it has always had — the
+      facets are JS-driven controls, so a page that could not run the script has
+      nothing to fold anyway, and a `<details>` that ships closed would hide them
+      from the one reader who cannot open it back up.
+
+      The summary carries the COUNT, because a fold that hides a filter somebody
+      set is worse than the six rows: `Filters` closed over a filtered table is a
+      page lying about what it shows. `syncFilters` writes it from the query
+      string, beside the Clear button it already decides, so the two cannot
+      disagree. -#}
+  {% if fields %}
+  <details class="facetbox" open>
+    <summary><span class="facetboxname">Filters</span><span class="facetboxsaid"></span></summary>
+  {% endif %}
   <div class="facets">
   {#- A field is a button and a list of checkboxes, and not a `<select>`, because
       the filter underneath has always been able to answer more than a select can
@@ -91,6 +112,7 @@ _FACETS = """
   </div>
   {% endfor %}
   </div>
+  {% if fields %}</details>{% endif %}
 </div>
 """
 
@@ -377,12 +399,66 @@ function syncFilters() {
 // field the record list below has never heard of.
 function showTheWayOut() {
   const out = document.getElementById('unfilter');
-  if (!out) return;
   const fields = [...document.querySelectorAll('.facet[data-field]')]
     .map(facet => facet.dataset.field);
-  const set = [...fields, 'q', 'predicate']
-    .some(field => params.getAll(field).filter(Boolean).length);
-  out.hidden = !set;
+  const chosen = [...fields, 'q', 'predicate']
+    .filter(field => params.getAll(field).filter(Boolean).length);
+  if (out) out.hidden = !chosen.length;
+  sayWhatIsFolded(chosen.length);
+}
+
+// How many fields are set, on the handle of the filter fold — see `_FACETS`. The
+// fold is only ever closed on a phone, and a closed bar that does not say a
+// filter is on is a page quietly showing a third of the plan.
+//
+// The FIELD count and not the value count: "3 set" means three questions have an
+// answer, which is what you have to open the box to see. Counting ticked boxes
+// would say "7 set" for one field with seven statuses chosen, and the reader
+// would open it looking for seven things.
+function sayWhatIsFolded(howMany) {
+  const said = document.querySelector('.facetbox > summary .facetboxsaid');
+  if (said) said.textContent = howMany ? `· ${howMany} set` : '';
+}
+
+// The boxes a phone folds away: the filter bar on every view that has one, and
+// the timeline's window controls and its key. All of them ship `open` and are
+// closed from here — see `_FACETS` for why that direction and not the other.
+//
+// One list and one script, because they are one behaviour. The alternative was a
+// fold each page switched on for itself, which is three copies of a media query,
+// three `toggle` listeners and three chances for the next one to forget the
+// re-fit below.
+const FOLDS = '.facetbox, .windowfold, .keyfold';
+
+// Folded on a phone and never on anything wider.
+//
+// **The listener is not a nicety.** Closed at 390 and then turned to landscape,
+// or opened on a desktop window that was narrow, the summary goes — the
+// stylesheet only draws it below 40rem — while the box is still closed. That is
+// eleven filters with nothing on the page that can reach them. So the same query
+// that draws the handle decides the state, both ways, whenever it changes.
+//
+// It does not fight the reader: `change` fires when the WIDTH crosses 40rem, not
+// when a summary is clicked, so a fold opened by hand on a phone stays open.
+const PHONE = matchMedia('(max-width: 40rem)');
+function foldOnAPhone(narrow) {
+  for (const box of document.querySelectorAll(FOLDS)) box.open = !narrow;
+  refitAroundTheFold();
+}
+foldOnAPhone(PHONE.matches);
+PHONE.addEventListener('change', event => foldOnAPhone(event.matches));
+// Opening or closing either box changes how much page is above the view's box,
+// and `--room` is that arithmetic. The shell measures on load, on resize and
+// when the typeface lands, and none of those is a reader pressing Key.
+for (const box of document.querySelectorAll(FOLDS))
+  box.addEventListener('toggle', refitAroundTheFold);
+
+// `fitRoom` is the shell's and is global, like everything else these blocks
+// share. Guarded because the pages that fold a filter bar are not only the three
+// that size a box to the window: the records list and the people page have no
+// `[data-fills]` at all, and on those there is nothing to re-fit.
+function refitAroundTheFold() {
+  if (typeof fitRoom === 'function') fitRoom();
 }
 
 function facetLabel(facet) {

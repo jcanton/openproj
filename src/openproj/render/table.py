@@ -2581,7 +2581,17 @@ const SQUEEZABLE = new Set(['title', 'owner', 'progress']);
 // 78px. `tags` is last because it is the column that absorbs whatever is left
 // over: while it is drawn the table fills its container exactly, and once it is
 // gone the fit can only leave a gap at the right.
-const SHED = ['prs', 'reviewers', 'progress', 'tags'];
+const LOOKUPS = ['prs', 'reviewers', 'progress', 'tags'];
+// The two columns that are `position: sticky` — see `[data-col="id"]` and
+// `[data-col="title"]` in the stylesheet. Named here because the fit has to know
+// how wide they are, and a second list of them is a second thing to keep in step;
+// if a third column is ever frozen, it is this line and that rule together.
+const FROZEN = ['id', 'title'];
+// Every column that can go, which is the four lookups plus the id. It is the list
+// the shed CLASSES are toggled from, and not the order anything is shed in: the
+// lookups go by `LOOKUPS` above and the id goes by a rule of its own — see
+// `drawnColumns`.
+const SHED = [...LOOKUPS, 'id'];
 // One class per column and not one for the set, because they go one at a time.
 const shedClass = key => 'shed-' + key;
 
@@ -2604,6 +2614,27 @@ const FLOOR = 110;      // narrower than this and a squeezed column is unreadabl
 // So: the same fit, with the one column that holds prose allowed to keep enough
 // room to hold it. Nothing else about the layout moves.
 const TITLE_FLOOR = 250;
+// **A floor is a promise about the column, and 250 was also a promise about the
+// window.** It says "a title should not have to wrap", which is true of a laptop
+// and is not a thing a 390px phone can offer anything: at that viewport the table
+// has 335px of room, and a column demanding 250 of it left 85 for everything
+// else while the frozen pair it is half of measured 372 — wider than the box it
+// is frozen inside.
+//
+// So the floor is the smaller of the promise and a share of the room. 45%, which
+// is the same bargain the timeline's label column strikes and for the same
+// reason: the identity of the row gets the larger share of a narrow box, and what
+// is left is still enough to scroll something into.
+//
+// 140 underneath it, because a share of nothing is nothing. It is `CLAMP_FLOOR`
+// plus a little — the narrowest this table asks any column to be while still
+// saying something — and below it a title stops being a name and becomes an
+// ellipsis.
+//
+// It changes nothing a laptop sees: at 45% the share only falls under 250 below
+// about 556px of table room, which is a window under 600. Measured at 1400, where
+// this and every other resolved width are byte-identical to before.
+const titleFloor = room => Math.max(140, Math.min(TITLE_FLOOR, Math.round(room * 0.45)));
 // And the progress column is a BAR now, not a bar and a count, so it narrows
 // rather than leaving: 78px holds its header on one line and a meter wide enough
 // to read a fraction off. It used to be the first thing shed, which was right
@@ -2628,7 +2659,7 @@ const CLAMP_FLOOR = 116;
 // Which floor a column has, in one place: `minimumWidth` decides what the table
 // can be squeezed to and `fitted` does the squeezing, and two copies of this
 // question is how those two come to disagree about a single column.
-const floorFor = key => key === 'title' ? TITLE_FLOOR
+const floorFor = (key, room) => key === 'title' ? titleFloor(room)
   : key === 'progress' ? PROGRESS_FLOOR
   : CLAMPED.has(key) ? CLAMP_FLOOR
   : SQUEEZABLE.has(key) ? FLOOR : Infinity;
@@ -2667,9 +2698,9 @@ function naturalWidths() {
 // 1393 scrolled sideways with all fourteen columns it had been told it could
 // keep — 293px of overflow at the low end. Two numbers that have to agree,
 // written in two languages, drifting; now there is one and it is measured.
-function minimumWidth(natural, keys) {
+function minimumWidth(natural, keys, room) {
   return keys.reduce(
-    (total, key, i) => total + Math.min(Math.ceil(natural[i]), floorFor(key)), 0);
+    (total, key, i) => total + Math.min(Math.ceil(natural[i]), floorFor(key, room)), 0);
 }
 
 // Which columns this much room can hold, as `[key, width]` pairs in the order
@@ -2684,11 +2715,30 @@ function minimumWidth(natural, keys) {
 // 112 of.
 function drawnColumns(natural, keys, room) {
   let drawn = keys.map((key, i) => [key, natural[i]]);
-  const needs = () => minimumWidth(drawn.map(one => one[1]), drawn.map(one => one[0]));
-  for (const key of SHED) {
+  const needs = () => minimumWidth(drawn.map(one => one[1]), drawn.map(one => one[0]), room);
+  for (const key of LOOKUPS) {
     if (needs() <= room) break;
     drawn = drawn.filter(one => one[0] !== key);
   }
+  // **The id goes by a different question, because it answers a different one.**
+  // The four above go while the TABLE will not fit. The id and the title are
+  // frozen, and a frozen pair is not paid for out of the table's width — it is
+  // paid for out of the window, every moment the table is scrolled. At a 390px
+  // viewport that pair measured 372px inside a 335px box: the columns that hold
+  // still were wider than the box they hold still inside, so scrolling right
+  // moved nothing into view because there was no view left to move it into.
+  //
+  // So the rule is about the reader and not about the fit: **what holds still may
+  // not take more than half of what there is.** Above that there is more frozen
+  // than scrollable and the sideways scroll stops being worth doing. Half is a
+  // judgement and it is the only one here; everything else is measurement.
+  //
+  // Asked of the same `minimumWidth` the fit is decided by, so the pair is
+  // measured the way it will be drawn — the title on its floor where the room is
+  // tight, and at its natural width where it is not.
+  const frozen = drawn.filter(one => FROZEN.includes(one[0]));
+  if (minimumWidth(frozen.map(one => one[1]), frozen.map(one => one[0]), room) > room / 2)
+    drawn = drawn.filter(one => one[0] !== 'id');
   return drawn;
 }
 
@@ -2714,11 +2764,11 @@ function fitted(natural, keys, room) {
   const level = group => {
     while (over > 0) {
       const flex = keys.map((_, i) => i)
-                       .filter(i => group.has(keys[i]) && width[i] > floorFor(keys[i]));
+                       .filter(i => group.has(keys[i]) && width[i] > floorFor(keys[i], room));
       if (!flex.length) return;
       const worst = Math.max(...flex.map(i => width[i]));
       const paying = flex.filter(i => width[i] === worst);
-      const floor = Math.max(...paying.map(i => floorFor(keys[i])));
+      const floor = Math.max(...paying.map(i => floorFor(keys[i], room)));
       const next = Math.max(floor, ...flex.filter(i => width[i] < worst).map(i => width[i]));
       const step = Math.min(worst - next, Math.ceil(over / paying.length));
       paying.forEach(i => { width[i] -= step; });
@@ -3472,7 +3522,13 @@ table.tight-dates td[data-col="end"] .dateshort { display: none; }
 .shed-progress [data-col="progress"],
 .shed-reviewers [data-col="reviewers"],
 .shed-prs [data-col="prs"],
-.shed-tags [data-col="tags"] { display: none; }
+.shed-tags [data-col="tags"],
+/* Last of the five, and the only one that changes what is FROZEN rather than
+   what is drawn. `--sticky-1` is set from the first header's measured width, so
+   a shed id measures zero, the title's `left` becomes 0, and the frozen column
+   is the title alone — by construction rather than by a second rule that has to
+   remember to agree. */
+.shed-id [data-col="id"] { display: none; }
 
 /* Where a row is picked up. Two dotted rules and not a `⠿`: that glyph is not in
    the vendored face's latin subset, so on a machine with no webfont it is a tofu

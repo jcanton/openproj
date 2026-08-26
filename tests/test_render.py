@@ -5380,3 +5380,208 @@ def test_the_graphs_legend_is_on_the_page_a_phone_can_see(on_a_phone: dict[str, 
         f"{len(got['keysOffPage'])} of the graph's legend keys are off the page on a "
         f"{got['viewport']}px phone, at: {got['keysOffPage']}"
     )
+
+
+# What a phone gets of the window, and what it has to open to see the rest. Asked
+# of the three views that size a box to it, because those are the three where the
+# furniture above and the drawing below compete for the same pixels.
+_THE_FOLD = """
+const h = el => el ? Math.round(el.getBoundingClientRect().height) : null;
+const box = document.querySelector('[data-fills]');
+const shut = [...document.querySelectorAll('.facetbox, .windowfold, .keyfold')]
+  .map(el => el.className + (el.open ? ':open' : ':shut'));
+const said = document.querySelector('.facetbox > summary .facetboxsaid');
+const handles = [...document.querySelectorAll(
+  '.facetbox > summary, .windowfold > summary, .keyfold > summary')]
+  .filter(el => el.getClientRects().length);
+return {
+  viewport: document.documentElement.clientWidth,
+  window: innerHeight,
+  boxTop: box ? Math.round(box.getBoundingClientRect().top + scrollY) : null,
+  boxHeight: h(box),
+  folds: shut,
+  handles: handles.length,
+  said: said ? said.textContent.trim() : null,
+};
+"""
+
+
+@pytest.fixture
+def views_on_a_phone(views: dict[str, str], tmp_path: Path) -> dict[str, dict]:
+    from browser import chrome, measured_on_a_phone
+
+    return measured_on_a_phone(chrome(), views, tmp_path / "folded", _THE_FOLD)
+
+
+def test_a_phone_gives_the_drawing_more_of_the_window_than_the_furniture(
+    views_on_a_phone: dict[str, dict]
+):
+    """The control bar is eleven filter fields, and at a 390px viewport they wrap
+    to six rows: 188px, on all three views, before a word of the plan.
+
+    Measured at 390x844 before this: the table's rows had 371px under 435px of
+    furniture, the graph's canvas 314 under 492, and the timeline's chart 150
+    under 655 — a Gantt in a sixth of the window, under five sixths of controls
+    for it. The same page on a laptop spends a tenth of the window on that bar,
+    which is why it had never looked like anything.
+
+    The claim is the ORDERING and not a number: whatever a phone turns out to be,
+    what you came to look at gets more of it than what you came to look at it
+    with. A percentage here would be a second thing to maintain and would say
+    less — this is the sentence that is actually true.
+
+    It holds for all three now because three things fold: the filter bar
+    everywhere, and the timeline's window controls and its key.
+    """
+    for view, got in views_on_a_phone.items():
+        assert got["boxHeight"] > got["boxTop"], (
+            f"{view} on a {got['viewport']}x{got['window']} phone puts {got['boxTop']}px of "
+            f"furniture above a {got['boxHeight']}px box, so most of the window is controls"
+        )
+
+
+def test_what_a_phone_folds_away_is_open_on_anything_wider(
+    views: dict[str, str], tmp_path: Path
+):
+    """The folds are `<details open>` closed by the script, and only below 40rem.
+
+    Both halves matter and only one of them is about phones. A fold that stayed
+    closed at 900px would be eleven filters behind a handle the stylesheet does
+    not draw at that width — the summary is `display: none` above 40rem — which is
+    a control with no way in and no way to know it is there.
+
+    The reader without JavaScript is the other half, and it is why the markup
+    ships `open`: these are JS-driven controls, so a page that could not run the
+    script has nothing to fold, and a `<details>` that shipped closed would hide
+    them from the one reader who cannot open it back.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    browser = chrome()
+    narrow = measured_on_a_phone(browser, views, tmp_path / "narrow", _THE_FOLD)
+    wide = measured_on_a_phone(browser, views, tmp_path / "wide", _THE_FOLD, width=900)
+
+    for view, got in narrow.items():
+        assert got["folds"], f"{view} has nothing to fold on a phone"
+        assert all(one.endswith(":shut") for one in got["folds"]), (
+            f"{view} leaves {got['folds']} open on a phone"
+        )
+        assert got["handles"] == len(got["folds"]), (
+            f"{view} draws {got['handles']} handles for {len(got['folds'])} folds, so one "
+            f"of them cannot be opened"
+        )
+    for view, got in wide.items():
+        assert all(one.endswith(":open") for one in got["folds"]), (
+            f"{view} folds {got['folds']} away at {got['viewport']}px, where the stylesheet "
+            f"draws no handle to open them with"
+        )
+        assert got["handles"] == 0, (
+            f"{view} draws {got['handles']} fold handles at {got['viewport']}px, over controls "
+            f"that are already on the screen"
+        )
+
+
+def test_a_folded_filter_bar_says_how_many_fields_are_set(
+    views: dict[str, str], tmp_path: Path
+):
+    """A closed bar over a filtered view is a page lying about what it shows.
+
+    This is the whole risk of the fold and the only thing that makes it safe: the
+    count is written from the query string by `syncFilters`, beside the Clear
+    button it already decides, so the two cannot disagree about whether anything
+    is set.
+
+    Two fields and three values, deliberately: the count is of FIELDS, because
+    "3 set" over one status field with three statuses ticked would send a reader
+    in looking for three questions that had answers.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    got = measured_on_a_phone(
+        browser := chrome(), views, tmp_path / "set", _THE_FOLD,
+        query="?status=ready&status=in_progress&kind=task",
+    )
+    for view, one in got.items():
+        assert one["said"] == "· 2 set", (
+            f"{view} folds a bar with two fields set and says {one['said']!r}"
+        )
+
+    clean = measured_on_a_phone(browser, views, tmp_path / "unset", _THE_FOLD)
+    for view, one in clean.items():
+        assert one["said"] == "", (
+            f"{view} says {one['said']!r} over a bar with nothing set"
+        )
+
+
+# The frozen pair, and what it leaves to scroll into. Asked of the table at two
+# widths in one browser, because the claim is about the relationship between them.
+_FROZEN = """
+const table = document.getElementById('rows');
+const drawn = [...table.querySelectorAll('thead th')]
+  .filter(th => th.getBoundingClientRect().width > 0)
+  .map(th => th.dataset.col);
+const width = key => {
+  const th = table.querySelector(`thead th[data-col="${key}"]`);
+  return th ? Math.round(th.getBoundingClientRect().width) : 0;
+};
+const box = document.querySelector('.table-scroll');
+return {
+  viewport: document.documentElement.clientWidth,
+  drawn,
+  frozen: width('id') + width('title'),
+  box: Math.round(box.clientWidth),
+  table: Math.round(table.getBoundingClientRect().width),
+};
+"""
+
+
+def test_what_the_table_freezes_leaves_something_to_scroll_into(
+    views: dict[str, str], tmp_path: Path
+):
+    """`[data-col="id"]` and `[data-col="title"]` are `position: sticky`, which is
+    what keeps a row's name on screen however far the table is scrolled sideways.
+    A frozen column is not paid for out of the table's width — it is paid for out
+    of the WINDOW, every moment the table is scrolled.
+
+    At a 390px viewport that pair measured 122 + 250 = 372px inside a 335px box:
+    the columns that hold still were wider than the box they hold still inside, so
+    scrolling right moved nothing into view because there was no view left to move
+    it into. Eleven columns, 1209px of table, and a reader who could reach exactly
+    the two that never move.
+
+    Two things fixed it and both are arithmetic rather than a breakpoint. The
+    title's floor is the smaller of 250 and 45% of the room, so the column that
+    holds a sentence stops demanding three quarters of a phone. And the id sheds
+    when the frozen pair would take more than half the box — which is a different
+    question from the one the other four shed on, and is why it is not in that
+    loop.
+
+    Asked at 900 as well, and that is not decoration: the rule has to be one a
+    laptop never meets. At 900 the pair is 372 of 860 and the id stays, which is
+    exactly what the same table did before any of this.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    browser = chrome()
+    one = {"table": views["table"]}
+    phone = measured_on_a_phone(browser, one, tmp_path / "frozen-390", _FROZEN)["table"]
+    laptop = measured_on_a_phone(
+        browser, one, tmp_path / "frozen-900", _FROZEN, width=900)["table"]
+
+    for got in (phone, laptop):
+        assert got["frozen"] <= got["box"] / 2, (
+            f"at {got['viewport']}px the table freezes {got['frozen']}px of a {got['box']}px "
+            f"box, so more of the window holds still than scrolls"
+        )
+        assert "title" in got["drawn"], (
+            f"at {got['viewport']}px the table sheds the column that names the row"
+        )
+
+    assert "id" not in phone["drawn"], (
+        "a phone still draws the id column, which with the title is wider than the box "
+        "the two are frozen inside"
+    )
+    assert "id" in laptop["drawn"], (
+        f"a {laptop['viewport']}px window sheds the id column, which is the drag grip and "
+        f"the only place the row says whether its last save reached GitHub"
+    )

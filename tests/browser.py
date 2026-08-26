@@ -357,6 +357,7 @@ def measured_on_a_phone(
     width: int = 390,
     height: int = 844,
     patience: float = 8.0,
+    query: str = "",
 ) -> dict[str, object]:
     """The same question `measured_in` asks, at a width Chrome will not open a
     window for. Every page, one report each.
@@ -405,6 +406,11 @@ def measured_on_a_phone(
     Measured both ways over the seven read surfaces: the reports are identical
     to the byte, and 2.4s a page of sleeping becomes about 0.35s a page of
     waiting. The sleep was the whole cost — the pages are ready long before it.
+
+    `query` is appended to every page's `file://` URL, for the same reason
+    `measured_in` has one: filter state is read off `location.search` and a script
+    cannot change the search without navigating, which loses the script. It is
+    how a test asks what a folded filter bar says when something is set.
     """
     import shutil as _shutil
 
@@ -425,14 +431,14 @@ def measured_on_a_phone(
 
     first, *rest = files
     found: dict[str, object] = {}
-    with _devtools(browser, files[first].as_uri(), profile) as (call, _said):
+    with _devtools(browser, files[first].as_uri() + query, profile) as (call, _said):
         call("Emulation.setDeviceMetricsOverride",
              {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": True})
         call("Page.enable")
         call("Page.reload", {"ignoreCache": True})
         found[first] = _drawn(call, first, script, patience)
         for name in rest:
-            call("Page.navigate", {"url": files[name].as_uri()})
+            call("Page.navigate", {"url": files[name].as_uri() + query})
             found[name] = _drawn(call, name, script, patience)
     return found
 

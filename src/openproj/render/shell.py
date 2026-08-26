@@ -693,6 +693,13 @@ body:has([data-fills]) { padding-bottom: 1rem; }
 #controls .aside > * { margin: 0; }
 #controls .facets { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: baseline;
                     margin-top: .5rem; }
+/* The fold's handle, and above 40rem there is nothing to fold: the `<details>`
+   ships `open` and stays open, so a summary here would be a control that says
+   "Filters" over filters that are already on the screen. `display: none` on a
+   summary does not close its details or hide the content — only the marker and
+   the word go. The phone block near the foot of this sheet is where it comes
+   back, and it is the only thing that ever closes the box. */
+#controls .facetbox > summary { display: none; }
 .facet { position: relative; font-size: 11px; color: var(--muted);
          text-transform: uppercase; letter-spacing: .04em; }
 /* The closed control. It used to be a `<select>` and it still has to read as one
@@ -1333,6 +1340,10 @@ table.tight-priority td[data-col="priority"] .chip.pri { padding: .1rem .3rem; }
    on a row that has only one key and would push a lone legend to the right edge
    for no reason anybody asked for. */
 .keyrow > .legend + .legend { margin-left: auto; }
+/* Nothing to fold above 40rem, and nothing to say so. Same shape as the filter
+   bar's summary and for the same reason — see `#controls .facetbox > summary`.
+   `.keyrow` keeps its own top margin, so the folded box adds none of its own. */
+.keyfold > summary, .windowfold > summary { display: none; }
 /* The row a page's own controls stand in — grep `class="editbar`: the table's
    create link, the record page's Delete-and-views row in both modes, the cycle
    page's "add somebody" and its goal bar, the one row of the cycles index's
@@ -1606,6 +1617,48 @@ tr.nothing .hint { margin: 0 0 .75rem; }
      wide there is nothing else on the row and no reason for the box not to be
      the row. `min-width: 0` first, or the 16rem floors the 100%. */
   #q { width: 100%; min-width: 0; box-sizing: border-box; }
+  /* The handle for the filter fold, and the only width at which the box is ever
+     closed. It reads as a control rather than as a heading — the marker is the
+     browser's own triangle, and the whole row is the hit target, which is the
+     one control on a phone that has to be easy to hit with a thumb. */
+  /* `list-item` and NOT `flex`, and it is the difference between a control and
+     a caption. A `<summary>` draws the browser's own disclosure triangle because
+     its default display is `list-item`; setting `display: flex` — which is what
+     this was, to put the count beside the word — takes the marker with it, and
+     what is left is the word FILTERS in muted small caps over nothing, which
+     reads as a heading for a section that is not there. There is no other mark
+     on the page saying the row can be opened.
+
+     The triangle is the browser's rather than a glyph or a drawing of one, for
+     the reason `.rowgrip` gives about `⠿`: a character outside the vendored
+     latin subset is a tofu box wherever the webfont did not land, and a marker
+     that is sometimes a box is worse than none. This one is also the shape every
+     other `<details>` the reader has ever opened uses, and it turns on its own.
+
+     The count beside the word is an inline span, which needs no flex to sit
+     there — `gap` was the only thing flex was buying and a space is enough. */
+  #controls .facetbox > summary {
+    display: list-item; list-style-position: inside;
+    padding: .45rem .1rem; margin-top: .35rem; cursor: pointer;
+    font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  #controls .facetbox > summary .facetboxname { margin-left: .2rem; }
+  /* What is set, said in the closed state. `--accent` and not the muted ink
+     beside it, for the same reason `.facet.chosen` is accented: a count that
+     reads at the weight of the word next to it is a count nobody notices, and
+     the whole risk of folding this away is a filter somebody forgot. */
+  #controls .facetbox > summary .facetboxsaid { color: var(--accent); margin-left: .35rem; }
+  #controls .facetbox > summary .facetboxsaid:empty { display: none; }
+  /* The key's handle and the window controls', drawn as the filter bar's is. One
+     phone, one way of folding something away, so the second and third cost no
+     learning. */
+  .keyfold > summary, .windowfold > summary {
+    display: list-item; list-style-position: inside;
+    padding: .45rem .1rem; cursor: pointer;
+    font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .04em;
+  }
 }
 /* A reader who has told their operating system they want less motion gets none.
    It is a system setting and not a preference this app keeps, so there is no
