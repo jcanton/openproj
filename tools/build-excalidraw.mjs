@@ -94,24 +94,66 @@ async function bundle() {
   const PROD = path.resolve('node_modules/@excalidraw/excalidraw/dist/prod')
   const cache = new Map()
 
-  // A woff2 as a `data:` URI, or the `local:` sentinel that tells
-  // `ExcalidrawFontFace.createUrls()` to fetch nothing and fall back to
-  // whatever the browser already has installed under that family name — the
-  // same mechanism, used for two different reasons. Xiaolai is dropped for
-  // size: 209 files, 12,667,492 B, for a CJK fallback face nothing in this
-  // tool's English-only UI reaches. Liberation Sans is dropped for licence:
-  // see static/VENDOR.md — the copy this package ships is the pre-2012
-  // Ascender/Red Hat build under GPLv2 plus the font-embedding exception, not
-  // the OFL 1.1 "Reserved Font Name Liberation" relicense, and the exception
-  // text is scoped to documents that embed the font rather than software that
-  // bundles it, with no separate file here for a notice to travel beside the
-  // way ELK's does. Both fall back cleanly: `createUrls()` short-circuits on
-  // `local:` before it ever reaches the network.
+  // Every family this bundle embeds has to be one static/VENDOR.md's font
+  // search actually looked at — an ALLOWLIST, not a blocklist of the two known
+  // cuts. A blocklist's failure is silent: `@excalidraw/excalidraw` version
+  // bumps its font set without asking anyone, and a blocklist only knows the
+  // names it was told to refuse, so a ninth family arriving in a future
+  // re-vendor would sail through as a `data:` URI with no licence review and
+  // no test to catch it — exactly the gap the seven-family search was done to
+  // close, reopened by the one line a version bump changes. `VETTED_FAMILIES`
+  // is the seven static/excalidraw-fonts-LICENSE.txt actually documents;
+  // `DROPPED_FAMILIES` is the two that fall back to `local:` on purpose, for
+  // two different reasons — Xiaolai for size (209 files, 12,667,492 B, for a
+  // CJK fallback face nothing in this tool's English-only UI reaches) and
+  // Liberation Sans for licence (see static/VENDOR.md: the copy this package
+  // ships is the pre-2012 Ascender/Red Hat build under GPLv2 plus the
+  // font-embedding exception, not the OFL 1.1 "Reserved Font Name Liberation"
+  // relicense, and the exception text is scoped to documents that embed the
+  // font rather than software that bundles it, with no separate file here for
+  // a notice to travel beside the way ELK's does). A family that is neither
+  // fails the build rather than shipping unreviewed: check its licence
+  // against the method static/VENDOR.md's font section describes, then either
+  // add it to `VETTED_FAMILIES` (and static/excalidraw-fonts-LICENSE.txt and
+  // static/VENDOR.md) or to `DROPPED_FAMILIES` here, the way Liberation was.
+  const VETTED_FAMILIES = new Set([
+    'Assistant',
+    'Cascadia',
+    'ComicShanns',
+    'Excalifont',
+    'Lilita',
+    'Nunito',
+    'Virgil',
+  ])
+  const DROPPED_FAMILIES = { Xiaolai: 'local:Xiaolai', Liberation: 'local:Liberation' }
+
+  // `rel` is always `fonts/<Family>/<file>.woff2` by the time it reaches
+  // here — both call sites below strip the leading `./` before calling this —
+  // so the family is the path segment right after `fonts`, on either
+  // separator, matching the `[\\/]` esbuild already uses for the same split
+  // elsewhere in this file.
+  function familyOf(rel) {
+    const parts = rel.split(/[\\/]/)
+    const i = parts.indexOf('fonts')
+    return i >= 0 ? parts[i + 1] : undefined
+  }
+
   function dataUri(rel) {
     const abs = path.join(PROD, rel)
     if (!fs.existsSync(abs)) return null
-    if (rel.includes('/Xiaolai/')) return 'local:Xiaolai'
-    if (rel.includes('/Liberation/')) return 'local:Liberation'
+    const family = familyOf(rel)
+    if (family !== undefined && Object.hasOwn(DROPPED_FAMILIES, family)) {
+      return DROPPED_FAMILIES[family]
+    }
+    if (family === undefined || !VETTED_FAMILIES.has(family)) {
+      throw new Error(
+        `font family ${JSON.stringify(family ?? rel)} (${rel}) is neither vetted nor a ` +
+          'known drop. Its licence has not been reviewed, so this build refuses to embed ' +
+          "it silently. Check it against static/VENDOR.md's font section, then either add " +
+          "it to VETTED_FAMILIES (and static/excalidraw-fonts-LICENSE.txt and VENDOR.md's " +
+          'table) or add it to DROPPED_FAMILIES here, in tools/build-excalidraw.mjs.',
+      )
+    }
     if (cache.has(abs)) return cache.get(abs)
     const uri = 'data:font/woff2;base64,' + fs.readFileSync(abs).toString('base64')
     cache.set(abs, uri)
