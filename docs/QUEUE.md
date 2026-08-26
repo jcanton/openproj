@@ -41,6 +41,20 @@ and each says why it is still here.
   no grid claim, no gate panel, no combobox, no adder row, and it still sorts,
   filters and links.
 
+* **Drawings, in a popup over the editor.** Designed 2026-08-26 and built on the
+  `drawings` branch the same cycle, written up in full at `docs/drawings.md` —
+  read that rather than a summary here, because the rejected shapes carry the
+  reasoning and one of them corrupts files. Excalidraw, vendored as our own
+  single-file build and fetched on the first press of a button in the
+  `.editbar`, opens in a popup over the editor. A drawing is a PNG exported with
+  `exportEmbedScene`, so the file is both the picture and its own editable
+  scene; it lives at a stable path, `drawings/draw-a1b2c3.png`, and an embed is
+  ordinary image markdown that GitHub renders. Content-addressed `assets/` was
+  the nearly-free shape and was refused because it would have raced the record
+  editor's own save through the merge ladder on every drawing save;
+  `Store.put_drawing` never decodes the bytes, because the store's own line
+  merge corrupts a PNG silently and answers 200 while doing it.
+
 ## What was tried and dropped
 
 * **A `<select>` converted into a button-and-menu, four more times.** The table's
@@ -73,36 +87,26 @@ and each says why it is still here.
 
 ## What is still owed
 
-* **Drawings, drawn here.** Designed 2026-08-26, written up in full at
-  `docs/drawings.md` — read that rather than a summary here, because the rejected
-  shapes carry the reasoning and one of them corrupts files.
+* **Inserting a raster image into a drawing is blocked, on purpose, by the same
+  policy that blocks everything else it forbids.** pica and image-blob-reduce,
+  which Excalidraw's own image tool uses to resize a pasted photo, each
+  construct a Worker to do it — one from a `data:text/javascript;base64` URI to
+  probe `createImageBitmap`, one from a `blob:` URI to resize — and the policy
+  is `default-src 'none'` with no `worker-src` and no `blob:` anywhere in it.
+  Rather than offer the tool and have it fail silently the first time somebody
+  reaches for it, the mounted editor hides it (`UIOptions.tools.image = false`).
+  jcanton accepted the gap on 2026-08-26; see `docs/drawings.md`, "The spike,
+  which came first."
 
-  The short version: Excalidraw, vendored as our own single-file build and fetched
-  on the first press of a button in the `.editbar`, opens in a popup over the
-  editor. A drawing is a PNG exported with `exportEmbedScene`, so the file is both
-  the picture and its own editable scene; it lives at `drawings/draw-a1b2c3.png`,
-  one flat top-level directory, and an embed is ordinary image markdown that
-  GitHub renders. The menu lists the drawings this body embeds, by id, in embed
-  order, scanned out of the body text with no stored state.
-
-  Content-addressed `assets/` was the nearly-free shape and was refused: it mints
-  a new path on every save, so every save must splice the body — a body write
-  racing the record editor's own save through the merge ladder. A stable path
-  makes that race not exist, and that is what the extra day buys.
-
-  A PNG must never reach `write_all`. `_commit` calls `.encode("utf-8")` and
-  `read` decodes, so today a binary through that path is an unhandled 500 — and
-  that is the good outcome, because latin-1-decoding it to make the crash go away
-  gets a clean line merge that prepends `---\n{}\n---\n` to the PNG magic number
-  and answers 200 with a real sha. Hence `Store.put_drawing`, which compares blob
-  ids and never decodes.
-
-  Nothing is built until a throwaway spike answers what the CSP asks: whether the
-  bundle runs at all under `default-src 'none'` with no worker, no `blob:` and no
-  wasm, whether the PNG export path avoids the harfbuzz subsetter, how big an
-  `en`-only non-splitting build really is, and how big a real drawing is against
-  the 2 MB ceiling. Red on wasm or fonts and the fallback ships the storage and
-  menu half against excalidraw.com, which is a strict prefix of the same design.
+* **A record's page and a slide's page disagree about what a signed-out reader
+  is given.** `render_detail` gates `editable` on `base_commit is not None`
+  alone, so a reader of a record still gets a textarea, a toolbar and
+  `attachEditing` wired to it — no Ace (that gate also checks `may_write`), no
+  socket, no save, but a box that looks live and is not. `render_slide_editor`
+  gates `editable` on `base_commit and may_write` together, so a reader of a
+  slide gets no surface at all. Pre-existing on both pages, not introduced by
+  the drawings work, and nobody has decided which of the two the other should
+  match.
 
 * **A save should not wait for GitHub.** Designed 2026-08-24, written up in full at
   `docs/deferred-push.md` — read that rather than a summary here, because the
