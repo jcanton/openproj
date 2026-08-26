@@ -338,11 +338,16 @@ nothing to keep in sync. It is the same scan `_inlined_assets` already does at
 `markdown.py:433`.
 
 `attachDrawing` sits beside `attachUploads` and is wired at both its call sites,
-`detail.py:1493` and `slides.py:795`. Note the hole it inherits: `slides.py:517` builds
-`const SURFACE = window.aceSurface && MAY_WRITE ? aceSurface(...) : null` rather than
-`bodySurface`, so on `/detail/<id>?view=slide&editor=plain` SURFACE is null and none of
-the `attach*` calls run at all. `render_slide_editor` has no test. Fixing that is part of
-this work, not a follow-up.
+`detail.py:1493` and `slides.py:813`. It inherited a hole doing so: `slides.py` used to
+build `const SURFACE = window.aceSurface && MAY_WRITE ? aceSurface(...) : null` rather
+than call `bodySurface`, so on `/detail/<id>?view=slide&editor=plain` `SURFACE` was `null`
+and none of the `attach*` calls ran at all — no toolbar, no upload wiring, no gutter, no
+status strip, and the new drawing button would have inherited exactly that silence.
+`render_slide_editor` had no test at all. Both are fixed in the same commit as this
+work rather than left as a follow-up: `slides.py:523` now calls `bodySurface(PROSE)`
+behind the same `MAY_WRITE` guard, and `tests/test_editor.py` covers the plain slide
+editor's toolbar and status strip, and separately confirms a reader (`MAY_WRITE` false)
+still gets no surface and none of the five `attach*` calls.
 
 ## The spike, which came first
 

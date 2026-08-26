@@ -514,7 +514,13 @@ const BASE = document.getElementById('base');
 // than defending against anything: `text` is declared right here, and a guard
 // that can only be false while the code is broken is a guard that hides the
 // break.
-const SURFACE = window.aceSurface && MAY_WRITE ? aceSurface(PROSE, PROSE.value) : null;
+// `bodySurface`, not `aceSurface` called directly: the record page's `SURFACE`
+// is built through `bodySurface` and this one used to call `aceSurface` on its
+// own, so on `?editor=plain` — with no Ace on the page and `window.aceSurface`
+// undefined — `SURFACE` was `null` regardless of `MAY_WRITE`, and every
+// `attach*` call below it (including `attachDrawing`) never ran at all. See
+// the comment over that block.
+const SURFACE = MAY_WRITE ? bodySurface(PROSE) : null;
 const text = () => SURFACE ? SURFACE.text() : PROSE.value;
 
 function state() {
@@ -793,14 +799,17 @@ for (const grip of PANES.querySelectorAll(':scope > .pgrip')) {
 // inlines; guarded, because a reader gets no surface and none of them may be
 // called on nothing.
 //
-// **The hole this inherits.** `SURFACE` above is `aceSurface(...)` or `null` —
-// never `bodySurface`'s fallback to the plain box the record page's `SURFACE`
-// gets — so on `?editor=plain` with a writer at the keyboard, `SURFACE` is
-// null, this whole block is skipped, and `#drawing` sits in the markup with
-// nothing behind it: not this commit's hole, the same one `attachUploads` and
-// `attachEditing` were already sitting in, and out of scope for the same
-// reason fixing it would be — `render_slide_editor` has no test today, and a
-// fix would need one of its own rather than riding in on a menu.
+// **The hole this used to inherit.** `SURFACE` above used to be built by
+// calling `aceSurface(...)` directly rather than through `bodySurface`, so on
+// `?editor=plain` with a writer at the keyboard, `SURFACE` was `null`, this
+// whole block was skipped, and `#drawing` sat in the markup with nothing
+// behind it — the same hole `attachUploads` and `attachEditing` were already
+// sitting in. Fixed at the same time as `attachDrawing` was wired in here,
+// rather than left for a new button to inherit: `render_slide_editor` had no
+// test at all before this, and this block's own coverage is
+// `test_the_plain_slide_editor_draws_a_toolbar_and_a_status_strip` and
+// `test_a_reader_of_the_slide_editor_gets_no_surface_and_no_toolbar` in
+// `tests/test_editor.py`.
 if (SURFACE) {
   attachUploads(SURFACE, document.getElementById('upload'));
   attachDrawing(SURFACE, document.getElementById('upload'));

@@ -7631,3 +7631,104 @@ def test_the_page_widens_its_pull_requests_with_what_is_open_now(client: TestCli
         "asking twice asked GitHub twice, or folded the same list in again"
     )
 
+
+# --------------------------------------------------------------------------- #
+# The slide editor's plain surface — `render_slide_editor`'s first test
+# --------------------------------------------------------------------------- #
+
+_SLIDE_TOOLBAR_AND_STATUS = _STUB_RENDER + r"""
+const marks = document.getElementById('marks');
+const bar = document.getElementById('statusbar');
+return {
+  buttons: marks.querySelectorAll('button.mark').length,
+  said: bar.textContent,
+};
+"""
+
+
+def test_the_plain_slide_editor_draws_a_toolbar_and_a_status_strip(
+    client: TestClient, tmp_path: Path
+):
+    """`render_slide_editor` inlines the same five `attach*` calls the record
+    page makes at `slides.py:795` — `attachUploads`, `attachDrawing`,
+    `attachEditing`, `attachGutter`, `attachStatus` — all behind `if (SURFACE)`.
+
+    `SURFACE` used to be built by calling `aceSurface` directly rather than
+    through `bodySurface`, the function that falls back to the plain textarea
+    surface when Ace is not on the page. So on `?editor=plain`,
+    `window.aceSurface` is undefined, `SURFACE` was `null`, and the whole
+    guarded block was skipped: no toolbar drawn into `#marks`, no upload
+    wiring, no drawing button wired to its surface, no gutter and no caret
+    readout in `#statusbar` at all. A person editing a slide with the plain
+    editor got a bare `<textarea>` with nothing around it — and the new
+    drawing button would have inherited exactly that hole, since it is wired
+    on the same guarded `SURFACE`.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}?view=slide&editor=plain").text,
+        tmp_path / "slide-plain.html", 1400, _SLIDE_TOOLBAR_AND_STATUS,
+        query="?editor=plain",
+    )
+    assert got["buttons"] > 0, "the plain slide editor drew no toolbar at all"
+    assert got["said"].strip(), "the plain slide editor drew no status strip at all"
+
+
+_SLIDE_READER_SURFACE = r"""
+return {
+  hasBodySurface: typeof bodySurface !== 'undefined',
+  marks: document.getElementById('marks').children.length,
+  said: document.getElementById('statusbar').textContent,
+};
+"""
+
+
+def test_a_reader_of_the_slide_editor_gets_no_surface_and_no_toolbar(repo_path: Path, tmp_path: Path):
+    """The other half of the same fix, and the one that matters more: `MAY_WRITE`
+    gates the call to `bodySurface` exactly as it gated the old call to
+    `aceSurface`, so a reader the server would refuse a save from still gets
+    `SURFACE === null` and none of the five `attach*` calls run. Giving a
+    signed-out reader a toolbar would be a worse regression than the hole this
+    commit closes.
+
+    Driven directly against `render_slide_editor` with `may_write=False`,
+    which is how `tests/test_render.py`'s
+    `test_a_reader_who_may_not_write_is_sent_no_editor_library` asks the same
+    question of the record page: `--auth dev` makes every request through the
+    `client` fixture a writer, so the read/write split can only be asked of the
+    renderer itself. The `Index` is built the same way the server builds its
+    own, off the same bare repo `repo_path` already seeded — reading the
+    server's private state through a running `client` would be reaching for
+    something this suite already has a documented way to ask directly.
+    """
+    from datetime import date
+
+    from openproj.index import build_index
+    from openproj.render import render_slide_editor
+    from openproj.render.shell import ROUTES
+    from openproj.store import Store
+    from openproj.web import _config_at, _records_at
+
+    store = Store(repo_path)
+    commit = store.head()
+    config, _unreadable_config = _config_at(store, commit)
+    records, _unreadable_records = _records_at(store, commit)
+    index = build_index(records, config, date.today())
+
+    page = render_slide_editor(
+        index, TASK, ROUTES, base_commit=commit, may_write=False, editor="plain",
+    )
+    assert "bodySurface(PROSE)" in page, "the guard changed shape entirely"
+    assert re.search(r"MAY_WRITE\s*\?\s*bodySurface\(PROSE\)\s*:\s*null", page), (
+        "a reader must still resolve SURFACE to null"
+    )
+
+    got = measured_in(
+        chrome(), page, tmp_path / "slide-reader.html", 1400, _SLIDE_READER_SURFACE,
+        query="?editor=plain",
+    )
+    assert not got["hasBodySurface"], (
+        "a reader was sent the editor toolkit that defines bodySurface at all"
+    )
+    assert got["marks"] == 0, "a reader was drawn a toolbar with nothing behind it"
+    assert got["said"] == "", "a reader was drawn a status strip with nothing behind it"
+
