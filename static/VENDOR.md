@@ -4,7 +4,10 @@ No npm, no build step, no CDN at runtime. These files are committed verbatim and
 inlined into the pages; `tests/test_render.py` asserts no rendered page references an
 external URL. One of them — Yjs — is inlined with two of its lines rewritten, because
 nobody publishes it in a form a `<script>` block can run; there is a section on that
-below, and the bytes in git are still upstream's.
+below, and the bytes in git are still upstream's. A second — `excalidraw.js` — is not
+inlined and is not upstream's bytes at all: it is this repository's own build, fetched
+by the browser rather than shipped on every page, and "The editor side," below, is
+where the override that permits a build step here is written down.
 
 | file | version | licence | source |
 |---|---|---|---|
@@ -18,6 +21,9 @@ below, and the bytes in git are still upstream's.
 | `ace-LICENSE.txt` | 1.44.0 | BSD-3-Clause | `LICENSE` from the same tarball |
 | `inter-latin-wght-normal.woff2` | latin subset, variable 100–900 | OFL 1.1 | https://cdn.jsdelivr.net/fontsource/fonts/inter:vf@latest/latin-wght-normal.woff2 |
 | `inter-LICENSE.txt` | — | OFL 1.1 | licence text for the face above |
+| `excalidraw.js` | 0.18.1 (React 18.3.1) | MIT (code) + 6×OFL-1.1 + MIT (7 shipped font families) | **our own esbuild output — see "The editor side," below** |
+| `excalidraw-LICENSE.txt` | 0.18.1 | MIT | https://raw.githubusercontent.com/excalidraw/excalidraw/master/LICENSE |
+| `excalidraw-fonts-LICENSE.txt` | — | OFL-1.1 (6 families) + MIT (1) | seven sources, one per family, fetched 2026-08-26 — see "The font licences," below |
 
 Not a file: the colour schemes in `src/openproj/themes.py` are data rather than a
 library, and are copied from **tinted-theming/schemes**, spec 0.11, MIT, fetched
@@ -343,3 +349,139 @@ layer recycles its divs between markers and never clears their text.
 estimated and unowned spans, cycle boundary rules and per-bar explanations are all
 custom, the scheduler emits exact spans, and a library would be fought rather than
 used. The spec sanctions this fallback.
+
+## The editor side, and the one file here that is our own build
+
+Every row above identifies bytes somebody else published; a SHA256 says "this is the
+file at that URL." `excalidraw.js` breaks that pattern, and it is worth saying exactly
+why rather than leaving it to look like an exception nobody explains. `@excalidraw/excalidraw`
+0.18.1 ships ESM-only, with roughly thirty bare dependencies externalised for a bundler
+to resolve, and it deleted its UMD build — the one shape a `<script>` tag could have run
+— in v0.18.0. There is no file upstream publishes that this repository could drop in
+and checksum the way `cytoscape.min.js` or `ace.js` are. So `static/excalidraw.js` is
+**our own esbuild output**, built by `tools/build-excalidraw.mjs` from the pinned
+`tools/excalidraw-package.json` and its lockfile, and what is checksummed is a build this
+repository controls rather than an artifact somebody else is on the hook for. `tools/README.md`
+has the mechanics; the two facts worth repeating here are that `--loader:.woff2=dataurl`
+inlines nothing by itself (the fonts are reached as string literals inside the package's
+own chunks, not as anything a loader sees) and that `--format=iife` folds every dynamic
+`import()` in regardless, so "English only" and "no mermaid" are stubs the build script
+writes rather than flags esbuild offers.
+
+**The override — no npm, no build step, no CDN — was taken deliberately, by jcanton, on
+2026-08-26, having been shown the cost, the way Ace's override was.** The cost: `static/`
+goes from 2.7 MB to roughly 8.0 MB the day this vendors, all of it one file this
+repository builds rather than receives. `detail.html`'s own byte count does not move —
+none of these bytes are on the page until somebody presses the drawing button — which is
+also why this file is **not inlined**. It is fetched on demand
+(`connect-src 'self'` allows the fetch), not carried on every page the way the graph
+libraries are, and that is the whole reason it does not appear in
+`tests/test_render.py`'s inlining assertions: there is nothing to inline.
+
+Measured, not the spike's earlier guess: **5,508,971 B raw, 1,963,903 B gzip**, against
+`@excalidraw/excalidraw` **0.18.1** and React **18.3.1** — not React 19, which the peer
+range permits but which was never on the scale. This is smaller than the figure the
+spike first reported (5,603,202 B raw / 2,036,296 B gzip), and the difference is not
+slack in the build, it is one font family removed after this vendoring looked at its
+actual licence — see below. `tools/build-excalidraw.mjs` reproduces this exact byte count;
+`node tools/build-excalidraw.mjs` prints the sha256 to compare against `SHA256SUMS`.
+
+`GET /static/{name}` in `web.py` is what actually serves the file: an explicit allowlist
+of vendored names, never a path taken off the request, `cache-control: public,
+max-age=31536000, immutable` because a vendored file changes only with a release
+(unlike a drawing, where the same header would be a lie), and deliberately not a
+`StaticFiles` mount — this repository has never had one, and a mount takes a path from
+the request where every other route here takes an id and derives the path itself.
+
+## The font licences, and the one family that did not clear the bar the other seven did
+
+The npm package ships no licence files at all — checked directly, not assumed: only a
+`package.json` declaring `"license": "MIT"` and a README. That covers the code. It says
+nothing about the twenty-five `.woff2` files the production build inlines as `data:`
+URIs across eight families, and a licence claimed for the code is not a licence claimed
+for a font bundled inside it. So each family was checked on its own, against the
+strongest evidence available for it — most decisively, the font's own `name` table,
+read directly out of the shipped bytes with `fontTools` rather than assumed from a
+web page, since a page can say anything and a font's `nameID 13`/`14` is what a
+`@font-face` actually ships with.
+
+**Seven families shipped, one did not.**
+
+- **Assistant** (4 files) — OFL-1.1. `nameID 13/14` in the shipped
+  `Assistant-Regular.woff2` carry the licence text and `http://scripts.sil.org/OFL`
+  directly; the copyright is 2020 The Assistant Project Authors
+  (https://github.com/hafontia/Assistant) with portions from 2010 The Source Sans Pro
+  Authors, Reserved Font Name 'Source'.
+- **Cascadia** (1 file, `CascadiaCode-Regular.woff2`) — OFL-1.1. The shipped font's own
+  `nameID 13` embeds the full OFL text ahead of a Microsoft embedding-restriction
+  preamble that reads more narrowly; the operative licence, confirmed against
+  Microsoft's own repository (https://github.com/microsoft/cascadia-code/blob/main/LICENSE,
+  fetched 2026-08-26: "Copyright (c) 2019 - Present, Microsoft Corporation, with
+  Reserved Font Name Cascadia Code," under OFL-1.1 with no such preamble at all), is the
+  OFL grant, not the paragraph in front of it.
+- **Comic Shanns** (4 files, one font pre-split for range-request loading) — MIT. The
+  shipped font's `nameID 0` carries the entire MIT text inline, matching
+  https://github.com/shannpersand/comic-shanns/blob/master/LICENSE (fetched 2026-08-26)
+  word for word: Copyright (c) 2018 Shannon Miwa, with four more contributors added
+  2023–2024.
+- **Excalifont** (7 files) — OFL-1.1, and this is the one to read carefully rather than
+  take on the same footing as the other six. The shipped font's own `nameID 0` is bare:
+  "Copyright (c) 2024 by Excalidraw. All rights reserved." — no `nameID 13`, no
+  `nameID 14`, no licence grant anywhere in the file, where every other shipped family
+  carries one. Taken alone, that string is the opposite of a permissive grant. What
+  makes this ship anyway is Excalidraw's own public statement about a font it holds the
+  copyright to: https://plus.excalidraw.com/excalifont (fetched 2026-08-26) states
+  "Download available under OFL-1.1 license (included in the font file)" and "Released
+  under the OFL-1.1 license, Excalifont is freely available for both personal and
+  commercial use... allowing designers and developers to integrate the font into their
+  projects without restrictions." That is the same shape of gap Ace's stripped BSD
+  notice left in this table — upstream's own bytes say less than upstream itself has
+  said elsewhere — resolved the same way: on the copyright holder's word, with the gap
+  written down rather than smoothed over. If a future re-vendoring finds this claim
+  retracted or narrowed, this family has to be re-checked from nothing, not assumed.
+- **Lilita** (2 files) — OFL-1.1. `nameID 0/14` of the shipped font: Copyright (c) 2011
+  Juan Montoreano (juan@remolacha.biz), Reserved Font Name "Lilita One".
+- **Nunito** (5 files) — OFL-1.1. `nameID 0/14`: Copyright 2014 The Nunito Project
+  Authors, matching https://github.com/googlefonts/nunito (fetched 2026-08-26).
+- **Virgil** (1 file) — OFL-1.1, from two independent sources that agree. The shipped
+  font's `nameID 13` carries the OFL text in full, and its `nameID 0` reads "Copyright
+  (c) 2011 by Your Own Font Foundry. All rights reserved." Excalidraw's own
+  redistribution of the same font, https://github.com/excalidraw/virgil/blob/main/LICENSE.md
+  (fetched 2026-08-26), restates it as "Copyright (c) 2021 - Present, Ellinor Rapp, with
+  Reserved Font Name Virgil," under the same licence. Both copyright lines are recorded
+  in `static/excalidraw-fonts-LICENSE.txt` rather than one silently dropped.
+
+**Liberation Sans (1 file, `LiberationSans-Regular.woff2`, 70,668 B) is dropped**, and
+not for the reason Xiaolai is cut from every build (209 files, 12,667,492 B, for a CJK
+fallback this English-only tool never reaches — pure size). This is a licence call. The
+shipped font's own `nameID 0` reads "Digitized data (c) 2007 Ascender Corporation. All
+rights reserved," `nameID 13` points only to "the license agreement under which you
+accepted the Liberation font software," and `nameID 14` is a dead Ascender Corporation
+URL — no OFL text, no OFL URL, nowhere in the file. That absence identifies the vintage:
+Red Hat's OFL-1.1 relicense of Liberation, current since 2012, carries its own distinct
+copyright line, "Copyright (c) 2012 Red Hat, Inc. with Reserved Font Name Liberation"
+(confirmed against Debian's packaging metadata for the current release), which does not
+appear anywhere in this file. What ships inside `@excalidraw/excalidraw` 0.18.1 is the
+**older, pre-2012 Ascender/Red Hat build**, licensed GNU GPLv2 with the standard font
+embedding exception — and that exception's own text is scoped to "a document which uses
+this font, and embed[s]... this font... into the document," not to software that bundles
+the font as a bytes resource inside its own distributed binary. Unlike ELK, the one other
+copyleft file in this table, Liberation Sans has no file of its own here for a notice to
+travel beside: it is a `data:` URI string folded into one minified `excalidraw.js` file,
+indistinguishable from Excalidraw's own MIT code once esbuild is done with it. A licence
+that does not travel with what it covers is not a licence this table can carry, so
+`dataUri()` in `tools/build-excalidraw.mjs` returns the same `local:` sentinel it returns
+for Xiaolai, and `ExcalidrawFontFace.createUrls()` falls back with no fetch and no
+console error — confirmed by the spike for the mechanism generally, and re-checked here
+for this specific family after the build changed. Excalidraw's own font metadata marks
+Liberation Sans `private: true`: it is an internal metrics-fallback face, never offered
+in the font picker, so the cut changes nothing a person using this tool can choose.
+
+**This is the one visible-to-users consequence worth stating plainly, because it is the
+opposite of Liberation's:** Excalifont and Virgil, the two hand-drawn faces that give
+Excalidraw drawings their look, both shipped. Nothing about the font search took away
+the hand-drawn face.
+
+The full texts are `static/excalidraw-LICENSE.txt` (Excalidraw's own MIT licence, for
+the code) and `static/excalidraw-fonts-LICENSE.txt` (the seven shipped families, each
+under its own heading, in the order above).

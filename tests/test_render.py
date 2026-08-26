@@ -206,8 +206,13 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(
     assert not re.search(r"@@[\w.-]+\.js@@", graph), "an inlining marker survived"
     # Read from the directory rather than listed here: the set changed the day
     # ELK replaced dagre, and a list written down in a test is a list that says
-    # a page is fine while it inlines a library nobody checked.
-    inlined = sorted(path.name for path in static.iterdir() if path.suffix == ".js")
+    # a page is fine while it inlines a library nobody checked. `excalidraw.js`
+    # is carved out before the count rather than folded into the loop below: it
+    # is the one vendored script inlined into no page at all, checked on its own
+    # further down.
+    inlined = sorted(
+        path.name for path in static.iterdir() if path.suffix == ".js" and path.name != "excalidraw.js"
+    )
     assert len(inlined) == 4, inlined
 
     # **"Exactly once, into the page that uses it" — which is not the same claim
@@ -228,6 +233,16 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(
         other = graph if wanted is editing else editing
         assert wanted.count(signature) == 1, name
         assert other.count(signature) == 0, f"{name} is in a page that does not use it"
+
+    # `excalidraw.js` is the one vendored script that belongs on no page at all —
+    # it is fetched by the browser on the first press of the drawing button
+    # (`GET /static/excalidraw.js`) rather than carried on every load, which is
+    # the whole reason it is a route and not a sixth marker in this file. A page
+    # that grew a copy of it would have grown by 5.5 MB with nothing above to
+    # notice, since the loop only ever checks the four names it is handed.
+    excalidraw_signature = (static / "excalidraw.js").read_text(encoding="utf-8")[:200]
+    assert graph.count(excalidraw_signature) == 0
+    assert editing.count(excalidraw_signature) == 0
 
 
 def test_the_table_carries_the_whole_plan_and_its_derived_dates(rendered: Path, seed_index: Index):

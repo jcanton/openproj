@@ -1,0 +1,191 @@
+#!/usr/bin/env node
+// Rebuilds static/excalidraw.js from the pinned dependencies beside this file.
+//
+// Every other file in static/ is committed byte-for-byte from something
+// upstream published. This one is not — see static/VENDOR.md for why — which
+// means the only way anyone can check these bytes is to reproduce them, and
+// the only way to reproduce them is a script that a human can actually run.
+//
+// "Never run npm inside the repository" (static/VENDOR.md, and every other
+// tool in this repo) is not negotiable just because this build needs one:
+// `npm ci` writes a node_modules tree with tens of thousands of files, and
+// there is no correct place for that tree to live under version control. So
+// this script never runs `npm` where it sits. It re-executes itself inside a
+// throwaway directory *outside* the repo, installs and bundles there, and
+// carries only the single finished file back across that boundary. Run it as:
+//
+//   node tools/build-excalidraw.mjs
+//
+// and it prints the temp directory, the byte count and the sha256 of what it
+// wrote to static/excalidraw.js, so the checksum in static/SHA256SUMS is
+// something you can verify rather than something you have to take on faith.
+//
+// The re-exec is what makes one file do two jobs. Run normally (no stage
+// argument) it is the ORCHESTRATOR: it stages entry.js, package.json and
+// package-lock.json into the temp directory, runs `npm ci` there, then invokes
+// *this same file*, copied alongside them, as a child process with
+// EXCALIDRAW_BUILD_STAGE=bundle and the temp directory as its cwd. Run with
+// that variable set, it is the BUNDLER: plain esbuild, resolving `entry.js`
+// and `node_modules` against its own cwd, exactly the shape `esbuild.build`
+// expects and exactly what a `node build-excalidraw.mjs` run by hand inside
+// that directory would also do — the orchestration is not part of the bundle
+// step's own logic, only of how it gets invoked.
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
+import { execFileSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+
+const THIS_FILE = fileURLToPath(import.meta.url)
+const TOOLS_DIR = path.dirname(THIS_FILE)
+const REPO_ROOT = path.resolve(TOOLS_DIR, '..')
+
+if (process.env.EXCALIDRAW_BUILD_STAGE === 'bundle') {
+  await bundle()
+} else {
+  await orchestrate()
+}
+
+async function orchestrate() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'openproj-excalidraw-'))
+  console.log(`building in ${tmp}`)
+
+  fs.copyFileSync(path.join(TOOLS_DIR, 'excalidraw-entry.js'), path.join(tmp, 'entry.js'))
+  fs.copyFileSync(path.join(TOOLS_DIR, 'excalidraw-package.json'), path.join(tmp, 'package.json'))
+  fs.copyFileSync(
+    path.join(TOOLS_DIR, 'excalidraw-package-lock.json'),
+    path.join(tmp, 'package-lock.json'),
+  )
+  // `npm ci` needs the running script inside the tree it installs into, not
+  // just the two files above — dynamic `import` resolution walks up from
+  // wherever a file lives, never from `process.cwd()`, so a copy staged here
+  // is what lets `import * as esbuild from 'esbuild'` below find the copy
+  // `npm ci` is about to install rather than nothing at all.
+  fs.copyFileSync(THIS_FILE, path.join(tmp, 'build-excalidraw.mjs'))
+
+  console.log('npm ci (exact versions from the lockfile beside this script)…')
+  execFileSync('npm', ['ci', '--no-audit', '--no-fund'], { cwd: tmp, stdio: 'inherit' })
+
+  console.log('bundling…')
+  execFileSync(process.execPath, ['build-excalidraw.mjs'], {
+    cwd: tmp,
+    stdio: 'inherit',
+    env: { ...process.env, EXCALIDRAW_BUILD_STAGE: 'bundle' },
+  })
+
+  const built = path.join(tmp, 'excalidraw.trim.js')
+  const dest = path.join(REPO_ROOT, 'static', 'excalidraw.js')
+  fs.copyFileSync(built, dest)
+
+  const { createHash } = await import('node:crypto')
+  const bytes = fs.readFileSync(dest)
+  const sha256 = createHash('sha256').update(bytes).digest('hex')
+  console.log(`\nwrote ${dest}`)
+  console.log(`${bytes.length} bytes, sha256 ${sha256}`)
+  console.log(
+    'update static/SHA256SUMS from the checked-out directory with:\n' +
+      '  cd static && shasum -a 256 *.js *.mjs *.woff2 > SHA256SUMS',
+  )
+  console.log(`(build directory left at ${tmp} — remove it once you are done comparing)`)
+}
+
+async function bundle() {
+  const esbuild = await import('esbuild')
+  const PROD = path.resolve('node_modules/@excalidraw/excalidraw/dist/prod')
+  const cache = new Map()
+
+  // A woff2 as a `data:` URI, or the `local:` sentinel that tells
+  // `ExcalidrawFontFace.createUrls()` to fetch nothing and fall back to
+  // whatever the browser already has installed under that family name — the
+  // same mechanism, used for two different reasons. Xiaolai is dropped for
+  // size: 209 files, 12,667,492 B, for a CJK fallback face nothing in this
+  // tool's English-only UI reaches. Liberation Sans is dropped for licence:
+  // see static/VENDOR.md — the copy this package ships is the pre-2012
+  // Ascender/Red Hat build under GPLv2 plus the font-embedding exception, not
+  // the OFL 1.1 "Reserved Font Name Liberation" relicense, and the exception
+  // text is scoped to documents that embed the font rather than software that
+  // bundles it, with no separate file here for a notice to travel beside the
+  // way ELK's does. Both fall back cleanly: `createUrls()` short-circuits on
+  // `local:` before it ever reaches the network.
+  function dataUri(rel) {
+    const abs = path.join(PROD, rel)
+    if (!fs.existsSync(abs)) return null
+    if (rel.includes('/Xiaolai/')) return 'local:Xiaolai'
+    if (rel.includes('/Liberation/')) return 'local:Liberation'
+    if (cache.has(abs)) return cache.get(abs)
+    const uri = 'data:font/woff2;base64,' + fs.readFileSync(abs).toString('base64')
+    cache.set(abs, uri)
+    return uri
+  }
+
+  const plugin = {
+    name: 'trim',
+    setup(b) {
+      // Drop mermaid-to-excalidraw entirely: ~2.8 MiB of mermaid, cytoscape
+      // and katex for a text-to-diagram import dialog this tool never opens.
+      b.onResolve({ filter: /^@excalidraw\/mermaid-to-excalidraw$/ }, () => ({
+        path: 'stub-mermaid',
+        namespace: 'stub',
+      }))
+      b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({
+        contents:
+          'export const parseMermaidToExcalidraw = async () => ' +
+          '{ throw new Error("mermaid support was stripped from this build") }',
+        loader: 'js',
+      }))
+      // Drop every locale but English. `--format=iife` folds every dynamic
+      // `import()` into the one output file regardless, so "en only" has to
+      // be enforced here rather than left to the format to do for free.
+      b.onResolve({ filter: /dist[\\/]prod[\\/]locales[\\/]/ }, (a) => {
+        if (/[\\/]en-[A-Z0-9]+\.js$/.test(a.path) || /[\\/]locales[\\/]en-/.test(a.path)) {
+          return null
+        }
+        return { path: 'stub-locale-' + path.basename(a.path), namespace: 'stub' }
+      })
+      // The package's CSS is reached through the exports map's `production`
+      // condition (the deep `dist/prod/index.css` path is refused), and its
+      // `url(./fonts/...)` references are rewritten to the same `data:` URIs
+      // (or the same `local:` sentinel) the JS string literals below get.
+      b.onLoad({ filter: /dist[\\/]prod[\\/]index\.css$/ }, async (a) => ({
+        contents: (await fs.promises.readFile(a.path, 'utf8')).replace(
+          /url\((['"]?)(\.\/fonts\/[^'")]+)\1\)/g,
+          (m, q, rel) => {
+            const u = dataUri(rel.slice(2))
+            return u === null ? m : `url("${u}")`
+          },
+        ),
+        loader: 'text',
+      }))
+      // The fonts are reached as plain JS string literals inside the
+      // package's own chunks, not as `import`s or a loader-recognised
+      // extension — `--loader:.woff2=dataurl` inlines nothing on its own.
+      // This rewrites those literals the same way, in every first-party file
+      // esbuild loads out of `dist/prod`.
+      b.onLoad({ filter: /@excalidraw[\\/]excalidraw[\\/]dist[\\/]prod[\\/].*\.js$/ }, async (a) => ({
+        contents: (await fs.promises.readFile(a.path, 'utf8')).replace(
+          /"(\.\/fonts\/[^"]+\.woff2)"/g,
+          (m, rel) => {
+            const u = dataUri(rel.slice(2))
+            return u === null ? m : JSON.stringify(u)
+          },
+        ),
+        loader: 'js',
+      }))
+    },
+  }
+
+  await esbuild.build({
+    entryPoints: ['entry.js'],
+    bundle: true,
+    format: 'iife',
+    minify: true,
+    target: 'es2020',
+    conditions: ['production'],
+    define: { 'process.env.NODE_ENV': '"production"', 'process.env.IS_PREACT': '"false"' },
+    loader: { '.woff2': 'dataurl', '.ttf': 'dataurl', '.css': 'text', '.wasm': 'binary' },
+    outfile: 'excalidraw.trim.js',
+    plugins: [plugin],
+    legalComments: 'none',
+    logLevel: 'info',
+  })
+}
