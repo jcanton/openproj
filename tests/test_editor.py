@@ -1665,6 +1665,11 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
     `surface.el` carrying the entry (or `null` for "+ drawing"), which is the
     whole of what this task ships; the status strip says so rather than
     leaving a press that visibly does nothing.
+
+    Also closes a coverage gap left behind by this task: Escape closing the
+    menu and returning focus to the button, and a second press of `#drawing`
+    closing it again, were both verified by hand in headless Chrome and
+    neither was asserted.
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "drawmenu.html", 1200,
@@ -1677,8 +1682,24 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
         };
         const outsideMarks = document.querySelectorAll('#marks button').length;
 
+        // Escape closes the menu and hands the keyboard back to the button
+        // that opened it — this task's own comment on the listener, unasserted
+        // until now.
         button.click();
         const menu = document.querySelector('.drawmenu');
+        menu.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+        const closedByEscape = menu.hidden;
+        const focusedAfterEscape = document.activeElement === button;
+
+        // A second press of the button while its own menu is open closes it —
+        // also unasserted until now.
+        button.click();
+        const openBeforeSecondPress = !menu.hidden;
+        button.click();
+        const closedBySecondPress = menu.hidden;
+        const expandedAfterSecondPress = button.getAttribute('aria-expanded');
+
+        button.click();
         const openRows = [...menu.querySelectorAll('button')].map(b => b.textContent);
         const expandedOpen = button.getAttribute('aria-expanded');
 
@@ -1709,6 +1730,8 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
         document.querySelector('.drawmenu button').click();
 
         return {namedForReaders, outsideMarks, openRows, expandedOpen,
+                closedByEscape, focusedAfterEscape,
+                openBeforeSecondPress, closedBySecondPress, expandedAfterSecondPress,
                 openAfterOwnMousedown, openAfterInsideMousedown, closedByOutsideMousedown,
                 afterPress, heardNew};
         """,
@@ -1717,6 +1740,11 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
         "an icon with no words is a mystery glyph to a reader who cannot see it"
     )
     assert got["outsideMarks"] == 16, "the menu is page chrome, not a seventeenth FORMATS mark"
+    assert got["closedByEscape"], "Escape did not close the menu"
+    assert got["focusedAfterEscape"], "Escape closed the menu but did not give the button back"
+    assert got["openBeforeSecondPress"], "the first of the pair did not even open it"
+    assert got["closedBySecondPress"], "a second press over an open menu did not close it"
+    assert got["expandedAfterSecondPress"] == "false"
     assert got["openRows"] == ["+ drawing", "draw-123abc"], "+ drawing leads, the id follows"
     assert got["expandedOpen"] == "true"
     assert got["openAfterOwnMousedown"], "pressing the button that opened it closed it again"
