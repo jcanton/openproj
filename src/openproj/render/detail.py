@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from datetime import date
 
 from markupsafe import Markup, escape
 
@@ -1889,14 +1888,24 @@ for (const article of document.querySelectorAll('article.record')) {
       return;
     }
     if (answer.ok) {
-      // To the landing, because the page you are on is about a record that no
-      // longer exists: staying here would show a 404 on the next reload, and
-      // reloading it is what the shell does when it hears the commit. The
-      // landing and not the table — this page belongs to every record, and a
-      // deleted issue's or note's reader sent to the table lands on a plan
-      // view that never showed the record they came from. Same retarget as
-      // the back link at the top of the page.
-      location.href = {{ links.records|tojson }};
+      // Away, because the page you are on is about a record that no longer
+      // exists: staying here would show a 404 on the next reload, and reloading
+      // it is what the shell does when it hears the commit.
+      //
+      // **Where the back link would have taken you** — jcanton, 2026-08-26: "the
+      // back path after edit/delete sometimes simply goes back to the main page,
+      // would be nice if it sent always to the previous page". This was the
+      // place it did not. It went to the landing deliberately, on the argument
+      // that a deleted issue's reader sent to the table lands on a plan view
+      // that never showed it; but the remembered origin is not the table, it is
+      // the view they were actually standing on, and it is never this record's
+      // own page because a record page does not stamp one.
+      //
+      // The landing stays as the fallback, for the tab that has no origin —
+      // a record opened in a new tab, or reached by typing the address.
+      // `cameFrom` is the shell's, and it is the same read the back link makes.
+      const back = typeof cameFrom === 'function' ? cameFrom() : null;
+      location.href = back ? back.href : {{ links.records|tojson }};
       return;
     }
     // Refused, and the reason is the useful part: "pitch-b20000 cannot be
@@ -2813,9 +2822,25 @@ def _new_rows() -> list[dict]:
             id=f"{PREFIX[kind]}-000000",
             kind=kind,
             title="",
-            # Today, because a date field that starts empty is a date field
-            # somebody leaves empty. This is a blank; nothing is overwritten.
-            assigned_on=date.today(),
+            # **Empty, and not today.** It was today, on the argument that a date
+            # field which starts empty is a date field somebody leaves empty —
+            # jcanton, 2026-08-26, reversing it: "assigned date default to empty
+            # would be better than default=today".
+            #
+            # The argument was answering the wrong risk. `assigned_on` is the one
+            # date the whole schedule is derived FROM, and a record created today
+            # is very often work that starts next cycle or work somebody is
+            # writing down so as not to lose it. Prefilling today does not stop
+            # anybody leaving it wrong, it makes wrong the DEFAULT and silent:
+            # the record schedules itself from a date nobody chose, and the only
+            # sign is a bar in the right place on the timeline for the wrong
+            # reason.
+            #
+            # Empty is not silent. `validate_all` already asks for this field at
+            # `in_progress` and nowhere else — "work in progress needs the date it
+            # was assigned" — so a record that never gets one is fine until it
+            # starts, and then says so beside itself.
+            assigned_on=None,
         )
         # One form on the page, so one prefix. The detail page's is the record's
         # id, because that page can hold sixteen of them at once.

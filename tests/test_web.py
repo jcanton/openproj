@@ -5685,3 +5685,75 @@ def test_a_bulk_write_needs_a_writer_like_every_other_door(secure_client: httpx.
         "/api/records", json={"base_commit": "0" * 40, "ids": [PROJECT], "fields": {}}
     )
     assert answer.status_code == 401, answer.text
+
+
+def _walked(url: str, profile: Path, steps: list[tuple[str, str]]) -> str:
+    """Drive a real browser through a sequence of pages, and report the last answer.
+
+    `in_a_live_page` polls ONE expression until it answers, which is the right
+    shape for "wait until this page is ready" and the wrong one for "do this,
+    then that": every poll is a fresh evaluation, so a walk with steps has to
+    carry its own state on `window` and race its own loop. Two attempts at that
+    oscillated and reported nothing.
+
+    So this is explicit: each step is (what to do, how long to wait), the waits
+    are real seconds because there is no virtual clock in a live session, and a
+    navigation that kills the context mid-evaluate is tolerated — the page still
+    goes, and the answer to that step is not the one being read.
+    """
+    import time
+
+    from browser import _devtools, _evaluated, chrome
+
+    with _devtools(chrome(), url, profile) as (call, said):
+        time.sleep(3)
+        answer = None
+        for expression, seconds in steps:
+            try:
+                answer = _evaluated(call, expression, patient=True)
+            except Exception:  # noqa: BLE001 - a navigation took the context with it
+                answer = None
+            time.sleep(seconds)
+        return answer, said
+
+
+def test_a_deleted_record_sends_a_real_browser_back_where_it_came_from(
+    live_server: str, tmp_path: Path,
+):
+    """jcanton, 2026-08-26: "the back path after edit/delete sometimes simply
+    goes back to the main page, would be nice if it sent always to the previous
+    page". Deleting was the place it did not.
+
+    Away is not optional — the page is about a record that no longer exists, and
+    the shell reloads it when it hears the commit — so the only question is
+    where. It went to the landing deliberately, on the argument that a deleted
+    issue's reader sent to the table lands on a plan view that never showed it.
+    The remembered origin is not the table though: it is the view they were
+    actually standing on, and it is never this record's own page, because a
+    record page does not stamp one.
+
+    A real journey, because the claim is about a store that survives a
+    navigation and the two pages either side of it are the only place that is
+    true. It is also the only way to see this at all: the decision is
+    `location.href = …`, and the shim that could record that cannot run the
+    record page — its editor asks the DOM for things a phantom does not have.
+
+    `OTHER` because it is a leaf. A record with work filed under it opens the
+    cascade confirmation instead, which is a different button and a bigger claim.
+    """
+    answer, said = _walked(
+        f"{live_server}/table", tmp_path / "profile",
+        [
+            # Standing on the table is what leaves the stamp this is about.
+            ("location.pathname", 1),
+            (f"location.href = {json.dumps(live_server + '/detail/' + OTHER)}", 3),
+            # The bar is drawn by the page's own script; the confirmation by the
+            # handler that takes the first press.
+            ("""[...document.querySelectorAll('button')]
+                 .find(b => b.textContent.trim() === 'Delete').click()""", 1),
+            ("""[...document.querySelectorAll('button')]
+                 .find(b => b.textContent.trim() === 'Delete it').click()""", 4),
+            ("location.pathname + location.search", 0),
+        ],
+    )
+    assert answer == "/table", (answer, said)

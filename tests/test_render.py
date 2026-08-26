@@ -6025,3 +6025,32 @@ def test_a_carried_row_may_be_repriced_but_not_re_bet(server_pages: dict[str, st
             assert picker and "disabled" not in picker.group(0), (
                 f"a carried row cannot have its {field} changed"
             )
+
+
+def test_the_create_form_opens_with_no_date_in_the_box(server_pages: dict[str, str]):
+    """jcanton, 2026-08-26: "assigned date default to empty would be better than
+    default=today".
+
+    It was today, on the argument that a date field which starts empty is a date
+    field somebody leaves empty. That was answering the wrong risk. `assigned_on`
+    is the one date the whole schedule is derived FROM, and a record created
+    today is very often work that starts next cycle, or work somebody is writing
+    down so as not to lose it. Prefilling today does not stop anybody leaving it
+    wrong — it makes wrong the default and makes it silent: the record schedules
+    itself from a date nobody chose, and the only sign is a bar in the right
+    place on the timeline for the wrong reason.
+
+    Empty is not silent. `validate_all` asks for the field at `in_progress` and
+    nowhere else, so a record that never gets one is fine until it starts and
+    then says so beside itself — which is why the box still carries
+    `data-required-at`.
+    """
+    box = re.search(r'<input[^>]*id="new-assigned_on"[^>]*>', server_pages["new"])
+    assert box, "the create form has no assigned-on box"
+    assert 'value=""' in box.group(0), (
+        f"the create form opens with a date already in it: {box.group(0)}"
+    )
+    assert 'data-required-at="in_progress"' in box.group(0), (
+        "the box no longer says when the field becomes required, so an empty one "
+        "is empty with nothing to say it will be asked for"
+    )
