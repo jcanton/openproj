@@ -965,6 +965,31 @@ article.record .editbar { margin-bottom: .4rem; }
   border-radius: 4px; box-shadow: 0 12px 40px rgba(0, 0, 0, .3);
   overflow: hidden;
 }
+/* The full-page size, which is the whole of what the toggle does — jcanton,
+   2026-08-26: "maybe full page size instead of full screen, so we don't have the
+   browser going to a different space on mac". `.drawpopup` is already
+   `position: fixed; inset: 0`, so this only has to stop capping the box inside
+   it.
+
+   `100%` of that overlay and not `100vw`/`100vh`: `100vw` counts the classic
+   scrollbar's gutter, so on a page with one the box would be a few pixels wider
+   than the window and put a scrollbar on the overlay itself. The overlay's own
+   box is exactly the viewport and already measured, which is the number wanted.
+
+   `box-sizing: border-box` with it, and that is measured rather than tidy. This
+   stylesheet has NO global border-box reset — it is set per element, on `th, td`
+   and four others — so `.drawbox` is content-box and `height: 100%` came out as
+   913px of content plus its 1px borders: a 915px box in a 913px overlay, two
+   pixels of overflow. The width hid it, because a flex item in a row container
+   still has `flex-shrink: 1` and the line simply took the two pixels back; the
+   cross axis has nothing that does that, so only the height was wrong. Measured
+   at 1400x1000: box 1385x915 against an overlay of 1385x913.
+
+   The radius goes with it. A rounded corner says "there is a page behind this";
+   at full page there is not one to see. */
+.drawbox.full {
+  width: 100%; height: 100%; box-sizing: border-box; border-radius: 0;
+}
 .drawhead {
   display: flex; align-items: center; justify-content: flex-end; gap: .5rem;
   padding: .5rem .75rem; border-bottom: 1px solid var(--line);
@@ -988,6 +1013,19 @@ article.record .editbar { margin-bottom: .4rem; }
    .drawask` already outrank the UA stylesheet's bare `[hidden]` rule on
    specificity alone, so without an override of its own the row would stay
    laid out — visible — even while the `hidden` attribute is set on it. */
+/* The size toggle, against the left edge of a bar that is otherwise packed
+   right. `margin-right: auto` on the first child and not `justify-content:
+   space-between` on the bar: the question row (`.drawask`) replaces Save and
+   Close in this same flex line, and `space-between` would have spread THAT out
+   too — the sentence at one edge and its two answers at the other.
+
+   Sized like the toolbar's other icon-only buttons, and centred the way `.hist`
+   is: a drawing has no baseline to sit on. */
+.drawhead .grow {
+  margin-right: auto; display: inline-flex; align-items: center;
+  justify-content: center; line-height: 0;
+}
+.drawhead .grow svg { display: block; width: 15px; height: 15px; }
 .drawhead .drawask { display: flex; align-items: center; gap: .5rem; }
 .drawhead .drawask[hidden] { display: none; }
 .drawhead .drawask .asking { margin: 0; font-size: 13px; color: var(--danger); }

@@ -8221,6 +8221,108 @@ def test_the_rooms_own_commit_does_not_reload_the_page_under_the_person_in_it(
         )
 
 
+def test_the_drawing_popup_takes_the_whole_page_and_remembers_that_it_did(
+    live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
+    tmp_path: Path,
+):
+    """jcanton, 2026-08-26: "can we have a fullscreen toggle button to make the
+    draw window full screen? or maybe full page size instead of full screen, so
+    we don't have the browser going to a different space on mac. whatever is
+    easier", then "maybe in the [save][close] bar on top of the draw area but on
+    the left side and with two expand/contract icons instead of text".
+
+    Full page, and nothing here calls `requestFullscreen` — which is the point of
+    his second sentence and is also the easier of the two: `.drawpopup` is
+    already `position: fixed; inset: 0`, so the whole viewport is covered and the
+    only thing between the drawing and the edges is `.drawbox`'s own
+    `min(96vw, 1100px)` cap. Asserted against the OVERLAY's box rather than
+    against `innerWidth`: that is the rectangle the box is being asked to fill,
+    and comparing to the window would fail by exactly a scrollbar on any page
+    that has one — which is the trap `100vw` sets and this rule avoids.
+
+    Four claims: it grows to the overlay, it is on the left while Save and Close
+    stay right, the icon and the accessible name swap together, and the choice
+    comes back on the next popup. The last is the one worth a live server: it
+    goes through `remembered`, so it is real `localStorage` on a real origin,
+    which a `file://` page cannot be trusted to have.
+    """
+    url = f"{live_server}/detail/{TASK}?both"
+    with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
+        time.sleep(3)
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelector('.drawmenu button').click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+
+        measure = """
+        (() => {
+          const overlay = document.querySelector('.drawpopup').getBoundingClientRect();
+          const box = document.querySelector('.drawbox').getBoundingClientRect();
+          const grow = document.getElementById('draw-size');
+          const save = document.getElementById('draw-save');
+          return {
+            fills: Math.round(box.width) === Math.round(overlay.width)
+                   && Math.round(box.height) === Math.round(overlay.height),
+            narrower: Math.round(box.width) < Math.round(overlay.width),
+            leftOfSave: Math.round(grow.getBoundingClientRect().left)
+                        < Math.round(save.getBoundingClientRect().left),
+            firstInBar: grow === document.querySelector('.drawhead').firstElementChild,
+            says: grow.getAttribute('aria-label'),
+            titled: grow.title,
+            words: grow.textContent.trim(),
+            drawings: grow.querySelectorAll('svg path').length,
+            // Reported whether or not they are asserted: every failure of this
+            // test is "the box is not the size it should be", and two numbers
+            // beside the boolean is the difference between reading the message
+            // and re-running it with a print in.
+            box: [Math.round(box.width), Math.round(box.height)],
+            overlay: [Math.round(overlay.width), Math.round(overlay.height)],
+          };
+        })()
+        """
+
+        small = _evaluated(call, measure)
+        assert small["narrower"], "the popup already filled the page before it was asked to"
+        assert small["leftOfSave"] and small["firstInBar"], (
+            f"the size toggle is not on the left of the bar: {small}"
+        )
+        assert small["words"] == "", "the toggle carries words; it was asked for icons"
+        assert small["drawings"] == 4, (
+            f"the expand icon is not the four corner brackets: {small['drawings']} paths"
+        )
+        assert small["says"] == "Full page" and small["titled"] == "Full page", (
+            "an icon with no words is a mystery glyph to a reader who cannot see it, and "
+            f"to one who can and cannot tell what it is: {small}"
+        )
+
+        _evaluated(call, "document.getElementById('draw-size').click()")
+        time.sleep(0.3)
+        big = _evaluated(call, measure)
+        assert big["fills"], f"the toggle did not take the whole page: {big}"
+        assert big["says"] == "Smaller", (
+            "the icon swapped but the name it is announced by did not, or the other "
+            f"way round: {big}"
+        )
+        assert big["drawings"] == 4, "the contract icon is not the same four brackets back"
+        # The keyboard goes back to the drawing rather than staying on a button
+        # that has done its job — the press was made in order to draw bigger.
+        assert _evaluated(call, """
+          !!(document.activeElement && document.activeElement.closest('.excalidraw'))
+        """), "the size toggle kept the keyboard"
+
+        # And it is remembered. Closed and reopened in the same page, which is
+        # what `localStorage` promises and what somebody who wants a big canvas
+        # wants without pressing this again every time.
+        _evaluated(call, "document.getElementById('draw-close').click()")
+        _until(call, "!document.querySelector('.drawpopup')")
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelector('.drawmenu button').click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+        again = _evaluated(call, measure)
+        assert again["fills"] and again["says"] == "Smaller", (
+            f"the popup forgot that it was opened at full page last time: {again}"
+        )
+
+
 def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
     live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
     tmp_path: Path,

@@ -249,6 +249,27 @@ STATUS_GLYPH = {
 # `aria-hidden` comes with the frame, which is what these need: each sits inside
 # a button that carries the name, and a drawing announced beside it would be the
 # same control said twice.
+# The two the drawing popup's size toggle wears, and it wears one at a time —
+# jcanton, 2026-08-26: "maybe in the [save][close] bar on top of the draw area
+# but on the left side and with two expand/contract icons instead of text".
+#
+# Four corner brackets each, facing out for "take the whole page" and in for
+# "give it back". Mirror images of one another about both axes, so the pair reads
+# as one control in two states rather than as two icons to learn — the same
+# argument `HISTORY_MARKS` makes for mirroring undo and redo about x=12.
+#
+# Stroked in `currentColor` through `_ICON_SVG`, like every other icon in this
+# application that is a diagram rather than a glyph. Sized by `.drawhead .grow
+# svg`; an SVG nothing sizes lays out at 0x0, which this application has now
+# shipped twice.
+DRAWING_SIZE_MARKS = {
+    "full": _ICON_SVG.format('<path d="M9 4H4v5"/><path d="M15 4h5v5"/>'
+                             '<path d="M15 20h5v-5"/><path d="M9 20H4v-5"/>'),
+    "small": _ICON_SVG.format('<path d="M4 9h5V4"/><path d="M20 9h-5V4"/>'
+                              '<path d="M20 15h-5v5"/><path d="M4 15h5v5"/>'),
+}
+
+
 DRAFT_MARKS = {
     "create": _ICON_SVG.format('<path d="M5 12.6 9.7 17.3 19 6.9"/>'),
     "cancel": _ICON_SVG.format('<path d="M6.6 6.6 17.4 17.4M17.4 6.6 6.6 17.4"/>'),

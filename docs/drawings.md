@@ -488,6 +488,45 @@ room, so nothing in this repository had a room in it and the whole class was inv
 They drive `?both` now — the editor a person actually gets. jcanton, same day: "you should
 use the ace editor by default in your tests from now on."
 
+## Full page, not full screen
+
+jcanton, 2026-08-26: "can we have a fullscreen toggle button to make the draw window full
+screen? or maybe full page size instead of full screen, so we don't have the browser going
+to a different space on mac. whatever is easier", and then "maybe in the [save][close] bar
+on top of the draw area but on the left side and with two expand/contract icons instead of
+text".
+
+Full page was both the one he preferred and the easier one, and nothing here calls
+`requestFullscreen`: `.drawpopup` is already `position: fixed; inset: 0`, so the viewport
+is covered already and the only thing between the drawing and the edges is `.drawbox`'s
+own `min(96vw, 1100px)` / `min(92vh, 800px)` cap. The toggle takes the cap off. No macOS
+Space, and no `fullscreenchange` state to keep a button honest against.
+
+`width: 100%` of that overlay rather than `100vw`, because `100vw` counts the classic
+scrollbar's gutter and would put the box a few pixels wider than the window it is covering.
+And `box-sizing: border-box` with it, which was measured rather than assumed: this
+stylesheet has no global border-box reset — it is set per element — so `.drawbox` is
+content-box and `height: 100%` came out as 913px of content plus its 1px borders, a 915px
+box in a 913px overlay. The width hid it, because a flex item in a row container still has
+`flex-shrink: 1` and the line took the two pixels back; the cross axis has nothing that
+does that, so only the height was wrong.
+
+The control is icon-only and sits at the left of a bar that is otherwise packed right —
+`margin-right: auto` on the first child, and not `justify-content: space-between` on the
+bar, because the unsaved-strokes question replaces Save and Close in that same flex line
+and `space-between` would have spread the sentence and its two answers to opposite edges.
+
+**Not `aria-pressed`.** A toggle button in the ARIA sense keeps one label and reports its
+state separately, which is right when the label is a noun the state qualifies. Here the
+icon is the whole control and it names the ACTION — brackets pointing out mean "take the
+whole page", pointing in mean "give it back" — so the accessible name says what the drawing
+says, and `aria-pressed` beside a name that already changed would be the state announced
+twice and disagreeing with itself. Two alternating actions, said once each.
+
+The choice is remembered in `localStorage` through `remembered`, beside the theme, the
+palette and the table's widths: somebody who wants the drawing editor big wants it big
+every time.
+
 ## Where the sentence goes
 
 Also 2026-08-26, with a screenshot of the edit-only view: "it's the 'saved' message, which

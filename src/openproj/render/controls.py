@@ -12,6 +12,7 @@ from .env import _fragment
 from .hill import _hill_html
 from .tokens import (
     DRAWING_ART,
+    DRAWING_SIZE_MARKS,
     HISTORY_MARKS,
     PEOPLE_FIELDS,
     PRIORITIES,
@@ -1074,6 +1075,9 @@ const HISTORY_ART = {{ history_art|tojson }};
 // `tokens.py`'s `DRAWING_ART`, which is where the glyph moved to when the button
 // became a `FORMATS` entry.
 const DRAW_ART = {{ draw_art|tojson }};
+
+// The size toggle's pair, arriving the same way — one shown at a time.
+const DRAW_SIZE_ART = {{ size_art|tojson }};
 
 // The room's undo history, once there is a room wired to this box. Declared here
 // and assigned in `_COEDIT`, which is a separate `<script>` inlined AFTER this
@@ -2486,6 +2490,34 @@ function drawPopup(label) {
   box.className = 'drawbox';
   const head = document.createElement('div');
   head.className = 'drawhead';
+  // **Full page, and not the Fullscreen API.** jcanton, 2026-08-26: "can we
+  // have a fullscreen toggle button to make the draw window full screen? or
+  // maybe full page size instead of full screen, so we don't have the browser
+  // going to a different space on mac. whatever is easier". Full page is both
+  // the one he preferred and the easier one — `.drawpopup` is already
+  // `position: fixed; inset: 0`, so the whole viewport is covered and the only
+  // thing between the drawing and the edges is `.drawbox`'s own
+  // `min(96vw, 1100px)` cap. The toggle takes the cap off. Nothing here calls
+  // `requestFullscreen`, so nothing moves the window to another macOS Space and
+  // there is no `fullscreenchange` state to keep this button honest against.
+  //
+  // Two icons and no words, on the left of the bar: "maybe in the [save][close]
+  // bar on top of the draw area but on the left side and with two
+  // expand/contract icons instead of text". `sized` below swaps the drawing and
+  // the name together.
+  //
+  // **Not `aria-pressed`.** A toggle button in the ARIA sense keeps ONE label
+  // and reports its state separately, which is right when the label is a noun
+  // the state qualifies. Here the icon is the whole control and it names the
+  // ACTION — brackets pointing out mean "take the whole page", pointing in mean
+  // "give it back" — so the accessible name has to say the same thing the
+  // drawing does, and a `aria-pressed` beside a name that already changed would
+  // be the state announced twice and disagreeing with itself. Two alternating
+  // actions, said once each.
+  const bigger = document.createElement('button');
+  bigger.type = 'button';
+  bigger.id = 'draw-size';
+  bigger.className = 'grow';
   const save = document.createElement('button');
   save.type = 'button';
   save.id = 'draw-save';
@@ -2498,7 +2530,12 @@ function drawPopup(label) {
   close.type = 'button';
   close.id = 'draw-close';
   close.textContent = 'Close';
-  head.append(save, close);
+  // First in the bar, and `.drawhead .grow`'s `margin-right: auto` is what puts
+  // it against the left edge while Save and Close stay against the right — the
+  // bar is `justify-content: flex-end`, so a plain `order` would have moved all
+  // three. Apart from the two that END the session, because this one only
+  // changes how much room they have.
+  head.append(bigger, save, close);
   // The question a close attempt over unsaved strokes raises, in place of
   // Save and Close rather than beside them — built once, here, so it exists
   // before there is ever anything to ask about. See `openDrawing`'s own
@@ -2525,7 +2562,7 @@ function drawPopup(label) {
   stage.className = 'drawstage';
   box.append(head, stage);
   overlay.append(box);
-  return {overlay, stage, head, save, close, ask, keep, discard};
+  return {overlay, box, stage, head, bigger, save, close, ask, keep, discard};
 }
 
 // One popup at a time. Nothing stops a second `openproj:draw` firing while the
@@ -2560,10 +2597,41 @@ async function openDrawing(surface, status, entry) {
   }
   DRAWING_OPEN = true;
   const button = document.getElementById('drawing');
-  const {overlay, stage, head, save, close, ask, keep, discard} = drawPopup(
+  const {overlay, box, stage, head, bigger, save, close, ask, keep, discard} = drawPopup(
     entry ? `Editing ${entry.id}` : 'A new drawing'
   );
   document.body.appendChild(overlay);
+
+  // Which size the popup opens at, remembered the way the theme, the palette and
+  // the table's widths are: somebody who wants the drawing editor big wants it
+  // big every time, and re-pressing this on every open is the kind of small toll
+  // that makes a control feel like an apology. `localStorage` and not
+  // `sessionStorage`, on the same argument — this is a preference, not where a
+  // tab happened to come from.
+  //
+  // Read through `remembered`, so a browser that refuses to store simply always
+  // opens at the smaller size rather than throwing on the way to the canvas.
+  const SIZE = 'openproj:drawing:full';
+  function sized(full) {
+    box.classList.toggle('full', full);
+    // The drawing and the name together, always: the icon shows what the next
+    // press DOES, so at full page it is the contract pair and the words are the
+    // words for going back.
+    bigger.innerHTML = full ? DRAW_SIZE_ART.small : DRAW_SIZE_ART.full;
+    const says = full ? 'Smaller' : 'Full page';
+    bigger.setAttribute('aria-label', says);
+    bigger.title = says;
+  }
+  sized(remembered.get(SIZE) === 'yes');
+  bigger.onclick = () => {
+    const full = !box.classList.contains('full');
+    sized(full);
+    remembered.set(SIZE, full ? 'yes' : 'no');
+    // Excalidraw sizes its canvas from its container and watches it, so the
+    // resize needs no telling — but the keyboard does: the press left focus on
+    // this button, and the point of the press was to draw in the bigger box.
+    if (api) api.focusContainer();
+  };
 
   let root = null, api = null, etag = null, closed = false, mounted = null;
 
@@ -3980,4 +4048,5 @@ def _combobox_html(
     return _fragment(
         _COMBOBOX, suggest=data, max_body_bytes=MAX_BODY_BYTES,
         history_art=HISTORY_MARKS, draw_art=DRAWING_ART,
+        size_art=DRAWING_SIZE_MARKS,
     )
