@@ -1205,7 +1205,7 @@ def test_the_people_page_is_one_table_with_one_header(rendered: Path):
     """
     body = read(rendered, "people.html")
     people = re.findall(r'<tbody class="person"', body)
-    table = re.search(r"<table id=\"roles\">.*?</table>", body, re.S).group(0)
+    table = re.search(r"<table id=\"roles\"[^>]*>.*?</table>", body, re.S).group(0)
 
     assert len(people) > 5, "the corpus names enough people for this to matter"
     assert body.count("<table") == 1, "one table, not one per person"
@@ -4076,8 +4076,13 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
         # end and nothing at its left.
         "table": ["h1.sr-only", "div#controls"],
         # And the timeline's two keys are one row rather than two — status on the
-        # left, marks on the right.
-        "timeline": ["h1.sr-only", "div#controls", "form.tl-controls", "div.keyrow"],
+        # left, marks on the right. Both of the timeline's own rows are inside a
+        # `<details>` now: the count of rows is unchanged and so is what is in
+        # them, because these are `open` at every width above 40rem and this is
+        # measured at 1400. What a phone does with them is
+        # `test_what_a_phone_folds_away_is_open_on_anything_wider`.
+        "timeline": ["h1.sr-only", "div#controls",
+                     "details.windowfold", "details.keyfold"],
     }[view], got["rows"]
 
     # The same three claims on every view, which is what "share the bar" means.
@@ -5382,6 +5387,322 @@ def test_the_graphs_legend_is_on_the_page_a_phone_can_see(on_a_phone: dict[str, 
         f"{len(got['keysOffPage'])} of the graph's legend keys are off the page on a "
         f"{got['viewport']}px phone, at: {got['keysOffPage']}"
     )
+
+
+# What a phone gets of the window, and what it has to open to see the rest. Asked
+# of the three views that size a box to it, because those are the three where the
+# furniture above and the drawing below compete for the same pixels.
+_THE_FOLD = """
+const h = el => el ? Math.round(el.getBoundingClientRect().height) : null;
+const box = document.querySelector('[data-fills]');
+const shut = [...document.querySelectorAll('.facetbox, .windowfold, .keyfold')]
+  .map(el => el.className + (el.open ? ':open' : ':shut'));
+const said = document.querySelector('.facetbox > summary .facetboxsaid');
+const handles = [...document.querySelectorAll(
+  '.facetbox > summary, .windowfold > summary, .keyfold > summary')]
+  .filter(el => el.getClientRects().length);
+return {
+  viewport: document.documentElement.clientWidth,
+  window: innerHeight,
+  boxTop: box ? Math.round(box.getBoundingClientRect().top + scrollY) : null,
+  boxHeight: h(box),
+  folds: shut,
+  handles: handles.length,
+  said: said ? said.textContent.trim() : null,
+};
+"""
+
+
+@pytest.fixture
+def views_on_a_phone(views: dict[str, str], tmp_path: Path) -> dict[str, dict]:
+    from browser import chrome, measured_on_a_phone
+
+    return measured_on_a_phone(chrome(), views, tmp_path / "folded", _THE_FOLD)
+
+
+def test_a_phone_gives_the_drawing_more_of_the_window_than_the_furniture(
+    views_on_a_phone: dict[str, dict]
+):
+    """The control bar is eleven filter fields, and at a 390px viewport they wrap
+    to six rows: 188px, on all three views, before a word of the plan.
+
+    Measured at 390x844 before this: the table's rows had 371px under 435px of
+    furniture, the graph's canvas 314 under 492, and the timeline's chart 150
+    under 655 — a Gantt in a sixth of the window, under five sixths of controls
+    for it. The same page on a laptop spends a tenth of the window on that bar,
+    which is why it had never looked like anything.
+
+    The claim is the ORDERING and not a number: whatever a phone turns out to be,
+    what you came to look at gets more of it than what you came to look at it
+    with. A percentage here would be a second thing to maintain and would say
+    less — this is the sentence that is actually true.
+
+    It holds for all three now because three things fold: the filter bar
+    everywhere, and the timeline's window controls and its key.
+    """
+    for view, got in views_on_a_phone.items():
+        assert got["boxHeight"] > got["boxTop"], (
+            f"{view} on a {got['viewport']}x{got['window']} phone puts {got['boxTop']}px of "
+            f"furniture above a {got['boxHeight']}px box, so most of the window is controls"
+        )
+
+
+def test_what_a_phone_folds_away_is_open_on_anything_wider(
+    views: dict[str, str], tmp_path: Path
+):
+    """The folds are `<details open>` closed by the script, and only below 40rem.
+
+    Both halves matter and only one of them is about phones. A fold that stayed
+    closed at 900px would be eleven filters behind a handle the stylesheet does
+    not draw at that width — the summary is `display: none` above 40rem — which is
+    a control with no way in and no way to know it is there.
+
+    The reader without JavaScript is the other half, and it is why the markup
+    ships `open`: these are JS-driven controls, so a page that could not run the
+    script has nothing to fold, and a `<details>` that shipped closed would hide
+    them from the one reader who cannot open it back.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    browser = chrome()
+    narrow = measured_on_a_phone(browser, views, tmp_path / "narrow", _THE_FOLD)
+    wide = measured_on_a_phone(browser, views, tmp_path / "wide", _THE_FOLD, width=900)
+
+    for view, got in narrow.items():
+        assert got["folds"], f"{view} has nothing to fold on a phone"
+        assert all(one.endswith(":shut") for one in got["folds"]), (
+            f"{view} leaves {got['folds']} open on a phone"
+        )
+        assert got["handles"] == len(got["folds"]), (
+            f"{view} draws {got['handles']} handles for {len(got['folds'])} folds, so one "
+            f"of them cannot be opened"
+        )
+    for view, got in wide.items():
+        assert all(one.endswith(":open") for one in got["folds"]), (
+            f"{view} folds {got['folds']} away at {got['viewport']}px, where the stylesheet "
+            f"draws no handle to open them with"
+        )
+        assert got["handles"] == 0, (
+            f"{view} draws {got['handles']} fold handles at {got['viewport']}px, over controls "
+            f"that are already on the screen"
+        )
+
+
+def test_a_folded_filter_bar_says_how_many_fields_are_set(
+    views: dict[str, str], tmp_path: Path
+):
+    """A closed bar over a filtered view is a page lying about what it shows.
+
+    This is the whole risk of the fold and the only thing that makes it safe: the
+    count is written from the query string by `syncFilters`, beside the Clear
+    button it already decides, so the two cannot disagree about whether anything
+    is set.
+
+    Two fields and three values, deliberately: the count is of FIELDS, because
+    "3 set" over one status field with three statuses ticked would send a reader
+    in looking for three questions that had answers.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    got = measured_on_a_phone(
+        browser := chrome(), views, tmp_path / "set", _THE_FOLD,
+        query="?status=ready&status=in_progress&kind=task",
+    )
+    for view, one in got.items():
+        assert one["said"] == "· 2 set", (
+            f"{view} folds a bar with two fields set and says {one['said']!r}"
+        )
+
+    clean = measured_on_a_phone(browser, views, tmp_path / "unset", _THE_FOLD)
+    for view, one in clean.items():
+        assert one["said"] == "", (
+            f"{view} says {one['said']!r} over a bar with nothing set"
+        )
+
+
+# The frozen pair, and what it leaves to scroll into. Asked of the table at two
+# widths in one browser, because the claim is about the relationship between them.
+_FROZEN = """
+const table = document.getElementById('rows');
+const drawn = [...table.querySelectorAll('thead th')]
+  .filter(th => th.getBoundingClientRect().width > 0)
+  .map(th => th.dataset.col);
+const width = key => {
+  const th = table.querySelector(`thead th[data-col="${key}"]`);
+  return th ? Math.round(th.getBoundingClientRect().width) : 0;
+};
+const box = document.querySelector('.table-scroll');
+return {
+  viewport: document.documentElement.clientWidth,
+  drawn,
+  frozen: width('id') + width('title'),
+  box: Math.round(box.clientWidth),
+  table: Math.round(table.getBoundingClientRect().width),
+};
+"""
+
+
+def test_what_the_table_freezes_leaves_something_to_scroll_into(
+    views: dict[str, str], tmp_path: Path
+):
+    """`[data-col="id"]` and `[data-col="title"]` are `position: sticky`, which is
+    what keeps a row's name on screen however far the table is scrolled sideways.
+    A frozen column is not paid for out of the table's width — it is paid for out
+    of the WINDOW, every moment the table is scrolled.
+
+    At a 390px viewport that pair measured 122 + 250 = 372px inside a 335px box:
+    the columns that hold still were wider than the box they hold still inside, so
+    scrolling right moved nothing into view because there was no view left to move
+    it into. Eleven columns, 1209px of table, and a reader who could reach exactly
+    the two that never move.
+
+    Two things fixed it and both are arithmetic rather than a breakpoint. The
+    title's floor is the smaller of 250 and 45% of the room, so the column that
+    holds a sentence stops demanding three quarters of a phone. And the id sheds
+    when the frozen pair would leave under a third of the box to scroll into —
+    which is a different question from the one the other four shed on, and is why
+    it is not in that loop.
+
+    Asked at 900 as well, and that is not decoration: the rule has to be one a
+    laptop never meets. At 900 the pair is 372 of 860 and the id stays, which is
+    exactly what the same table did before any of this.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    browser = chrome()
+    one = {"table": views["table"]}
+    phone = measured_on_a_phone(browser, one, tmp_path / "frozen-390", _FROZEN)["table"]
+    laptop = measured_on_a_phone(
+        browser, one, tmp_path / "frozen-900", _FROZEN, width=900)["table"]
+
+    for got in (phone, laptop):
+        assert got["frozen"] <= got["box"] * 2 / 3, (
+            f"at {got['viewport']}px the table freezes {got['frozen']}px of a {got['box']}px "
+            f"box, so under a third of it is left to scroll into"
+        )
+        assert "title" in got["drawn"], (
+            f"at {got['viewport']}px the table sheds the column that names the row"
+        )
+
+    assert "id" not in phone["drawn"], (
+        "a phone still draws the id column, which with the title is wider than the box "
+        "the two are frozen inside"
+    )
+    assert "id" in laptop["drawn"], (
+        f"a {laptop['viewport']}px window sheds the id column, which is the drag grip and "
+        f"the only place the row says whether its last save reached GitHub"
+    )
+
+
+# Where the corner is, and what the tables do with a narrow box. One script,
+# because both answers come from the same layout at the same width.
+_THE_CHROME = """
+const corner = document.querySelector('.corner');
+const nav = document.querySelector('nav');
+const line = cell => parseFloat(getComputedStyle(cell).lineHeight) || 16;
+const tables = [...document.querySelectorAll('table.unfitted')].map(table => {
+  const box = table.closest('.table-scroll, .sideways');
+  const cells = [...table.querySelectorAll('tbody td')]
+    .filter(cell => cell.getClientRects().length);
+  return {
+    name: table.id || table.className,
+    boxed: !!box,
+    // Wider than the box it is in, which is what "scrolls" means for a table
+    // that is already inside an `overflow: auto`.
+    over: box ? Math.round(table.getBoundingClientRect().width) - box.clientWidth : null,
+    cells: cells.length,
+    wrapping: cells.filter(c => getComputedStyle(c).whiteSpace !== 'nowrap').length,
+  };
+});
+return {
+  viewport: document.documentElement.clientWidth,
+  cornerIn: corner ? (corner.parentElement.id || corner.parentElement.tagName) : null,
+  navHeight: nav ? Math.round(nav.getBoundingClientRect().height) : null,
+  tables,
+};
+"""
+
+
+def test_the_nav_on_a_phone_is_links_and_nothing_else(
+    phone_pages: dict[str, str], tmp_path: Path
+):
+    """jcanton, 2026-08-26: "I'd move the sign-in and theme and light/dark pickers
+    to the footer, or an overflow hamburger menu in the nav: currently they occupy
+    one extra row".
+
+    The footer and not a hamburger, because of what those three controls are: you
+    set which plan and which theme once and never touch them again, and reads
+    here are deliberately public so nothing forces the sign-in. A row of its own
+    above the plan is the most expensive place on a phone to keep three controls
+    nobody presses twice.
+
+    Measured: the nav was 83px and the footer 21px; it is 50px and 28px, so the
+    nav loses a whole row and the page gets 26px back on every view.
+
+    **Both directions, and that is not symmetry for its own sake.** CSS cannot
+    move a node between parents, so this is a real relocation done by script —
+    which means a phone turned to landscape mid-session must put it back, or the
+    theme toggle is in a footer while the nav has room for it and nothing on the
+    page says why.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    browser = chrome()
+    narrow = measured_on_a_phone(browser, phone_pages, tmp_path / "stowed", _THE_CHROME)
+    wide = measured_on_a_phone(
+        browser, phone_pages, tmp_path / "unstowed", _THE_CHROME, width=900)
+
+    for page, got in narrow.items():
+        assert got["cornerIn"] == "build", (
+            f"{page} keeps the sign-in, plan and theme controls in "
+            f"{got['cornerIn']} on a {got['viewport']}px phone"
+        )
+    for page, got in wide.items():
+        assert got["cornerIn"] == "NAV", (
+            f"{page} leaves them in {got['cornerIn']} at {got['viewport']}px, where the "
+            f"nav has room and the footer is a place nobody looks for them"
+        )
+
+
+def test_a_table_with_no_fit_of_its_own_scrolls_rather_than_wraps(
+    phone_pages: dict[str, str], tmp_path: Path
+):
+    """jcanton, 2026-08-26: "the /table table renders well, without newlines and
+    scrollable content, but all other tables do not: they introduce newlines and
+    do not scroll horizontally. can you make them all like the /table table?"
+
+    `/table` is the only one with a measured column fit. The other four had
+    `width: 100%` and let the browser wrap, which at 390px turns a login into
+    three lines and a title into six — and every row on screen grows to match, so
+    a roster of five people is a page and a half of stacked syllables.
+
+    They take the other half of what `/table` does and none of the fit: size to
+    the content, and scroll inside the box they were already in. All four WERE
+    already in a scroller and none of them ever scrolled, because a table told to
+    be 100% wide always fits — which is why the assertion is that the table is
+    wider than its box rather than that a scroller exists.
+
+    `#rows` is deliberately not in this set: its widths are set inline by the fit,
+    and `white-space: nowrap` on its cells would undo the clamped columns it
+    draws instead of wrapping.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    got = measured_on_a_phone(chrome(), phone_pages, tmp_path / "unfitted", _THE_CHROME)
+    seen = 0
+    for page, one in got.items():
+        for table in one["tables"]:
+            seen += 1
+            where = f"{table['name']} on {page}"
+            assert table["boxed"], f"{where} is not in a scroller, so it can only wrap"
+            assert not table["wrapping"], (
+                f"{where}: {table['wrapping']} of {table['cells']} cells still wrap"
+            )
+            assert table["over"] > 0, (
+                f"{where} is {table['over']}px wider than its box, so it fitted by "
+                f"wrapping something rather than by having room"
+            )
+    assert seen >= 4, f"only {seen} unfitted tables were measured, and there are four"
 
 # **Which pointer the reader has, said at launch.** The wash is inside
 # `@media (hover: hover)`, and what headless Chrome answers there depends on the

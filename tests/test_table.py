@@ -1069,7 +1069,13 @@ def test_the_search_box_is_not_the_tenth_filter(page: str):
     next dropdown along.
     """
     assert re.search(r'<div class="searching">\s*<input id="q"[^>]*>', page)
-    assert re.search(r'</div>\s*<div class="facets">', page)
+    # The `<details>` between the two is the fold a phone closes — see `_FACETS`.
+    # It changes nothing about the claim here, which is that the box is on a line
+    # of its own and the fields are on another; it only means the fields are now
+    # inside a box that can be shut.
+    assert re.search(
+        r'</div>\s*<details class="facetbox" open>\s*<summary>.*?</summary>\s*'
+        r'<div class="facets">', page, re.S)
 
 
 def test_the_table_sizes_itself_to_its_contents_and_the_window(page: str):
@@ -1189,16 +1195,21 @@ def _arithmetic(page: str, expression: str, args: list) -> object:
     parts = [
         re.search(r"^const SPARE_COLUMN = .*?;$", page, re.M),
         re.search(r"^const SQUEEZABLE = new Set\(\[[^\]]*\]\);$", page, re.M),
-        re.search(r"^const SHED = \[[^\]]*\];$", page, re.M),
+        re.search(r"^const LOOKUPS = \[[^\]]*\];$", page, re.M),
+        re.search(r"^const FROZEN = \[[^\]]*\];$", page, re.M),
+        re.search(r"^const SHED = \[\.\.\.LOOKUPS, 'id'\];$", page, re.M),
         re.search(r"^const FLOOR = \d+;", page, re.M),
         re.search(r"^const TITLE_FLOOR = \d+;$", page, re.M),
+        # The title's floor is a share of the room below about 556px of it, so it
+        # is a function and comes with the constant it is capped by.
+        re.search(r"^const titleFloor = room =>.*?;$", page, re.M),
         re.search(r"^const PROGRESS_FLOOR = \d+;$", page, re.M),
         re.search(r"^const CLAMP_FLOOR = \d+;", page, re.M),
         re.search(r"^const CLAMPED = new Set\(\[[^\]]*\]\);$", page, re.M),
         # The floors are per column now — a sentence and a login cannot share one
         # — so the lookup that decides which comes with them.
-        re.search(r"^const floorFor = key =>.*?Infinity;$", page, re.S | re.M),
-        re.search(r"^function minimumWidth\(natural, keys\) \{.*?^\}$", page, re.S | re.M),
+        re.search(r"^const floorFor = \(key, room\) =>.*?Infinity;$", page, re.S | re.M),
+        re.search(r"^function minimumWidth\(natural, keys, room\) \{.*?^\}$", page, re.S | re.M),
         re.search(r"^function drawnColumns\(natural, keys, room\) \{.*?^\}$", page, re.S | re.M),
         re.search(r"^function fitted\(natural, keys, room\) \{.*?^\}$", page, re.S | re.M),
     ]
@@ -1217,10 +1228,17 @@ def _fit(page: str, natural: list[int], keys: list[str], room: int) -> list[int]
     return _arithmetic(page, "fitted(ARGS[0], ARGS[1], ARGS[2])", [natural, keys, room])
 
 
-def _minimum(page: str, keys: list[str]) -> int:
-    """The narrowest these columns can be drawn, by the page's own reckoning."""
+def _minimum(page: str, keys: list[str], room: int = 10_000) -> int:
+    """The narrowest these columns can be drawn, by the page's own reckoning.
+
+    `room` because the title's floor is the smaller of 250 and 45% of it, so "the
+    narrowest" is a question about the window as well as about the columns. The
+    default is a window wider than any floor is a share of, which is the number
+    this used to answer with when there was only one.
+    """
     return _arithmetic(
-        page, "minimumWidth(ARGS[0], ARGS[1])", [[MEASURED[key] for key in keys], keys]
+        page, "minimumWidth(ARGS[0], ARGS[1], ARGS[2])",
+        [[MEASURED[key] for key in keys], keys, room],
     )
 
 
@@ -1234,15 +1252,35 @@ def _drawn(page: str, keys: list[str], room: int) -> list[str]:
     return [key for key, _ in pairs]
 
 
-def _floor(page: str, key: str) -> int:
-    """The narrowest this column may be drawn, by the page's own reckoning."""
-    return _arithmetic(page, "floorFor(ARGS[0])", [key])
+def _floor(page: str, key: str, room: int = 10_000) -> int:
+    """The narrowest this column may be drawn, by the page's own reckoning.
+
+    `room` for the same reason `_minimum` takes one: the title's floor is a share
+    of it below about 556px, and 250 above.
+    """
+    return _arithmetic(page, "floorFor(ARGS[0], ARGS[1])", [key, room])
+
+
+def _lookups(page: str) -> list[str]:
+    """What the table gives up while it will not fit, in the order it gives them up.
+
+    This is the loop in `drawnColumns`, and it is not everything that can go: the
+    id leaves by a rule of its own about the frozen pair, at a width that has
+    nothing to do with whether the table fits. `_shed` below is the whole set.
+    """
+    return (re.search(r"const LOOKUPS = \[([^\]]*)\]", page).group(1)
+            .replace("'", "").replace(" ", "").split(","))
 
 
 def _shed(page: str) -> list[str]:
-    """What the table gives up when it runs out of room, in that order."""
-    return (re.search(r"const SHED = \[([^\]]*)\]", page).group(1)
-            .replace("'", "").replace(" ", "").split(","))
+    """Every column that can be shed, which is what the shed CLASSES are drawn for.
+
+    Read from the page's own `SHED = [...LOOKUPS, 'id']` rather than written out
+    here, so a fifth lookup or a second frozen column reaches this file on its
+    own. A plain regex over `SHED` would come back with the literal `...LOOKUPS`.
+    """
+    spread = re.search(r"const SHED = \[\.\.\.LOOKUPS, '(\w+)'\]", page).group(1)
+    return [*_lookups(page), spread]
 
 
 def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
@@ -1276,7 +1314,7 @@ def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
     # the widest thing on the row; the count is on the hover card now and the bar
     # narrows to a floor instead, so the first lookup to go is `reviewers`.
     drawn = _drawn(page, keys, WINDOW)
-    assert _shed(page)[0] not in drawn, "the first lookup in SHED is the first thing to go"
+    assert _lookups(page)[0] not in drawn, "the first lookup in SHED is the first thing to go"
     assert len(drawn) < len(keys), "nothing was shed at a window that cannot hold every column"
     width = dict(
         zip(drawn, _fit(page, [MEASURED[key] for key in drawn], drawn, WINDOW), strict=True)
@@ -1296,7 +1334,7 @@ def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
             # readable — below the floor it scrolls instead, which is honest.
             # Each squeezable column has its own floor: a sentence and a login
             # cannot share one, and the bar is narrower than either.
-            assert width[key] == MEASURED[key] or width[key] >= _floor(page, key), key
+            assert width[key] == MEASURED[key] or width[key] >= _floor(page, key, WINDOW), key
         else:
             # A date, a count and a cycle number have exactly one right width and
             # no graceful way to be narrower.
@@ -1320,7 +1358,7 @@ def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
         # its floor. `reviewers` is the first thing `SHED` gives up now.
         for key in clamped & set(drawn):
             assert width[key] == min(MEASURED[key], clamp_floor), key
-    assert width["title"] >= _floor(page, "title"), (
+    assert width["title"] >= _floor(page, "title", WINDOW), (
         "and never past the width at which it stops being readable"
     )
 
@@ -2596,9 +2634,20 @@ def test_the_narrow_layout_drops_the_columns_that_are_lookups(page: str):
         # rather than its reason.
         if not prelude.startswith("@media") or "width" not in prelude:
             continue
-        assert not re.search(r"\.shed-|data-col|--sticky|\btable\b|\bt[hd]\b", body), (
-            f"the breakpoint that drifted is back, inside `{prelude}`: {body.strip()[:160]}"
-        )
+        for rule in body.split("}"):
+            # `.unfitted` is the one table selector a width query may carry, and
+            # it is allowed because of what the class MEANS: these are the four
+            # tables with no measured fit — the records list, the roles table and
+            # the cycle's two — which on a phone size to their content and scroll
+            # rather than wrapping. `#rows` is the fitted one and is excluded by
+            # the class, not by this test; the drift this guards against is a
+            # typed width deciding what the FIT decides, and a rule that cannot
+            # apply to the fitted table cannot drift from it.
+            if ".unfitted" in rule:
+                continue
+            assert not re.search(r"\.shed-|data-col|--sticky|\btable\b|\bt[hd]\b", rule), (
+                f"the breakpoint that drifted is back, inside `{prelude}`: {rule.strip()[:160]}"
+            )
     rule = re.search(r"\n(\.shed-.*?) \{ display: none; \}", styles, re.S).group(1)
     for column in _shed(page):
         assert f'.shed-{column} [data-col="{column}"]' in rule, column
@@ -2633,8 +2682,12 @@ def test_no_window_leaves_the_table_scrolling_sideways_by_choice(page: str, room
     shortfall, never by a column it could have dropped.
     """
     keys = [column for column, _ in _TABLE_COLUMNS]
-    last = [key for key in keys if key not in _shed(page)]
-    minimum, reduced = _minimum(page, keys), _minimum(page, last)
+    # `_lookups` and not `_shed`: the last layout the FIT arrives at is the one
+    # with every lookup gone, and the id is still in it. The id leaves on the
+    # frozen pair's rule instead, below about 558px of room — under every window
+    # this test walks, and a different claim from the one it is making.
+    last = [key for key in keys if key not in _lookups(page)]
+    minimum, reduced = _minimum(page, keys, room), _minimum(page, last, room)
     assert reduced < minimum, "shedding a column has to buy room"
 
     drawn = _drawn(page, keys, room)
@@ -2660,18 +2713,27 @@ def test_a_column_goes_only_when_the_one_before_it_was_not_enough(page: str):
     widths is the width at which the layout above it stopped fitting.
     """
     keys = [column for column, _ in _TABLE_COLUMNS]
-    order = _shed(page)
 
     kept = list(keys)
-    for column in order:
+    for column in _lookups(page):
         # One pixel below what this layout needs is where the next column goes.
-        edge = _minimum(page, kept)
+        edge = _minimum(page, kept, 10_000)
         assert _drawn(page, keys, edge) == kept, f"{column} goes too early"
         kept = [key for key in kept if key != column]
         assert _drawn(page, keys, edge - 1) == kept, f"{column} goes too late"
 
-    # And nothing goes below that: what is left is what the table always draws.
-    assert _drawn(page, keys, 320) == kept
+    # **The id is not in that walk and must not be**, which is the half of this
+    # test that is about the rule rather than the order. It goes when the FROZEN
+    # pair would leave under a third of the box to scroll into — a question about
+    # the window and not about whether the table fits — so it is still drawn one
+    # pixel below the last lookup's edge, where every column that goes by fitting
+    # has already gone.
+    assert "id" in _drawn(page, keys, _minimum(page, kept, 10_000) - 1), (
+        "the id sheds on the fitting rule, so it goes at a width that says nothing "
+        "about what the frozen pair leaves"
+    )
+    # And it does go, on its own rule, at a phone.
+    assert _drawn(page, keys, 320) == [key for key in kept if key != "id"]
 
 
 def test_the_tags_cell_is_one_line_with_the_rest_behind_a_count(page: str):

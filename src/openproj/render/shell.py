@@ -708,6 +708,13 @@ body:has([data-fills]) { padding-bottom: 1rem; }
 #controls .aside > * { margin: 0; }
 #controls .facets { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: baseline;
                     margin-top: .5rem; }
+/* The fold's handle, and above 40rem there is nothing to fold: the `<details>`
+   ships `open` and stays open, so a summary here would be a control that says
+   "Filters" over filters that are already on the screen. `display: none` on a
+   summary does not close its details or hide the content — only the marker and
+   the word go. The phone block near the foot of this sheet is where it comes
+   back, and it is the only thing that ever closes the box. */
+#controls .facetbox > summary { display: none; }
 .facet { position: relative; font-size: 11px; color: var(--muted);
          text-transform: uppercase; letter-spacing: .04em; }
 /* The closed control. It used to be a `<select>` and it still has to read as one
@@ -1363,6 +1370,10 @@ table.tight-priority td[data-col="priority"] .chip.pri { padding: .1rem .3rem; }
    on a row that has only one key and would push a lone legend to the right edge
    for no reason anybody asked for. */
 .keyrow > .legend + .legend { margin-left: auto; }
+/* Nothing to fold above 40rem, and nothing to say so. Same shape as the filter
+   bar's summary and for the same reason — see `#controls .facetbox > summary`.
+   `.keyrow` keeps its own top margin, so the folded box adds none of its own. */
+.keyfold > summary, .windowfold > summary { display: none; }
 /* The row a page's own controls stand in — grep `class="editbar`: the table's
    create link, the record page's Delete-and-views row in both modes, the cycle
    page's "add somebody" and its goal bar, the one row of the cycles index's
@@ -1667,6 +1678,36 @@ tr.nothing .hint { margin: 0 0 .75rem; }
 
    40rem is the app's one narrow breakpoint — the width `.marks` already wraps
    at — and a second number meaning "narrow" is two numbers to keep in step. */
+/* **A table with no fit of its own would rather scroll than wrap.** jcanton,
+   2026-08-26: "the /table table renders well, without newlines and scrollable
+   content, but all other tables do not: they introduce newlines and do not
+   scroll horizontally. can you make them all like the /table table?"
+
+   `/table` is the only one with a measured column fit — `fitWidths` sizes every
+   column from its content and sheds what will not go, which is a few hundred
+   lines of arithmetic this table's own file explains. The other four have
+   `width: 100%` and let the browser wrap: at 390px that turns a login into three
+   lines and a title into six, and every row on the screen grows to match, so a
+   roster of five people is a page and a half of stacked syllables.
+
+   These four take the other half of what `/table` does and none of the fit:
+   size to the CONTENT and scroll inside the box they are already in. All four
+   were already in a scroller — `.table-scroll` for the records list and the
+   roles table, `.sideways` for the cycle's two — and none of them ever scrolled,
+   because a table told to be 100% wide always fits.
+
+   `min-width: 100%` beside `max-content`, or a table narrower than the phone
+   stops short of the right edge and reads as a column of something.
+
+   A class and not `.table-scroll table`, because `#rows` is in a `.table-scroll`
+   too and it is the one table this must not touch: its widths are set inline by
+   the fit, and `white-space: nowrap` on its cells would undo the clamped columns
+   it draws instead of wrapping. Named for what these tables ARE rather than for
+   what the rule does to them. */
+@media (max-width: 40rem) {
+  table.unfitted { width: max-content; min-width: 100%; }
+  table.unfitted th, table.unfitted td { white-space: nowrap; }
+}
 @media (max-width: 40rem) {
   input, select, textarea { font-size: 16px !important; }
   /* The search box is `min-width: 16rem`, which was 256px of 13px text and is
@@ -1676,6 +1717,58 @@ tr.nothing .hint { margin: 0 0 .75rem; }
      wide there is nothing else on the row and no reason for the box not to be
      the row. `min-width: 0` first, or the 16rem floors the 100%. */
   #q { width: 100%; min-width: 0; box-sizing: border-box; }
+  /* The handle for the filter fold, and the only width at which the box is ever
+     closed. It reads as a control rather than as a heading — the marker is the
+     browser's own triangle, and the whole row is the hit target, which is the
+     one control on a phone that has to be easy to hit with a thumb. */
+  /* `list-item` and NOT `flex`, and it is the difference between a control and
+     a caption. A `<summary>` draws the browser's own disclosure triangle because
+     its default display is `list-item`; setting `display: flex` — which is what
+     this was, to put the count beside the word — takes the marker with it, and
+     what is left is the word FILTERS in muted small caps over nothing, which
+     reads as a heading for a section that is not there. There is no other mark
+     on the page saying the row can be opened.
+
+     The triangle is the browser's rather than a glyph or a drawing of one, for
+     the reason `.rowgrip` gives about `⠿`: a character outside the vendored
+     latin subset is a tofu box wherever the webfont did not land, and a marker
+     that is sometimes a box is worse than none. This one is also the shape every
+     other `<details>` the reader has ever opened uses, and it turns on its own.
+
+     The count beside the word is an inline span, which needs no flex to sit
+     there — `gap` was the only thing flex was buying and a space is enough. */
+  #controls .facetbox > summary {
+    display: list-item; list-style-position: inside;
+    padding: .45rem .1rem; margin-top: .35rem; cursor: pointer;
+    font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  #controls .facetbox > summary .facetboxname { margin-left: .2rem; }
+  /* What is set, said in the closed state. `--accent` and not the muted ink
+     beside it, for the same reason `.facet.chosen` is accented: a count that
+     reads at the weight of the word next to it is a count nobody notices, and
+     the whole risk of folding this away is a filter somebody forgot. */
+  #controls .facetbox > summary .facetboxsaid { color: var(--accent); margin-left: .35rem; }
+  #controls .facetbox > summary .facetboxsaid:empty { display: none; }
+  /* The footer holds the corner on a phone — see `stowCorner`. A row rather than
+     a stack, and wrapping, because the three controls in it are narrow and the
+     version line beside them is short: on a 390px page they come out as two
+     lines where the nav was spending one on its own. `margin-left: auto` is the
+     corner's own rule and still right here — it pushes the controls away from
+     the version line, which is the only other thing on the row. */
+  #build { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; }
+  /* The nav loses the element that was forcing it wide, so what is left is
+     links. Nothing else changes: they were already wrapping. */
+  #build .corner { font-size: 13px; }
+  /* The key's handle and the window controls', drawn as the filter bar's is. One
+     phone, one way of folding something away, so the second and third cost no
+     learning. */
+  .keyfold > summary, .windowfold > summary {
+    display: list-item; list-style-position: inside;
+    padding: .45rem .1rem; cursor: pointer;
+    font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .04em;
+  }
 }
 /* A reader who has told their operating system they want less motion gets none.
    It is a system setting and not a preference this app keeps, so there is no
@@ -2429,6 +2522,44 @@ function fitRoom() { roomSlack = 0; settleRoom(4); }
   {% endif %}
 </footer>
 <script>
+// **Sign-in, the plan picker and the theme toggle move to the footer on a
+// phone.** jcanton, 2026-08-26: "I'd move the sign-in and theme and light/dark
+// pickers to the footer, or an overflow hamburger menu in the nav: currently
+// they occupy one extra row".
+//
+// The footer and not a hamburger, and the reason is what each of these three
+// controls is. A hamburger is for things you go looking for; these are things
+// you set once — which plan, which theme — and then never touch, plus a sign-in
+// that reads are deliberately public without. A row of its own above the plan is
+// the most expensive place on a phone to keep three controls nobody presses
+// twice, and the footer already exists on every page with a line of room in it.
+//
+// **A relocation and not a second copy.** CSS cannot move a node between
+// parents, and rendering the corner twice would be two sign-in buttons in one
+// document — two ids, two `#who` fills, and a script that writes to whichever it
+// finds first. So the one element is appended to whichever parent the width
+// calls for, both ways, whenever the query changes: a phone turned to landscape
+// mid-session must not leave the theme toggle in a footer the nav has room for.
+//
+// `NARROW` and not `PHONE`, which `_FILTER_JS` already declares on the three
+// filtering views — these two scripts share one global scope and a page carrying
+// both would redeclare it. Same number, and it is the app's one narrow
+// breakpoint; the CSS above says it in `@media (max-width: 40rem)`.
+const NARROW = matchMedia('(max-width: 40rem)');
+const CORNER = document.querySelector('nav .corner');
+const NAVBAR = document.querySelector('nav');
+const BUILD = document.getElementById('build');
+
+function stowCorner(narrow) {
+  if (!CORNER || !BUILD || !NAVBAR) return;
+  const home = narrow ? BUILD : NAVBAR;
+  // Appending a node that is already the last child of `home` is a no-op that
+  // still moves focus off it in some browsers, so the question is asked first.
+  if (CORNER.parentElement !== home) home.append(CORNER);
+}
+stowCorner(NARROW.matches);
+NARROW.addEventListener('change', event => stowCorner(event.matches));
+
 // No third state to cycle through: with nothing stored the page follows the
 // system, and the first click stores the opposite of whatever is on screen.
 const THEME = document.getElementById('theme');
