@@ -954,6 +954,19 @@ article.record .editbar { margin-bottom: .4rem; }
    it the stage pushes `.drawbox` taller than the `min(92vh, 800px)` it was
    given rather than filling it. */
 .drawstage { flex: 1; min-height: 0; position: relative; }
+/* The unsaved-strokes question, in place of Save and Close rather than
+   beside them (`openDrawing`'s `asking` hides the two buttons while this is
+   shown). `flex` to sit in the same row `.drawhead` already lays out left of
+   nothing — the sentence, then the two answers, right-aligned like the
+   buttons it replaced. `[hidden]` written out explicitly, the same reason
+   `.confirming[hidden]` below needs it: the two classes in `.drawhead
+   .drawask` already outrank the UA stylesheet's bare `[hidden]` rule on
+   specificity alone, so without an override of its own the row would stay
+   laid out — visible — even while the `hidden` attribute is set on it. */
+.drawhead .drawask { display: flex; align-items: center; gap: .5rem; }
+.drawhead .drawask[hidden] { display: none; }
+.drawhead .drawask .asking { margin: 0; font-size: 13px; color: var(--danger); }
+.drawhead .drawask button.discard { border-color: var(--danger); color: var(--danger); }
 article.record .commitbar { margin-top: 0; }
 /* The bar's BOX is on the page before the session that fills it — jcanton,
    2026-08-24: "page elements should not move or appear/disappear when

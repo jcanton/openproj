@@ -363,6 +363,53 @@ behind the same `MAY_WRITE` guard, and `tests/test_editor.py` covers the plain s
 editor's toolbar and status strip, and separately confirms a reader (`MAY_WRITE` false)
 still gets no surface and none of the five `attach*` calls.
 
+## Closing over unsaved strokes
+
+`teardown()` was the popup's only close path — reached from Close, from Escape,
+and from every error branch — and for as long as this feature had no guard on
+it, all three unmounted immediately. Draw for ten minutes, press Escape by
+reflex, and the strokes were gone: the drawing was never posted, so there was
+no blob and no history to recover it from. jcanton asked for a guard on being
+shown the gap, 2026-08-26.
+
+Not `window.confirm()`, for the same reasons `detail.py`'s delete flow already
+gives at `detail.py:1947-1950`: a native dialog cannot say which drawing this
+is, cannot show a server's reason (there is none here to show, but the point
+generalises), and stops every other script on the page until somebody answers
+it. A fourth reason is specific to this feature: the browser tests drive real
+Chrome over CDP, and a native dialog blocks every subsequent DevTools command
+— the harness would hang rather than fail. So the question is in-page chrome,
+`.drawask`, shown in place of Save and Close rather than beside them, the same
+shape `.confirming` uses for a delete.
+
+**What counts as dirty was decided, not inferred from `onChange` firing.**
+Excalidraw's `onChange` runs on mount, on pointer-move, on selection and on
+scroll, so a flag set by onChange firing at all would have asked on a popup
+nobody touched as readily as on a real drawing — and a guard that cries wolf
+gets dismissed on reflex, which is worse than no guard at all. So `openDrawing`
+carries no running flag. A close attempt instead compares the scene as it
+stands, `api.getSceneElements()`, against the array Excalidraw was mounted
+with — by count first, then element by element on the fields an actual
+stroke, drag, resize, restyle or reorder moves (position, size, angle, the
+point list a line or freedraw carries, its text, and the handful of style
+fields), deliberately not on `version`/`versionNonce`/`updated`, which
+Excalidraw bumps on more than a content change.
+
+Two things had to stay silent for the guard to be worth having: opening an
+existing drawing and closing it untouched, and drawing, saving, then closing.
+The first holds because the comparison's baseline is `initial.elements` — what
+was actually handed to Excalidraw to mount, not a second read taken back off
+it — so a fresh, untouched mount reads as identical to itself. The second
+holds structurally: a successful save calls the raw `teardown()` directly
+rather than the close-attempt path that asks, because there is nothing left
+in the popup for the person to lose once their strokes are already on the
+server. Escape is two levels, matching the delete flow's own
+(`detail.py:1959-1962`): with the question up it backs out of the question,
+and only with no question up does it close the popup — bound as one branch of
+the same `document`-level `keydown` listener the popup already had, rather
+than a second listener, so Excalidraw's own reading of Escape (to drop a
+selection) is unaffected.
+
 ## The spike, which came first
 
 No openproj code was written until a throwaway spike answered the questions the CSP

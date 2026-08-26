@@ -2425,11 +2425,33 @@ function drawPopup(label) {
   close.id = 'draw-close';
   close.textContent = 'Close';
   head.append(save, close);
+  // The question a close attempt over unsaved strokes raises, in place of
+  // Save and Close rather than beside them — built once, here, so it exists
+  // before there is ever anything to ask about. See `openDrawing`'s own
+  // comment for why this is an in-page question and not `confirm()`; the
+  // shape — a sentence, then the two answers — matches `detail.py`'s delete
+  // flow (`detail.py:1941-1962`) on purpose.
+  const ask = document.createElement('div');
+  ask.className = 'drawask';
+  ask.hidden = true;
+  const why = document.createElement('span');
+  why.className = 'asking';
+  why.textContent = 'This drawing has unsaved strokes. Closing throws them away.';
+  const keep = document.createElement('button');
+  keep.type = 'button';
+  keep.className = 'keep';
+  keep.textContent = 'Keep drawing';
+  const discard = document.createElement('button');
+  discard.type = 'button';
+  discard.className = 'discard';
+  discard.textContent = 'Discard';
+  ask.append(why, keep, discard);
+  head.append(ask);
   const stage = document.createElement('div');
   stage.className = 'drawstage';
   box.append(head, stage);
   overlay.append(box);
-  return {overlay, stage, save, close};
+  return {overlay, stage, save, close, ask, keep, discard};
 }
 
 // One popup at a time. Nothing stops a second `openproj:draw` firing while the
@@ -2452,13 +2474,19 @@ async function openDrawing(surface, status, entry) {
   }
   DRAWING_OPEN = true;
   const button = document.getElementById('drawing');
-  const {overlay, stage, save, close} = drawPopup(
+  const {overlay, stage, save, close, ask, keep, discard} = drawPopup(
     entry ? `Editing ${entry.id}` : 'A new drawing'
   );
   document.body.appendChild(overlay);
 
-  let root = null, api = null, etag = null, closed = false;
+  let root = null, api = null, etag = null, closed = false, mounted = null;
 
+  // The raw close: unmounts and removes the overlay, no question asked. Every
+  // caller below that already told the person what happened — a fetch that
+  // failed, a response that was refused, a save that just succeeded — calls
+  // THIS directly, because there is nothing of theirs left in the popup to
+  // lose. `closeAttempt`, further down, is the only path that asks first, and
+  // it is the one wired to Close and to Escape.
   function teardown() {
     if (closed) return;
     closed = true;
@@ -2468,11 +2496,86 @@ async function openDrawing(surface, status, entry) {
     document.removeEventListener('keydown', onKey);
     button.focus();
   }
+
+  // What "unsaved" means, decided on purpose rather than left to
+  // Excalidraw's `onChange`: it fires on mount, on pointer-move, on
+  // selection and on scroll, so a flag set by onChange firing AT ALL would
+  // ask on a popup nobody touched as readily as on ten minutes of real
+  // strokes. A guard that cries wolf trains people to dismiss it on reflex,
+  // and then it is not there the one time it matters — the failure this
+  // whole function exists to prevent, and the one a naive dirty flag would
+  // reintroduce.
+  //
+  // So there is no running flag. A close attempt instead compares the scene
+  // AS IT STANDS against the array Excalidraw was mounted with — by count
+  // first (an element added or removed), then, element by element, on the
+  // fields an actual stroke, drag, resize, restyle or reorder would move:
+  // position, size, angle, the point list a line or freedraw carries, its
+  // text, and the handful of style fields a person can change without moving
+  // anything. Left out on purpose: each element's own `version`/
+  // `versionNonce`/`updated` bookkeeping, which Excalidraw bumps on more than
+  // a content change (normalising on mount, for one) — keying dirt to those
+  // would be exactly the false-positive failure this exists to avoid. Array order is
+  // kept, deliberately: bringing a shape to front or back changes nothing
+  // this list reads, but it is still a real edit and it does move the
+  // element's position in the array `getSceneElements()` returns.
+  function signature(elements) {
+    return elements.map(el => JSON.stringify([
+      el.id, el.type, el.x, el.y, el.width, el.height, el.angle, el.points,
+      el.text, el.fontSize, el.fontFamily, el.strokeColor, el.backgroundColor,
+      el.fillStyle, el.strokeWidth, el.strokeStyle, el.roughness, el.opacity,
+      el.groupIds,
+    ]));
+  }
+  function isDirty() {
+    // Nothing mounted yet — Close pressed while the bundle was still
+    // loading, or while a fetch for an existing drawing was still in
+    // flight. Nothing of the person's is in the popup to lose either way.
+    if (!api) return false;
+    const now = signature(api.getSceneElements());
+    return now.length !== mounted.length || now.some((sig, i) => sig !== mounted[i]);
+  }
+
+  // Shown in place of Save and Close, hidden in place of the question — the
+  // same shape `detail.py`'s delete flow uses for `.confirming`, and the same
+  // reason: an in-page question can say which popup this is (there can only
+  // ever be one, `DRAWING_OPEN` sees to that, but the wording still names the
+  // drawing) and does not stop the CDP harness's own commands the way a
+  // native `confirm()` would.
+  const asking = state => {
+    ask.hidden = !state;
+    save.hidden = state;
+    close.hidden = state;
+    if (state) keep.focus();
+  };
+  keep.onclick = () => asking(false);
+  discard.onclick = () => teardown();
+
+  // The close a person actually presses: Close, or Escape with no question
+  // already up. Asks once, if there is unsaved work; answering "discard" or
+  // finding nothing dirty goes straight to `teardown`.
+  function closeAttempt() {
+    if (isDirty()) { asking(true); return; }
+    teardown();
+  }
   function onKey(event) {
-    if (event.key === 'Escape') teardown();
+    if (event.key !== 'Escape') return;
+    // Two levels, matching the delete flow's own Escape (`detail.py:1959-1962`):
+    // with the question up, Escape backs OUT OF THE QUESTION rather than out
+    // of the popup — a single reflexive Escape must not both dismiss the
+    // question and lose the drawing. This was already the one `keydown`
+    // listener `openDrawing` binds on `document` — that has to stay true,
+    // because Excalidraw's own canvas also reads Escape (to drop a
+    // selection) and a second listener could only add a chance of swallowing
+    // it before Excalidraw's own handler runs. So this branches on `ask`'s
+    // own state rather than adding a listener, and calls neither
+    // `stopPropagation` nor `preventDefault`: Excalidraw sees every Escape
+    // this page ever gets, exactly as it did before this guard existed.
+    if (!ask.hidden) { asking(false); return; }
+    closeAttempt();
   }
   document.addEventListener('keydown', onKey);
-  close.onclick = teardown;
+  close.onclick = closeAttempt;
 
   const lib = await excalidraw(status);
   if (closed) return; // Close was pressed while the bundle was still loading.
@@ -2535,6 +2638,12 @@ async function openDrawing(surface, status, entry) {
     // a `worker-src`/`blob:` grant to go with it.
     UIOptions: {tools: {image: false}},
   }));
+  // The baseline `isDirty` compares against: `initial.elements` is exactly
+  // what Excalidraw was just told to mount — `[]` for a new drawing,
+  // `loaded.data.elements` for one just fetched — not a second read taken
+  // back off `api`, which would be answering "did mounting change anything"
+  // rather than "did the PERSON change anything".
+  mounted = signature(initial.elements);
   save.disabled = false;
   status.textContent = entry ? `editing ${entry.id}` : 'drawing a new picture';
 
@@ -2606,6 +2715,12 @@ async function openDrawing(surface, status, entry) {
       }
       status.textContent = `${answer.path} saved`;
       announce(status.textContent);
+      // `teardown`, not `closeAttempt`: a save that just succeeded put every
+      // stroke on the server, so there is nothing left for `isDirty` to
+      // protect — asking here would be asking whether to discard work that
+      // is already safe. This is also draw-Save-then-Close's whole answer:
+      // Save already closes the popup on success, so there is no separate
+      // Close press left for a question to interrupt.
       teardown();
     } catch (error) {
       status.textContent = `that drawing was not saved — ${error.message}`;

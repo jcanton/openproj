@@ -8201,3 +8201,161 @@ def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(live_server: str, 
         after = _evaluated(call, "document.querySelector('[name=body]').value")
         assert after == before, "a refused save still touched the markdown"
 
+
+def test_closing_unsaved_strokes_asks_first_and_keep_drawing_preserves_them(
+    live_server: str, tmp_path: Path
+):
+    """Task 11's own gap: `teardown` used to be the popup's only close path,
+    reached from Close with no question asked at all — draw for ten minutes,
+    press Close, and the strokes were gone with nothing to undo. `closeAttempt`
+    is the guard now in front of it, and this walks the two things that decide
+    whether it earns its keep rather than just existing:
+
+    1. it must actually ask when there is unsaved work, and "keep drawing" has
+       to mean the strokes are still THERE afterward, not merely that the
+       question goes away over an emptied canvas — proven here by saving
+       after backing out and reading the shape back off the server, the same
+       way `test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown`
+       proves a save landed at all;
+    2. it must stay SILENT reopening that same drawing having touched nothing
+       — `isDirty` compares the live scene against the array Excalidraw was
+       just mounted with, and a fresh mount of what this test just wrote back
+       has to read as identical to itself, or every reader who opens a
+       drawing to look at it gets asked a question that means nothing.
+    """
+    url = f"{live_server}/detail/{TASK}?editor=plain"
+    with _devtools(chrome(), url, tmp_path / "profile") as (call, said):
+        time.sleep(2)
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelector('.drawmenu button').click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-rectangle\"]').click()")
+        _drag(call, 300, 300, 480, 430)
+        time.sleep(0.2)
+
+        _evaluated(call, "document.getElementById('draw-close').click()")
+        asked = _evaluated(call, """({
+          popupThere: !!document.querySelector('.drawpopup'),
+          asking: !document.querySelector('.drawask').hidden,
+          saveHidden: document.getElementById('draw-save').hidden,
+          closeHidden: document.getElementById('draw-close').hidden,
+        })""")
+        assert asked == {
+            "popupThere": True, "asking": True, "saveHidden": True, "closeHidden": True,
+        }, asked
+
+        _evaluated(call, "document.querySelector('.drawask .keep').click()")
+        backed_out = _evaluated(call, """({
+          popupThere: !!document.querySelector('.drawpopup'),
+          asking: !document.querySelector('.drawask').hidden,
+          saveHidden: document.getElementById('draw-save').hidden,
+        })""")
+        assert backed_out == {"popupThere": True, "asking": False, "saveHidden": False}, (
+            backed_out
+        )
+
+        _evaluated(call, "document.getElementById('draw-save').click()")
+        assert _until(call, "!document.querySelector('.drawpopup')"), (
+            "keep drawing left the popup unable to save cleanly afterward"
+        )
+        body = _evaluated(call, "document.querySelector('[name=body]').value")
+        match = re.search(r"draw-[0-9a-f]{6}", body)
+        assert match, f"no drawing id landed in the body: {body!r}"
+        drawing_id = match.group(0)
+
+        served = httpx.get(f"{live_server}/drawings/{drawing_id}.png")
+        assert served.status_code == 200
+        loaded = _evaluated(call, f"""
+        (async () => {{
+          const blob = await (await fetch('/drawings/{drawing_id}.png')).blob();
+          const scene = await EXCALIDRAW.loadSceneOrLibraryFromBlob(blob, null, null);
+          return {{count: scene.data.elements.length, types: scene.data.elements.map(e => e.type)}};
+        }})()
+        """)
+        assert loaded == {"count": 1, "types": ["rectangle"]}, (
+            f"keep drawing did not actually keep the shape drawn before Close: {loaded}"
+        )
+
+        # Reopened, untouched: `isDirty` compares against the very array
+        # Excalidraw was just mounted with, and nothing moved it.
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelectorAll('.drawmenu button')[1].click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+        assert _until(
+            call, f"document.getElementById('upload').textContent === 'editing {drawing_id}'"
+        )
+        _evaluated(call, "document.getElementById('draw-close').click()")
+        assert _evaluated(call, "!document.querySelector('.drawpopup')"), (
+            "an untouched, freshly reopened drawing asked before closing instead of "
+            "closing directly"
+        )
+
+
+def test_escape_backs_out_of_the_question_and_discard_throws_the_drawing_away(
+    live_server: str, tmp_path: Path
+):
+    """The other half of `closeAttempt`'s contract, and the one the delete flow
+    at `detail.py:1959-1962` already sets the shape for: Escape is two levels,
+    backing out of the QUESTION while it is up and only closing the popup once
+    it is not, and Discard really has to throw the drawing away rather than
+    saving it under a gentler name.
+
+    `document.dispatchEvent(new KeyboardEvent(...))` rather than a CDP
+    `Input.dispatchKeyEvent` — the same synthetic-Escape shape
+    `test_facets.py`, `test_status_gate.py` and `test_table.py` already use
+    for their own two-level Escapes. `onKey` is bound on `document` and reads
+    only `event.key`, so a synthetic event reaches it exactly as a trusted one
+    would; nothing here needs Excalidraw itself to react to the key.
+    """
+    url = f"{live_server}/detail/{TASK}?editor=plain"
+    with _devtools(chrome(), url, tmp_path / "profile") as (call, said):
+        time.sleep(2)
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelector('.drawmenu button').click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-ellipse\"]').click()")
+        _drag(call, 550, 300, 700, 430)
+        time.sleep(0.2)
+
+        escape = "document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))"
+
+        # First Escape: unsaved work, so it raises the question rather than
+        # closing the popup outright.
+        _evaluated(call, escape)
+        first = _evaluated(call, """({
+          popupThere: !!document.querySelector('.drawpopup'),
+          asking: !document.querySelector('.drawask').hidden,
+        })""")
+        assert first == {"popupThere": True, "asking": True}, first
+
+        # Second Escape, with the question up: backs OUT OF THE QUESTION, not
+        # out of the popup — a reflexive double-Escape must not both dismiss
+        # the question and lose the drawing.
+        _evaluated(call, escape)
+        second = _evaluated(call, """({
+          popupThere: !!document.querySelector('.drawpopup'),
+          asking: !document.querySelector('.drawask').hidden,
+        })""")
+        assert second == {"popupThere": True, "asking": False}, (
+            f"the second Escape closed the popup instead of backing out of the question: {second}"
+        )
+
+        # Close, pressed with the question not up and the drawing still
+        # unsaved: it raises the question again rather than closing.
+        _evaluated(call, "document.getElementById('draw-close').click()")
+        assert _evaluated(call, "!document.querySelector('.drawask').hidden"), (
+            "Close skipped the question the second time it was pressed"
+        )
+
+        _evaluated(call, "document.querySelector('.drawask .discard').click()")
+        assert _evaluated(call, "!document.querySelector('.drawpopup')"), (
+            "Discard left the popup on screen"
+        )
+        body = _evaluated(call, "document.querySelector('[name=body]').value")
+        assert "drawings/draw-" not in body, (
+            "a discarded drawing still left an embed in the body — nothing was ever posted "
+            "for one to reference"
+        )
+
