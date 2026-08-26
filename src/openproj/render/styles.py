@@ -884,6 +884,45 @@ article.record .editbar { margin-bottom: .4rem; }
   stroke: currentColor; stroke-width: 1.6;
   stroke-linecap: round; stroke-linejoin: round;
 }
+/* Drawings, wearing the same box Slide does — a bordered pill around one
+   glyph and no words, `color: var(--muted)` until it is pressed or hovered,
+   the same pattern `.slide-view` sets two rules up. Not that class itself:
+   this is a `<button>`, not the `<a>` a segment is, and "slide-view" would be
+   a lie about which control this is. */
+.editbar #drawing {
+  display: inline-flex; align-items: center; justify-content: center;
+  margin: 0 .75rem 0 0; padding: .3rem .5rem;
+  border: 1px solid var(--line-strong); border-radius: 3px;
+  background: var(--surface); color: var(--muted); line-height: 0;
+}
+.editbar #drawing:hover, .editbar #drawing[aria-expanded="true"] {
+  color: var(--accent); border-color: var(--accent);
+}
+/* The glyph is FILLED — Excalidraw's own `fill="currentColor"`, carried over
+   from the bundle rather than reworked into the stroke-only treatment
+   `.slide-view svg` uses for its triangle — so it is sized a shade under that
+   button's 15px, the same difference `.marks .hist svg`'s own comment gives
+   between a stroke and a glyph filling one box. */
+.editbar #drawing svg { display: block; width: 14px; height: 14px; }
+/* The menu `attachDrawing` opens under the button, parked on the body the way
+   every list here is. Not `.suggest`: that class lives in `_SUGGEST_STYLE`,
+   which `render_slide_editor` — the other page this button draws on — never
+   loads, and the button is wired on both. Self-contained here, in the one
+   sheet both pages DO load, rather than a second stylesheet added to one of
+   them for four rules. */
+.drawmenu {
+  position: absolute; z-index: 20; min-width: 10rem; max-height: 16rem;
+  overflow-y: auto; display: flex; flex-direction: column; padding: .25rem 0;
+  background: var(--surface); border: 1px solid var(--line-strong);
+  border-radius: 3px; box-shadow: 0 4px 14px rgba(0,0,0,.12); font-size: 13px;
+}
+.drawmenu button {
+  display: block; width: 100%; text-align: left; font: inherit; color: inherit;
+  background: none; border: none; padding: .35rem .75rem; cursor: pointer;
+}
+.drawmenu button:hover, .drawmenu button:focus-visible {
+  background: var(--accent); color: var(--on-accent); outline: none;
+}
 article.record .commitbar { margin-top: 0; }
 /* The bar's BOX is on the page before the session that fills it — jcanton,
    2026-08-24: "page elements should not move or appear/disappear when

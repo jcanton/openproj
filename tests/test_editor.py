@@ -1620,6 +1620,119 @@ def test_a_toolbar_button_keeps_the_selection_it_acts_on(client: TestClient):
     assert "event.detail" in page
 
 
+def test_the_drawing_menu_lists_what_the_body_embeds_in_the_order_it_embeds_them(
+    client: TestClient, tmp_path: Path
+):
+    """By id and in embed order — jcanton, 2026-08-26. Match order over the raw
+    markdown IS embed order, which is why this needs no index and no state.
+
+    Driven through the real page's own `drawingsIn`, not a Python reimplementation
+    of the regex — the two would drift the day one of them changed alone.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "drawings.html", 1200,
+        """
+        const body = "![two](drawings/draw-bbbbbb.png)\\n"
+          + "![one](drawings/draw-aaaaaa.png){width=60}\\n"
+          + "![again](drawings/draw-bbbbbb.png)\\n"
+          + "![a picture](assets/0123456789abcdef.png)\\n"
+          + "![nope](drawings/notadrawing.png)\\n";
+        return drawingsIn(body);
+        """,
+    )
+    assert [d["id"] for d in got] == ["draw-bbbbbb", "draw-aaaaaa"], (
+        "deduped keeping the first occurrence, in match order — not sorted, not "
+        "deduped keeping the last, and the assets and non-drawing arms excluded"
+    )
+    # The FIRST span, not a search for the id that would have landed on
+    # whichever occurrence `indexOf` found — proven by the span pointing at the
+    # first `draw-bbbbbb`, three lines before the "again" that repeats it.
+    assert got[0] == {
+        "id": "draw-bbbbbb", "path": "drawings/draw-bbbbbb.png", "alt": "two",
+        "from": 0, "to": 32,
+    }
+    assert got[1] == {
+        "id": "draw-aaaaaa", "path": "drawings/draw-aaaaaa.png", "alt": "one",
+        "from": 33, "to": 65,
+    }
+
+
+def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
+    client: TestClient, tmp_path: Path
+):
+    """The control and the menu, with no editor mounted behind either yet — see
+    `attachDrawing`'s own comment. A press dispatches `openproj:draw` on
+    `surface.el` carrying the entry (or `null` for "+ drawing"), which is the
+    whole of what this task ships; the status strip says so rather than
+    leaving a press that visibly does nothing.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "drawmenu.html", 1200,
+        """
+        const area = document.querySelector('textarea[name=body]');
+        area.value = 'before\\n![mine](drawings/draw-123abc.png)\\nafter';
+        const button = document.getElementById('drawing');
+        const namedForReaders = {
+          label: button.getAttribute('aria-label'), title: button.title,
+        };
+        const outsideMarks = document.querySelectorAll('#marks button').length;
+
+        button.click();
+        const menu = document.querySelector('.drawmenu');
+        const openRows = [...menu.querySelectorAll('button')].map(b => b.textContent);
+        const expandedOpen = button.getAttribute('aria-expanded');
+
+        // A mousedown ON the button, or anywhere INSIDE the menu, must not
+        // close it out from under a press that is about to choose something —
+        // only somewhere else does.
+        button.dispatchEvent(new Event('mousedown', {bubbles: true}));
+        const openAfterOwnMousedown = !menu.hidden;
+        menu.dispatchEvent(new Event('mousedown', {bubbles: true}));
+        const openAfterInsideMousedown = !menu.hidden;
+        document.body.dispatchEvent(new Event('mousedown', {bubbles: true}));
+        const closedByOutsideMousedown = menu.hidden;
+
+        button.click();
+        const menu2 = document.querySelector('.drawmenu');
+        let heard = 'unset';
+        area.addEventListener('openproj:draw', event => { heard = event.detail; });
+        // The second row: "+ drawing" is first, the one embedded drawing second.
+        menu2.querySelectorAll('button')[1].click();
+        const afterPress = {
+          hidden: menu2.hidden, expanded: button.getAttribute('aria-expanded'),
+          heard, status: document.getElementById('upload').textContent,
+        };
+
+        button.click();
+        let heardNew = 'unset';
+        area.addEventListener('openproj:draw', event => { heardNew = event.detail; });
+        document.querySelector('.drawmenu button').click();
+
+        return {namedForReaders, outsideMarks, openRows, expandedOpen,
+                openAfterOwnMousedown, openAfterInsideMousedown, closedByOutsideMousedown,
+                afterPress, heardNew};
+        """,
+    )
+    assert got["namedForReaders"] == {"label": "Drawings", "title": "Drawings"}, (
+        "an icon with no words is a mystery glyph to a reader who cannot see it"
+    )
+    assert got["outsideMarks"] == 16, "the menu is page chrome, not a seventeenth FORMATS mark"
+    assert got["openRows"] == ["+ drawing", "draw-123abc"], "+ drawing leads, the id follows"
+    assert got["expandedOpen"] == "true"
+    assert got["openAfterOwnMousedown"], "pressing the button that opened it closed it again"
+    assert got["openAfterInsideMousedown"], "a press inside the menu closed it before it chose"
+    assert got["closedByOutsideMousedown"], "a press outside the button and the menu left it open"
+    assert got["afterPress"] == {
+        "hidden": True, "expanded": "false",
+        "heard": {
+            "id": "draw-123abc", "path": "drawings/draw-123abc.png", "alt": "mine",
+            "from": 7, "to": 40,
+        },
+        "status": "the drawing editor arrives in the next commit",
+    }, "pressing a row closed the menu and named exactly what was pressed"
+    assert got["heardNew"] is None, '"+ drawing" is a new drawing, and null says so'
+
+
 def test_no_page_echoes_the_dates_it_is_asking_for(page: str):
     """The create form was the first page to lose the ISO echo, on the grounds
     that its two date boxes are the only dates on screen and had nothing to be
@@ -7517,3 +7630,4 @@ def test_the_page_widens_its_pull_requests_with_what_is_open_now(client: TestCli
     assert answer["again"] == answer["after"], (
         "asking twice asked GitHub twice, or folded the same list in again"
     )
+

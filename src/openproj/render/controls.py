@@ -2339,6 +2339,125 @@ function attachUploads(surface, status) {
   });
 }
 
+// The drawings this body embeds, in the order it embeds them, each with the
+// span of source that names it. A span and not a search: two embeds of one id
+// are two rows, and `indexOf` would edit the first one whichever was pressed —
+// the mistake `attachUploads`'s own `indexOf`, above, does not make because it
+// only ever has one placeholder to find.
+const DRAWING_SRC =
+  /!\[([^\]]*)\]\((drawings\/(draw-[0-9a-f]{6})\.png)\)/g;
+
+function drawingsIn(text) {
+  const found = [], seen = new Set();
+  for (const m of text.matchAll(DRAWING_SRC)) {
+    if (seen.has(m[3])) continue;
+    seen.add(m[3]);
+    found.push({id: m[3], path: m[2], alt: m[1], from: m.index, to: m.index + m[0].length});
+  }
+  return found;
+}
+
+// The drawings button and the menu it opens. No Excalidraw editor is mounted
+// here — that is the next commit — so this is the CONTROL and the MENU only,
+// and it owns both: the button is already in the markup (`.editbar`'s own, not
+// a seventeenth `FORMATS` entry, because a menu is page chrome and not a
+// formatting mark), and nothing outside this function builds the popover,
+// fills it or reads what was pressed in it.
+//
+// Pressing a row does not open anything YET. `openproj:draw` on `surface.el`
+// is the seam a future `attachExcalidraw` mounts on, mirroring exactly how the
+// image button hands its press to `attachUploads` over `openproj:pick-image` —
+// the button here dispatches, and until that listener exists, this function is
+// its own placeholder listener, saying so in the status strip rather than
+// leaving a press that visibly does nothing.
+function attachDrawing(surface, status) {
+  const button = document.getElementById('drawing');
+  // Withheld from a reader the server would refuse a write from, on both pages
+  // that draw it — a page with no button is the ordinary case, not a null this
+  // wiring could walk into.
+  if (!button) return;
+
+  const menu = document.createElement('div');
+  menu.className = 'drawmenu';
+  menu.hidden = true;
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', 'Drawings in this document');
+
+  // Under the button, in the page's coordinates — parked on the body for the
+  // reason every list `park` carries one is: an ancestor with `overflow` would
+  // otherwise clip it, and nothing about this button's home in `.editbar`
+  // promises there is none.
+  function place() {
+    const at = button.getBoundingClientRect();
+    menu.style.left = (at.left + scrollX) + 'px';
+    menu.style.top = (at.bottom + scrollY) + 'px';
+  }
+
+  park(button, menu, () => { if (!menu.hidden) place(); });
+
+  function close() {
+    if (menu.hidden) return;
+    menu.hidden = true;
+    menu.replaceChildren();
+    button.setAttribute('aria-expanded', 'false');
+  }
+
+  // Recomputed every time the menu opens: no stored state, and nothing this
+  // popover owns can drift from a body somebody just finished typing a
+  // drawing's markdown into by hand.
+  function open() {
+    const rows = drawingsIn(surface.text());
+    menu.replaceChildren(...[null, ...rows].map(entry => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.setAttribute('role', 'menuitem');
+      item.textContent = entry ? entry.id : '+ drawing';
+      item.onclick = () => choose(entry);
+      return item;
+    }));
+    menu.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+    place();
+    menu.querySelector('button').focus();
+    announce(rows.length
+      ? `${rows.length} drawing${rows.length === 1 ? '' : 's'} in this document. `
+        + '+ drawing to start another.'
+      : 'No drawings in this document yet. + drawing to start one.');
+  }
+
+  function choose(entry) {
+    close();
+    button.focus();
+    surface.el.dispatchEvent(new CustomEvent('openproj:draw', {detail: entry}));
+  }
+
+  button.setAttribute('aria-haspopup', 'true');
+  button.setAttribute('aria-expanded', 'false');
+  button.onclick = () => (menu.hidden ? open() : close());
+
+  // Anywhere outside the button and the menu itself closes it — `mousedown`,
+  // to match the moment `park`'s other lists close on rather than waiting for
+  // a `click` that a dismissed popover would never get to see.
+  document.addEventListener('mousedown', event => {
+    if (menu.hidden || event.target === button || menu.contains(event.target)) return;
+    close();
+  });
+  menu.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    close();
+    button.focus();
+  });
+
+  // No mount answers this yet. Said in the status strip rather than left
+  // silent, because a control that visibly does nothing is worse than no
+  // control — and replaced outright the day a real listener exists to say
+  // something truer, the same way this line will read once Excalidraw is the
+  // one hearing `openproj:draw`.
+  surface.el.addEventListener('openproj:draw', () => {
+    status.textContent = 'the drawing editor arrives in the next commit';
+  });
+}
+
 // --- what is open right now, as against what the corpus cites --------------
 //
 // jcanton, 2026-08-25: "would it be possible to have a page connect to the

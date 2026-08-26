@@ -40,7 +40,7 @@ from ..model import Record, lead_text
 from ..vendor import _ace
 from .controls import _combobox_html
 from .deck import _DECK_STYLE, _deck_view, _said, _seeded, choosable, slide_html
-from .detail import _body_html, _fact_rows, _progress_view, _slidebar
+from .detail import _DRAW_BUTTON, _body_html, _fact_rows, _progress_view, _slidebar
 from .editor import _ACE_SURFACE, _ace_wanted
 from .env import _fragment
 from .markdown import _inlined_assets
@@ -149,7 +149,7 @@ _SLIDE = """
       end somebody can only find by pressing it, which is the argument that
       already kept a Delete off the create form. -#}
   {% if editable %}
-  <p class="editbar">{{ slidebar }}
+  <p class="editbar">{{ slidebar }}{{ drawbutton }}
     <span id="views" class="views" role="group" aria-label="How the document is shown">
       <a class="seg" href="{{ links.record }}{{ e.id }}?edit" aria-pressed="false"
          aria-label="Write" title="Write">
@@ -787,12 +787,23 @@ for (const grip of PANES.querySelectorAll(':scope > .pgrip')) {
   };
 }
 
-// The toolbar, the upload path, the gutter and the status strip — the same four
-// calls the record page makes, in the same order, on the same surface. They come
-// from `controls.py`'s block, which this page now inlines; guarded, because a
-// reader gets no surface and none of them may be called on nothing.
+// The toolbar, the upload path, the drawings menu, the gutter and the status
+// strip — the same five calls the record page makes, in the same order, on
+// the same surface. They come from `controls.py`'s block, which this page now
+// inlines; guarded, because a reader gets no surface and none of them may be
+// called on nothing.
+//
+// **The hole this inherits.** `SURFACE` above is `aceSurface(...)` or `null` —
+// never `bodySurface`'s fallback to the plain box the record page's `SURFACE`
+// gets — so on `?editor=plain` with a writer at the keyboard, `SURFACE` is
+// null, this whole block is skipped, and `#drawing` sits in the markup with
+// nothing behind it: not this commit's hole, the same one `attachUploads` and
+// `attachEditing` were already sitting in, and out of scope for the same
+// reason fixing it would be — `render_slide_editor` has no test today, and a
+// fix would need one of its own rather than riding in on a menu.
 if (SURFACE) {
   attachUploads(SURFACE, document.getElementById('upload'));
+  attachDrawing(SURFACE, document.getElementById('upload'));
   attachEditing(SURFACE, document.getElementById('marks'));
   attachGutter(SURFACE, document.getElementById('gutter-note'));
   attachStatus(SURFACE, document.getElementById('statusbar'));
@@ -874,6 +885,10 @@ def render_slide_editor(
             editable=editable,
             base_commit=base_commit or "",
             slidebar=_slidebar(record.id, links, here=True),
+            # The same button `detail.py` draws, imported rather than redrawn —
+            # a second copy of 4,614 characters of path data is a second thing
+            # to keep byte-identical with the vendored mark it was lifted from.
+            drawbutton=_DRAW_BUTTON,
         )
         # **The library, then the surface, then this page's own script**, and
         # that order is load-bearing rather than tidy. These are classic scripts

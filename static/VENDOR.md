@@ -393,6 +393,32 @@ max-age=31536000, immutable` because a vendored file changes only with a release
 `StaticFiles` mount — this repository has never had one, and a mount takes a path from
 the request where every other route here takes an id and derives the path itself.
 
+## The drawings button's mark, lifted out of the same bundle
+
+The control that opens Excalidraw carries Excalidraw's own mark rather than a text label —
+jcanton, 2026-08-26 — inline SVG, like every icon in that bar, because nothing on a page
+here may fetch one (`tests/test_render.py`'s `test_no_page_reaches_the_network`, the same
+rule every other icon already obeys). The npm package ships no `.svg` files at all, so the
+source is the vendored bundle itself: `static/excalidraw.js` defines two separate logo
+components, `ExcalidrawLogo-icon` (the glyph, `viewBox="0 0 40 40"`) and `ExcalidrawLogo-text`
+(the wordmark, `viewBox="0 0 450 55"`, illegible at the 24px a toolbar button draws at). The
+icon is the one this repository took, byte-for-byte — `d`, `fill="currentColor"`, both
+copied out of the bundle rather than redrawn — as `_DRAWING_MARK` in `render/detail.py`,
+which `render/slides.py` imports rather than carrying a second copy of.
+
+The path's own `viewBox="0 0 40 40"` is not this codebase's usual `24 24`, and is kept
+rather than rescaled: the glyph is a 20-subpath compound shape carrying twenty `a`
+(elliptical arc) commands, each with a rotation and two flags that are not coordinates, and
+a mechanical find-and-multiply over 4,614 characters of path data would scale those exactly
+as readily as the lengths beside them, silently drawing the wrong arc. The button's `<svg>`
+keeps the house `viewBox="0 0 24 24"` and meets the path with `<g transform="scale(.6)">`
+instead — 40 × .6 = 24 — a transform asks nothing of the numbers inside the path, so there
+is nothing left in it to get wrong.
+
+Same code, same licence: this is Excalidraw's MIT-licensed mark, used to label a control
+that opens Excalidraw, in a bundle this repository already ships. No new licence obligation
+follows from a second use of bytes already covered by `excalidraw-LICENSE.txt`, above.
+
 ## The font licences, and the one family that did not clear the bar the other seven did
 
 The npm package ships no licence files at all — checked directly, not assumed: only a
