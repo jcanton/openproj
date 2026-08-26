@@ -15,6 +15,7 @@ from .icons import _ICON_ART, ICONS, icon_svg
 from .markdown import _markdown
 from .shell import ROUTES, STATIC, Links, _page
 from .styles import _DETAIL_STYLE, _SCROLL_STYLE, _SUGGEST_STYLE
+from .tokens import PRIORITIES, STATUSES
 
 # Betting table to review meeting for a plan with nothing to copy from. Four
 # weeks is the team's cadence; every cycle written after the first one carries
@@ -213,11 +214,11 @@ _CYCLE = """
     repository holds every page to. -#}
 <table id="bets" autocomplete="off"><thead><tr>
   <th>in {{ c.number }}</th>
-  {% for column in ("title", "kind", "status", "appetite", "assignees", "reviewers") %}
+  {% for column in ("title", "kind", "status", "priority", "appetite", "assignees", "reviewers") %}
   <th data-sort="{{ loop.index }}" aria-sort="none">
     <button type="button" class="sorter">{{ column }}</button></th>
   {% endfor %}
-  <th data-sort="7" aria-sort="none"><button type="button" class="sorter">bet in</button></th>
+  <th data-sort="8" aria-sort="none"><button type="button" class="sorter">bet in</button></th>
 </tr></thead><tbody>
   {#- Every box in this table is named after the row it is in, not after its
       column. A column header names a cell to somebody reading down the page; to
@@ -231,7 +232,25 @@ _CYCLE = """
                {{ 'disabled' if row.carried else '' }}></td>
     <td><a href="{{ links.record }}{{ row.id }}">{{ row.title }}</a></td>
     <td><span class="chip kind-{{ row.kind }}">{{ row.kind|human }}</span></td>
-    <td><span class="chip {{ status_class(row.status) }}">{{ row.status|human }}</span></td>
+    {#- Status and priority are CHOSEN, never typed: three words over six rungs is
+        a way to write `in progres` into the corpus, and the record page and the
+        table both already answer this question with a closed list. The mark
+        travels with the word for the same reason it does in the table's editor —
+        a picker that drops the glyph is a picker whose open state says something
+        different from the cell it replaced.
+
+        Both are offered on a carried row. What a carried row may not have is a
+        second cycle stamped onto it, which is the checkbox; its priority is a
+        fact about the work and stays as editable as anybody's. -#}
+    <td><select class="pick {{ status_class(row.status) }}" data-field="status"
+        aria-label="{{ row.title }} status">
+      {% for value in statuses %}<option value="{{ value }}"
+        {{- ' selected' if value == row.status else '' }}>{{ mark('status', value) }}{{
+        value|human }}</option>{% endfor %}</select></td>
+    <td><select class="pick" data-field="priority" aria-label="{{ row.title }} priority">
+      {% for value in priorities %}<option value="{{ value }}"
+        {{- ' selected' if value == row.priority else '' }}>{{ mark('priority', value) }}{{
+        value|human }}</option>{% endfor %}</select></td>
     <td><input class="live" data-field="{{ row.size_field }}" data-type="number"
                aria-label="{{ row.title }} appetite in weeks"
                autocomplete="off" value="{{ row.size }}"
@@ -557,6 +576,31 @@ for (const input of document.querySelectorAll('#bets input.live')) {
   };
 }
 
+// The two closed-set cells, staged the same way and with far less to guard.
+// There is no typing to revert, no suggestion widget to lose a key to and no
+// coercion to get wrong: a `<select>`'s value is always one of the rungs the page
+// drew, and `change` fires only when somebody picked. What it shares with the
+// boxes above is the thing that matters — nothing is written here, it is staged,
+// and the one Save button on this page commits it with everything else.
+for (const pick of document.querySelectorAll('#bets select.pick')) {
+  let was = pick.value;
+  pick.onchange = () => {
+    if (pick.value === was) return;
+    was = pick.value;
+    // The rung's own colour travels with the picker, so the status column still
+    // reads DOWN at a glance — which is the whole reason it was a chip and not a
+    // word. Rewritten on change rather than left on the value it was drawn with:
+    // a picker showing `Done` in the ready tint is worse than an uncoloured one,
+    // because it is confidently wrong. The class list is rebuilt from `st-`
+    // rather than toggled, so nothing has to know which rung it was.
+    if (pick.dataset.field === 'status') {
+      pick.className = [...pick.classList].filter(one => !one.startsWith('st-')).join(' ')
+        + ' st-' + pick.value;
+    }
+    pend(pick.closest('tr').dataset.id, pick.dataset.field, pick.value);
+  };
+}
+
 // Capacity is what a rate BUYS, so it has to move while the rate is being typed.
 // Left to the next page load, the number somebody is setting is invisible at the
 // moment they are setting it — which is most of the moment that matters.
@@ -729,6 +773,20 @@ document.getElementById('betclear').onclick = () => {
 function betCell(row, at) {
   const cell = row.cells[at];
   if (!cell) return '';
+  // A LADDER sorts by rung, not by spelling. `selectedIndex` is the rung,
+  // because the page draws both lists in the order `STATUSES` and `PRIORITIES`
+  // declare them — so status goes thinking, shaping, ready, in progress, done,
+  // shelved, and priority goes very high to very low, which is the order every
+  // other view in the app puts them in.
+  //
+  // It also fixes the status column, which is older than this: sorting it by
+  // what the chip said gave `Done, In progress, Ready, Shaping` — alphabetical
+  // order over a ladder, which is an order nobody at a betting table wants.
+  //
+  // Padded, so `parseFloat` in `betSort` takes this branch and compares numbers.
+  // Returning the raw index would work by luck until a ladder grew a tenth rung.
+  const pick = cell.querySelector('select');
+  if (pick) return String(pick.selectedIndex).padStart(3, '0');
   const box = cell.querySelector('input:not([type=checkbox])');
   return (box ? box.value : cell.textContent).trim();
 }
@@ -937,6 +995,23 @@ input.rate { width: 4rem; }
    the word above it, and `border-box` keeps the padding inside the cell. */
 #bets input.live.wide { width: 100%; min-width: 11rem; box-sizing: border-box; }
 #bets input.live:hover { border-color: var(--line); }
+/* The two closed-set cells. Dressed as the boxes beside them rather than as the
+   browser's own control: a betting table is one grid of things you are filling
+   in, and a native select among five bordered inputs reads as a different kind
+   of thing that must therefore do a different kind of job.
+   `max-width: 100%` because a status word plus its glyph is wider than the
+   column header, and the two frozen columns are not this table's problem —
+   without it the picker sets the column width and `title` pays for it. */
+#bets select.pick {
+  font: inherit; font-size: 13px; max-width: 100%;
+  color: inherit; background: var(--bg);
+  border: 1px solid var(--surface-2); border-radius: 2px; padding: .1rem .15rem;
+}
+/* The rung's colour comes from the shell, where `select.pick.st-X` is generated
+   beside `.chip.st-X` from the one loop over `STATUSES` — see the note there.
+   Nothing about the ladder is written in this file. */
+#bets select.pick:hover { border-color: var(--line); }
+#bets select.pick:focus { border-color: var(--accent); }
 /* The border is the hover affordance, not the focus one. Suppressing the outline
    here left the only keyboard-reachable cell on the page with nothing to say it
    had focus; the shell's :focus-visible ring draws it now. */
@@ -1787,6 +1862,11 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
                 "title": record.title,
                 "kind": record.kind,
                 "status": record.status,
+                # The field jcanton asked for at the table: "it's missing
+                # priority, that's very important". A bet is a decision about
+                # what matters most against a fixed appetite, and the one number
+                # that says what matters was on every other view but this one.
+                "priority": record.priority,
                 "size": "" if defaulted else f"{size:g}",
                 "size_field": "person_weeks",
                 "size_hint": f"{size:g} assumed" if defaulted else "",
@@ -1846,6 +1926,10 @@ def render_cycle(
         links=links,
         editable=base_commit is not None,
         base_commit=base_commit or "",
+        # The two ladders, in rung order, so the pickers and the sort agree with
+        # the rest of the app rather than with a copy written here.
+        statuses=STATUSES,
+        priorities=PRIORITIES,
         combobox=_combobox_html(index, live=base_commit is not None),
     )
     return _page(

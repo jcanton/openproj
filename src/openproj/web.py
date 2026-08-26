@@ -524,6 +524,15 @@ def opens_at(kind: str) -> str:
 # frame is refused out loud: a document that large could not be committed
 # either way, and a frame dropped in silence is how a paste disappeared.
 MAX_UPDATE_BYTES = 4 * MAX_BODY_BYTES
+# How many records one bulk write may touch. A bound rather than a policy: the
+# gesture that reaches this route is a cmd-click selection in a table, so the
+# realistic number is two to twenty, and the whole plan is a few hundred. What it
+# stops is a hand-crafted payload naming every record in the plan and holding the
+# single writer lock while `write_all` reads, patches and parses all of them —
+# not malice necessarily, a loop with a bug in it. Refused out loud and naming
+# the number, because a silent truncation would write *some* of the selection,
+# which is the half-done state this whole route exists to prevent.
+MAX_BULK_RECORDS = 100
 # How far behind one member of a room may fall before the room starts counting.
 # Derived from the frame ceiling and not written out beside it, for the reason
 # the paragraph above gives: this is "one whole document, queued and not yet on
@@ -2751,6 +2760,131 @@ def create_app(
         )
         if written.commit:
             await announce(written.commit, [record_id])
+        return _result(written, base)
+
+    @app.patch("/api/records")
+    async def save_many(request: Request) -> JSONResponse:
+        """One field-set, several records, ONE commit.
+
+        The table can now write a column across a selection — pick the cells with
+        cmd/ctrl-click or a shift range, edit any one of them, and every record in
+        it takes the value. That is one decision somebody made, and `git log` on a
+        plan is the team's record of decisions: six commits saying "status ready"
+        describe six decisions that were never made. `Store.write_all` already
+        commits several files under one lock with a compare-and-swap per path, so
+        this route is the gate in front of it and nothing else.
+
+        **It is `/api/records` and the singular route is untouched.** Routing the
+        bulk case through `PATCH /api/record/{id}` in a loop was the alternative
+        and it is the one that cannot be made right: the second call in the loop
+        is written against the commit the first one made, so a conflict halfway
+        leaves half the selection written on a protected branch, with no way to
+        say which half from the client.
+
+        Every refusal the singular route makes, made here first and for every
+        record, because a batch that half-applies is the state this exists to
+        prevent. Nothing is written until all of them have passed:
+
+        * a record that is not in the plan is a 404 naming it;
+        * an id two files claim is a 409, same as the singular route — the save
+          would edit a record that is not the one on screen;
+        * a bad type, or a status no vocabulary defines, is refused before the
+          file is touched;
+        * every patched file is parsed before any of them is written, so a batch
+          cannot put a file into git that takes every page down;
+        * `loop_made` is asked of each candidate against a population with ALL
+          the candidates substituted, and not against the stored plan — six rows
+          taking a new parent in one commit can make a cycle that no single one
+          of them makes on its own.
+
+        `ids` is deduplicated and its order is not the sender's to choose: the
+        commit message is built from the model's field order and a count, so
+        nothing the payload carries reaches a line this server signs except
+        through `_named`.
+        """
+        user = writer(request)
+        payload = await _sent(request)
+        base = _base_in(store, payload)
+
+        wanted = payload.get("ids")
+        if not isinstance(wanted, list) or not all(isinstance(one, str) for one in wanted):
+            raise HTTPException(422, "ids must be a list of record ids")
+        # Order fixed by the plan and not by the payload, and deduplicated: the
+        # same id twice is one file, and `write_all` is a mapping — the second
+        # would silently replace the first with the identical content anyway,
+        # which is a thing better said than relied on.
+        ids = [one for one in dict.fromkeys(wanted)]
+        if not ids:
+            raise HTTPException(422, "no records to write")
+        if len(ids) > MAX_BULK_RECORDS:
+            raise HTTPException(
+                422,
+                f"{len(ids)} records in one write, and the limit is {MAX_BULK_RECORDS}. "
+                "Narrow the selection.",
+            )
+
+        fields = {k: v for k, v in _fields_in(payload).items() if k != "id"}
+        if not fields:
+            raise HTTPException(422, "no fields to write")
+        _reject_bad_types(fields)
+
+        _, index = index_now()
+        contested = {
+            problem.record_id
+            for problem in index.problems
+            if problem.field == "id" and problem.severity == "blocker"
+        }
+
+        files: dict[str, str | None] = {}
+        candidates = []
+        for record_id in ids:
+            path = _path_for(store, base, record_id)
+            if path is None:
+                raise HTTPException(404, f"no record {record_id!r}")
+            if record_id in contested:
+                raise HTTPException(
+                    409,
+                    f"{record_id} is claimed by two files. Resolve it in git and reload — "
+                    "a save here would edit a record that is not the one you were shown.",
+                )
+            _reject_bad_status(_kind_for(record_id), fields)
+            content = _patched(store.read(base, path), fields, None, path)
+            try:
+                candidates.append(parse_text(content, path))
+            except ValueError as error:
+                raise HTTPException(
+                    422,
+                    f"{record_id} would not read back as a record: "
+                    f"{why_it_will_not_read(error)}",
+                ) from None
+            files[path] = content
+
+        # The population every candidate is judged against is the plan with all of
+        # them already applied. Asked that way round because the batch lands as one
+        # commit: a shape that only exists once every record in the selection has
+        # moved is a shape this write would create, and checking each candidate
+        # against the stored plan would miss exactly that.
+        after = {record.id: record for record in index.records.values()}
+        for candidate in candidates:
+            after[candidate.id] = candidate
+        for candidate in candidates:
+            loop = loop_made(candidate, after.values())
+            if loop:
+                raise HTTPException(409, loop)
+
+        written = await _write_or_refuse(
+            store.write_all,
+            files,
+            base_commit=base,
+            author=user.login,
+            message=(
+                f"{len(ids)} records: {_named(fields, RECORD_FIELDS) or 'body'}"
+                if len(ids) > 1
+                else f"{ids[0]}: {_named(fields, RECORD_FIELDS) or 'body'}"
+            ),
+        )
+        if written.commit:
+            await announce(written.commit, ids)
         return _result(written, base)
 
     @app.delete("/api/record/{record_id}")
