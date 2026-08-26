@@ -1570,16 +1570,35 @@ const TITLED = document.querySelector('.title-field');
 const SURFACE = bodySurface(BODY);
 attachUploads(SURFACE, document.getElementById('upload'));
 attachEditing(SURFACE, document.getElementById('marks'), CREATING);
-// The same status strip the upload path writes into — one place a person
-// already learned to read for "what did that button just do", not a second
-// one this control would have had to teach.
+// **`#state`, not `#upload`.** jcanton, 2026-08-26, with a screenshot of the
+// edit-only view: "it's the 'saved' message, which in side-by-side prints on one
+// line perfectly well but in the normal edit view doesn't. should we move this
+// message higher up in the [save] [reset] saved bar?"
+//
+// `#upload` is a `.markbar` cell sharing a flex line with seventeen toolbar
+// buttons, so it gets whatever width they leave — plenty beside a half-page
+// editor in the split view, four wrapped lines beside the same toolbar in the
+// full-width one, pushing the toolbar row to four times its height. The commit
+// bar has the whole page and one short sentence in it.
+//
+// It was already going there and this only stops it going to two places at
+// once: `announce` writes to `#state` when the page has one (`shell.py`), and
+// every sentence `openDrawing` produces is announced as well as shown. The
+// screenshot has the message twice for exactly that reason — once wrapped in
+// the toolbar, once on one line in the commit bar. Passing `#state` here makes
+// the two the same cell, which is what `announce`'s own repeat path is written
+// to handle.
+//
+// `attachUploads` above keeps `#upload`. Its sentences are shorter, nobody has
+// reported them wrapping, and moving a control's status because a NEIGHBOUR's
+// wrapped is a change made without a measurement behind it.
 //
 // AFTER `attachEditing`, and that order is load-bearing now: the drawings
 // button is a `FORMATS` entry, so it does not exist until the line above has
 // drawn the bar. `attachDrawing` returns on a missing `#drawing` rather than
 // throwing — which is the right answer for the table and the cycle page, and
 // would be a silently dead button here.
-attachDrawing(SURFACE, document.getElementById('upload'));
+attachDrawing(SURFACE, document.getElementById('state'));
 // A `[` in the document offers the records it could point at, and a word with a
 // slash or a hash in it offers the pull requests. No element of its own: the
 // popup hangs off the body and the caret it sits under is the surface's to

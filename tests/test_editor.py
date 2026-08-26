@@ -1760,7 +1760,7 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
         menu2.querySelectorAll('button')[1].click();
         const afterPress = {
           hidden: menu2.hidden, expanded: button.getAttribute('aria-expanded'),
-          heard, status: document.getElementById('upload').textContent,
+          heard, status: document.getElementById('state').textContent,
           // The real listener now answers a press by opening the popup —
           // `openDrawing` appends it before it ever awaits the bundle, so
           // this is true before the fetch this `file://` page cannot make
@@ -1864,12 +1864,12 @@ def test_a_second_drawing_cannot_be_opened_over_the_first(client: TestClient, tm
         """
         const area = document.querySelector('textarea[name=body]');
         area.dispatchEvent(new CustomEvent('openproj:draw', {detail: null}));
-        const firstStatus = document.getElementById('upload').textContent;
+        const firstStatus = document.getElementById('state').textContent;
         const firstPopups = document.querySelectorAll('.drawpopup').length;
         area.dispatchEvent(new CustomEvent('openproj:draw', {detail: null}));
         return {
           firstStatus, firstPopups,
-          secondStatus: document.getElementById('upload').textContent,
+          secondStatus: document.getElementById('state').textContent,
           popupsAfterSecond: document.querySelectorAll('.drawpopup').length,
         };
         """,
@@ -8272,6 +8272,21 @@ def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
             "put it somewhere other than the caret"
         )
 
+        # Where the sentence went, which is a layout claim as much as a wiring
+        # one. jcanton, 2026-08-26, with a screenshot of the edit-only view:
+        # "it's the 'saved' message, which in side-by-side prints on one line
+        # perfectly well but in the normal edit view doesn't. should we move
+        # this message higher up in the [save] [reset] saved bar?" `#upload` is
+        # a `.markbar` cell sharing a flex line with seventeen toolbar buttons,
+        # so at full width `drawings/draw-xxxxxx.png saved` wrapped to four
+        # lines and took the toolbar's row height with it. Asserted as "and NOT
+        # in the toolbar strip", because the assertion above it passes just as
+        # happily with the sentence in both places, which is what it was.
+        assert _evaluated(call, "document.getElementById('upload').textContent") == "", (
+            "the drawing's status is in the toolbar strip as well as the commit "
+            "bar — said twice, and the toolbar is the copy that wraps"
+        )
+
         served = httpx.get(f"{live_server}/drawings/{drawing_id}.png")
         assert served.status_code == 200
         assert set(_png_text_chunks(served.content)) == {b"application/vnd.excalidraw+json"}, (
@@ -8300,7 +8315,7 @@ def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
         _evaluated(call, "document.querySelectorAll('.drawmenu button')[1].click()")
         _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
         assert _until(
-            call, f"document.getElementById('upload').textContent === 'editing {drawing_id}'"
+            call, f"document.getElementById('state').textContent === 'editing {drawing_id}'"
         )
 
         _evaluated(call, "document.querySelector('[data-testid=\"toolbar-diamond\"]').click()")
@@ -8311,7 +8326,7 @@ def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
         _evaluated(call, "document.getElementById('draw-save').click()")
         assert _until(
             call,
-            f"document.getElementById('upload').textContent === 'drawings/{drawing_id}.png saved'",
+            f"document.getElementById('state').textContent === 'drawings/{drawing_id}.png saved'",
         )
         after_resave = _evaluated(call, "SURFACE.text()")
         assert after_resave == before_resave, (
@@ -8371,7 +8386,7 @@ def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(
         _evaluated(call, "document.querySelectorAll('.drawmenu button')[1].click()")
         _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
         assert _until(
-            call, f"document.getElementById('upload').textContent === 'editing {drawing_id}'"
+            call, f"document.getElementById('state').textContent === 'editing {drawing_id}'"
         )
 
         # Somebody else changes the same drawing from outside this browser,
@@ -8395,8 +8410,8 @@ def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(
             "open, and a drawing has no merge. Reopen it."
         )
         assert _until(
-            call, f"document.getElementById('upload').textContent === {expected!r}"
-        ), _evaluated(call, "document.getElementById('upload').textContent")
+            call, f"document.getElementById('state').textContent === {expected!r}"
+        ), _evaluated(call, "document.getElementById('state').textContent")
         assert _evaluated(call, "!!document.querySelector('.drawpopup')"), (
             "the popup closed on a refusal — the strokes in it went with it"
         )
@@ -8486,7 +8501,7 @@ def test_closing_unsaved_strokes_asks_first_and_keep_drawing_preserves_them(
         _evaluated(call, "document.querySelectorAll('.drawmenu button')[1].click()")
         _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
         assert _until(
-            call, f"document.getElementById('upload').textContent === 'editing {drawing_id}'"
+            call, f"document.getElementById('state').textContent === 'editing {drawing_id}'"
         )
         _evaluated(call, "document.getElementById('draw-close').click()")
         assert _evaluated(call, "!document.querySelector('.drawpopup')"), (

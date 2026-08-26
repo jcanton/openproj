@@ -818,9 +818,10 @@ if (SURFACE) {
   // `false`: a slide is edited on a record that already exists, so there is
   // always something for a drawing to be embedded in.
   attachEditing(SURFACE, document.getElementById('marks'), false);
-  // After `attachEditing`, which is what draws the button this wires — see the
-  // record page's own copy of this pair for why.
-  attachDrawing(SURFACE, document.getElementById('upload'));
+  // After `attachEditing`, which is what draws the button this wires, and into
+  // `#state` rather than `#upload` — see the record page's own copy of this pair
+  // for both.
+  attachDrawing(SURFACE, document.getElementById('state'));
   attachGutter(SURFACE, document.getElementById('gutter-note'));
   attachStatus(SURFACE, document.getElementById('statusbar'));
 }

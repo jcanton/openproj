@@ -488,6 +488,35 @@ room, so nothing in this repository had a room in it and the whole class was inv
 They drive `?both` now — the editor a person actually gets. jcanton, same day: "you should
 use the ace editor by default in your tests from now on."
 
+## Where the sentence goes
+
+Also 2026-08-26, with a screenshot of the edit-only view: "it's the 'saved' message, which
+in side-by-side prints on one line perfectly well but in the normal edit view doesn't.
+should we move this message higher up in the [save] [reset] saved bar?"
+
+`#upload` is a `.markbar` cell sharing a flex line with seventeen toolbar buttons, so it
+gets whatever width they leave: plenty beside a half-page editor in the split view, four
+wrapped lines beside the same toolbar at full width — taking the toolbar's row height with
+it. The commit bar has the whole page and one short sentence in it.
+
+It was already going there. `announce` writes to `#state` when the page has one, and every
+sentence `openDrawing` produced was announced as well as shown, so the screenshot has the
+message twice: wrapped in the toolbar, and on one line in the commit bar. `attachDrawing`
+takes `#state` now, which makes those two the same cell.
+
+And then said ONCE. With `status` being `#state`, which carries `role="status"`, assigning
+its `textContent` already IS the announcement — announcing on top of it hit `announce`'s
+repeat path, which blanks the cell and restores it on a `setTimeout(0)` so a live region
+speaks the same words twice. That left the message empty for a tick, and
+`test_a_second_drawing_cannot_be_opened_over_the_first` reads it synchronously after the
+press and caught it. The eleven `announce(status.textContent)` calls inside `openDrawing`
+are gone; `attachUploads` keeps its three, correctly — its strip is `#upload`, a different
+cell from `#state`.
+
+`attachUploads` keeps `#upload` for the same reason. Its sentences are shorter, nobody has
+reported them wrapping, and there is a test that pins the toolbar to one row with a
+97-character upload sentence beside it.
+
 ## The menu that did not quite go away
 
 Same day: "the dropdown menu doesn't completely disappear sometimes". `close()` sets

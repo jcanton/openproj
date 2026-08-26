@@ -2536,6 +2536,19 @@ let DRAWING_OPEN = false;
 
 // Mounts the popup for `entry` — a row from `drawingsIn`, or `null` for
 // "+ drawing" — and owns its whole lifecycle: load, fetch, mount, save, close.
+// **Said once.** Every sentence below used to be written to `status` and then
+// passed to `announce` as well, which is what `attachUploads` above still does
+// and is right for it: its strip is `#upload`, and `announce` writes to
+// `#state`, so the two are different cells and the second is the one a screen
+// reader is listening to.
+//
+// This function's `status` IS `#state` now (see `detail.py`'s `attachDrawing`
+// call for why it moved), and it carries `role="status"`, so assigning its
+// `textContent` is already the announcement. Announcing on top of it hit
+// `announce`'s repeat path — same text, so it blanks the cell and restores it on
+// a `setTimeout(0)` to make a live region speak twice — and left the message
+// empty for a tick. `test_a_second_drawing_cannot_be_opened_over_the_first`
+// reads it synchronously after the press and caught exactly that.
 async function openDrawing(surface, status, entry) {
   // Said rather than left silent: a control that visibly does nothing is
   // worse than no control at all, the same rule the size ceiling and every
@@ -2543,7 +2556,6 @@ async function openDrawing(surface, status, entry) {
   // popup, so this is not a hypothetical press.
   if (DRAWING_OPEN) {
     status.textContent = 'a drawing is already open — close it first';
-    announce(status.textContent);
     return;
   }
   DRAWING_OPEN = true;
@@ -2694,7 +2706,6 @@ async function openDrawing(surface, status, entry) {
     lib = await excalidraw(status);
   } catch (error) {
     status.textContent = `the drawing editor could not be loaded — ${error.message}`;
-    announce(status.textContent);
     teardown();
     return;
   }
@@ -2708,14 +2719,12 @@ async function openDrawing(surface, status, entry) {
       response = await fetch(`/${entry.path}`);
     } catch (error) {
       status.textContent = `${entry.path} could not be opened — ${error.message}`;
-      announce(status.textContent);
       teardown();
       return;
     }
     if (closed) return;
     if (!response.ok) {
       status.textContent = `${entry.path} could not be opened`;
-      announce(status.textContent);
       teardown();
       return;
     }
@@ -2730,13 +2739,11 @@ async function openDrawing(surface, status, entry) {
       loaded = await lib.loadSceneOrLibraryFromBlob(blob, null, null);
     } catch (error) {
       status.textContent = `${entry.path} does not read back as a drawing — ${error.message}`;
-      announce(status.textContent);
       teardown();
       return;
     }
     if (loaded.type !== lib.MIME_TYPES.excalidraw) {
       status.textContent = `${entry.path} is a library file, not a drawing`;
-      announce(status.textContent);
       teardown();
       return;
     }
@@ -2801,7 +2808,6 @@ async function openDrawing(surface, status, entry) {
     if (blob.size > MAX_DRAWING_BYTES) {
       status.textContent = `that drawing is ${Math.ceil(blob.size / 1024)} KB; the limit `
         + `is ${MAX_DRAWING_BYTES / 1024} KB — simplify it, or ask for the ceiling to be raised`;
-      announce(status.textContent);
       return;
     }
     status.textContent = 'saving…';
@@ -2830,12 +2836,10 @@ async function openDrawing(surface, status, entry) {
         // throws away the work it refused would be the worse of the two
         // losses, and there is nothing else here that could show it again.
         status.textContent = refusal(answer, 409);
-        announce(status.textContent);
         return;
       }
       if (!response.ok) {
         status.textContent = refusal(answer, response.status);
-        announce(status.textContent);
         return;
       }
       committed = answer.commit;
@@ -2852,7 +2856,6 @@ async function openDrawing(surface, status, entry) {
         etag = `"${answer.etag}"`;
       }
       status.textContent = `${answer.path} saved`;
-      announce(status.textContent);
       // `teardown`, not `closeAttempt`: a save that just succeeded put every
       // stroke on the server, so there is nothing left for `isDirty` to
       // protect — asking here would be asking whether to discard work that
@@ -2862,7 +2865,6 @@ async function openDrawing(surface, status, entry) {
       teardown();
     } catch (error) {
       status.textContent = `that drawing was not saved — ${error.message}`;
-      announce(status.textContent);
     } finally {
       dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
     }
