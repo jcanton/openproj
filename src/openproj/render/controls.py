@@ -2582,12 +2582,12 @@ async function openDrawing(surface, status, entry) {
         // open with the drawing still in it: a conflict dialog that also
         // throws away the work it refused would be the worse of the two
         // losses, and there is nothing else here that could show it again.
-        status.textContent = answer.detail || 'somebody else changed this drawing';
+        status.textContent = refusal(answer, 409);
         announce(status.textContent);
         return;
       }
       if (!response.ok) {
-        status.textContent = answer.detail || 'that drawing was refused';
+        status.textContent = refusal(answer, response.status);
         announce(status.textContent);
         return;
       }
