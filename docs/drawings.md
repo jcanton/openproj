@@ -1,12 +1,12 @@
 # Drawings
 
-Designed 2026-08-26 with jcanton, and not built. Excalidraw, vendored, opened in a
+Designed and built 2026-08-26 with jcanton. Excalidraw, vendored, opens in a
 popup over the editor; a drawing is a PNG that carries its own editable scene, and
-it lives at a stable path under one top-level directory. Nothing here is speculative
+it lives at a stable path under one top-level directory. Nothing here was speculative
 about the product — every fork below was decided in conversation. A feasibility spike
-has since run against the questions the CSP raised, and settled all but two of them;
-what is still open is named where the spike's own answers are, not hidden behind a
-promise to measure later.
+ran first against the questions the CSP raised, and settled all but two of them; both
+are resolved where the spike's own answers are, in "The spike, which came first"
+below, rather than restated here.
 
 ## What it is
 
@@ -56,7 +56,7 @@ about the whole tree it writes into — an asset is never edited, so there is no
 compare against, nothing to merge, and no conflict that can exist, which is why it
 needs none of `write_all`'s compare-and-swap. A mutable file in `assets/` makes that
 sentence false about a directory whose `immutable, max-age=31536000` caching
-(`web.py:3229-3231`) and whose replay fast path (`_replay_one`, `store.py:1397`) both
+(`web.py:3269-3271`) and whose replay fast path (`_replay_one`, `store.py:1397`) both
 rest on it being true. A separate directory keeps the two guarantees visibly separate,
 and no existing asset test changes.
 
@@ -132,13 +132,13 @@ base/current read pair, and `_verdict` — and `_verdict`'s own docstring
 semantics cannot drift. Widening it *is* the drift. The decision is also per-path, not
 per-call: a flag cannot express one commit holding a `.md` and a `.png`.
 
-Two comments become false the day this ships and must be corrected in the same commit:
-`put_asset`'s docstring (`store.py:1659-1663`) has to be scoped to the
+Two comments became false the day this shipped, and were corrected in the same commit:
+`put_asset`'s docstring (`store.py:1659-1665`) was scoped to the
 content-addressed half, and `_replay_one`'s `UnicodeDecodeError` arm
-(`store.py:1434-1439`) has to stop saying that reaching it means a hand-committed
-binary. A concurrently-edited drawing is a routine way in, and the consequence is the
-whole commit parking to `refs/openproj/stranded-<sha>` (`store.py:1482`) after a 200
-already went out.
+(`store.py:1434-1446`) stopped saying that reaching it means a hand-committed
+binary. A concurrently-edited drawing is now a routine way in, and the consequence is
+the whole commit parking to `refs/openproj/stranded-<sha>` (`store.py:1482`) after a
+200 already went out.
 
 ## The id
 
@@ -147,14 +147,14 @@ drawing_id = f"draw-{secrets.token_hex(3)}"
 ```
 
 Same alphabet, same width, same CSPRNG and the same never-from-the-client rule as the
-record mint at `web.py:3362`, and for the reason `POST /api/record` gives at
-`web.py:3360-3361`: an id supplied by a browser is a path supplied by a browser, once
+record mint at `web.py:3402`, and for the reason `POST /api/record` gives at
+`web.py:3400-3401`: an id supplied by a browser is a path supplied by a browser, once
 it becomes `drawings/<id>.png`. `draw` collides with no rung prefix in `KINDS`
-(`model.py:1233-1264`), so the `record_id.split("-")[0]` idiom at `web.py:1253`,
-`web.py:2023` and `model.py:1394` cannot mis-route a drawing into a record directory.
+(`model.py:1233-1264`), so the `record_id.split("-")[0]` idiom at `web.py:1266`,
+`web.py:2036` and `model.py:1394` cannot mis-route a drawing into a record directory.
 
 **With a uniqueness check, which the record mint does not have.** Nothing between
-`web.py:3362` and `web.py:3400` queries the index or the tree; records survive on an
+`web.py:3402` and `web.py:3440` queries the index or the tree; records survive on an
 incidental guard falling out of `_identity_problems` (`model.py:2858-2872`). A drawing
 never reaches `validate_all`, so it would inherit no guard at all — and `_attempt`
 short-circuits to an unconditional overwrite whenever `current == base_commit`
@@ -167,7 +167,7 @@ roughly a 3% chance that some pair collides. `docs/data-model.md:32`'s "never co
 is true of a simultaneous pair and not of a growing corpus.
 
 **No slug half, ever**, and the argument is not YAGNI. Records need `_path_for`
-(`web.py:1262-1294`) because humans rename record files in git and the slug drifts.
+(`web.py:1275-1307`) because humans rename record files in git and the slug drifts.
 That is survivable only because bodies reference records *by id*, through `_link`. A
 drawing embed references it *by path*. So a real rename would have to rewrite every
 body that names the drawing — a body-rewriting feature, which a path finder does not
@@ -186,7 +186,7 @@ Guarded by `DRAWING_PATTERN` on the stem and a literal `.png` suffix. Answers
 `image/png` with `ETag: "<blob oid>"`, `cache-control: no-cache`, and a 304 on a
 matching `If-None-Match`.
 
-**Not `immutable`.** `web.py:3229-3230` justifies that header with "the name IS the hash
+**Not `immutable`.** `web.py:3269-3271` justifies that header with "the name IS the hash
 of the contents, so this bytes-for-bytes cannot change under a cache", which is exactly
 what stops being true here. `no-cache` means revalidate every time, not do not store;
 the ETag turns the revalidation into a 304 whenever the drawing has not moved.
@@ -212,17 +212,17 @@ PUT  /api/drawing/{id}       raw image/png body, If-Match: "<etag>".  Same shape
 
 Both check the eight-byte PNG signature and the byte ceiling, and both end in exactly
 one `await _write_or_refuse(store.put_drawing, ...)` with the method as the **bare first
-positional argument** — `tests/test_web.py:5036-5043` collects `id(call.args[0])`, so a
+positional argument** — `tests/test_web.py:5083-5090` collects `id(call.args[0])`, so a
 lambda wrapper or a keyword argument escapes the guard in silence.
 
-`tests/test_web.py:5017`'s `WRITERS` set gains `"put_drawing"`. Without that line the
-AST guard silently stops covering the new routes: the test keeps passing, and a forked
-plan answers a drawing save with a traceback — the exact outage
+`tests/test_web.py:5064`'s `WRITERS` set gained `"put_drawing"`. Without that line the
+AST guard would have silently stopped covering the new routes: the test keeps passing,
+and a forked plan answers a drawing save with a traceback — the exact outage
 `test_no_write_route_escapes_the_refusal` was written for.
 
-`web.py:19-22`'s module docstring enumerates the closed writable surface. It gains
-`drawings/<drawing id>.png` by `DRAWING_PATTERN`, because it is the file's stated
-invariant and reviewers check against it.
+`web.py:19-22`'s module docstring enumerates the closed writable surface, and now
+names `drawings/<drawing id>.png` by `DRAWING_PATTERN` alongside the rest, because it
+is the file's stated invariant and reviewers check against it.
 
 ## Two people, one drawing
 
@@ -240,12 +240,13 @@ chosen to remove.
 
 ## The read side, and the one risky edit
 
-Today `_ASSET_SRC` (`render/markdown.py:127-131`) matches only
-`assets/[0-9a-f]{16}.<ext>`, so a drawing path falls through `markdown.py:294-296` and
-renders as `<a href="…">sync flow (external image)</a>` — a text link, on the detail
-page, in the preview, in the deck and in the export alike.
+Before this shipped, `_ASSET_SRC` matched only `assets/[0-9a-f]{16}.<ext>`, so a
+drawing path fell through `markdown.py:294-296` and rendered as
+`<a href="…">sync flow (external image)</a>` — a text link, on the detail page, in
+the preview, in the deck and in the export alike.
 
-It becomes `_EMBED_SRC` with two arms, and **group(1) widens to carry the directory**:
+It became `_EMBED_SRC` (`render/markdown.py:127-131`), with two arms, and
+**group(1) widened to carry the directory**:
 
 ```python
 _EMBED_SRC = re.compile(
@@ -254,12 +255,12 @@ _EMBED_SRC = re.compile(
 )
 ```
 
-Today group(1) excludes the directory and every consumer re-adds `assets/` by hand.
-With two directories that is impossible, so the prefix moves into the group,
-`Links.asset` (`render/shell.py:54`, `:100`) becomes `Links.repo` (`""` static, `"/"`
+Group(1) used to exclude the directory, and every consumer re-added `assets/` by hand.
+With two directories that was no longer possible, so the prefix moved into the group,
+`Links.asset` (`render/shell.py:54`, `:100`) became `Links.repo` (`""` static, `"/"`
 served), and the three byte-identical
-`lambda name: store.read_asset(commit, f"assets/{name}")` at `web.py:2187`, `:2274` and
-`:2356` collapse to `lambda path: store.read_asset(commit, path)`.
+`lambda name: store.read_asset(commit, f"assets/{name}")` calls, at `web.py:2200`,
+`:2287` and `:2369`, collapsed to `lambda path: store.read_asset(commit, path)`.
 
 The drawings arm is pinned to `\.png` rather than sharing `_ASSET_MEDIA`'s alternation,
 so `_ASSET_MEDIA` stays the single source for the *asset* format list, which is what its
@@ -267,13 +268,14 @@ comment at `markdown.py:110-114` asks for. Keys stay consistent by construction,
 `_image`'s lookup and `_inlined_assets`' map are both built from group(1), and the
 suffix-driven media lookup at `markdown.py:439` still works on a full path.
 
-**This is the riskiest edit in the plan.** Four call sites move together or the deck
-silently stops inlining pictures and starts emailing broken images;
-`tests/test_deck.py:543` catches it only if the fixture path moves in the same commit.
+**This was the riskiest edit in the change.** Four call sites had to move together or
+the deck would have silently stopped inlining pictures and started emailing broken
+images; `tests/test_deck.py:543` would have caught it only if the fixture path moved in
+the same commit — it did, and stayed green.
 
-`render/export.py:41-47` copies only `assets/`, so it becomes a loop over
-`("assets", "drawings")`. Without it every exported page shows a broken drawing, for
-exactly the reason its docstring at `export.py:26-29` already gives about assets.
+`render/export.py:41-47` used to copy only `assets/`; it is now a loop over
+`("assets", "drawings")`. Without it every exported page would show a broken drawing,
+for exactly the reason its docstring at `export.py:26-29` already gives about assets.
 
 ## What does not change
 
@@ -304,31 +306,43 @@ did.
 
 It is **not** on the editor page. `detail.html` stays at 1,110,377 B with Ace, unchanged,
 because the bundle is fetched on the first press of the drawing button rather than carried
-on the page — `connect-src 'self'` allows the fetch, `script-src 'unsafe-inline'` allows the
-injection — and mounted in a popup over the editor. An iframe is not an option:
-`render/shell.py:79-90` is `default-src 'none'` with no `frame-src`.
+on the page, and mounted in a popup over the editor. `openproj` had no route that served a
+static file at all before this — every other vendored library is read off disk and inlined
+into a rendered page rather than fetched by the browser on its own. `GET /static/{name}` was
+added for exactly this one file, an explicit allowlist of vendored names rather than a
+`StaticFiles` mount, because a mount's whole feature is taking a path from the request and
+everything else in this server takes an id and derives the path itself. The fetch is
+`connect-src 'self'`, which the policy grants; the injection that follows it is an inline
+script and not a `<script src>`, because `script-src` is `'unsafe-inline'` and grants no
+`'self'` for a fetched script to match — a `src` attribute pointing at the same file is
+refused outright, so fetch-and-inject is the one door that opens. An iframe is not an option
+either: `render/shell.py:79-90` is `default-src 'none'` with no `frame-src`.
 
-What gets fetched is not a guess any more. The spike built the aggressively trimmed IIFE —
-mermaid and all 55 locales already stubbed out, `en` the only one that ships — and measured
-it: **5,603,202 B raw, 2,025,230 B gzip**, against `@excalidraw/excalidraw` **0.18.1** and
-React **18.3.1**. Not React 19: the peer range permits it, but 19 is not the version that
-was on the scale, so this stops claiming it is. That gzip figure is the FLOOR — no build
-flag measured gets under it — and jcanton approved it on 2026-08-26 with the consequence
-spelled out rather than glossed over: `static/` goes from 2.7 MB to 8.3 MB the day this
-vendors. `detail.html`'s own byte count does not move, because none of those bytes are on
-it until somebody presses the button.
+The spike's own build — mermaid and all 55 locales already stubbed out, `en` the only one
+that ships — measured **5,603,202 B raw, 2,025,230 B gzip** against `@excalidraw/excalidraw`
+**0.18.1** and React **18.3.1** (not React 19: the peer range permits it, but 19 is not the
+version that was on the scale, so this does not claim it is). The bundle that actually
+shipped came in smaller: **5,508,971 B raw, 1,963,903 B gzip**. The difference is not slack
+in the build; it is one font family removed once this vendoring looked at its actual
+licence, and a second dropped for size — see "The font licences," below. jcanton approved
+vendoring it on 2026-08-26 with the consequence spelled out rather than glossed over:
+`static/` went from 2.7 MB to roughly 8.0 MB the day this landed. `detail.html`'s own byte
+count did not move, because none of those bytes are on it until somebody presses the button.
 
-Note that `tests/test_editor.py:5118` only flags injected scripts that carry a `src`, so
-fetch-and-inject passes the letter of that probe while breaking its spirit. The probe is
-widened in the same commit.
+The generic network probe used to flag only an injected script that carried a `src`
+(`tests/test_editor.py:5297-5325`), so fetch-and-inject would have passed the letter of that
+probe while breaking its spirit. It was widened in the same commit to also catch a marked
+inline injection, so the zero violations it asserts is evidence the probe could have failed
+rather than an assertion that could only ever pass.
 
-The control goes in the `.editbar` beside `{{ slidebar }}` (`detail.py:930`,
+The control goes in the `.editbar` beside `{{ slidebar }}` (`detail.py:1024`,
 `slides.py:152`), not as a seventeenth entry in `FORMATS`. A menu is page chrome, not a
-formatting mark, and it keeps `tests/test_editor.py:1560` and `:2044` and the 40rem wrap
-query calibrated to "sixteen buttons needing 561px" (`styles.py:222-229`) out of the change.
+formatting mark, and it keeps `tests/test_editor.py:1566-1571` and `:2236` and the 40rem
+wrap query calibrated to "sixteen buttons needing 561px" (`styles.py:222-229`) out of the
+change.
 
 The button carries the Excalidraw icon — jcanton, 2026-08-26 — inline SVG like every other
-mark in this bar, because `test_no_page_reaches_the_network` (`tests/test_render.py:160`)
+mark in this bar, because `test_no_page_reaches_the_network` (`tests/test_render.py:177`)
 forbids fetching one, the same rule every other icon here already obeys.
 
 The menu is `_EMBED_SRC.finditer(surface.text())`, drawings arm only, deduped keeping the
@@ -338,7 +352,7 @@ nothing to keep in sync. It is the same scan `_inlined_assets` already does at
 `markdown.py:433`.
 
 `attachDrawing` sits beside `attachUploads` and is wired at both its call sites,
-`detail.py:1493` and `slides.py:813`. It inherited a hole doing so: `slides.py` used to
+`detail.py:1592` and `slides.py:815`. It inherited a hole doing so: `slides.py` used to
 build `const SURFACE = window.aceSurface && MAY_WRITE ? aceSurface(...) : null` rather
 than call `bodySurface`, so on `/detail/<id>?view=slide&editor=plain` `SURFACE` was `null`
 and none of the `attach*` calls ran at all — no toolbar, no upload wiring, no gutter, no
@@ -356,7 +370,8 @@ asks. The bundle was built, mounted under `default-src 'none'`, and measured:
 
 1. **Does it run at all** with no worker, no `blob:`, no wasm and no `<script src>`?
    Assert zero `securitypolicyviolation` events, with a deliberately-broken control
-   beside it so the probe can fail — the shape at `tests/test_editor.py:5155`.
+   beside it so the probe can fail — the shape already used for Ace at
+   `tests/test_editor.py:5358`.
 2. **Does the PNG export path avoid wasm?** Yes, and the wasm question is CLOSED,
    negatively: Excalidraw made **zero** wasm calls anywhere on the PNG path, and with
    wasm hard-blocked the exported PNGs came out correct and the same size. Nothing in
@@ -400,24 +415,26 @@ asks. The bundle was built, mounted under `default-src 'none'`, and measured:
    hook the way Ace's `renderer.updateFull(true)` is one, and what a probe has to do
    instead, racing `requestAnimationFrame` against a `setTimeout`, is there too.
 
-Green on every question above except the two that follow, so the openproj side
-proceeds as designed rather than falling back to the export-and-drop handshake against
-excalidraw.com that was the plan if wasm or fonts had come back red. Two things stayed
-unmeasured, and they are the risk that is left:
+Green on every question above, so the openproj side proceeded as designed rather than
+falling back to the export-and-drop handshake against excalidraw.com that was the plan if
+wasm or fonts had come back red. Two things stayed unmeasured by the spike itself, and both
+were closed once the rest was built:
 
-- **The fetch-and-inject delivery this design specifies was never itself exercised.**
-  The probe inlined all 9.1 MB into one `file://` page rather than fetching it.
+- **The fetch-and-inject delivery this design specifies was never itself exercised by the
+  spike.** The probe had inlined all 9.1 MB into one `file://` page rather than fetching it.
   `connect-src 'self'` allows the fetch and `script-src 'unsafe-inline'` allows the
   injection, and `'self'` is absent from `script-src` so a `<script src>` is refused and
-  fetch-and-inject is the only door that opens — but the pair together is unverified,
-  and evaluating 5.6 MB inline is not a free operation on its own.
-- **Inserting a raster image into a drawing is blocked, and will stay blocked.** pica
-  and image-blob-reduce construct a `data:text/javascript;base64` Worker for a
+  fetch-and-inject is the only door that opens — and the pair was then driven together, over
+  a real origin, in `test_the_fetch_and_inject_delivery_is_clean_under_the_real_policy`
+  (`tests/test_editor.py:7988`): zero `securitypolicyviolation` events, with a real
+  `<script src>` as the forced-failure control beside it, so the zero is evidence the probe
+  could have failed and did not, rather than an assertion that could only ever pass.
+- **Inserting a raster image into a drawing is blocked, and stays blocked.** pica and
+  image-blob-reduce construct a `data:text/javascript;base64` Worker for a
   `createImageBitmap` probe and a `blob:` Worker for resizing, and the policy is
   `default-src 'none'` with no `worker-src` and no `blob:`. jcanton accepted this on
-  2026-08-26. The mounted editor therefore hides the image tool
-  (`UIOptions.tools.image = false`) — a control that is not offered, rather than one
-  that lies.
+  2026-08-26. The mounted editor hides the image tool (`UIOptions.tools.image = false`,
+  `render/controls.py:2536`) — a control that is not offered, rather than one that lies.
 
 ## Five helpers, not one
 
@@ -429,7 +446,7 @@ to disk and opens `where.as_uri()`, with the DOM as the only channel out. `_devt
 against a real socket. And `screenshot()` (`tests/browser.py:48`) is a working pixel
 channel: it rendered a correct full editor at its existing 5000 ms default.
 
-The `live_server` fixture (`tests/test_web.py:2032`) runs the real app under uvicorn on
+The `live_server` fixture (`tests/test_web.py:2043`) runs the real app under uvicorn on
 `127.0.0.1`, and `tests/test_web.py:2100` plus three uses of `in_a_live_page` in
 `tests/test_coedit.py` already drive real journeys against it. **The
 open-an-existing-drawing round trip is testable today**, over a real origin, through
@@ -457,7 +474,7 @@ The coverage this ships with: `put_drawing`'s refusals and its same-bytes conver
 at the store level; the two routes and their `_write_or_refuse` wrapping, at the web
 level; `_EMBED_SRC` against both arms and the negative cases (`drawings/notadrawing.png`,
 `drawings/draw-a1b2c3.svg`, and three more) in
-`test_a_drawing_is_drawn_and_a_lookalike_is_not` (`tests/test_render.py:3767`); the
+`test_a_drawing_is_drawn_and_a_lookalike_is_not` (`tests/test_render.py:3782`); the
 export copying both directories; the deck inlining a drawing; the menu's scan as a pure
 function over body text; and now, over a real origin, the round trip itself.
 
@@ -472,7 +489,7 @@ function over body text; and now, over a real origin, the round trip itself.
   blob. `store.py:186-187`: on Cloud Run the filesystem is memory, so a 200 there is data
   loss with a receipt.
 - `Store.last_edited` puts every path at head into the settle-set (`store.py:943`), and
-  `_PARSED`'s prune threshold (`web.py:822`) counts total blobs. Drawings arrive in bulk
+  `_PARSED`'s prune threshold (`web.py:835`) counts total blobs. Drawings arrive in bulk
   and inflate both for no benefit.
 
 ## Things that are true and unpleasant
@@ -483,15 +500,25 @@ function over body text; and now, over a real origin, the round trip itself.
 - **The name `drawings` becomes spoken for.** `_RECORD_DIRS` is derived from `KINDS`
   (`model.py:1315`), so a future seventh rung named `drawing` would retroactively make
   `drawings/` a record directory and every file in it a claimed record, with no migration.
-- **The font licences are unsettled, and the extent is bigger than it looked.** The Latin
-  build ships **25 woff2 across 8 families**: Assistant (4 files, 81,144 B), Excalifont
-  (7, 64,768 B), Cascadia (1, 65,732 B), Liberation (1, 70,668 B), Virgil (1, 56,156 B),
-  ComicShanns (4, 31,452 B), Nunito (5, 57,564 B), Lilita (2, 12,092 B). The package is
-  MIT and the repo LICENSE is MIT, but every one of those 25 files is third-party, with
-  no per-font LICENSE file in the tree, and the generated Excalifont's embedded string
-  reads "Copyright (c) 2024 by Excalidraw. All rights reserved." `static/VENDOR.md`'s
-  per-file licence requirement applies to all 25. This needs a real answer before any
-  font is committed.
+- **The font licences were checked family by family, and one did not clear the bar the
+  other seven did.** The Latin build ships **24 woff2 across 7 families**: Assistant (4
+  files, 81,144 B), Excalifont (7, 64,768 B), Cascadia (1, 65,732 B), Virgil (1, 56,156 B),
+  ComicShanns (4, 31,452 B), Nunito (5, 57,564 B), Lilita (2, 12,092 B). The package itself
+  is MIT and the repo LICENSE is MIT, but every one of those 24 files is third-party with
+  no per-font LICENSE file in the npm package, so each family was checked against its own
+  shipped `name` table rather than assumed from a web page. The generated Excalifont's
+  embedded string still reads "Copyright (c) 2024 by Excalidraw. All rights reserved." —
+  no licence grant of its own anywhere in the file — resolved on Excalidraw's own public word
+  that it is OFL-1.1, since Excalidraw holds the copyright. **Liberation Sans (1 file,
+  70,668 B) was dropped**, and not for size: its shipped binary turned out to be the
+  pre-2012 Ascender/Red Hat build, GPLv2 with the standard font-embedding exception — and
+  that exception is scoped to a document that embeds a font, not to software that bundles
+  one as a resource inside its own distributed binary. `dataUri()` returns it the same
+  `local:` sentinel it returns for Xiaolai, below, and Excalidraw's own font metadata marks
+  Liberation Sans `private:` true, an internal metrics-fallback face never offered in the
+  font picker, so the cut changes nothing a person using this tool can choose. The full
+  texts, one per family, are in `static/excalidraw-fonts-LICENSE.txt`; the per-file licence
+  requirement `static/VENDOR.md` states applies to all 24.
 - **CJK is out.** Confirmed almost exactly: Xiaolai, 209 files, 12,667,492 B, under
   every option. Dropping it is clean rather than merely necessary, though: replacing the
   literals with a `local:` sentinel makes `createUrls()` return `[]` — no fetch, no
@@ -503,7 +530,11 @@ function over body text; and now, over a real origin, the round trip itself.
   export may silently come back 1x unless `getDimensions` is passed. No corroborating bug
   report found. It decides whether drawings look right on a retina screen, and it needs a
   smoke test rather than a citation.
-- **A conflict's shape on the wire is untraced.** Whether `_result(written, commit)`'s
-  status and body can be rendered by the editor's existing conflict box, or whether the
-  drawing popup needs its own refusal line, was not established. If it needs its own, that
-  is real work not costed here.
+- **A conflict's shape on the wire needed its own refusal line, not the editor's existing
+  conflict box.** The drawing popup has no textarea and no diff to show, so `_result`'s 409
+  is caught before it reaches any shared machinery: the status line prints the server's
+  sentence verbatim and the popup stays open with the strokes still in it, rather than
+  closing on the refusal it just showed (`render/controls.py:2579-2587`). Verified against a
+  real conflict — an `httpx` client changes the same drawing from outside the browser
+  between reopen and Save — in `test_a_stale_save_is_refused_and_the_popup_keeps_the_work`
+  (`tests/test_editor.py:8138`).
