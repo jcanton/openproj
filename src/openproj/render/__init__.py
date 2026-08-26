@@ -72,7 +72,7 @@ from .hill import (
 from .icons import _ICON_ART, ICONS, icon_svg
 from .markdown import (
     _ASSET_MEDIA,
-    _ASSET_SRC,
+    _EMBED_SRC,
     _body_html,
     _drop_repeated_title,
     preview_html,
@@ -150,10 +150,10 @@ __all__ = [
     "TEMPLATES",
     "_ACE_SURFACE",
     "_ASSET_MEDIA",
-    "_ASSET_SRC",
     "_COEDIT",
     "_COMBOBOX",
     "_DETAIL",
+    "_EMBED_SRC",
     "_FILTER_JS",
     "_HILL_ALONG",
     "_HILL_BOX",

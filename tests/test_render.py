@@ -3747,6 +3747,53 @@ def test_only_an_asset_this_tool_stored_is_ever_drawn_as_an_image():
         assert "(external image)" in drawn or source in str(drawn), source
 
 
+def test_a_drawing_is_drawn_and_a_lookalike_is_not():
+    """The same rule as an asset, asked of the second directory.
+
+    An image is drawn only if it is an asset or a drawing this tool stored.
+    The drawings arm is pinned to `.png` on purpose: `_ASSET_MEDIA` stays the
+    single source for the *asset* format list, and a drawing is one format.
+    """
+    from openproj.model import Task
+    from openproj.render import _body_html
+
+    def _record(body: str) -> Task:
+        return Task(id="task-000001", kind="task", title="t", person_weeks=1, body=body)
+
+    stored = "drawings/draw-a1b2c3.png"
+    assert f'<img src="{stored}"' in _body_html(_record(f"![ok]({stored})"))
+
+    for source in (
+        "drawings/notadrawing.png",      # our directory, not our naming
+        "drawings/draw-a1b2c3.svg",      # our naming, a format we do not store
+        "drawings/draw-a1b2c.png",       # five hex, not six
+        "drawings/draw-a1b2c3d.png",     # seven
+        "drawings/sub/draw-a1b2c3.png",  # our prefix, somebody else's tree
+    ):
+        drawn = _body_html(_record(f"![x]({source})"))
+        assert "<img" not in drawn, source
+
+
+def test_the_deck_still_inlines_a_picture_after_the_prefix_moved():
+    """The failure this guards is silent: a deck that stops inlining does not
+    error, it mails a broken image. Group 1 carrying the directory means the
+    key in the map and the key `_image` looks up must still be the same string.
+    """
+    from openproj.render.markdown import _inlined_assets
+
+    body = "![a](assets/0123456789abcdef.png) and ![b](drawings/draw-a1b2c3.png)"
+    seen: list[str] = []
+
+    def read(path: str) -> bytes | None:
+        seen.append(path)
+        return b"\x89PNG\r\n\x1a\n"
+
+    found = _inlined_assets([body], read)
+    assert seen == ["assets/0123456789abcdef.png", "drawings/draw-a1b2c3.png"]
+    assert set(found) == set(seen)
+    assert all(v.startswith("data:image/png;base64,") for v in found.values())
+
+
 # --------------------------------------------------------------------------- #
 # The end of the calendar
 # --------------------------------------------------------------------------- #

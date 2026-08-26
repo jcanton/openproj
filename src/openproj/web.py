@@ -2174,7 +2174,7 @@ def create_app(
                 index,
                 number,
                 render.ROUTES,
-                lambda name: store.read_asset(commit, f"assets/{name}"),
+                lambda path: store.read_asset(commit, path),
                 # The commit the rail's Save compares against, and whether this
                 # reader may write at all. Both, for the reason `render_deck`
                 # says: a reader keeps the rail, because it is how anybody finds
@@ -2261,7 +2261,7 @@ def create_app(
                     base_commit=commit,
                     may_write=may_write(request),
                     editor=which_editor(request),
-                    asset=lambda name: store.read_asset(commit, f"assets/{name}"),
+                    asset=lambda path: store.read_asset(commit, path),
                 )
             )
         return page(
@@ -2343,7 +2343,7 @@ def create_app(
                         render.ROUTES,
                         render.inlined_assets(
                             [record.body, record.slide.body if record.slide else ""],
-                            lambda name: store.read_asset(commit, f"assets/{name}"),
+                            lambda path: store.read_asset(commit, path),
                         ),
                     )
                 )
