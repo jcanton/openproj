@@ -112,6 +112,7 @@ _CYCLE = """
   this cycle builds for. Only the people named here are in the cycle.
   <span id="stale" class="warnish" hidden>The dates changed — capacity is
     recounted when you save.</span></p>
+<div class="sideways">
 <table class="load"><thead><tr>
   <th></th><th>person</th><th>available</th><th>capacity</th><th>bet</th><th>load</th>
   <th>scheduled until</th></tr></thead>
@@ -135,6 +136,7 @@ _CYCLE = """
   </tr>
   {% endfor %}
 </tbody></table>
+</div>
 {% if editable %}
 <p class="editbar"><label for="joining" class="hint">add somebody</label>
    <input id="joining" placeholder="login" data-suggest="people" autocomplete="off">
@@ -212,6 +214,7 @@ _CYCLE = """
     table head that is only a `<th>` with a listener is a control a keyboard
     cannot reach and a screen reader does not announce — the quality floor this
     repository holds every page to. -#}
+<div class="sideways">
 <table id="bets" autocomplete="off"><thead><tr>
   <th>in {{ c.number }}</th>
   {% for column in ("title", "kind", "status", "priority", "appetite", "assignees", "reviewers") %}
@@ -265,6 +268,7 @@ _CYCLE = """
   </tr>
   {% endfor %}
 </tbody></table>
+</div>
 
 <h2>Notes</h2>
 {#- Below the table on purpose: this is what the room said while it was ticking
@@ -1025,6 +1029,29 @@ button.drop { border: none; background: none; cursor: pointer; padding: 0 .2rem;
               color: var(--muted); font-size: 13px; line-height: 1; }
 button.drop:hover { color: var(--danger); }
 #joining { font: inherit; font-size: 13px; width: 10rem; }
+/* **The two wide tables scroll themselves, not the document.** The roster is
+   seven columns and the betting table is eight, and both were written down as
+   "eight columns fit a screen; the page scrolls" — which was measured against a
+   screen. At a 390px viewport the roster ran to 617px and the betting table to
+   865, and what scrolled was the whole page: every heading, the prose, the Save
+   bar and the notes box slid sideways together, so reading one number in the
+   `load` column moved the entire cycle out from under the reader.
+
+   A wrapper and not `display: block` on the table itself, which is the trick
+   this replaces the need for: a block-level table stops being a table box, and
+   these two are `border-collapse` with a sticky `thead` and measured column
+   widths. The box goes around it instead, and the table inside is untouched.
+
+   No `max-height` and therefore not `.table-scroll`, which carries one. That
+   class is for the ONE box a view fills to the window; these two sit in the
+   middle of a document that scrolls past them, and capping their height would
+   put a second vertical scroller inside a page that already has one.
+
+   Every width, not only below 40rem. The tables are as wide as the plan makes
+   them — a long login or a long title widens the roster on any screen — so a
+   rule that only applies to phones is a rule that lets the desktop page scroll
+   sideways the day somebody joins with a long name. */
+.sideways { overflow-x: auto; overscroll-behavior-x: contain; }
 #bets { border-collapse: collapse; width: 100%; font-size: 13px; }
 #bets th, #bets td { border-bottom: 1px solid var(--line); padding: .3rem .5rem;
                      text-align: left; }

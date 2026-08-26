@@ -1642,6 +1642,41 @@ tr.nothing .hint { margin: 0 0 .75rem; }
 #pile { border-left: 3px solid var(--sev-warn); background: var(--sev-warn-soft);
         padding: .6rem .8rem; margin: 0 0 1rem; font-size: 13px; font-weight: 600;
         overflow-wrap: anywhere; }
+/* **Sixteen pixels, because below sixteen Safari zooms.** Focus a control whose
+   text is smaller than 16px on iOS and the browser scales the whole page up to
+   make it legible — and it does not scale back when the control blurs. The
+   reader is left on a page 1.2x too wide, scrolling sideways through a layout
+   that fitted a moment ago, and nothing on screen says what happened or how to
+   undo it. Measured on this app at a 390px viewport: the search box is 13px, the
+   scheme picker 12px, the timeline's two date boxes and its zoom 13px, and the
+   cycle page's rate and bet boxes 13-14px. Every read surface has at least one.
+
+   `input, select, textarea` and deliberately not `button`: the zoom is a
+   text-entry behaviour, and the editor's sixteen 12px marks are a toolbar that
+   16px would break onto three rows to fix a problem it does not have.
+
+   A `maximum-scale=1` viewport would also stop it, and it is the wrong fix — it
+   takes pinch-zoom away from everybody to spare a reader one surprise, which is
+   the accessibility floor traded for a layout.
+
+   `!important` for the same reason the block below it is important, and the
+   comment there is the one to read: each page's stylesheet is inlined immediately
+   after this block, so `.tl-controls input` (0,1,1) beats a bare `input` (0,0,1)
+   on specificity AND takes every tie on order. Importance is what is left.
+   Resolved against the real sheets, not assumed.
+
+   40rem is the app's one narrow breakpoint — the width `.marks` already wraps
+   at — and a second number meaning "narrow" is two numbers to keep in step. */
+@media (max-width: 40rem) {
+  input, select, textarea { font-size: 16px !important; }
+  /* The search box is `min-width: 16rem`, which was 256px of 13px text and is
+     256px of 16px text — the same box holding a fifth fewer characters, so
+     "Search titles, tags, PRs, people" came back from this change clipped at
+     "peopl". A minimum is the wrong shape for it here anyway: on a page 350px
+     wide there is nothing else on the row and no reason for the box not to be
+     the row. `min-width: 0` first, or the 16rem floors the 100%. */
+  #q { width: 100%; min-width: 0; box-sizing: border-box; }
+}
 /* A reader who has told their operating system they want less motion gets none.
    It is a system setting and not a preference this app keeps, so there is no
    toggle for it and nothing in `remembered` — the browser answers, every page.
