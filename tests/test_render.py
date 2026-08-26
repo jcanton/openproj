@@ -5590,3 +5590,114 @@ def test_what_the_table_freezes_leaves_something_to_scroll_into(
         f"a {laptop['viewport']}px window sheds the id column, which is the drag grip and "
         f"the only place the row says whether its last save reached GitHub"
     )
+
+
+# Where the corner is, and what the tables do with a narrow box. One script,
+# because both answers come from the same layout at the same width.
+_THE_CHROME = """
+const corner = document.querySelector('.corner');
+const nav = document.querySelector('nav');
+const line = cell => parseFloat(getComputedStyle(cell).lineHeight) || 16;
+const tables = [...document.querySelectorAll('table.unfitted')].map(table => {
+  const box = table.closest('.table-scroll, .sideways');
+  const cells = [...table.querySelectorAll('tbody td')]
+    .filter(cell => cell.getClientRects().length);
+  return {
+    name: table.id || table.className,
+    boxed: !!box,
+    // Wider than the box it is in, which is what "scrolls" means for a table
+    // that is already inside an `overflow: auto`.
+    over: box ? Math.round(table.getBoundingClientRect().width) - box.clientWidth : null,
+    cells: cells.length,
+    wrapping: cells.filter(c => getComputedStyle(c).whiteSpace !== 'nowrap').length,
+  };
+});
+return {
+  viewport: document.documentElement.clientWidth,
+  cornerIn: corner ? (corner.parentElement.id || corner.parentElement.tagName) : null,
+  navHeight: nav ? Math.round(nav.getBoundingClientRect().height) : null,
+  tables,
+};
+"""
+
+
+def test_the_nav_on_a_phone_is_links_and_nothing_else(
+    phone_pages: dict[str, str], tmp_path: Path
+):
+    """jcanton, 2026-08-26: "I'd move the sign-in and theme and light/dark pickers
+    to the footer, or an overflow hamburger menu in the nav: currently they occupy
+    one extra row".
+
+    The footer and not a hamburger, because of what those three controls are: you
+    set which plan and which theme once and never touch them again, and reads
+    here are deliberately public so nothing forces the sign-in. A row of its own
+    above the plan is the most expensive place on a phone to keep three controls
+    nobody presses twice.
+
+    Measured: the nav was 83px and the footer 21px; it is 50px and 28px, so the
+    nav loses a whole row and the page gets 26px back on every view.
+
+    **Both directions, and that is not symmetry for its own sake.** CSS cannot
+    move a node between parents, so this is a real relocation done by script —
+    which means a phone turned to landscape mid-session must put it back, or the
+    theme toggle is in a footer while the nav has room for it and nothing on the
+    page says why.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    browser = chrome()
+    narrow = measured_on_a_phone(browser, phone_pages, tmp_path / "stowed", _THE_CHROME)
+    wide = measured_on_a_phone(
+        browser, phone_pages, tmp_path / "unstowed", _THE_CHROME, width=900)
+
+    for page, got in narrow.items():
+        assert got["cornerIn"] == "build", (
+            f"{page} keeps the sign-in, plan and theme controls in "
+            f"{got['cornerIn']} on a {got['viewport']}px phone"
+        )
+    for page, got in wide.items():
+        assert got["cornerIn"] == "NAV", (
+            f"{page} leaves them in {got['cornerIn']} at {got['viewport']}px, where the "
+            f"nav has room and the footer is a place nobody looks for them"
+        )
+
+
+def test_a_table_with_no_fit_of_its_own_scrolls_rather_than_wraps(
+    phone_pages: dict[str, str], tmp_path: Path
+):
+    """jcanton, 2026-08-26: "the /table table renders well, without newlines and
+    scrollable content, but all other tables do not: they introduce newlines and
+    do not scroll horizontally. can you make them all like the /table table?"
+
+    `/table` is the only one with a measured column fit. The other four had
+    `width: 100%` and let the browser wrap, which at 390px turns a login into
+    three lines and a title into six — and every row on screen grows to match, so
+    a roster of five people is a page and a half of stacked syllables.
+
+    They take the other half of what `/table` does and none of the fit: size to
+    the content, and scroll inside the box they were already in. All four WERE
+    already in a scroller and none of them ever scrolled, because a table told to
+    be 100% wide always fits — which is why the assertion is that the table is
+    wider than its box rather than that a scroller exists.
+
+    `#rows` is deliberately not in this set: its widths are set inline by the fit,
+    and `white-space: nowrap` on its cells would undo the clamped columns it
+    draws instead of wrapping.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    got = measured_on_a_phone(chrome(), phone_pages, tmp_path / "unfitted", _THE_CHROME)
+    seen = 0
+    for page, one in got.items():
+        for table in one["tables"]:
+            seen += 1
+            where = f"{table['name']} on {page}"
+            assert table["boxed"], f"{where} is not in a scroller, so it can only wrap"
+            assert not table["wrapping"], (
+                f"{where}: {table['wrapping']} of {table['cells']} cells still wrap"
+            )
+            assert table["over"] > 0, (
+                f"{where} is {table['over']}px wider than its box, so it fitted by "
+                f"wrapping something rather than by having room"
+            )
+    assert seen >= 4, f"only {seen} unfitted tables were measured, and there are four"

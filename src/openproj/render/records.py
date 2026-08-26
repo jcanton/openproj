@@ -18,7 +18,7 @@ _RECORDS = """
 <p class="editbar"><a class="button" href="{{ create.href }}">{{ create.label }}</a></p>
 {%- endif %}
 {{ facets }}
-<div class="table-scroll" data-fills><table id="records"><thead><tr>
+<div class="table-scroll" data-fills><table id="records" class="unfitted"><thead><tr>
   {%- for column in columns %}
   <th data-col="{{ column }}">{{ label(column) }}</th>
   {%- endfor %}

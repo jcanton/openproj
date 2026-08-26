@@ -112,7 +112,7 @@ _CYCLE = """
   <span id="stale" class="warnish" hidden>The dates changed — capacity is
     recounted when you save.</span></p>
 <div class="sideways">
-<table class="load"><thead><tr>
+<table class="load unfitted"><thead><tr>
   <th></th><th>person</th><th>available</th><th>capacity</th><th>bet</th><th>load</th>
   <th>scheduled until</th></tr></thead>
 <tbody id="roster">
@@ -214,7 +214,7 @@ _CYCLE = """
     cannot reach and a screen reader does not announce — the quality floor this
     repository holds every page to. -#}
 <div class="sideways">
-<table id="bets" autocomplete="off"><thead><tr>
+<table id="bets" class="unfitted" autocomplete="off"><thead><tr>
   <th>in {{ c.number }}</th>
   {% for column in ("title", "kind", "status", "appetite", "assignees", "reviewers") %}
   <th data-sort="{{ loop.index }}" aria-sort="none">
@@ -1184,7 +1184,7 @@ _PEOPLE = """
     `data-fills` is what tells the shell this is the box to give the window's
     remaining height to; `--room` does the measuring. -#}
 <div class="table-scroll" data-fills>
-<table id="roles">
+<table id="roles" class="unfitted">
   <thead><tr><th scope="col">role</th><th scope="col">record</th><th scope="col">kind</th>
     <th scope="col">status</th><th scope="col">scheduled</th></tr></thead>
   {% for person in people %}
