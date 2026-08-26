@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from datetime import date
 
 from markupsafe import Markup, escape
 
@@ -1047,7 +1046,41 @@ _DETAIL = """
       </select>
     </label></p>
   {%- else %}
-  <p class="eyebrow"><span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span></p>
+  {#- The chip, and — where there is a server to ask — the one control that can
+      change it. Here rather than in the facts list because the kind is what the
+      record IS: it decides which fields the page even offers, so a picker for it
+      belongs beside the name and not among the values it governs. -#}
+  <p class="eyebrow"><span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span>{%
+    if editable %}<button type="button" class="rekind">Change kind</button>{%
+    endif %}</p>
+  {%- if editable %}
+  {#- Asked before it is done, and it says the expensive part out loud: the id
+      carries the kind, so this mints a new record and retires this one. Every
+      other write on this page edits the file in front of you. -#}
+  {#- Classes and not ids, for the reason the delete control's own comment
+      gives: this page can hold every record in the plan at once, and a control
+      resolved by `getElementById` acts on whichever record happens to be first.
+      Everything below is found through the article it belongs to. -#}
+  <div class="rekinding" hidden>
+    <p class="asking">Make <strong>{{ e.title }}</strong>
+      <label class="sr-only">a different kind
+      {#- Every kind but the one it already is. Filtered in the template from the
+          ladder itself rather than from a list built beside it, so a rung added
+          to `KINDS` is offered here without a second edit — and the server
+          refuses the ones this particular record cannot become, which is a
+          question about its parent and its children and not about the ladder. -#}
+      <select class="becomes">{% for k in kinds %}{% if k != e.kind %}<option
+        value="{{ k }}">{{ k|human }}</option>{% endif %}{% endfor %}</select></label>?</p>
+    <p class="reach">The id carries the kind, so this makes a NEW record and
+      retires <code>{{ e.id }}</code>. Everything filed under it or waiting on it
+      is repointed in the same commit; the old id stops resolving.</p>
+    <p class="why" role="alert" hidden></p>
+    <span class="acts">
+      <button type="button" class="really">Change it</button>
+      <button type="button" class="keep">Keep it</button>
+    </span>
+  </div>
+  {%- endif %}
   {%- endif %}
   {#- One slot for the record's name in both modes: the read span and the title
       box swap inside the heading, so pressing Write changes what the name is
@@ -1835,6 +1868,102 @@ if (!CREATING) {
   document.getElementById('reset').onclick = resetEdits;
 }
 
+// Changing a record's KIND, which is the one edit on this page that does not
+// edit the record: the id carries the kind, so the server mints a new record,
+// repoints everything that named the old one and retires it — all in one commit.
+//
+// Two presses, like deleting, and for the same reason: this is not reversible
+// from the page. And a THIRD where something would be lost — a rung that does
+// not read a field this record has written down. The server refuses the first
+// attempt with the list, the panel says it in the words the server chose, and
+// the second press sends that list back. A confirmation whose text the page
+// wrote itself is a confirmation that can drift from what the server will do.
+for (const article of document.querySelectorAll('article.record')) {
+  const open = article.querySelector('button.rekind');
+  if (!open) continue;
+  const ask = article.querySelector('.rekinding');
+  const why = ask.querySelector('.why');
+  const acts = ask.querySelector('.acts');
+  const going = ask.querySelector('button.really');
+  const picker = ask.querySelector('select.becomes');
+  // What the server said would be lost, once it has said it. Cleared whenever
+  // the question changes, so a confirmation collected for one kind can never be
+  // spent on another.
+  let losing = null;
+
+  const asking = state => {
+    ask.hidden = !state;
+    open.hidden = state;
+    why.hidden = true;
+    acts.hidden = false;
+    losing = null;
+    going.textContent = 'Change it';
+    if (state) ask.querySelector('button.keep').focus();
+  };
+  open.onclick = () => asking(true);
+  ask.querySelector('button.keep').onclick = () => asking(false);
+  ask.onkeydown = event => { if (event.key === 'Escape') asking(false); };
+  // A different kind is a different question, so an answer given about the last
+  // one is not an answer to this one.
+  picker.onchange = () => {
+    losing = null;
+    why.hidden = true;
+    going.textContent = 'Change it';
+  };
+
+  going.onclick = async () => {
+    going.disabled = true;
+    dispatchEvent(new Event('openproj:writing'));
+    let committed = null;
+    try {
+      const body = {
+        base_commit: BASE.value,
+        id: article.id,
+        kind: picker.value,
+      };
+      // Only on the second press, and only the list the server itself sent.
+      if (losing) body.drops = losing;
+      const response = await fetch('/api/rekind', {
+        method: 'POST', headers: {'content-type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+      const answer = await response.json().catch(() => ({}));
+      if (response.status === 409 && Array.isArray(answer.drops)) {
+        // Not a refusal so much as the question this gesture could not ask until
+        // the server had worked out the answer.
+        losing = answer.drops;
+        why.hidden = false;
+        // `refusal` and not `answer.detail`, which is the shape of the bug
+        // `test_no_write_path_reads_a_key_a_conflict_does_not_carry` exists for:
+        // a 409 from the STORE answers with a report and no `detail`, and this
+        // 409 is not that one — but a call site that knows the difference is a
+        // call site that will be wrong the day it stops being true. The shell's
+        // formatter is the one place allowed to know.
+        why.textContent = refusal(answer, response.status);
+        going.textContent = 'Change it anyway';
+        going.disabled = false;
+        return;
+      }
+      if (!response.ok) {
+        why.hidden = false;
+        why.textContent = refusal(answer, response.status);
+        going.disabled = false;
+        return;
+      }
+      committed = answer.commit;
+      // The record you were reading has a new id, so this is the one write on
+      // this page that has somewhere else to be afterwards.
+      location.href = {{ links.record|tojson }} + answer.id;
+    } catch (error) {
+      why.hidden = false;
+      why.textContent = 'The server could not be reached. Nothing was changed.';
+      going.disabled = false;
+    } finally {
+      dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
+    }
+  };
+}
+
 // Deleting a record. Two presses and a named record between them, and every
 // element found through the article it belongs to rather than by id — this page
 // can hold more than one record, and a destructive control resolved by
@@ -1889,14 +2018,24 @@ for (const article of document.querySelectorAll('article.record')) {
       return;
     }
     if (answer.ok) {
-      // To the landing, because the page you are on is about a record that no
-      // longer exists: staying here would show a 404 on the next reload, and
-      // reloading it is what the shell does when it hears the commit. The
-      // landing and not the table — this page belongs to every record, and a
-      // deleted issue's or note's reader sent to the table lands on a plan
-      // view that never showed the record they came from. Same retarget as
-      // the back link at the top of the page.
-      location.href = {{ links.records|tojson }};
+      // Away, because the page you are on is about a record that no longer
+      // exists: staying here would show a 404 on the next reload, and reloading
+      // it is what the shell does when it hears the commit.
+      //
+      // **Where the back link would have taken you** — jcanton, 2026-08-26: "the
+      // back path after edit/delete sometimes simply goes back to the main page,
+      // would be nice if it sent always to the previous page". This was the
+      // place it did not. It went to the landing deliberately, on the argument
+      // that a deleted issue's reader sent to the table lands on a plan view
+      // that never showed it; but the remembered origin is not the table, it is
+      // the view they were actually standing on, and it is never this record's
+      // own page because a record page does not stamp one.
+      //
+      // The landing stays as the fallback, for the tab that has no origin —
+      // a record opened in a new tab, or reached by typing the address.
+      // `cameFrom` is the shell's, and it is the same read the back link makes.
+      const back = typeof cameFrom === 'function' ? cameFrom() : null;
+      location.href = back ? back.href : {{ links.records|tojson }};
       return;
     }
     // Refused, and the reason is the useful part: "pitch-b20000 cannot be
@@ -2813,9 +2952,25 @@ def _new_rows() -> list[dict]:
             id=f"{PREFIX[kind]}-000000",
             kind=kind,
             title="",
-            # Today, because a date field that starts empty is a date field
-            # somebody leaves empty. This is a blank; nothing is overwritten.
-            assigned_on=date.today(),
+            # **Empty, and not today.** It was today, on the argument that a date
+            # field which starts empty is a date field somebody leaves empty —
+            # jcanton, 2026-08-26, reversing it: "assigned date default to empty
+            # would be better than default=today".
+            #
+            # The argument was answering the wrong risk. `assigned_on` is the one
+            # date the whole schedule is derived FROM, and a record created today
+            # is very often work that starts next cycle or work somebody is
+            # writing down so as not to lose it. Prefilling today does not stop
+            # anybody leaving it wrong, it makes wrong the DEFAULT and silent:
+            # the record schedules itself from a date nobody chose, and the only
+            # sign is a bar in the right place on the timeline for the wrong
+            # reason.
+            #
+            # Empty is not silent. `validate_all` already asks for this field at
+            # `in_progress` and nowhere else — "work in progress needs the date it
+            # was assigned" — so a record that never gets one is fine until it
+            # starts, and then says so beside itself.
+            assigned_on=None,
         )
         # One form on the page, so one prefix. The detail page's is the record's
         # id, because that page can hold sixteen of them at once.
