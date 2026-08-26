@@ -843,6 +843,28 @@ const COEDIT = (() => {
   let bound = false;    // the textarea and the document are wired together
   let dead = false;     // asked to reload, or given up on: stay degraded
   let saving = false;   // an `openproj:writing` this owes an `openproj:wrote`
+  // **Whether THIS tab pressed Save**, which `saving` above is not and was read
+  // as. `saving` is the shell's writing/wrote pairing, and it is set by the
+  // room's `t: 'saving'` frame — a BROADCAST, sent to every member, including
+  // for the commit the quiet window makes that nobody pressed at all. So
+  // `const mine = saving` in the `saved` branch was true in every tab in the
+  // room, and `location.reload()` ran in every one of them.
+  //
+  // jcanton, 2026-08-26: "I drew three shapes in a new drawing and the window
+  // simply closed. I didn't touch escape nor any other key, nor did I click
+  // outside the drawing window. I think the page gets auto-reloaded when this
+  // happens!" It does. Reproduced against a live server: put anything in the
+  // body, open the drawing popup, draw, and stop typing — twenty seconds later
+  // (`coedit.QUIET_SECONDS`) the server commits the room on its own, and this
+  // page reloaded out from under the editor. Nothing about it is specific to
+  // drawings; a drawing popup is just the only thing on this page holding
+  // unsaved state that a reload can take.
+  //
+  // The reload branch's own comment already said "Only the tab that asked:
+  // everybody else in the room is still typing, and a commit somebody else made
+  // is not a reason to reload the page in front of you." That was the contract;
+  // this flag is what makes the code keep it.
+  let asked = false;    // THIS tab pressed Save, as against the room writing
   let arrived = false;  // the socket has worked at least once
   let attempts = 0;
 
@@ -1235,6 +1257,10 @@ const COEDIT = (() => {
   function settle(commit) {
     if (!saving) return;
     saving = false;
+    // Cleared with it, on every path: refused, dropped socket, "nothing to
+    // commit" and success alike. A press that ends any other way than a commit
+    // must not leave the next room-made commit looking like this tab's.
+    asked = false;
     // Announced even when the write was refused, and from `onclose` when the
     // socket goes mid-write: this is what a `finally` is on the paths that have
     // a request to end.
@@ -1509,7 +1535,12 @@ const COEDIT = (() => {
       // Whether this tab is the one that asked, read BEFORE `settle` clears it:
       // the frame goes to everybody in the room, and only the tab that pressed
       // the button should be told anything or have its editor closed.
-      const mine = saving;
+      //
+      // `asked` and not `saving`, which is the whole of the bug this line used
+      // to be: `saving` is set by the `t: 'saving'` frame, which is broadcast to
+      // the room, so it was true in every tab — see `asked`'s own comment where
+      // it is declared.
+      const mine = asked;
       if (message.update) YJS.applyUpdate(doc, raw(message.update), 'remote');
       BASE.value = message.commit;
       ORIGINAL_BODY = text.toString();
@@ -1711,6 +1742,9 @@ const COEDIT = (() => {
     // `store.write` against the room's base.
     typed();
     writing();
+    // Set HERE and nowhere else: this is the one line in this file that runs
+    // because a person pressed the button, which is exactly what `asked` means.
+    asked = true;
     announce('saving…');
     send({t: 'save', fields});
   }};

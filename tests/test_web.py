@@ -556,6 +556,18 @@ def test_every_write_a_page_makes_is_announced_before_and_after_it(
         )
         if "/api/preview" not in url
     ]
+    # The one path here where "how many fetch call sites does the source hold"
+    # and "how many writes can happen per press" genuinely differ: `openDrawing`
+    # chooses `PUT /api/drawing/<id>` or `POST /api/drawing` with a ternary at
+    # Save time, never both, and wraps whichever fires in exactly one
+    # `openproj:writing`/`openproj:wrote` pair. Every other write path here is
+    # one call site because it is one write; this is two call sites for the one
+    # save button, so the pair is collapsed into the single write it is before
+    # asking whether the count below balances.
+    if "'/api/drawing'" in fetches and "`/api/drawing/${entry.id}`" in fetches:
+        both = ("'/api/drawing'", "`/api/drawing/${entry.id}`")
+        fetches = [url for url in fetches if url not in both]
+        fetches.append("'/api/drawing' or `/api/drawing/${entry.id}`, never both")
     assert fetches, route
     # And a write that is not a fetch at all. The detail page's Save goes over
     # the co-editing socket when a room is live, and the room commits on its own
@@ -3025,6 +3037,42 @@ def test_an_asset_name_that_is_not_a_hash_never_becomes_a_path(client: TestClien
         assert client.get(f"/assets/{name}").status_code == 404, name
 
 
+def test_the_static_route_serves_only_the_allowlisted_name(client: TestClient):
+    """`GET /static/{name}` did not exist before the Excalidraw bundle needed
+    something to answer `fetch('/static/excalidraw.js')`. The route is an
+    allowlist rather than a directory listing, so this checks both directions:
+    the one name on it is served, correctly, and a file that is genuinely
+    sitting in `static/` — `ace.js`, vendored and checksummed the same as
+    `excalidraw.js` — is still refused for not being the one name that is."""
+    from openproj.render import _static_dir
+
+    response = client.get("/static/excalidraw.js")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/javascript"
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert response.content == (_static_dir() / "excalidraw.js").read_bytes()
+
+    for name in ("ace.js", "VENDOR.md", "SHA256SUMS", "nope.js"):
+        assert client.get(f"/static/{name}").status_code == 404, name
+
+
+def test_a_static_name_that_is_not_the_allowlisted_one_never_becomes_a_path(
+    client: TestClient,
+):
+    """The same shape as the asset route's own test, for the same reason: the
+    writable surface is closed by construction and the readable one this route
+    adds has to be too. None of these ever reach `vendor._static_dir()` — they
+    fail the dict lookup before any path is built at all."""
+    # A bare ".." is not in this list: httpx's own URL normalization resolves
+    # `/static/..` down to `/` before the request leaves the client, the same
+    # dot-segment removal any browser does, so it never reaches this route at
+    # all. `%2e%2e` is the same two characters, percent-encoded, which survives
+    # that normalization and lets the *server's* own handling of a literal
+    # ".." be the thing under test rather than an artifact of the client.
+    for name in ("../config/defaults.yaml", "..%2Fconfig", "%2e%2e", "sub/excalidraw.js"):
+        assert client.get(f"/static/{name}").status_code == 404, name
+
+
 def test_a_stored_image_is_drawn_and_a_remote_one_is_not(client: TestClient):
     """A remote image would make the page fetch from the network, which is what
     inlining every library was for. One in the repository travels with the clone
@@ -3055,6 +3103,104 @@ def test_the_preview_shows_what_the_page_will_show(client: TestClient):
     assert f'<img src="/{path}"' in stored
     assert '<a href="https://example.com/b.png">b (external image)</a>' in previewed
     assert "https://github.com/kilnlab/kiln4py/pull/2318" in previewed
+
+
+# --- drawings -----------------------------------------------------------------
+
+
+def test_a_drawing_is_served_with_an_etag_and_not_as_immutable(client: TestClient):
+    """The asset route's `immutable` is justified by the name being the hash of
+    the contents, which is exactly what stops being true for a drawing."""
+    made = client.post("/api/drawing", content=PNG, headers={"content-type": "image/png"})
+    assert made.status_code == 200
+    path = made.json()["path"]
+
+    got = client.get("/" + path)
+    assert got.status_code == 200
+    assert got.headers["content-type"].startswith("image/png")
+    assert "immutable" not in got.headers["cache-control"]
+    assert got.headers["cache-control"] == "no-cache"
+    assert got.headers["etag"] == f'"{made.json()["etag"]}"'
+
+    again = client.get("/" + path, headers={"if-none-match": got.headers["etag"]})
+    assert again.status_code == 304
+
+
+def test_a_drawing_id_that_is_not_one_is_not_served(client: TestClient):
+    for name in (
+        "notadrawing.png",
+        "draw-a1b2c3.svg",
+        "draw-a1b2c.png",
+        "../assets/0123456789abcdef.png",
+    ):
+        assert client.get(f"/drawings/{name}").status_code == 404, name
+
+
+def test_the_drawing_door_takes_png_and_nothing_else(client: TestClient):
+    """`IMAGE_TYPES` is untouched, so `web.py`'s deliberate SVG refusal is
+    neither reversed nor widened — this door is narrower, not wider."""
+    for kind in ("image/jpeg", "image/svg+xml", "text/plain"):
+        sent = client.post("/api/drawing", content=PNG, headers={"content-type": kind})
+        assert sent.status_code == 415, kind
+
+
+def test_a_drawing_that_is_not_a_png_is_refused_whatever_the_header_says(client: TestClient):
+    sent = client.post("/api/drawing", content=b"GIF89a", headers={"content-type": "image/png"})
+    assert sent.status_code == 422
+
+
+def test_a_drawing_over_the_ceiling_is_refused(client: TestClient):
+    from openproj.web import MAX_ASSET_BYTES
+
+    fat = b"\x89PNG\r\n\x1a\n" + b"x" * MAX_ASSET_BYTES
+    sent = client.post("/api/drawing", content=fat, headers={"content-type": "image/png"})
+    assert sent.status_code == 413
+
+
+def test_saving_a_drawing_against_a_stale_etag_is_refused(client: TestClient):
+    made = client.post("/api/drawing", content=PNG, headers={"content-type": "image/png"}).json()
+    client.put(
+        f"/api/drawing/{made['id']}",
+        content=PNG + b"theirs",
+        headers={"content-type": "image/png", "if-match": f'"{made["etag"]}"'},
+    )
+
+    mine = client.put(
+        f"/api/drawing/{made['id']}",
+        content=PNG + b"mine",
+        headers={"content-type": "image/png", "if-match": f'"{made["etag"]}"'},
+    )
+    assert mine.status_code == 409
+    assert "somebody changed this drawing while you had it open" in mine.text
+
+
+def test_a_drawing_save_without_if_match_is_refused(client: TestClient):
+    made = client.post("/api/drawing", content=PNG, headers={"content-type": "image/png"}).json()
+    sent = client.put(
+        f"/api/drawing/{made['id']}",
+        content=PNG + b"x",
+        headers={"content-type": "image/png"},
+    )
+    assert sent.status_code == 428
+
+
+def test_a_drawing_save_lands_and_serves_the_new_bytes(client: TestClient, repo_path: Path):
+    made = client.post("/api/drawing", content=PNG, headers={"content-type": "image/png"}).json()
+    before = git_head(repo_path)
+
+    edited = PNG + b"more strokes"
+    saved = client.put(
+        f"/api/drawing/{made['id']}",
+        content=edited,
+        headers={"content-type": "image/png", "if-match": f'"{made["etag"]}"'},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["etag"] != made["etag"]
+    assert git_head(repo_path) != before
+
+    served = client.get("/" + made["path"])
+    assert served.content == edited
+    assert served.headers["etag"] == f'"{saved.json()["etag"]}"'
 
 
 # A reference in prose, the same reference already inside a link, and one inside
@@ -4814,11 +4960,22 @@ def wedged_writes(client: TestClient, note: str) -> dict[str, object]:
         ),
         "PUT /api/icon": client.put("/api/icon", json={"icon": "fox"}),
         "POST /api/asset": upload(client, PNG),
+        # No pre-existing drawing needed for either: `put_drawing` calls
+        # `_refuse_forked`/`_refuse_swamped` before it ever reads a blob, so
+        # the gate fires on a minted id and a made-up `if-match` alike.
+        "POST /api/drawing": client.post(
+            "/api/drawing", content=PNG, headers={"content-type": "image/png"}
+        ),
+        "PUT /api/drawing/{drawing_id}": client.put(
+            "/api/drawing/draw-000000",
+            content=PNG,
+            headers={"content-type": "image/png", "if-match": '"0000000000000000"'},
+        ),
     }
 
 
 def test_every_write_route_refuses_in_words_while_the_plan_is_forked(forked: Forked):
-    """Nine routes, not the one the audit happened to test — and the refusal
+    """Eleven routes, not the one the audit happened to test — and the refusal
     they briefly lost when the push left the request path, restored at the gate.
 
     The write path cannot meet the fork any more, and for one revision of this
@@ -4832,7 +4989,7 @@ def test_every_write_route_refuses_in_words_while_the_plan_is_forked(forked: For
     "Saying it on the page"); refusing a fork is the floor under it.
 
     The inventory is checked against the app's own router rather than typed out,
-    so an eighth write route cannot be added without either being driven here or
+    so an eleventh write route cannot be added without either being driven here or
     being named as one that never touches the store.
     """
     exempt = {
@@ -4862,6 +5019,8 @@ def test_every_write_route_refuses_in_words_while_the_plan_is_forked(forked: For
         ("PUT", "/api/cycle/{number}"),
         ("PUT", "/api/icon"),
         ("POST", "/api/asset"),
+        ("POST", "/api/drawing"),
+        ("PUT", "/api/drawing/{drawing_id}"),
     }
     routed = {
         (method, route.path)
@@ -4969,7 +5128,7 @@ def test_no_write_route_escapes_the_refusal():
 
     from openproj import web
 
-    WRITERS = {"write", "write_all", "put_asset", "remove"}
+    WRITERS = {"write", "write_all", "put_asset", "put_drawing", "remove"}
     tree = ast.parse(Path(web.__file__).read_text(encoding="utf-8"))
 
     def writes(node) -> list[ast.Attribute]:

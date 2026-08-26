@@ -41,6 +41,20 @@ and each says why it is still here.
   no grid claim, no gate panel, no combobox, no adder row, and it still sorts,
   filters and links.
 
+* **Drawings, in a popup over the editor.** Designed 2026-08-26 and built on the
+  `drawings` branch the same cycle, written up in full at `docs/drawings.md` —
+  read that rather than a summary here, because the rejected shapes carry the
+  reasoning and one of them corrupts files. Excalidraw, vendored as our own
+  single-file build and fetched on the first press of a button in the
+  `.editbar`, opens in a popup over the editor. A drawing is a PNG exported with
+  `exportEmbedScene`, so the file is both the picture and its own editable
+  scene; it lives at a stable path, `drawings/draw-a1b2c3.png`, and an embed is
+  ordinary image markdown that GitHub renders. Content-addressed `assets/` was
+  the nearly-free shape and was refused because it would have raced the record
+  editor's own save through the merge ladder on every drawing save;
+  `Store.put_drawing` never decodes the bytes, because the store's own line
+  merge corrupts a PNG silently and answers 200 while doing it.
+
 ## What was tried and dropped
 
 * **A `<select>` converted into a button-and-menu, four more times.** The table's
@@ -72,6 +86,58 @@ and each says why it is still here.
   and drop targets. Enter and F2 open an editor.
 
 ## What is still owed
+
+* **Found: the room's own commit was reloading the page.** Kept because the
+  hunt is the expensive half. jcanton reported the drawing popup vanishing on
+  2026-08-26; the first cause found was the popup's own Escape, fixed the same
+  day, and he then said he had seen it "even after drawing a couple of lines and
+  without pressing escape", which that fix does not explain.
+
+  It was `location.reload()`, and nothing about it was specific to drawings.
+  `saving` in `_COEDIT` is the shell's writing/wrote pairing and is set by the
+  room's `t: 'saving'` frame, which `web.py`'s `_commit_room` BROADCASTS to
+  every member — including for the commit the quiet window makes that nobody
+  pressed. The `saved` branch read `const mine = saving` to decide whether to
+  reload, so "the tab that pressed Save" was every tab in the room, and the
+  room's own twenty-second commit (`coedit.QUIET_SECONDS`) reloaded all of them.
+  A drawing popup is simply the only thing on that page holding unsaved state a
+  reload can take, which is why a drawing is what finally made it visible; the
+  same reload has been taking the read view out from under everybody else in
+  every room since the room shipped.
+
+  Fixed by giving "this tab pressed Save" a flag of its own, which is what the
+  reload branch's comment already claimed the code did.
+  `test_the_rooms_own_commit_does_not_reload_the_page_under_the_person_in_it`
+  fails without it. **The lesson worth keeping: every drawing test was written
+  against `?editor=plain`**, so no test in this repository had a room in it and
+  the whole class was invisible. They are on `?both` now — jcanton, 2026-08-26:
+  "you should use the ace editor by default in your tests from now on".
+
+  Still open, and much smaller: pressing Save with a drawing popup open reloads
+  the page and takes the strokes, because the record's own save path ends in
+  `location.reload()` by design. Self-inflicted rather than spontaneous, and
+  nobody has hit it.
+
+* **Inserting a raster image into a drawing is blocked, on purpose, by the same
+  policy that blocks everything else it forbids.** pica and image-blob-reduce,
+  which Excalidraw's own image tool uses to resize a pasted photo, each
+  construct a Worker to do it — one from a `data:text/javascript;base64` URI to
+  probe `createImageBitmap`, one from a `blob:` URI to resize — and the policy
+  is `default-src 'none'` with no `worker-src` and no `blob:` anywhere in it.
+  Rather than offer the tool and have it fail silently the first time somebody
+  reaches for it, the mounted editor hides it (`UIOptions.tools.image = false`).
+  jcanton accepted the gap on 2026-08-26; see `docs/drawings.md`, "The spike,
+  which came first."
+
+* **A record's page and a slide's page disagree about what a signed-out reader
+  is given.** `render_detail` gates `editable` on `base_commit is not None`
+  alone, so a reader of a record still gets a textarea, a toolbar and
+  `attachEditing` wired to it — no Ace (that gate also checks `may_write`), no
+  socket, no save, but a box that looks live and is not. `render_slide_editor`
+  gates `editable` on `base_commit and may_write` together, so a reader of a
+  slide gets no surface at all. Pre-existing on both pages, not introduced by
+  the drawings work, and nobody has decided which of the two the other should
+  match.
 
 * **A save should not wait for GitHub.** Designed 2026-08-24, written up in full at
   `docs/deferred-push.md` — read that rather than a summary here, because the

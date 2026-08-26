@@ -810,10 +810,15 @@ def test_no_title_can_inline_a_library_a_second_time(marker_static, marker_serve
     # here would have asserted it appears once on a page it must never appear on
     # at all. `test_every_library_is_inlined_exactly_once_and_no_marker_survives`
     # is where the pairing of file to page is kept, and it holds both halves.
+    # `excalidraw.js` is excluded the same way, for a different reason: it is
+    # inlined into no page at all, static or served — it is fetched by the
+    # browser from `GET /static/excalidraw.js` on the first press of the
+    # drawing button, so a title that inlined it a second time would not even
+    # be inlining it a first.
     heads = {
         path.name: path.read_text(encoding="utf-8")[:200]
         for path in STATIC_DIR.iterdir()
-        if path.suffix == ".js" and not path.name.startswith(("ace", "keybinding-"))
+        if path.suffix == ".js" and not path.name.startswith(("ace", "keybinding-", "excalidraw"))
     }
     assert len(heads) == 2, "the graph vendors two libraries"
     for where, graph in (

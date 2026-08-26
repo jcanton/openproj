@@ -884,6 +884,152 @@ article.record .editbar { margin-bottom: .4rem; }
   stroke: currentColor; stroke-width: 1.6;
   stroke-linecap: round; stroke-linejoin: round;
 }
+/* Drawings, wearing the same box Slide does — a bordered pill around one
+   glyph and no words, `color: var(--muted)` until it is pressed or hovered,
+   the same pattern `.slide-view` sets two rules up. Not that class itself:
+   this is a `<button>`, not the `<a>` a segment is, and "slide-view" would be
+   a lie about which control this is. */
+.editbar #drawing {
+  display: inline-flex; align-items: center; justify-content: center;
+  margin: 0 .75rem 0 0; padding: .3rem .5rem;
+  border: 1px solid var(--line-strong); border-radius: 3px;
+  background: var(--surface); color: var(--muted); line-height: 0;
+}
+.editbar #drawing:hover, .editbar #drawing[aria-expanded="true"] {
+  color: var(--accent); border-color: var(--accent);
+}
+/* The drawings button, which is a `.mark` among `.mark`s now and takes the
+   whole of their box, border and hover from the rules above — jcanton,
+   2026-08-26: "the button should also have the same style as the other buttons
+   above the editor, not the current style of the view switching buttons". So
+   the only thing left to say here is the size of the glyph inside it, which is
+   the same thing `.marks .hist svg` has to say two rules up and for the same
+   reason: an SVG nothing sizes lays out at 0x0.
+
+   13px, matching `.hist` exactly rather than the 14px it wore in `.editbar`.
+   The old number was a shade under the 15px of the segments it sat between;
+   its neighbours are the history marks now, and matching them is what keeps
+   one bar reading as one bar. The glyph is FILLED — Excalidraw's own
+   `fill="currentColor"`, carried over from the bundle rather than reworked
+   into a stroke — which is why it can take the same box as a stroked icon
+   without looking heavier than one. */
+.marks .draw svg { display: block; width: 13px; height: 13px; }
+.marks .draw { display: inline-flex; align-items: center; justify-content: center;
+               line-height: 0; }
+/* The menu `attachDrawing` opens under the button, parked on the body the way
+   every list here is. Not `.suggest`: that class lives in `_SUGGEST_STYLE`,
+   which `render_slide_editor` — the other page this button draws on — never
+   loads, and the button is wired on both. Self-contained here, in the one
+   sheet both pages DO load, rather than a second stylesheet added to one of
+   them for four rules. */
+.drawmenu {
+  position: absolute; z-index: 20; min-width: 10rem; max-height: 16rem;
+  overflow-y: auto; display: flex; flex-direction: column; padding: .25rem 0;
+  background: var(--surface); border: 1px solid var(--line-strong);
+  border-radius: 3px; box-shadow: 0 4px 14px rgba(0,0,0,.12); font-size: 13px;
+}
+.drawmenu button {
+  display: block; width: 100%; text-align: left; font: inherit; color: inherit;
+  background: none; border: none; padding: .35rem .75rem; cursor: pointer;
+}
+.drawmenu button:hover, .drawmenu button:focus-visible {
+  background: var(--accent); color: var(--on-accent); outline: none;
+}
+/* `[hidden]` written out explicitly, exactly as `.drawhead .drawask[hidden]`
+   below has to be — and missed here, which jcanton reported on 2026-08-26 as
+   "the dropdown menu doesn't completely disappear sometimes".
+
+   The UA stylesheet's `[hidden] { display: none }` loses to ANY author rule
+   that sets `display`, on cascade origin alone and regardless of specificity.
+   `.drawmenu` sets `display: flex`, so `close()` setting `menu.hidden = true`
+   changed nothing about whether the box was laid out. What made it look like it
+   mostly worked is the `replaceChildren()` on the same line: an emptied menu
+   collapses to its own padding and border and no more. Measured in Chrome at
+   1200px — open 162x71, closed 162x10 — which is the thin bordered bar under
+   the button in jcanton's screenshot, not a rendering artefact. */
+.drawmenu[hidden] { display: none; }
+/* The popup `openDrawing` mounts Excalidraw into. `position: fixed; inset: 0`
+   over the whole page rather than parked beside the button the way
+   `.drawmenu` is: a menu is a few words under where you pressed, and an
+   editor somebody is going to spend minutes drawing in is not something to
+   leave half-covered by whatever the page happened to be scrolled to. */
+.drawpopup {
+  position: fixed; inset: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .45);
+}
+.drawbox {
+  display: flex; flex-direction: column;
+  width: min(96vw, 1100px); height: min(92vh, 800px);
+  background: var(--surface); border: 1px solid var(--line-strong);
+  border-radius: 4px; box-shadow: 0 12px 40px rgba(0, 0, 0, .3);
+  overflow: hidden;
+}
+/* The full-page size, which is the whole of what the toggle does — jcanton,
+   2026-08-26: "maybe full page size instead of full screen, so we don't have the
+   browser going to a different space on mac". `.drawpopup` is already
+   `position: fixed; inset: 0`, so this only has to stop capping the box inside
+   it.
+
+   `100%` of that overlay and not `100vw`/`100vh`: `100vw` counts the classic
+   scrollbar's gutter, so on a page with one the box would be a few pixels wider
+   than the window and put a scrollbar on the overlay itself. The overlay's own
+   box is exactly the viewport and already measured, which is the number wanted.
+
+   `box-sizing: border-box` with it, and that is measured rather than tidy. This
+   stylesheet has NO global border-box reset — it is set per element, on `th, td`
+   and four others — so `.drawbox` is content-box and `height: 100%` came out as
+   913px of content plus its 1px borders: a 915px box in a 913px overlay, two
+   pixels of overflow. The width hid it, because a flex item in a row container
+   still has `flex-shrink: 1` and the line simply took the two pixels back; the
+   cross axis has nothing that does that, so only the height was wrong. Measured
+   at 1400x1000: box 1385x915 against an overlay of 1385x913.
+
+   The radius goes with it. A rounded corner says "there is a page behind this";
+   at full page there is not one to see. */
+.drawbox.full {
+  width: 100%; height: 100%; box-sizing: border-box; border-radius: 0;
+}
+.drawhead {
+  display: flex; align-items: center; justify-content: flex-end; gap: .5rem;
+  padding: .5rem .75rem; border-bottom: 1px solid var(--line);
+  /* Never scrolls out of reach: the canvas below can grow taller than the
+     window on its own terms, and Save has to stay pressable regardless. */
+  flex: none;
+}
+/* `min-height: 0` and not the flex item's default `auto`: a flex child sized
+   by its content refuses to shrink below that content's height, and
+   Excalidraw's own canvas reports a real intrinsic size — the same reason
+   `textarea.body-field` needs the same rule in the split view, above. Without
+   it the stage pushes `.drawbox` taller than the `min(92vh, 800px)` it was
+   given rather than filling it. */
+.drawstage { flex: 1; min-height: 0; position: relative; }
+/* The unsaved-strokes question, in place of Save and Close rather than
+   beside them (`openDrawing`'s `asking` hides the two buttons while this is
+   shown). `flex` to sit in the same row `.drawhead` already lays out left of
+   nothing — the sentence, then the two answers, right-aligned like the
+   buttons it replaced. `[hidden]` written out explicitly, the same reason
+   `.confirming[hidden]` below needs it: the two classes in `.drawhead
+   .drawask` already outrank the UA stylesheet's bare `[hidden]` rule on
+   specificity alone, so without an override of its own the row would stay
+   laid out — visible — even while the `hidden` attribute is set on it. */
+/* The size toggle, against the left edge of a bar that is otherwise packed
+   right. `margin-right: auto` on the first child and not `justify-content:
+   space-between` on the bar: the question row (`.drawask`) replaces Save and
+   Close in this same flex line, and `space-between` would have spread THAT out
+   too — the sentence at one edge and its two answers at the other.
+
+   Sized like the toolbar's other icon-only buttons, and centred the way `.hist`
+   is: a drawing has no baseline to sit on. */
+.drawhead .grow {
+  margin-right: auto; display: inline-flex; align-items: center;
+  justify-content: center; line-height: 0;
+}
+.drawhead .grow svg { display: block; width: 15px; height: 15px; }
+.drawhead .drawask { display: flex; align-items: center; gap: .5rem; }
+.drawhead .drawask[hidden] { display: none; }
+.drawhead .drawask .asking { margin: 0; font-size: 13px; color: var(--danger); }
+.drawhead .drawask button.discard { border-color: var(--danger); color: var(--danger); }
 article.record .commitbar { margin-top: 0; }
 /* The bar's BOX is on the page before the session that fills it — jcanton,
    2026-08-24: "page elements should not move or appear/disappear when

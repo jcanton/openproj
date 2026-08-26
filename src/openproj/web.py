@@ -17,8 +17,9 @@ regex before anything is concatenated, and the directory comes from its prefix.
 `<directory>/<id>.md` for every rung of the ladder — issues and notes included,
 through the one pattern `KINDS` derives — is the shape of it, and every path
 added since is admitted the same way and by nothing else: `cycles/<n>.md` by a
-number, `assets/<sha>` by the hash of the bytes, and `people/<login>.md` by
-`model.LOGIN_PATTERN` (see `PUT /api/icon`). No route takes a path, a directory
+number, `assets/<sha>` by the hash of the bytes, `people/<login>.md` by
+`model.LOGIN_PATTERN` (see `PUT /api/icon`), and `drawings/<drawing id>.png` by
+`DRAWING_PATTERN`. No route takes a path, a directory
 or a file name from a request — `POST /api/promote` writes two files and takes
 neither of their names, because a record id and a kind decide both. This matters
 more than usual because branch protection means a bad write cannot be
@@ -60,7 +61,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from pydantic import BaseModel
 from starlette.websockets import WebSocketDisconnect
 
-from . import __version__, coedit, render
+from . import __version__, coedit, render, vendor
 from .auth import (
     OAuthError,
     User,
@@ -274,7 +275,7 @@ def _refusal(error: Exception) -> HTTPException:
 async def _write_or_refuse(write, /, *args, **kwargs):
     """Run one store write off the event loop, and answer rather than crash.
 
-    The narrow waist every HTTP write already had: each of the seven routes ends
+    The narrow waist every HTTP write already had: each of the ten routes ends
     in exactly one `asyncio.to_thread(store.…)` call, so wrapping that call is
     the whole of the write path and nothing else. Kept as a function rather than
     an `@app.exception_handler`, because `WRITE_FAILURES` is true of a *write*
@@ -283,9 +284,10 @@ async def _write_or_refuse(write, /, *args, **kwargs):
     as though it were.
 
     `test_no_write_route_escapes_the_refusal` (`tests/test_web.py`) reads this
-    file as syntax and holds the shape — every `store.write`, `store.write_all`
-    and `store.put_asset` outside `_commit_room` is the first argument here — so
-    the eighth write route cannot be added without it.
+    file as syntax and holds the shape — every `store.write`, `store.write_all`,
+    `store.put_asset`, `store.put_drawing` and `store.remove` outside
+    `_commit_room` is the first argument here — so a write route added outside
+    this shape goes unnoticed rather than refused.
     """
     try:
         return await asyncio.to_thread(write, *args, **kwargs)
@@ -621,6 +623,28 @@ IMAGE_TYPES = {
     "image/webp": ".webp",
 }
 ASSET_PATTERN = re.compile(r"^[0-9a-f]{16}\.(png|jpg|gif|webp)$")
+
+# `GET /static/{name}` exists for exactly one file so far: the vendored
+# Excalidraw bundle is fetched on the first press of the drawing button rather
+# than carried on every page, so something has to answer that fetch. This is
+# an allowlist of vendored names, not a directory listing — the writable
+# surface is closed by construction (this module's docstring), and a route
+# that took its file name from the request and opened `static/<name>` would
+# open the readable surface the same way a path traversal always does. Every
+# name here is checked in exactly once, by hand, alongside what it should be
+# served as; there is no name this dict does not already know about.
+STATIC_ALLOWLIST = {
+    "excalidraw.js": "application/javascript",
+}
+
+DRAWING_DIR = "drawings"
+DRAWING_SUFFIX = ".png"
+# A drawing is named by its id alone. Kept separate from `ID_PATTERN` for the
+# reason `CYCLE_PATTERN` gives below it: the record id pattern is what keeps the
+# writable surface closed by construction, and widening it to admit a fifth
+# shape is how that property gets lost by degrees. `\A`/`\Z` and not `^`/`$`,
+# which admit a trailing newline.
+DRAWING_PATTERN = re.compile(r"\Adraw-[0-9a-f]{6}\Z")
 
 _DEV_SECRETS = {"", "dev-secret", "change-me", "secret"}
 
@@ -2179,7 +2203,7 @@ def create_app(
                 index,
                 number,
                 render.ROUTES,
-                lambda name: store.read_asset(commit, f"assets/{name}"),
+                lambda path: store.read_asset(commit, path),
                 # The commit the rail's Save compares against, and whether this
                 # reader may write at all. Both, for the reason `render_deck`
                 # says: a reader keeps the rail, because it is how anybody finds
@@ -2266,7 +2290,7 @@ def create_app(
                     base_commit=commit,
                     may_write=may_write(request),
                     editor=which_editor(request),
-                    asset=lambda name: store.read_asset(commit, f"assets/{name}"),
+                    asset=lambda path: store.read_asset(commit, path),
                 )
             )
         return page(
@@ -2348,7 +2372,7 @@ def create_app(
                         render.ROUTES,
                         render.inlined_assets(
                             [record.body, record.slide.body if record.slide else ""],
-                            lambda name: store.read_asset(commit, f"assets/{name}"),
+                            lambda path: store.read_asset(commit, path),
                         ),
                     )
                 )
@@ -3440,6 +3464,33 @@ def create_app(
             {"path": path, "url": f"/{path}", "fresh": fresh, "commit": commit}
         )
 
+    @app.get("/static/{name}")
+    def vendored(name: str) -> Response:
+        """A vendored file, over HTTP — the one gap Task 6 found: nothing
+        served `static/` before this, because every other vendored library is
+        read off disk and inlined into a rendered page rather than fetched by
+        the browser on its own. `STATIC_ALLOWLIST` is the whole check; `name`
+        never reaches a filesystem path except as a key into it, so `..`, an
+        encoded slash folded into one path segment, or a name simply not in
+        the dict all end here rather than at `vendor._static_dir()`. Not a
+        `StaticFiles` mount: this repository has never had one, and a mount's
+        whole feature is taking a path from the request — everything else
+        here takes an id and derives the path itself instead.
+        """
+        media_type = STATIC_ALLOWLIST.get(name)
+        if media_type is None:
+            raise HTTPException(404, "no such vendored file")
+        data = (vendor._static_dir() / name).read_bytes()
+        return Response(
+            data,
+            media_type=media_type,
+            # Honest here in a way it would not be for a drawing: a vendored
+            # file changes only with a release, so a byte-identical `name`
+            # really does mean byte-identical content, forever, the same
+            # promise `/assets/{name}` makes for a content-addressed upload.
+            headers={"cache-control": "public, max-age=31536000, immutable"},
+        )
+
     @app.get("/assets/{name}")
     def asset(name: str) -> Response:
         if not ASSET_PATTERN.match(name):
@@ -3454,6 +3505,109 @@ def create_app(
             # The name IS the hash of the contents, so this bytes-for-bytes
             # cannot change under a cache.
             headers={"cache-control": "public, max-age=31536000, immutable"},
+        )
+
+    def _drawing_path(name: str) -> str:
+        stem, _, suffix = name.rpartition(".")
+        if not DRAWING_PATTERN.match(stem) or f".{suffix}" != DRAWING_SUFFIX:
+            raise HTTPException(404, "no such drawing")
+        return f"{DRAWING_DIR}/{name}"
+
+    async def _drawing_body(request: Request) -> bytes:
+        """The bytes of a drawing, checked the way `/api/asset` checks an
+        upload, through a narrower door. `IMAGE_TYPES` is untouched — a
+        drawing is `image/png` alone, because that is the one format
+        Excalidraw exports to this route — and the byte ceiling is
+        `MAX_ASSET_BYTES` again rather than a second number that could drift
+        from it. The signature check exists because the content-type header
+        is what the client claims, not what the bytes are.
+        """
+        kind = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if kind != "image/png":
+            raise HTTPException(415, "a drawing is a PNG")
+        data = await request.body()
+        if len(data) > MAX_ASSET_BYTES:
+            raise HTTPException(
+                413, f"that drawing is {len(data) // 1024} KB; the limit is "
+                     f"{MAX_ASSET_BYTES // 1024} KB"
+            )
+        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise HTTPException(422, "that is not a PNG")
+        return data
+
+    @app.get("/drawings/{name}")
+    def drawing(name: str, request: Request) -> Response:
+        path = _drawing_path(name)
+        head = store.head()
+        blob = store.blob_id(head, path)
+        if blob is None:
+            raise HTTPException(404, "no such drawing")
+        tag = f'"{blob}"'
+        if request.headers.get("if-none-match") == tag:
+            return Response(status_code=304, headers={"etag": tag, "cache-control": "no-cache"})
+        data = store.read_asset(head, path)
+        if data is None:
+            raise HTTPException(404, "no such drawing")
+        return Response(
+            data,
+            media_type="image/png",
+            # NOT `immutable`. The asset route earns that header by the name
+            # being the hash of the contents, and a drawing's name is its id —
+            # the bytes under it change. `no-cache` means revalidate, not do
+            # not store, and the ETag turns the revalidation into a 304
+            # whenever the drawing has not moved.
+            headers={"etag": tag, "cache-control": "no-cache"},
+        )
+
+    @app.post("/api/drawing")
+    async def draw(request: Request) -> JSONResponse:
+        user = writer(request)
+        data = await _drawing_body(request)
+        # The mint, here and never from the client, for the reason `/api/record`
+        # gives: an id supplied by a browser is a path supplied by a browser
+        # once it becomes `drawings/<id>.png`. Retried, because unlike a record
+        # this CAN check — the path is the id, so there is no `<id>--<slug>`
+        # ambiguity, and `put_drawing` does the check under the same lock it
+        # writes in. At a thousand drawings the birthday bound is about 3%.
+        for _ in range(8):
+            drawing_id = f"draw-{secrets.token_hex(3)}"
+            path = f"{DRAWING_DIR}/{drawing_id}{DRAWING_SUFFIX}"
+            written, blob = await _write_or_refuse(
+                store.put_drawing, path, data, None, user.login, f"draw {path}"
+            )
+            if written.outcome == "committed":
+                commit = store.head()
+                await announce(commit, [])
+                return JSONResponse(
+                    {"id": drawing_id, "path": path, "etag": blob, "commit": commit}
+                )
+        raise HTTPException(500, "could not mint a drawing id")
+
+    @app.put("/api/drawing/{drawing_id}")
+    async def redraw(drawing_id: str, request: Request) -> JSONResponse:
+        user = writer(request)
+        if not DRAWING_PATTERN.match(drawing_id):
+            raise HTTPException(404, "no such drawing")
+        base = request.headers.get("if-match", "").strip('"')
+        if not base:
+            raise HTTPException(428, "say which version of the drawing you started from")
+        data = await _drawing_body(request)
+        path = f"{DRAWING_DIR}/{drawing_id}{DRAWING_SUFFIX}"
+        written, blob = await _write_or_refuse(
+            store.put_drawing, path, data, base, user.login, f"redraw {path}"
+        )
+        # Through `_result`, the house shape every other write route answers
+        # in, and not a bare `HTTPException(409, written.conflict)`: that
+        # serialises as `{"detail": …}`, and the shell's `refusal()` reads
+        # `answer.conflict` on a 409 — so a drawing conflict answered in
+        # `detail` fell through to the generic "somebody changed this first"
+        # instead of the sentence this route means to show.
+        if written.outcome == "conflict":
+            return _result(written, base)
+        commit = store.head()
+        await announce(commit, [])
+        return JSONResponse(
+            {"id": drawing_id, "path": path, "etag": blob, "commit": commit}
         )
 
     @app.post("/api/record")

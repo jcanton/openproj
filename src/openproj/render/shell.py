@@ -46,7 +46,12 @@ class Links(BaseModel):
     new: str = ""  # only the server can create; a rendered file has nowhere to post
     cycles: str = "cycles.html"
     cycle: str = "cycles.html#"  # prefix, then the cycle number
-    asset: str = "assets/"  # a rendered file sits beside the assets it names
+    # Prefix in front of a repository-relative embed path. Empty in the static
+    # export, where a rendered file sits beside the `assets/` and `drawings/`
+    # directories it names; `/` when a server is answering for them. It was
+    # `asset = "assets/"` while there was one directory to name; `_EMBED_SRC`
+    # spells the directory itself now, so this is only the prefix.
+    repo: str = ""
     # Prefix, then the record id: where the hover card asks for a shaping
     # document. Empty in the static export, where there is no server to ask — the
     # card draws what the row already carries and the title stays what it always
@@ -92,7 +97,7 @@ ROUTES = Links(
     table="/table", detail="/detail", graph="/graph", timeline="/timeline",
     record="/detail/", new="/new", people="/people",
     cycles="/cycles", cycle="/cycle/",
-    asset="/assets/", deck="/deck/", body="/api/body/",
+    repo="/", deck="/deck/", body="/api/body/",
 )
 
 

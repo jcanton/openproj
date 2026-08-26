@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 
+import httpx
 import pygit2
 import pytest
-from browser import chrome, measured_in
+from browser import _devtools, _evaluated, chrome, in_a_live_page, measured_in
 from fastapi.testclient import TestClient
 from pages import elements
 from test_store import commit_directly
@@ -30,17 +32,19 @@ from test_web import (
     DONE,
     OTHER,
     PATH,
+    PNG,
     SECRET,
     SEED,
     TASK,
     file_at,
     git_head,
     head,
+    live_server,  # noqa: F401 — a fixture, requested by name below
     save,
 )
 
 from openproj.auth import sign_session
-from openproj.web import SESSION_COOKIE, create_app
+from openproj.web import MAX_ASSET_BYTES, SESSION_COOKIE, create_app
 
 # Computed by the scheduler, never typed. If one of these ever gains an input,
 # somebody can put a start date in a file and the next reschedule will silently
@@ -893,11 +897,13 @@ def test_a_write_from_the_cycle_page_is_not_reported_back_as_somebody_else_s(
     the request that made it."""
     page = client.get("/cycle/37").text
 
-    assert page.count("dispatchEvent(new Event('openproj:writing'));") == 3, (
-        "the cycle record, each record in the batch, and the asset upload the "
-        "shared editor helpers carry onto this page"
+    assert page.count("dispatchEvent(new Event('openproj:writing'));") == 4, (
+        "the cycle record, each record in the batch, and the asset upload and the "
+        "drawing save the shared editor helpers carry onto this page — the source "
+        "for both of the latter two ships here whether or not this page ever wires "
+        "`attachDrawing` to a surface"
     )
-    assert page.count("dispatchEvent(new CustomEvent('openproj:wrote'") == 3
+    assert page.count("dispatchEvent(new CustomEvent('openproj:wrote'") == 4
     assert "window.SHOWING = ['cycle-' + NUMBER]" in page, (
         "so a write that lands here reads as landing here"
     )
@@ -1547,6 +1553,14 @@ def test_the_toolbar_is_the_one_in_the_screenshot_and_that_overrules_a_count(
     to `.value` and destroys the browser's stack, so a history button was a
     button that did nothing the moment a second person joined. `Y.UndoManager`
     is what answers that, and they are the first two entries here now.
+
+    **Seventeen, and the seventeenth is not in the shot at all.** Drawings is
+    openproj's own and HackMD has no equivalent, so the shot cannot arbitrate
+    it. It sits after Image because jcanton asked for it there on 2026-08-26 —
+    "next to the figure button" — having first shipped it in `.editbar` beside
+    the view switcher. It is here rather than in a list of its own for the same
+    reason Image is: this table is the bar, and a button drawn into the bar from
+    somewhere else is a button this test cannot see.
     """
     page = client.get(f"/detail/{TASK}").text
     marks = re.search(r"const FORMATS = \[(.*?)\n\];", page, re.S).group(1)
@@ -1561,7 +1575,7 @@ def test_the_toolbar_is_the_one_in_the_screenshot_and_that_overrules_a_count(
         "Undo", "Redo",
         "Bold", "Italic", "Strikethrough", "Heading",
         "Code", "Code block", "Quote", "Bullet list", "Numbered list", "Check list",
-        "Link", "Image", "Table", "Horizontal rule",
+        "Link", "Image", "Drawings", "Table", "Horizontal rule",
     ]
     # Where the rules fall, and not merely how many there are: a separator in the
     # wrong place groups the buttons into a claim about them that is false.
@@ -1618,6 +1632,254 @@ def test_a_toolbar_button_keeps_the_selection_it_acts_on(client: TestClient):
     keyed = "button.onclick = event => { if (event.detail === 0) applyMark(surface, mark); };"
     assert keyed in page
     assert "event.detail" in page
+
+
+def test_the_drawing_menu_lists_what_the_body_embeds_in_the_order_it_embeds_them(
+    client: TestClient, tmp_path: Path
+):
+    """By id and in embed order — jcanton, 2026-08-26. Match order over the raw
+    markdown IS embed order, which is why this needs no index and no state.
+
+    Driven through the real page's own `drawingsIn`, not a Python reimplementation
+    of the regex — the two would drift the day one of them changed alone.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "drawings.html", 1200,
+        """
+        const body = "![two](drawings/draw-bbbbbb.png)\\n"
+          + "![one](drawings/draw-aaaaaa.png){width=60}\\n"
+          + "![again](drawings/draw-bbbbbb.png)\\n"
+          + "![a picture](assets/0123456789abcdef.png)\\n"
+          + "![nope](drawings/notadrawing.png)\\n";
+        return drawingsIn(body);
+        """,
+    )
+    assert [d["id"] for d in got] == ["draw-bbbbbb", "draw-aaaaaa"], (
+        "deduped keeping the first occurrence, in match order — not sorted, not "
+        "deduped keeping the last, and the assets and non-drawing arms excluded"
+    )
+    # The FIRST span, not a search for the id that would have landed on
+    # whichever occurrence `indexOf` found — proven by the span pointing at the
+    # first `draw-bbbbbb`, three lines before the "again" that repeats it.
+    assert got[0] == {
+        "id": "draw-bbbbbb", "path": "drawings/draw-bbbbbb.png", "alt": "two",
+        "from": 0, "to": 32,
+    }
+    assert got[1] == {
+        "id": "draw-aaaaaa", "path": "drawings/draw-aaaaaa.png", "alt": "one",
+        "from": 33, "to": 65,
+    }
+
+
+def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
+    client: TestClient, tmp_path: Path
+):
+    """The control and the menu, and now the real listener behind a press —
+    `attachDrawing`'s own comment. A press dispatches `openproj:draw` on
+    `surface.el` carrying the entry (or `null` for "+ drawing"), which
+    `openDrawing` hears and answers by opening the popup; `measured_in` cannot
+    drive that mount to completion (see `docs/drawings.md`, "Five helpers, not
+    one"), so what is asserted here is the SYNCHRONOUS half: the popup appears
+    and the status strip says the bundle is loading, both true the instant the
+    press returns and neither dependent on the fetch this page's `file://`
+    origin cannot make.
+
+    Also closes Task 7's coverage gap: Escape closing the menu and returning
+    focus to the button, and a second press of `#drawing` closing it again,
+    were both verified by hand in headless Chrome and neither was asserted.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "drawmenu.html", 1200,
+        """
+        const area = document.querySelector('textarea[name=body]');
+        area.value = 'before\\n![mine](drawings/draw-123abc.png)\\nafter';
+        const button = document.getElementById('drawing');
+        const namedForReaders = {
+          label: button.getAttribute('aria-label'), title: button.title,
+        };
+        // The landing view is the reading one, and the whole bar this button
+        // now lives in is withheld there — "not be visible in preview mode,
+        // just in the editing modes". Asked of the used pixels rather than of
+        // the rule, because the rule is on `.markbar` and the button is a child
+        // of `#marks` inside it: `offsetParent` is null for anything in a
+        // `display: none` subtree, however the display got there.
+        const shownInPreview = !!button.offsetParent;
+        flipEditing();
+        await new Promise(settled => setTimeout(settled, 40));
+        const shownWhileEditing = !!button.offsetParent;
+        const inMarks = [...document.querySelectorAll('#marks button')];
+        // Where in the bar it sits, not merely that it is in it: the ask was
+        // "next to the figure button", and a button that landed at the far end
+        // beside the horizontal rule would pass a bare count.
+        const beside = inMarks[inMarks.indexOf(button) - 1]?.title;
+        const markStyled = button.classList.contains('mark');
+        const inTheMarkBar = !!button.closest('.markbar');
+
+        // Escape closes the menu and hands the keyboard back to the button
+        // that opened it — Task 7's own comment on this listener, unasserted
+        // until now.
+        button.click();
+        const menu = document.querySelector('.drawmenu');
+        menu.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+        const closedByEscape = menu.hidden;
+        // What `hidden` actually did to the box, which the attribute above
+        // cannot say. See the assertion for the bug this caught.
+        const closedBox = (r => [Math.round(r.width), Math.round(r.height)])(
+          menu.getBoundingClientRect()
+        );
+        const closedDisplay = getComputedStyle(menu).display;
+        const focusedAfterEscape = document.activeElement === button;
+
+        // A second press of the button while its own menu is open closes it —
+        // also Task 7's, also unasserted until now.
+        button.click();
+        const openBeforeSecondPress = !menu.hidden;
+        button.click();
+        const closedBySecondPress = menu.hidden;
+        const expandedAfterSecondPress = button.getAttribute('aria-expanded');
+
+        button.click();
+        const openRows = [...menu.querySelectorAll('button')].map(b => b.textContent);
+        const expandedOpen = button.getAttribute('aria-expanded');
+
+        // A mousedown ON the button, or anywhere INSIDE the menu, must not
+        // close it out from under a press that is about to choose something —
+        // only somewhere else does.
+        button.dispatchEvent(new Event('mousedown', {bubbles: true}));
+        const openAfterOwnMousedown = !menu.hidden;
+        menu.dispatchEvent(new Event('mousedown', {bubbles: true}));
+        const openAfterInsideMousedown = !menu.hidden;
+        document.body.dispatchEvent(new Event('mousedown', {bubbles: true}));
+        const closedByOutsideMousedown = menu.hidden;
+
+        button.click();
+        const menu2 = document.querySelector('.drawmenu');
+        let heard = 'unset';
+        area.addEventListener('openproj:draw', event => { heard = event.detail; });
+        // The second row: "+ drawing" is first, the one embedded drawing second.
+        menu2.querySelectorAll('button')[1].click();
+        const afterPress = {
+          hidden: menu2.hidden, expanded: button.getAttribute('aria-expanded'),
+          heard, status: document.getElementById('state').textContent,
+          // The real listener now answers a press by opening the popup —
+          // `openDrawing` appends it before it ever awaits the bundle, so
+          // this is true before the fetch this `file://` page cannot make
+          // has even been attempted.
+          popupOpened: !!document.querySelector('.drawpopup'),
+        };
+
+        button.click();
+        let heardNew = 'unset';
+        area.addEventListener('openproj:draw', event => { heardNew = event.detail; });
+        document.querySelector('.drawmenu button').click();
+
+        return {namedForReaders, marks: inMarks.length, beside, markStyled, inTheMarkBar,
+                shownInPreview, shownWhileEditing, closedBox, closedDisplay,
+                openRows, expandedOpen,
+                closedByEscape, focusedAfterEscape,
+                openBeforeSecondPress, closedBySecondPress, expandedAfterSecondPress,
+                openAfterOwnMousedown, openAfterInsideMousedown, closedByOutsideMousedown,
+                afterPress, heardNew};
+        """,
+    )
+    assert got["namedForReaders"] == {"label": "Drawings", "title": "Drawings"}, (
+        "an icon with no words is a mystery glyph to a reader who cannot see it"
+    )
+    # jcanton, 2026-08-26: "the excalidraw button should not be up there where
+    # you put it: it should live next to the figure button just on top of the
+    # editor and not be visible in preview mode, just in the editing modes",
+    # and "the button should also have the same style as the other buttons
+    # above the editor, not the current style of the view switching buttons".
+    # This asserted the opposite until then — `outsideMarks == 16`, "the menu is
+    # page chrome, not a seventeenth FORMATS mark" — which was a real argument
+    # about what the control IS and simply not an argument about where it goes.
+    assert got["marks"] == 17, "the drawings button is not in the toolbar at all"
+    assert got["beside"].startswith("Image"), (
+        "the drawings button is in the bar but not beside the figure button: it "
+        f"follows {got['beside']!r}"
+    )
+    assert got["markStyled"], (
+        "the button is in the mark bar wearing the view switcher's clothes"
+    )
+    assert got["inTheMarkBar"], (
+        "the button is not in `.markbar`, which is the row `article.record.view-view "
+        ".markbar` hides — so it would show in the reading view"
+    )
+    assert not got["shownInPreview"], "the drawings button is on screen in the reading view"
+    assert got["shownWhileEditing"], (
+        "the drawings button is hidden in the editing view too — it is not withheld "
+        "from the preview, it is just gone"
+    )
+    assert got["closedByEscape"], "Escape did not close the menu"
+    # And that closing it took the BOX away, not only the attribute. jcanton,
+    # 2026-08-26: "the dropdown menu doesn't completely disappear sometimes".
+    # The UA stylesheet's `[hidden] { display: none }` loses to any author rule
+    # that sets `display`, on cascade origin and regardless of specificity, and
+    # `.drawmenu` sets `display: flex` — so `menu.hidden = true` changed nothing
+    # about layout. What hid it well enough to ship is the `replaceChildren()`
+    # on the same line: an emptied menu collapses to its own padding and border,
+    # which measured 162x10 and is the thin bar in the screenshot. Asserted on
+    # the used pixels, because every cheaper question — the attribute, the class
+    # — was already true while the bar was on screen.
+    assert got["closedBox"] == [0, 0], (
+        f"the closed menu still lays out a {got['closedBox'][0]}x{got['closedBox'][1]} box "
+        f"(display: {got['closedDisplay']}) — `[hidden]` needs a rule of its own here, the "
+        "same one `.drawhead .drawask[hidden]` already carries"
+    )
+    assert got["focusedAfterEscape"], "Escape closed the menu but did not give the button back"
+    assert got["openBeforeSecondPress"], "the first of the pair did not even open it"
+    assert got["closedBySecondPress"], "a second press over an open menu did not close it"
+    assert got["expandedAfterSecondPress"] == "false"
+    assert got["openRows"] == ["+ drawing", "draw-123abc"], "+ drawing leads, the id follows"
+    assert got["expandedOpen"] == "true"
+    assert got["openAfterOwnMousedown"], "pressing the button that opened it closed it again"
+    assert got["openAfterInsideMousedown"], "a press inside the menu closed it before it chose"
+    assert got["closedByOutsideMousedown"], "a press outside the button and the menu left it open"
+    assert got["afterPress"] == {
+        "hidden": True, "expanded": "false",
+        "heard": {
+            "id": "draw-123abc", "path": "drawings/draw-123abc.png", "alt": "mine",
+            "from": 7, "to": 40,
+        },
+        "status": "loading the drawing editor…",
+        "popupOpened": True,
+    }, "pressing a row closed the menu, named exactly what was pressed, and opened the popup"
+    assert got["heardNew"] is None, '"+ drawing" is a new drawing, and null says so'
+
+
+def test_a_second_drawing_cannot_be_opened_over_the_first(client: TestClient, tmp_path: Path):
+    """`DRAWING_OPEN` refuses a second `openproj:draw` while a popup is still
+    on screen — the menu is still reachable behind it, and two Excalidraw
+    roots stacked on one page is not a state worth reaching just to see what
+    it does. The refusal used to be silent; this is the guard's own comment
+    ("a control that visibly does nothing is worse than no control"), asserted
+    for the first time rather than merely quoted.
+
+    Dispatched directly on the surface rather than through the menu: the menu
+    is already covered by the tests above, and what this one is actually about
+    is the second call into `openDrawing`, from wherever it comes.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "second-drawing.html", 1200,
+        """
+        const area = document.querySelector('textarea[name=body]');
+        area.dispatchEvent(new CustomEvent('openproj:draw', {detail: null}));
+        const firstStatus = document.getElementById('state').textContent;
+        const firstPopups = document.querySelectorAll('.drawpopup').length;
+        area.dispatchEvent(new CustomEvent('openproj:draw', {detail: null}));
+        return {
+          firstStatus, firstPopups,
+          secondStatus: document.getElementById('state').textContent,
+          popupsAfterSecond: document.querySelectorAll('.drawpopup').length,
+        };
+        """,
+    )
+    assert got["firstPopups"] == 1, "the first press did not even open a popup"
+    assert got["firstStatus"] == "loading the drawing editor…"
+    assert got["popupsAfterSecond"] == 1, "a second popup was mounted over the first"
+    assert got["secondStatus"] == "a drawing is already open — close it first", (
+        "the guard went quiet again"
+    )
 
 
 def test_no_page_echoes_the_dates_it_is_asking_for(page: str):
@@ -2029,7 +2291,7 @@ def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
     )
     assert got["undoneBold"] == "alpha beta", (
         "one undo did not take the wrap back off, and a wrap is the shape "
-        f"eleven of the sixteen buttons use — {got['undoneBold']!r}"
+        f"eleven of the seventeen buttons use — {got['undoneBold']!r}"
     )
 
     assert got["linked"] == {"text": "read [the notes](https://example.org/a?b=c)", "taken": True}
@@ -2041,8 +2303,12 @@ def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
         "the image button did not reach the upload path paste and drop use"
     )
     assert "![" not in got["wrote"], "and it wrote markdown into the box instead"
+    # Seventeen since 2026-08-26, when the drawings button moved out of
+    # `.editbar` and into this bar beside Image. The three rules and where they
+    # fall are the part this assertion is actually about, and neither moved: the
+    # new button joined the last group rather than starting one.
     assert got["bar"] == {
-        "buttons": 16,
+        "buttons": 17,
         "rules": 3,
         "before": ["Bold", "Code", "Link"],
         "rows": 1,
@@ -5115,7 +5381,20 @@ window.__errors = [];
 addEventListener('error', event => window.__errors.push(String(event.message)));
 const append = Element.prototype.appendChild;
 Element.prototype.appendChild = function (node) {
-  if (node && node.tagName === 'SCRIPT' && node.src) window.__injected.push(node.src.slice(-24));
+  if (node && node.tagName === 'SCRIPT') {
+    // A `src` names the twenty-four characters that end it. An inline script
+    // — one whose body was set with `.textContent`, the way `attachDrawing`'s
+    // fetch-and-inject loader builds one — has no `src` at all, so the
+    // original version of this hook never saw it: it passed the LETTER of
+    // "no script is injected at runtime" while missing the one this page now
+    // deliberately does inject. `dataset.injectedBundle` is that loader's own
+    // marker on the one script it is allowed to inject, read back here so an
+    // unmarked inline script — the one this hook could not previously have
+    // told apart from it — still shows up as itself.
+    window.__injected.push(
+      node.src ? node.src.slice(-24) : `inline:${node.dataset.injectedBundle || '(unmarked)'}`
+    );
+  }
   return append.call(this, node);
 };
 """
@@ -5281,6 +5560,11 @@ _VIM_ON = r"""
     // sizing figures the match stopped holding — so the run opened a file
     // dialog and then reported the button as one that does nothing.
     if (button.classList.contains('upload')) continue;
+    // Opens the drawings menu and writes nothing either, and skipped by class
+    // for the same reason — it moved into this bar on 2026-08-26, beside the
+    // image button, and a sweep that asserts every `.mark` writes markdown
+    // would report it inert.
+    if (button.classList.contains('draw')) continue;
     // Undo and redo write no markdown at all — they move a stack. Excluded here
     // rather than asserted as "wrote something", which they would pass by taking
     // back the mark before them and would therefore say nothing.
@@ -5365,8 +5649,9 @@ def test_the_toolbar_and_the_keymap_do_not_cancel_each_other(
 
     inert = [title for title, wrote in got["marks"] if not wrote]
     assert inert == [], f"these toolbar buttons do nothing with vim on: {inert}"
-    # Thirteen: the sixteen in the shot, less Image, less the two history buttons,
-    # which are not marks and are asserted where the stack they move is.
+    # Thirteen: the seventeen in the shot, less Image, less Drawings — neither
+    # of which writes markdown — less the two history buttons, which are not
+    # marks at all and are asserted where the stack they move is.
     assert len(got["marks"]) == 13, got["marks"]
 
     # The record, asserted rather than described: this is the call that would have
@@ -6157,7 +6442,13 @@ def test_every_button_on_the_toolbar_can_be_reached_at_a_window_that_is_not_wide
         patience=4800,
     )
 
-    assert got["width"] == width and got["buttons"] == 16, got
+    # Seventeen on the record page and sixteen on the create form, which is the
+    # drawings button and its own gate: it joined `FORMATS` on 2026-08-26 and
+    # `attachEditing` withholds it while creating, because nothing is stored yet
+    # for a drawing to be embedded in. The two numbers here are the only place
+    # that gate is asserted against a page actually rendered at a width.
+    expected = 17 if where == "detail" else 16
+    assert got["width"] == width and got["buttons"] == expected, got
     assert got["past"] < 0, (
         f"at {width}px the toolbar reaches {got['past']}px past the edge of the surface "
         f"it is drawn on, so the buttons on the end cannot be pressed: {got['flex']}"
@@ -7517,3 +7808,946 @@ def test_the_page_widens_its_pull_requests_with_what_is_open_now(client: TestCli
     assert answer["again"] == answer["after"], (
         "asking twice asked GitHub twice, or folded the same list in again"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The slide editor's plain surface — `render_slide_editor`'s first test
+# --------------------------------------------------------------------------- #
+
+_SLIDE_TOOLBAR_AND_STATUS = _STUB_RENDER + r"""
+const marks = document.getElementById('marks');
+const bar = document.getElementById('statusbar');
+return {
+  buttons: marks.querySelectorAll('button.mark').length,
+  said: bar.textContent,
+};
+"""
+
+
+def test_the_plain_slide_editor_draws_a_toolbar_and_a_status_strip(
+    client: TestClient, tmp_path: Path
+):
+    """`render_slide_editor` inlines the same five `attach*` calls the record
+    page makes at `slides.py:795` — `attachUploads`, `attachDrawing`,
+    `attachEditing`, `attachGutter`, `attachStatus` — all behind `if (SURFACE)`.
+
+    `SURFACE` used to be built by calling `aceSurface` directly rather than
+    through `bodySurface`, the function that falls back to the plain textarea
+    surface when Ace is not on the page. So on `?editor=plain`,
+    `window.aceSurface` is undefined, `SURFACE` was `null`, and the whole
+    guarded block was skipped: no toolbar drawn into `#marks`, no upload
+    wiring, no drawing button wired to its surface, no gutter and no caret
+    readout in `#statusbar` at all. A person editing a slide with the plain
+    editor got a bare `<textarea>` with nothing around it — and the new
+    drawing button would have inherited exactly that hole, since it is wired
+    on the same guarded `SURFACE`.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}?view=slide&editor=plain").text,
+        tmp_path / "slide-plain.html", 1400, _SLIDE_TOOLBAR_AND_STATUS,
+        query="?editor=plain",
+    )
+    assert got["buttons"] > 0, "the plain slide editor drew no toolbar at all"
+    assert got["said"].strip(), "the plain slide editor drew no status strip at all"
+
+
+_SLIDE_READER_SURFACE = r"""
+return {
+  hasBodySurface: typeof bodySurface !== 'undefined',
+  marks: document.getElementById('marks').children.length,
+  said: document.getElementById('statusbar').textContent,
+};
+"""
+
+
+def test_a_reader_of_the_slide_editor_gets_no_surface_and_no_toolbar(
+    repo_path: Path, tmp_path: Path
+):
+    """The other half of the same fix, and the one that matters more: `MAY_WRITE`
+    gates the call to `bodySurface` exactly as it gated the old call to
+    `aceSurface`, so a reader the server would refuse a save from still gets
+    `SURFACE === null` and none of the five `attach*` calls run. Giving a
+    signed-out reader a toolbar would be a worse regression than the hole this
+    commit closes.
+
+    Driven directly against `render_slide_editor` with `may_write=False`,
+    which is how `tests/test_render.py`'s
+    `test_a_reader_who_may_not_write_is_sent_no_editor_library` asks the same
+    question of the record page: `--auth dev` makes every request through the
+    `client` fixture a writer, so the read/write split can only be asked of the
+    renderer itself. The `Index` is built the same way the server builds its
+    own, off the same bare repo `repo_path` already seeded — reading the
+    server's private state through a running `client` would be reaching for
+    something this suite already has a documented way to ask directly.
+    """
+    from datetime import date
+
+    from openproj.index import build_index
+    from openproj.render import render_slide_editor
+    from openproj.render.shell import ROUTES
+    from openproj.store import Store
+    from openproj.web import _config_at, _records_at
+
+    store = Store(repo_path)
+    commit = store.head()
+    config, _unreadable_config = _config_at(store, commit)
+    records, _unreadable_records = _records_at(store, commit)
+    index = build_index(records, config, date.today())
+
+    page = render_slide_editor(
+        index, TASK, ROUTES, base_commit=commit, may_write=False, editor="plain",
+    )
+    assert "bodySurface(PROSE)" in page, "the guard changed shape entirely"
+    assert re.search(r"MAY_WRITE\s*\?\s*bodySurface\(PROSE\)\s*:\s*null", page), (
+        "a reader must still resolve SURFACE to null"
+    )
+
+    got = measured_in(
+        chrome(), page, tmp_path / "slide-reader.html", 1400, _SLIDE_READER_SURFACE,
+        query="?editor=plain",
+    )
+    assert not got["hasBodySurface"], (
+        "a reader was sent the editor toolkit that defines bodySurface at all"
+    )
+    assert got["marks"] == 0, "a reader was drawn a toolbar with nothing behind it"
+    assert got["said"] == "", "a reader was drawn a status strip with nothing behind it"
+
+
+# --- the drawing popup, mounted for real, over a real origin ----------------
+#
+# `measured_in` cannot drive this page at all: 0 of 6 runs completed mount
+# plus two exports at its usual ~5000ms budget, 3 of 6 at 60000ms, all 6 only
+# at 600000ms, and not cleanly monotonically along the way (`docs/drawings.md`,
+# "Five helpers, not one"). So nothing below uses it. Every test here drives a
+# real Chrome over DevTools against `live_server`'s real uvicorn — the same
+# shape `tests/test_coedit.py` already uses three times — because that is the
+# only mode that can actually fetch `/static/excalidraw.js`, mount it, and
+# carry exported PNG bytes back out as something a Python test can read.
+
+
+def test_the_client_side_drawing_ceiling_matches_the_servers(client: TestClient):
+    """`MAX_DRAWING_BYTES` in the rendered page is a literal and not a template
+    variable — `render/` cannot import `MAX_ASSET_BYTES` from `web.py`, because
+    `web.py` imports `render` and the reverse import would be a cycle. The same
+    trade `NO_VALUE` makes against `index.NO_VALUE`
+    (`test_empty_is_spelled_the_same_on_both_sides_of_the_wire`), and the same
+    risk: nothing but this test stops the two drifting, and a drift would let
+    an oversized drawing through the client's own guard only for the server to
+    answer it with a 413 after the strokes are already on their way there.
+    """
+    page = client.get(f"/detail/{TASK}").text
+    assert "const MAX_DRAWING_BYTES = 2 * 1024 * 1024;" in page
+    assert MAX_ASSET_BYTES == 2 * 1024 * 1024, (
+        "web.py's own ceiling moved, and the client's literal was not updated with it"
+    )
+
+
+# **The window every drawing test opens Chrome in, and it is a fix rather than a
+# preference.** `suite (editor)` went red on CI on a green branch, on the third
+# shape of `test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown`
+# and nowhere else: the re-save read back two elements where three had been
+# drawn. It reproduced nowhere locally — 3/3, then the whole file green — which
+# is what sent this to a measurement instead of a guess.
+#
+# Headless Chrome with no `--window-size` opens at 800x600, which is **756x469
+# of viewport**. `.drawbox` is `min(92vh, 800px)` tall, so the stage came out at
+# 725x388 sitting from y=62 to y=450.2 — and the diamond, the third shape, is
+# dragged from (300, 450) to (480, 550). The release is 81px BELOW the bottom of
+# the window; the press is 0.2px above the bottom edge of the canvas. A fifth of
+# one pixel of margin is not a test, it is a coin toss that this machine happened
+# to keep winning and CI's happened to lose, and when it lost the press landed on
+# the backdrop, no shape was drawn, and the export honestly held the two shapes
+# that were there.
+#
+# Measured with the same probe, at 1400x1000: 1400x913 of viewport, a stage of
+# 1100x756 running from y=100 to y=856, and all three drags — the furthest of
+# them ending at y=550 — comfortably inside it.
+#
+# It also buys back the thing being tested. At 756x469 Excalidraw renders its
+# **mobile** layout (`.excalidraw--mobile`, confirmed in the same probe): a
+# different toolbar in a different place, which is not the editor this feature
+# ships to anybody on a desktop and not the one these tests mean to be driving.
+DRAWING_WINDOW = ("--window-size=1400,1000",)
+
+
+# Where on the canvas a shape is dragged, stated once. Excalidraw's own UI sits
+# ON the canvas as floating islands, and at `DRAWING_WINDOW`'s size they are not
+# where they were at 800x600: with a shape tool active the properties panel
+# occupies x 159-359 / y 176-767, the tool bar x 438-948 / y 116-160, and the
+# zoom island x 159-371 / y 805-841. Measured, all three, and the three boxes
+# below all fall in clear canvas — the first pair of coordinates this file used
+# started at (300, 300), which is inside the properties panel and drew nothing at
+# all once the window grew.
+FIRST_SHAPE = (500, 300, 700, 430)
+SECOND_SHAPE = (800, 300, 1000, 430)
+THIRD_SHAPE = (500, 550, 700, 680)
+
+
+def _drag(call, x1: float, y1: float, x2: float, y2: float) -> None:
+    """A real, trusted drag on the canvas: `Input.dispatchMouseEvent`, not a
+    synthetic `pointerdown`/`pointerup` a script could dispatch on its own.
+    Excalidraw's shape tools read a genuine pointer down, a genuine move and a
+    genuine up — the same three DevTools already sends `pressed_in`'s single
+    click through, extended to a drag because a shape needs two points and
+    `pressed_in` only ever presses one."""
+    for kind, x, y, buttons in (
+        ("mousePressed", x1, y1, 1), ("mouseMoved", x2, y2, 1), ("mouseReleased", x2, y2, 0),
+    ):
+        call("Input.dispatchMouseEvent", {
+            "type": kind, "x": x, "y": y, "button": "left", "buttons": buttons, "clickCount": 1,
+        })
+        time.sleep(0.05)
+
+
+def _until(call, expression: str, seconds: float = 20) -> object:
+    """`expression`, asked again every quarter second until it answers
+    something truthy — `in_a_live_page`'s own wait, pulled out here because
+    these tests ask it of more than one condition over one page's life rather
+    than once at the end of it."""
+    deadline = time.monotonic() + seconds
+    value = None
+    while time.monotonic() < deadline:
+        value = _evaluated(call, expression, patient=True)
+        if value:
+            return value
+        time.sleep(0.25)
+    raise AssertionError(f"never became true within {seconds}s: {expression}")
+
+
+def _png_text_chunks(data: bytes) -> dict[bytes, bytes]:
+    """Every `tEXt` chunk's key and value, read by walking the file's own
+    chunk structure rather than trusted from a comment about what
+    `exportToBlob` is supposed to write. The structural claim this backs is
+    "the scene really is in the PNG, under this key" — never a byte count,
+    because Excalidraw's roughness draws from a random seed and the same scene
+    exported twice does not land on the same size (`docs/drawings.md`, "Five
+    helpers, not one")."""
+    assert data[:8] == b"\x89PNG\r\n\x1a\n", "not a PNG at all"
+    chunks: dict[bytes, bytes] = {}
+    pos = 8
+    while pos < len(data):
+        length = int.from_bytes(data[pos:pos + 4], "big")
+        kind = data[pos + 4:pos + 8]
+        body = data[pos + 8:pos + 8 + length]
+        if kind == b"tEXt":
+            key, _, value = body.partition(b"\x00")
+            chunks[key] = value
+        pos += 8 + length + 4
+    return chunks
+
+
+_WATCH_INJECTIONS_AND_OPEN = r"""
+(async () => {
+  // Installed exactly once, gated on its OWN flag and set before anything
+  // below it can throw — decoupled from whether the clicks that arm the
+  // popup (next block) ever succeed. `in_a_live_page` polls this whole
+  // expression again every 250ms with NO initial delay, so the first poll can
+  // land before `attachDrawing` has wired `#drawing`'s handler or built
+  // `.drawmenu` at all. A version of this hook that reinstalled itself on
+  // every failed retry wrapped `Element.prototype.appendChild` a second time
+  // on top of the first — each wrap closing over whatever `appendChild`
+  // already was, so the ONE real `document.head.appendChild(tag)` the loader
+  // makes walked through both layers and was counted twice. Measured at
+  // ~4-7% of runs before this fix, always the same diff: `injected ==
+  // ['inline:excalidraw', 'inline:excalidraw']` — a probe whose own setup
+  // double-installs under a retry, reporting two injections for one, on the
+  // one test guarding the riskiest half of this feature.
+  if (!window.__hooked) {
+    window.__hooked = true;
+    window.__violations = [];
+    document.addEventListener('securitypolicyviolation', event => {
+      window.__violations.push(event.effectiveDirective + ' <- ' + String(event.blockedURI));
+    });
+    // Widened the same way `_WATCH_THE_NETWORK` was widened, above: a `src`
+    // is refused where the plain `.textContent` script this page injects is
+    // not, so both have to be caught for the zero below to mean anything.
+    window.__injected = [];
+    const append = Element.prototype.appendChild;
+    Element.prototype.appendChild = function (node) {
+      if (node && node.tagName === 'SCRIPT') {
+        window.__injected.push(
+          node.src ? 'src' : `inline:${node.dataset.injectedBundle || '(unmarked)'}`
+        );
+      }
+      return append.call(this, node);
+    };
+  }
+  // Arming is the other half, and it is allowed to fail and retry as many
+  // times as the page takes to be ready: nothing here throws, so a poll that
+  // lands too early costs nothing and the next one tries again. `?.click()`
+  // on a button that is not there yet, or whose handler is not wired yet, is
+  // a silent no-op rather than a `TypeError` — and the menu row is CHECKED
+  // before it is clicked, rather than clicked and left to throw if `open()`
+  // has not run yet.
+  if (!window.__armed) {
+    document.getElementById('drawing')?.click();
+    const row = document.querySelector('.drawmenu button');
+    if (!row) return null;
+    row.click();
+    window.__armed = true;
+    return null;
+  }
+  if (!document.querySelector('.drawpopup .excalidraw')) return null;
+  // A frame raced against a timeout rather than trusted alone: rAF is
+  // unreliable on this exact page under a virtual clock, and this harness
+  // has no virtual clock to race against — but the race costs nothing and
+  // keeps this probe shaped the same way as the ones that do need it.
+  await new Promise(resolve => {
+    let settled = false;
+    requestAnimationFrame(() => { if (!settled) { settled = true; resolve(); } });
+    setTimeout(() => { if (!settled) { settled = true; resolve(); } }, 300);
+  });
+  const before = {
+    violations: window.__violations.slice(), injected: window.__injected.slice(),
+  };
+  // The forced failure: a REAL `<script src>`, refused because `script-src`
+  // grants no `'self'` for a fetched script to match — the same shape
+  // `test_no_editor_asks_for_a_script_after_the_page_has_loaded` uses for Ace.
+  const control = document.createElement('script');
+  control.src = '/static/excalidraw.js';
+  document.body.appendChild(control);
+  await new Promise(r => setTimeout(r, 300));
+  return {
+    before,
+    after: {violations: window.__violations.slice(), injected: window.__injected.slice()},
+  };
+})()
+"""
+
+
+def test_the_fetch_and_inject_delivery_is_clean_under_the_real_policy(
+    live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
+    tmp_path: Path,
+):
+    """The spike proved fetch and inject are each individually allowed —
+    `connect-src 'self'` grants the fetch that reads the bundle's text,
+    `script-src 'unsafe-inline'` grants the inline injection — but never
+    exercised the pair together: it inlined all 9.1MB into one `file://` page
+    instead of fetching anything (`docs/drawings.md`, "The spike, which came
+    first"). This is that pair, against a real origin, with the
+    forced-failure control every CSP probe in this file carries: a real
+    `<script src>` really is refused where the marked inline injection is not,
+    so the zero violations below are evidence the probe could have failed and
+    did not — not an assertion that could only ever pass.
+    """
+    drawn, said = in_a_live_page(
+        chrome(), f"{live_server}/detail/{TASK}?editor=plain",
+        _WATCH_INJECTIONS_AND_OPEN, tmp_path / "profile", seconds=30,
+    )
+    before, after = drawn["before"], drawn["after"]
+    assert before["violations"] == [], (
+        f"the real fetch-and-inject path tripped the policy: {before['violations']}"
+    )
+    assert before["injected"] == ["inline:excalidraw"], (
+        "the only script injected at runtime by the time the popup mounted was not "
+        f"exactly one, marked as the vendored bundle: {before['injected']}"
+    )
+    # The console is not asked for silence here the way the other CSP probes in
+    # this file ask it: the forced-failure control a few lines down is a real
+    # policy violation and prints a real console line about it, on purpose, in
+    # this same session — the `securitypolicyviolation` event above already IS
+    # the authoritative zero, over the window that matters.
+
+    assert after["injected"] == before["injected"] + ["src"], (
+        f"the forced-failure control was not even injected: {after['injected']}"
+    )
+    assert any("script-src" in line for line in after["violations"]), (
+        f"the policy did not refuse the injected <script src>: {after['violations']}"
+    )
+
+
+def test_the_rooms_own_commit_does_not_reload_the_page_under_the_person_in_it(
+    live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
+    tmp_path: Path,
+):
+    """jcanton, 2026-08-26: "I drew three shapes in a new drawing and the window
+    simply closed. I didn't touch escape nor any other key, nor did I click
+    outside the drawing window. I think the page gets auto-reloaded when this
+    happens!"
+
+    It was auto-reloading, and nothing about it was specific to drawings — a
+    drawing popup is simply the only thing on this page holding unsaved state
+    that a reload can take, which is why this is what finally made it visible.
+
+    `saving` in `_COEDIT` is the shell's writing/wrote pairing, and it is set by
+    the room's `t: 'saving'` frame — which `web.py`'s `_commit_room` BROADCASTS
+    to every member, including for the commit the quiet window makes that nobody
+    pressed. The `saved` branch then read `const mine = saving` to decide whether
+    to `location.reload()`, so "the tab that pressed Save" was every tab in the
+    room, and the room's own twenty-second commit (`coedit.QUIET_SECONDS`)
+    reloaded all of them.
+
+    Driven the way it happens rather than by poking the flag: put something in
+    the body, open a drawing, draw in it, and then do what a person drawing
+    does — stop typing. The sentinel is a `window` property, so it cannot
+    survive a navigation however the navigation came about, and it is the
+    assertion rather than the popup, which could vanish for its own reasons.
+
+    Slow on purpose. The quiet window is the thing under test and it is twenty
+    real seconds; a version of this that reached in and shortened it would be
+    asserting against a timer this application does not ship.
+    """
+    url = f"{live_server}/detail/{TASK}?both"
+    with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
+        time.sleep(3)
+        assert _evaluated(call, "!!document.querySelector('.ace_editor')"), (
+            "this has to be the room, and the room is the editor a person gets by "
+            "default — on `?editor=plain` there is no socket and nothing to test"
+        )
+        _evaluated(call, "window.__sentinel = 'alive'")
+
+        # Something for the room to commit. Without it the quiet window has
+        # nothing pending and never fires, which is why an earlier version of
+        # this walk sat happily through thirty seconds and proved nothing.
+        _evaluated(call, "SURFACE.splice(0, 0, 'a change nobody saved\\n')")
+        time.sleep(1)
+
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelector('.drawmenu button').click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-rectangle\"]').click()")
+        _drag(call, *FIRST_SHAPE)
+
+        # Past `coedit.QUIET_SECONDS`, with the person doing nothing at all.
+        time.sleep(26)
+
+        alive = _evaluated(call, "window.__sentinel || 'GONE'", patient=True)
+        assert alive == "alive", (
+            "the page navigated while somebody was drawing in it — the room's own "
+            "commit reloaded the tab, and every unsaved stroke went with it"
+        )
+        assert _evaluated(call, "!!document.querySelector('.drawpopup')"), (
+            "the page survived but the drawing popup did not"
+        )
+
+
+def test_the_drawing_popup_takes_the_whole_page_and_remembers_that_it_did(
+    live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
+    tmp_path: Path,
+):
+    """jcanton, 2026-08-26: "can we have a fullscreen toggle button to make the
+    draw window full screen? or maybe full page size instead of full screen, so
+    we don't have the browser going to a different space on mac. whatever is
+    easier", then "maybe in the [save][close] bar on top of the draw area but on
+    the left side and with two expand/contract icons instead of text".
+
+    Full page, and nothing here calls `requestFullscreen` — which is the point of
+    his second sentence and is also the easier of the two: `.drawpopup` is
+    already `position: fixed; inset: 0`, so the whole viewport is covered and the
+    only thing between the drawing and the edges is `.drawbox`'s own
+    `min(96vw, 1100px)` cap. Asserted against the OVERLAY's box rather than
+    against `innerWidth`: that is the rectangle the box is being asked to fill,
+    and comparing to the window would fail by exactly a scrollbar on any page
+    that has one — which is the trap `100vw` sets and this rule avoids.
+
+    Four claims: it grows to the overlay, it is on the left while Save and Close
+    stay right, the icon and the accessible name swap together, and the choice
+    comes back on the next popup. The last is the one worth a live server: it
+    goes through `remembered`, so it is real `localStorage` on a real origin,
+    which a `file://` page cannot be trusted to have.
+    """
+    url = f"{live_server}/detail/{TASK}?both"
+    with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
+        time.sleep(3)
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelector('.drawmenu button').click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+
+        measure = """
+        (() => {
+          const overlay = document.querySelector('.drawpopup').getBoundingClientRect();
+          const box = document.querySelector('.drawbox').getBoundingClientRect();
+          const grow = document.getElementById('draw-size');
+          const save = document.getElementById('draw-save');
+          return {
+            fills: Math.round(box.width) === Math.round(overlay.width)
+                   && Math.round(box.height) === Math.round(overlay.height),
+            narrower: Math.round(box.width) < Math.round(overlay.width),
+            leftOfSave: Math.round(grow.getBoundingClientRect().left)
+                        < Math.round(save.getBoundingClientRect().left),
+            firstInBar: grow === document.querySelector('.drawhead').firstElementChild,
+            says: grow.getAttribute('aria-label'),
+            titled: grow.title,
+            words: grow.textContent.trim(),
+            drawings: grow.querySelectorAll('svg path').length,
+            // Reported whether or not they are asserted: every failure of this
+            // test is "the box is not the size it should be", and two numbers
+            // beside the boolean is the difference between reading the message
+            // and re-running it with a print in.
+            box: [Math.round(box.width), Math.round(box.height)],
+            overlay: [Math.round(overlay.width), Math.round(overlay.height)],
+          };
+        })()
+        """
+
+        small = _evaluated(call, measure)
+        assert small["narrower"], "the popup already filled the page before it was asked to"
+        assert small["leftOfSave"] and small["firstInBar"], (
+            f"the size toggle is not on the left of the bar: {small}"
+        )
+        assert small["words"] == "", "the toggle carries words; it was asked for icons"
+        assert small["drawings"] == 4, (
+            f"the expand icon is not the four corner brackets: {small['drawings']} paths"
+        )
+        assert small["says"] == "Full page" and small["titled"] == "Full page", (
+            "an icon with no words is a mystery glyph to a reader who cannot see it, and "
+            f"to one who can and cannot tell what it is: {small}"
+        )
+
+        _evaluated(call, "document.getElementById('draw-size').click()")
+        time.sleep(0.3)
+        big = _evaluated(call, measure)
+        assert big["fills"], f"the toggle did not take the whole page: {big}"
+        assert big["says"] == "Smaller", (
+            "the icon swapped but the name it is announced by did not, or the other "
+            f"way round: {big}"
+        )
+        assert big["drawings"] == 4, "the contract icon is not the same four brackets back"
+        # The keyboard goes back to the drawing rather than staying on a button
+        # that has done its job — the press was made in order to draw bigger.
+        assert _evaluated(call, """
+          !!(document.activeElement && document.activeElement.closest('.excalidraw'))
+        """), "the size toggle kept the keyboard"
+
+        # And it is remembered. Closed and reopened in the same page, which is
+        # what `localStorage` promises and what somebody who wants a big canvas
+        # wants without pressing this again every time.
+        _evaluated(call, "document.getElementById('draw-close').click()")
+        _until(call, "!document.querySelector('.drawpopup')")
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelector('.drawmenu button').click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+        again = _evaluated(call, measure)
+        assert again["fills"] and again["says"] == "Smaller", (
+            f"the popup forgot that it was opened at full page last time: {again}"
+        )
+
+
+def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
+    live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
+    tmp_path: Path,
+):
+    """The round trip `docs/drawings.md` says is testable today, driven
+    exactly the way it says to drive it: a real Chrome over DevTools, real
+    strokes, against a real origin. Three claims, told as one story because
+    they are one story —
+
+    1. a new drawing splices its markdown exactly once, at the caret, and
+       nowhere else;
+    2. the bytes the server now serves read back — through the app's own
+       already-loaded `EXCALIDRAW.loadSceneOrLibraryFromBlob`, not a second
+       implementation of the format — as the same elements that were drawn,
+       structurally (a `tEXt` chunk under the right key, the right element
+       count and types) and never by an exact byte count, which Excalidraw's
+       own random seed makes meaningless;
+    3. a re-save of that same drawing — after a reload, reopened through the
+       menu, with a third shape added — changes the PNG and changes nothing
+       else, because the whole point of a stable path is that the body never
+       has to be found and edited again.
+    """
+    url = f"{live_server}/detail/{TASK}?both"
+    with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
+        time.sleep(2)
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelector('.drawmenu button').click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-rectangle\"]').click()")
+        _drag(call, *FIRST_SHAPE)
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-ellipse\"]').click()")
+        _drag(call, *SECOND_SHAPE)
+        time.sleep(0.2)
+
+        original_body = _evaluated(call, "SURFACE.text()")
+        assert "drawings/draw-" not in original_body, "the body already named a drawing"
+
+        _evaluated(call, "document.getElementById('draw-save').click()")
+        assert _until(call, "!document.querySelector('.drawpopup')"), (
+            "the popup did not close itself after a successful save"
+        )
+        after_create = _evaluated(call, "SURFACE.text()")
+        match = re.search(r"draw-[0-9a-f]{6}", after_create)
+        assert match, f"no drawing id landed in the body: {after_create!r}"
+        drawing_id = match.group(0)
+        assert after_create == f"![](drawings/{drawing_id}.png){original_body}", (
+            "the splice put something other than the bare embed in at the caret, or "
+            "put it somewhere other than the caret"
+        )
+
+        # Where the sentence went, which is a layout claim as much as a wiring
+        # one. jcanton, 2026-08-26, with a screenshot of the edit-only view:
+        # "it's the 'saved' message, which in side-by-side prints on one line
+        # perfectly well but in the normal edit view doesn't. should we move
+        # this message higher up in the [save] [reset] saved bar?" `#upload` is
+        # a `.markbar` cell sharing a flex line with seventeen toolbar buttons,
+        # so at full width `drawings/draw-xxxxxx.png saved` wrapped to four
+        # lines and took the toolbar's row height with it. Asserted as "and NOT
+        # in the toolbar strip", because the assertion above it passes just as
+        # happily with the sentence in both places, which is what it was.
+        assert _evaluated(call, "document.getElementById('upload').textContent") == "", (
+            "the drawing's status is in the toolbar strip as well as the commit "
+            "bar — said twice, and the toolbar is the copy that wraps"
+        )
+
+        served = httpx.get(f"{live_server}/drawings/{drawing_id}.png")
+        assert served.status_code == 200
+        assert set(_png_text_chunks(served.content)) == {b"application/vnd.excalidraw+json"}, (
+            "the exported PNG carries no scene, or carries it under a different key"
+        )
+        round_trip = _evaluated(call, f"""
+        (async () => {{
+          const blob = await (await fetch('/drawings/{drawing_id}.png')).blob();
+          const loaded = await EXCALIDRAW.loadSceneOrLibraryFromBlob(blob, null, null);
+          return {{count: loaded.data.elements.length,
+                   types: loaded.data.elements.map(e => e.type)}};
+        }})()
+        """)
+        assert round_trip == {"count": 2, "types": ["rectangle", "ellipse"]}, round_trip
+
+        # Reload, and reopen the SAME drawing through the menu — not a fresh
+        # popup addressed by hand, but the seam a person actually presses.
+        call("Page.enable")
+        call("Page.navigate", {"url": url})
+        _until(call, "!!document.getElementById('drawing')")
+        _evaluated(call, "document.getElementById('drawing').click()")
+        rows = _until(
+            call, "[...document.querySelectorAll('.drawmenu button')].map(b => b.textContent)"
+        )
+        assert rows == ["+ drawing", drawing_id], rows
+        _evaluated(call, "document.querySelectorAll('.drawmenu button')[1].click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+        assert _until(
+            call, f"document.getElementById('state').textContent === 'editing {drawing_id}'"
+        )
+
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-diamond\"]').click()")
+        _drag(call, *THIRD_SHAPE)
+        time.sleep(0.2)
+
+        before_resave = _evaluated(call, "SURFACE.text()")
+        _evaluated(call, "document.getElementById('draw-save').click()")
+        assert _until(
+            call,
+            f"document.getElementById('state').textContent === 'drawings/{drawing_id}.png saved'",
+        )
+        after_resave = _evaluated(call, "SURFACE.text()")
+        assert after_resave == before_resave, (
+            "a re-save touched the markdown — the whole reason a drawing lives at a "
+            "stable path is that this never has to happen"
+        )
+        assert after_resave == after_create, "the body moved between the two saves, not just in one"
+
+        resaved_round_trip = _evaluated(call, f"""
+        (async () => {{
+          const blob = await (await fetch('/drawings/{drawing_id}.png')).blob();
+          const loaded = await EXCALIDRAW.loadSceneOrLibraryFromBlob(blob, null, null);
+          return {{count: loaded.data.elements.length,
+                   types: loaded.data.elements.map(e => e.type)}};
+        }})()
+        """)
+        assert resaved_round_trip == {
+            "count": 3, "types": ["rectangle", "ellipse", "diamond"],
+        }, resaved_round_trip
+        assert not [line for line in said if "Content Security Policy" in line], said
+
+
+def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(
+    live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
+    tmp_path: Path,
+):
+    """"The loser is refused, in one sentence, and their strokes are gone" —
+    from the file. `docs/drawings.md` is explicit that a conflict dialog which
+    also throws away the work it refused is the worse of the two losses, so
+    this is what "the popup stays open with the work still in it" means asked
+    of a real save against a real conflict, not merely inferred from the code.
+
+    An ordinary `httpx` client plays the somebody else: it changes the
+    drawing, over the wire, between the moment the popup opens (and captures
+    its etag) and the moment Save is pressed against it — the same window a
+    second tab or a second person would occupy.
+    """
+    url = f"{live_server}/detail/{TASK}?both"
+    with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
+        time.sleep(2)
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelector('.drawmenu button').click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-rectangle\"]').click()")
+        _drag(call, *FIRST_SHAPE)
+        time.sleep(0.2)
+        _evaluated(call, "document.getElementById('draw-save').click()")
+        assert _until(call, "!document.querySelector('.drawpopup')")
+
+        body = _evaluated(call, "SURFACE.text()")
+        drawing_id = re.search(r"draw-[0-9a-f]{6}", body).group(0)
+
+        call("Page.enable")
+        call("Page.navigate", {"url": url})
+        _until(call, "!!document.getElementById('drawing')")
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelectorAll('.drawmenu button')[1].click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+        assert _until(
+            call, f"document.getElementById('state').textContent === 'editing {drawing_id}'"
+        )
+
+        # Somebody else changes the same drawing from outside this browser,
+        # against the very etag the popup just captured.
+        current = httpx.get(f"{live_server}/drawings/{drawing_id}.png")
+        elsewhere = httpx.put(
+            f"{live_server}/api/drawing/{drawing_id}",
+            content=PNG + b"someone else's edit entirely",
+            headers={"content-type": "image/png", "if-match": current.headers["etag"]},
+        )
+        assert elsewhere.status_code == 200, elsewhere.text
+
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-ellipse\"]').click()")
+        _drag(call, *SECOND_SHAPE)
+        time.sleep(0.2)
+        before = _evaluated(call, "SURFACE.text()")
+        _evaluated(call, "document.getElementById('draw-save').click()")
+
+        expected = (
+            f"drawings/{drawing_id}.png — somebody changed this drawing while you had it "
+            "open, and a drawing has no merge. Reopen it."
+        )
+        assert _until(
+            call, f"document.getElementById('state').textContent === {expected!r}"
+        ), _evaluated(call, "document.getElementById('state').textContent")
+        assert _evaluated(call, "!!document.querySelector('.drawpopup')"), (
+            "the popup closed on a refusal — the strokes in it went with it"
+        )
+        after = _evaluated(call, "SURFACE.text()")
+        assert after == before, "a refused save still touched the markdown"
+
+
+def test_closing_unsaved_strokes_asks_first_and_keep_drawing_preserves_them(
+    live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
+    tmp_path: Path,
+):
+    """Task 11's own gap: `teardown` used to be the popup's only close path,
+    reached from Close with no question asked at all — draw for ten minutes,
+    press Close, and the strokes were gone with nothing to undo. `closeAttempt`
+    is the guard now in front of it, and this walks the two things that decide
+    whether it earns its keep rather than just existing:
+
+    1. it must actually ask when there is unsaved work, and "keep drawing" has
+       to mean the strokes are still THERE afterward, not merely that the
+       question goes away over an emptied canvas — proven here by saving
+       after backing out and reading the shape back off the server, the same
+       way `test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown`
+       proves a save landed at all;
+    2. it must stay SILENT reopening that same drawing having touched nothing
+       — `isDirty` compares the live scene against the array Excalidraw was
+       just mounted with, and a fresh mount of what this test just wrote back
+       has to read as identical to itself, or every reader who opens a
+       drawing to look at it gets asked a question that means nothing.
+    """
+    url = f"{live_server}/detail/{TASK}?both"
+    with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
+        time.sleep(2)
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelector('.drawmenu button').click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-rectangle\"]').click()")
+        _drag(call, *FIRST_SHAPE)
+        time.sleep(0.2)
+
+        _evaluated(call, "document.getElementById('draw-close').click()")
+        asked = _evaluated(call, """({
+          popupThere: !!document.querySelector('.drawpopup'),
+          asking: !document.querySelector('.drawask').hidden,
+          saveHidden: document.getElementById('draw-save').hidden,
+          closeHidden: document.getElementById('draw-close').hidden,
+        })""")
+        assert asked == {
+            "popupThere": True, "asking": True, "saveHidden": True, "closeHidden": True,
+        }, asked
+
+        _evaluated(call, "document.querySelector('.drawask .keep').click()")
+        backed_out = _evaluated(call, """({
+          popupThere: !!document.querySelector('.drawpopup'),
+          asking: !document.querySelector('.drawask').hidden,
+          saveHidden: document.getElementById('draw-save').hidden,
+        })""")
+        assert backed_out == {"popupThere": True, "asking": False, "saveHidden": False}, (
+            backed_out
+        )
+
+        _evaluated(call, "document.getElementById('draw-save').click()")
+        assert _until(call, "!document.querySelector('.drawpopup')"), (
+            "keep drawing left the popup unable to save cleanly afterward"
+        )
+        body = _evaluated(call, "SURFACE.text()")
+        match = re.search(r"draw-[0-9a-f]{6}", body)
+        assert match, f"no drawing id landed in the body: {body!r}"
+        drawing_id = match.group(0)
+
+        served = httpx.get(f"{live_server}/drawings/{drawing_id}.png")
+        assert served.status_code == 200
+        loaded = _evaluated(call, f"""
+        (async () => {{
+          const blob = await (await fetch('/drawings/{drawing_id}.png')).blob();
+          const scene = await EXCALIDRAW.loadSceneOrLibraryFromBlob(blob, null, null);
+          return {{count: scene.data.elements.length, types: scene.data.elements.map(e => e.type)}};
+        }})()
+        """)
+        assert loaded == {"count": 1, "types": ["rectangle"]}, (
+            f"keep drawing did not actually keep the shape drawn before Close: {loaded}"
+        )
+
+        # Reopened, untouched: `isDirty` compares against the very array
+        # Excalidraw was just mounted with, and nothing moved it.
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelectorAll('.drawmenu button')[1].click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+        assert _until(
+            call, f"document.getElementById('state').textContent === 'editing {drawing_id}'"
+        )
+        _evaluated(call, "document.getElementById('draw-close').click()")
+        assert _evaluated(call, "!document.querySelector('.drawpopup')"), (
+            "an untouched, freshly reopened drawing asked before closing instead of "
+            "closing directly"
+        )
+
+
+def test_escape_backs_out_of_the_question_and_discard_throws_the_drawing_away(
+    live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
+    tmp_path: Path,
+):
+    """The other half of `closeAttempt`'s contract, and the one the delete flow
+    at `detail.py:1959-1962` already sets the shape for: Escape is two levels,
+    backing out of the QUESTION while it is up and only closing the popup once
+    it is not, and Discard really has to throw the drawing away rather than
+    saving it under a gentler name.
+
+    `document.dispatchEvent(new KeyboardEvent(...))` rather than a CDP
+    `Input.dispatchKeyEvent` — the same synthetic-Escape shape
+    `test_facets.py`, `test_status_gate.py` and `test_table.py` already use
+    for their own two-level Escapes. `onKey` is bound on `document` and reads
+    only `event.key`, so a synthetic event reaches it exactly as a trusted one
+    would; nothing here needs Excalidraw itself to react to the key.
+
+    **Escape reaches the popup only from the popup's own chrome**, which is the
+    third thing this walks and the reason the first press below is on Close
+    rather than on the key. jcanton, 2026-08-26: "sometimes the excalidraw
+    editor seems to crash and close without warning". It was this listener:
+    with nothing drawn, `isDirty` is honestly false, so an Escape that reached
+    `onKey` went straight through `closeAttempt` to `teardown` and the editor
+    was simply gone — no question, because there was nothing to ask about, and
+    no sentence anywhere. Excalidraw takes Escape itself while the pointer is in
+    the canvas, so it only bit when focus was elsewhere: on the drawings button
+    under the overlay, or after a click on the dark backdrop. Both are one
+    keystroke from where a person actually is.
+    """
+    url = f"{live_server}/detail/{TASK}?both"
+    with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
+        time.sleep(2)
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelector('.drawmenu button').click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+
+        # The other half of the same fix, and the half that makes the Escape rule
+        # bearable: `autoFocus` puts the keyboard IN the drawing when the popup
+        # mounts, so Excalidraw takes Escape itself and the guard below is the
+        # backstop rather than the whole defence. Asserted through the shortcut
+        # it buys as well as through `activeElement`, because a container that
+        # holds focus and does not act on a key is focus that bought nothing —
+        # `r` is Excalidraw's own binding for the rectangle tool.
+        #
+        # `api.focusContainer()` after `root.render(...)` was written first and
+        # measured doing nothing: `root.render` is React 18's and returns before
+        # the tree commits, so `api` was still null on the next line,
+        # `document.activeElement` was `<body>`, and `r` picked nothing.
+        focused = _evaluated(call, """
+          !!(document.activeElement && document.activeElement.closest('.excalidraw'))
+        """)
+        assert focused, (
+            "the popup mounted with the keyboard still outside it — Excalidraw "
+            "never sees Escape, and Tab walks the page under the overlay"
+        )
+        for kind in ("rawKeyDown", "keyUp"):
+            call("Input.dispatchKeyEvent", {"type": kind, "key": "r", "code": "KeyR",
+                                            "windowsVirtualKeyCode": 82, "text": "r"})
+        time.sleep(0.3)
+        assert _evaluated(
+            call, "document.querySelector('[data-testid=\"toolbar-rectangle\"]').checked"
+        ), "the drawing holds focus but does not act on a key, which is not focus"
+
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-ellipse\"]').click()")
+        _drag(call, *SECOND_SHAPE)
+        time.sleep(0.2)
+
+        escape = (
+            "document.dispatchEvent("
+            "new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))"
+        )
+
+        # An Escape pressed where the person is actually drawing is Excalidraw's
+        # and not this popup's: it leaves a tool and drops a selection, and it
+        # must not take the editor with it. `focusContainer` put the keyboard
+        # there when the popup mounted, so this is the ordinary case and not a
+        # contrived one.
+        stray = _evaluated(call, f"(() => {{ {escape}; return {{"
+                                 "popupThere: !!document.querySelector('.drawpopup'),"
+                                 "asking: !document.querySelector('.drawask').hidden,"
+                                 "}; })()")
+        assert stray == {"popupThere": True, "asking": False}, (
+            "an Escape pressed in the drawing reached the popup — with nothing "
+            f"drawn this is the close that reads as a crash: {stray}"
+        )
+
+        # Close: unsaved work, so it raises the question rather than closing the
+        # popup outright. This was a first Escape until 2026-08-26; the key
+        # cannot raise the question from inside the canvas any more, which is
+        # the whole point of the assertion above it.
+        _evaluated(call, "document.getElementById('draw-close').click()")
+        first = _evaluated(call, """({
+          popupThere: !!document.querySelector('.drawpopup'),
+          asking: !document.querySelector('.drawask').hidden,
+        })""")
+        assert first == {"popupThere": True, "asking": True}, first
+
+        # Second Escape, with the question up: backs OUT OF THE QUESTION, not
+        # out of the popup — a reflexive double-Escape must not both dismiss
+        # the question and lose the drawing.
+        _evaluated(call, escape)
+        second = _evaluated(call, """({
+          popupThere: !!document.querySelector('.drawpopup'),
+          asking: !document.querySelector('.drawask').hidden,
+        })""")
+        assert second == {"popupThere": True, "asking": False}, (
+            f"the second Escape closed the popup instead of backing out of the question: {second}"
+        )
+
+        # Close, pressed with the question not up and the drawing still
+        # unsaved: it raises the question again rather than closing.
+        #
+        # And the other half of the focus rule, asserted on the way past: Escape
+        # pressed ON Close is somebody addressing the dialog, so it does reach
+        # the popup — the control is not unreachable from the keyboard, it is
+        # only unreachable from inside the canvas.
+        _evaluated(call, "document.getElementById('draw-close').focus()")
+        _evaluated(call, escape)
+        assert _evaluated(call, "!document.querySelector('.drawask').hidden"), (
+            "Escape on the Close button did not reach the popup — the dialog "
+            "cannot be dismissed from the keyboard at all"
+        )
+        _evaluated(call, "document.querySelector('.drawask .keep').click()")
+
+        _evaluated(call, "document.getElementById('draw-close').click()")
+        assert _evaluated(call, "!document.querySelector('.drawask').hidden"), (
+            "Close skipped the question the second time it was pressed"
+        )
+
+        _evaluated(call, "document.querySelector('.drawask .discard').click()")
+        assert _evaluated(call, "!document.querySelector('.drawpopup')"), (
+            "Discard left the popup on screen"
+        )
+        body = _evaluated(call, "SURFACE.text()")
+        assert "drawings/draw-" not in body, (
+            "a discarded drawing still left an embed in the body — nothing was ever posted "
+            "for one to reference"
+        )
+

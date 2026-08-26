@@ -1428,3 +1428,124 @@ def test_a_refused_pull_request_is_not_fatal(tmp_path: Path):
     # Durable regardless: the branch on the REMOTE holds the original commit.
     reference = pygit2.Repository(str(remote_path)).references.get(f"refs/heads/{branch}")
     assert reference is not None and str(reference.target) == ours.commit
+
+
+# --------------------------------------------------------------------------- #
+# A drawing is written by blob id, and never decoded
+#
+# `WriteResult` has no `.committed`; a refusal is `outcome == "conflict"` with
+# the sentence in `.conflict`, the same shape `_verdict` builds for every other
+# write. `put_drawing` compares blob ids and never runs a PNG through `read`.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_drawing_is_written_and_its_blob_id_comes_back(store: Store):
+    png = b"\x89PNG\r\n\x1a\n" + b"first"
+    written, blob = store.put_drawing(
+        "drawings/draw-a1b2c3.png", png, None, "jcanton", "draw draw-a1b2c3"
+    )
+    assert written.outcome == "committed"
+    assert store.read_asset(store.head(), "drawings/draw-a1b2c3.png") == png
+    assert store.blob_id(store.head(), "drawings/draw-a1b2c3.png") == blob
+
+
+def test_creating_a_drawing_over_one_that_exists_is_refused(store: Store):
+    png = b"\x89PNG\r\n\x1a\n"
+    store.put_drawing("drawings/draw-a1b2c3.png", png, None, "jcanton", "draw")
+    written, _ = store.put_drawing(
+        "drawings/draw-a1b2c3.png", png + b"other", None, "jcanton", "draw"
+    )
+    assert written.outcome == "conflict"
+    # The bytes that were there are the bytes that are there.
+    assert store.read_asset(store.head(), "drawings/draw-a1b2c3.png") == png
+
+
+def test_a_stringified_none_etag_does_not_pass_for_a_drawing_that_is_not_there(store: Store):
+    """`str(None)` is the four-character string `"None"`, a guessable literal
+    rather than a real blob id. A PUT that sends `If-Match: "None"` against a
+    drawing that was never created has to be refused by the CREATE guard, not
+    slip through it because `str(stored)` and `base_blob` both happen to read
+    `"None"` when nothing is stored — the exact string a client that lost
+    track of whether it had ever saved would send.
+    """
+    written, _ = store.put_drawing(
+        "drawings/draw-a1b2c3.png", b"\x89PNG\r\n\x1a\n", "None", "jcanton", "draw"
+    )
+    assert written.outcome == "conflict"
+    assert store.read_asset(store.head(), "drawings/draw-a1b2c3.png") is None
+
+
+def test_a_put_against_a_hand_deleted_drawing_is_refused_honestly(store: Store, repo_path: Path):
+    """"Reopen it" is the ordinary conflict's whole answer, and it is the one
+    thing that cannot work once the file is actually gone — deleted from the
+    repo by hand, at a terminal, the way `git rm` would. That case gets its
+    own sentence rather than inheriting the "somebody changed this" one, which
+    promises a reopen this path cannot deliver.
+
+    The deletion goes in as a hand-built commit, through a second `pygit2`
+    handle on the same repository, rather than through `store.remove`:
+    `remove` runs through `write_all`'s merge ladder, which reads the file
+    back through `read()`'s UTF-8 decode to check it is really gone — the
+    exact crash `docs/drawings.md`'s "A PNG must never touch the merge
+    ladder" warns a drawing must never reach, on the read side as much as the
+    write side.
+    """
+    png = b"\x89PNG\r\n\x1a\n"
+    _, first = store.put_drawing("drawings/draw-a1b2c3.png", png, None, "a", "draw")
+
+    repo = pygit2.Repository(str(repo_path))
+    parent = repo.head.target
+    builder = repo.TreeBuilder(repo[parent].tree)
+    builder.remove("drawings")
+    who = pygit2.Signature("a human", "a@example.invalid")
+    repo.create_commit(
+        "refs/heads/main", who, who, "rm drawings/draw-a1b2c3.png", builder.write(), [parent]
+    )
+
+    written, _ = store.put_drawing(
+        "drawings/draw-a1b2c3.png", png + b"mine", first, "a", "draw"
+    )
+    assert written.outcome == "conflict"
+    assert "deleted from the plan" in written.conflict
+    assert "Reopen it" not in written.conflict
+
+
+def test_a_drawing_saved_against_a_stale_blob_is_refused_and_says_so(store: Store):
+    """There is no third drawing that is both people's intent, so the refusal
+    is the whole of the answer — the same argument `_merge_body`'s docstring
+    makes about CRDTs, applied to bytes no line merge can touch."""
+    png = b"\x89PNG\r\n\x1a\n"
+    _, first = store.put_drawing("drawings/draw-a1b2c3.png", png, None, "a", "draw")
+    store.put_drawing("drawings/draw-a1b2c3.png", png + b"theirs", first, "b", "draw")
+
+    written, _ = store.put_drawing(
+        "drawings/draw-a1b2c3.png", png + b"mine", first, "a", "draw"
+    )
+    assert written.outcome == "conflict"
+    assert "somebody changed this drawing while you had it open" in written.conflict
+    assert store.read_asset(store.head(), "drawings/draw-a1b2c3.png") == png + b"theirs"
+
+
+def test_saving_a_drawing_unchanged_mints_no_commit(store: Store):
+    """An empty commit on the decision log says a decision was made when none
+    was — the bug `store.py` records being fixed twice already."""
+    png = b"\x89PNG\r\n\x1a\n"
+    _, blob = store.put_drawing("drawings/draw-a1b2c3.png", png, None, "a", "draw")
+    head = store.head()
+
+    written, again = store.put_drawing("drawings/draw-a1b2c3.png", png, blob, "a", "draw")
+    assert written.outcome == "committed"
+    assert again == blob
+    assert store.head() == head
+
+
+def test_a_drawing_never_reaches_the_merge_ladder(store: Store):
+    """A PNG through `write_all` is `AttributeError` today, and that crash is
+    the GOOD outcome: latin-1-decoding it to make the crash go away gets a
+    clean line merge that prepends `---\\n{}\\n---\\n` to the magic number and
+    answers 200 with a real sha. This test is the tripwire on that road."""
+    png = b"\x89PNG\r\n\x1a\n" + b"body"
+    store.put_drawing("drawings/draw-a1b2c3.png", png, None, "a", "draw")
+    stored = store.read_asset(store.head(), "drawings/draw-a1b2c3.png")
+    assert stored is not None and stored.startswith(b"\x89PNG\r\n\x1a\n")
+    assert not stored.startswith(b"---")

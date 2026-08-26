@@ -125,6 +125,23 @@ def test_render_static_writes_every_page_and_says_which(rendered: Path, seed_ind
         assert render_static(seed_index, Path(directory)) == PAGES
 
 
+def test_the_export_carries_drawings_as_well_as_assets(seed_index, tmp_path: Path):
+    """Without the copy an exported plan renders every drawing as a broken
+    image — the markdown points at `drawings/…` relative to the page, which is
+    exactly right and exactly useless if the directory is not there. The same
+    sentence `export.py` already writes about assets."""
+    repo = tmp_path / "plan"
+    (repo / "assets").mkdir(parents=True)
+    (repo / "drawings").mkdir()
+    (repo / "assets" / "0123456789abcdef.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (repo / "drawings" / "draw-a1b2c3.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    out = tmp_path / "out"
+    render_static(seed_index, out, repo=repo)
+    assert (out / "assets" / "0123456789abcdef.png").is_file()
+    assert (out / "drawings" / "draw-a1b2c3.png").is_file()
+
+
 def fetches_nothing(body: str, where: str) -> None:
     """Every way a page can ask the network for a file, in one place.
 
@@ -189,8 +206,15 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(
     assert not re.search(r"@@[\w.-]+\.js@@", graph), "an inlining marker survived"
     # Read from the directory rather than listed here: the set changed the day
     # ELK replaced dagre, and a list written down in a test is a list that says
-    # a page is fine while it inlines a library nobody checked.
-    inlined = sorted(path.name for path in static.iterdir() if path.suffix == ".js")
+    # a page is fine while it inlines a library nobody checked. `excalidraw.js`
+    # is carved out before the count rather than folded into the loop below: it
+    # is the one vendored script inlined into no page at all, checked on its own
+    # further down.
+    inlined = sorted(
+        path.name
+        for path in static.iterdir()
+        if path.suffix == ".js" and path.name != "excalidraw.js"
+    )
     assert len(inlined) == 4, inlined
 
     # **"Exactly once, into the page that uses it" — which is not the same claim
@@ -211,6 +235,16 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(
         other = graph if wanted is editing else editing
         assert wanted.count(signature) == 1, name
         assert other.count(signature) == 0, f"{name} is in a page that does not use it"
+
+    # `excalidraw.js` is the one vendored script that belongs on no page at all —
+    # it is fetched by the browser on the first press of the drawing button
+    # (`GET /static/excalidraw.js`) rather than carried on every load, which is
+    # the whole reason it is a route and not a sixth marker in this file. A page
+    # that grew a copy of it would have grown by 5.5 MB with nothing above to
+    # notice, since the loop only ever checks the four names it is handed.
+    excalidraw_signature = (static / "excalidraw.js").read_text(encoding="utf-8")[:200]
+    assert graph.count(excalidraw_signature) == 0
+    assert editing.count(excalidraw_signature) == 0
 
 
 def test_the_table_carries_the_whole_plan_and_its_derived_dates(rendered: Path, seed_index: Index):
@@ -2005,6 +2039,50 @@ def test_every_vendored_file_is_the_one_that_was_checksummed():
         assert digest == sums[name].strip(), name
 
 
+def test_no_vendored_file_carries_an_api_key():
+    """GitHub opened a `google_api_key` secret-scanning alert against this
+    repository hours after `static/excalidraw.js` was first committed. The key
+    was not ours and nothing of ours leaked: `@excalidraw/excalidraw` bakes its
+    own build-time `VITE_APP_*` constants into the published package, one of
+    which is the Firebase config for `excalidraw-room-persistence` — their
+    public collaboration backend, in every copy of that package on GitHub. The
+    alert listed five other public repositories leaking the same string.
+
+    It was dead text here even before it was removed — the bundle holds one
+    occurrence of the word `firebase` and no Firebase SDK, and every page ships
+    under `connect-src 'self'`, which refuses every host in that block — but a
+    public repository should not carry a live third-party credential it cannot
+    rotate, and an alert per re-vendor is one somebody eventually closes on
+    reflex. `tools/build-excalidraw.mjs` blanks the value on the way through and
+    re-checks its own output.
+
+    This is the same assertion made of the bytes actually in git, so it holds
+    for everyone who never runs that build — which is everyone, most days. Asked
+    of every vendored file rather than of `excalidraw.js`, and by SHAPE rather
+    than by the one known string, for the reason `VENDOR.md`'s own font
+    allowlist gives: a check that only knows what it was told about is one the
+    next version bump silently defeats. `AIza` plus 35 characters of Google's
+    key alphabet is what GitHub's scanner matches.
+    """
+    import re
+
+    from openproj.render import _static_dir
+
+    google_key = re.compile(rb"AIza[0-9A-Za-z_-]{35}")
+    static = _static_dir()
+    for path in sorted(static.iterdir()):
+        if not path.is_file() or path.suffix not in {".js", ".mjs", ".css"}:
+            continue
+        found = google_key.findall(path.read_bytes())
+        assert not found, (
+            f"{path.name} carries {len(found)} Google API key(s) — first begins "
+            f"{found[0][:8].decode()}… . If this arrived with a re-vendor, widen the "
+            "scrub in tools/build-excalidraw.mjs and rebuild; do not commit the bundle "
+            "and do not close the scanning alert as revoked, because the key is not "
+            "ours to revoke."
+        )
+
+
 def test_the_vendoring_note_covers_every_file_it_is_about():
     """VENDOR.md was titled "Vendored JavaScript" and never mentioned the font that
     had been sitting beside the scripts, so the one binary in the repository was
@@ -3745,6 +3823,53 @@ def test_only_an_asset_this_tool_stored_is_ever_drawn_as_an_image():
         # answer than the link this would otherwise have made of it.
         assert "<img" not in drawn, source
         assert "(external image)" in drawn or source in str(drawn), source
+
+
+def test_a_drawing_is_drawn_and_a_lookalike_is_not():
+    """The same rule as an asset, asked of the second directory.
+
+    An image is drawn only if it is an asset or a drawing this tool stored.
+    The drawings arm is pinned to `.png` on purpose: `_ASSET_MEDIA` stays the
+    single source for the *asset* format list, and a drawing is one format.
+    """
+    from openproj.model import Task
+    from openproj.render import _body_html
+
+    def _record(body: str) -> Task:
+        return Task(id="task-000001", kind="task", title="t", person_weeks=1, body=body)
+
+    stored = "drawings/draw-a1b2c3.png"
+    assert f'<img src="{stored}"' in _body_html(_record(f"![ok]({stored})"))
+
+    for source in (
+        "drawings/notadrawing.png",      # our directory, not our naming
+        "drawings/draw-a1b2c3.svg",      # our naming, a format we do not store
+        "drawings/draw-a1b2c.png",       # five hex, not six
+        "drawings/draw-a1b2c3d.png",     # seven
+        "drawings/sub/draw-a1b2c3.png",  # our prefix, somebody else's tree
+    ):
+        drawn = _body_html(_record(f"![x]({source})"))
+        assert "<img" not in drawn, source
+
+
+def test_the_deck_still_inlines_a_picture_after_the_prefix_moved():
+    """The failure this guards is silent: a deck that stops inlining does not
+    error, it mails a broken image. Group 1 carrying the directory means the
+    key in the map and the key `_image` looks up must still be the same string.
+    """
+    from openproj.render.markdown import _inlined_assets
+
+    body = "![a](assets/0123456789abcdef.png) and ![b](drawings/draw-a1b2c3.png)"
+    seen: list[str] = []
+
+    def read(path: str) -> bytes | None:
+        seen.append(path)
+        return b"\x89PNG\r\n\x1a\n"
+
+    found = _inlined_assets([body], read)
+    assert seen == ["assets/0123456789abcdef.png", "drawings/draw-a1b2c3.png"]
+    assert set(found) == set(seen)
+    assert all(v.startswith("data:image/png;base64,") for v in found.values())
 
 
 # --------------------------------------------------------------------------- #

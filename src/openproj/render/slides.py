@@ -149,6 +149,9 @@ _SLIDE = """
       end somebody can only find by pressing it, which is the argument that
       already kept a Delete off the create form. -#}
   {% if editable %}
+  {#- No drawings button here either: it is a `FORMATS` entry drawn into
+      `#marks` below, beside the image button. See `detail.py`'s copy of this
+      bar. -#}
   <p class="editbar">{{ slidebar }}
     <span id="views" class="views" role="group" aria-label="How the document is shown">
       <a class="seg" href="{{ links.record }}{{ e.id }}?edit" aria-pressed="false"
@@ -514,7 +517,13 @@ const BASE = document.getElementById('base');
 // than defending against anything: `text` is declared right here, and a guard
 // that can only be false while the code is broken is a guard that hides the
 // break.
-const SURFACE = window.aceSurface && MAY_WRITE ? aceSurface(PROSE, PROSE.value) : null;
+// `bodySurface`, not `aceSurface` called directly: the record page's `SURFACE`
+// is built through `bodySurface` and this one used to call `aceSurface` on its
+// own, so on `?editor=plain` — with no Ace on the page and `window.aceSurface`
+// undefined — `SURFACE` was `null` regardless of `MAY_WRITE`, and every
+// `attach*` call below it (including `attachDrawing`) never ran at all. See
+// the comment over that block.
+const SURFACE = MAY_WRITE ? bodySurface(PROSE) : null;
 const text = () => SURFACE ? SURFACE.text() : PROSE.value;
 
 function state() {
@@ -787,13 +796,32 @@ for (const grip of PANES.querySelectorAll(':scope > .pgrip')) {
   };
 }
 
-// The toolbar, the upload path, the gutter and the status strip — the same four
-// calls the record page makes, in the same order, on the same surface. They come
-// from `controls.py`'s block, which this page now inlines; guarded, because a
-// reader gets no surface and none of them may be called on nothing.
+// The toolbar, the upload path, the drawings menu, the gutter and the status
+// strip — the same five calls the record page makes, in the same order, on
+// the same surface. They come from `controls.py`'s block, which this page now
+// inlines; guarded, because a reader gets no surface and none of them may be
+// called on nothing.
+//
+// **The hole this used to inherit.** `SURFACE` above used to be built by
+// calling `aceSurface(...)` directly rather than through `bodySurface`, so on
+// `?editor=plain` with a writer at the keyboard, `SURFACE` was `null`, this
+// whole block was skipped, and `#drawing` sat in the markup with nothing
+// behind it — the same hole `attachUploads` and `attachEditing` were already
+// sitting in. Fixed at the same time as `attachDrawing` was wired in here,
+// rather than left for a new button to inherit: `render_slide_editor` had no
+// test at all before this, and this block's own coverage is
+// `test_the_plain_slide_editor_draws_a_toolbar_and_a_status_strip` and
+// `test_a_reader_of_the_slide_editor_gets_no_surface_and_no_toolbar` in
+// `tests/test_editor.py`.
 if (SURFACE) {
   attachUploads(SURFACE, document.getElementById('upload'));
-  attachEditing(SURFACE, document.getElementById('marks'));
+  // `false`: a slide is edited on a record that already exists, so there is
+  // always something for a drawing to be embedded in.
+  attachEditing(SURFACE, document.getElementById('marks'), false);
+  // After `attachEditing`, which is what draws the button this wires, and into
+  // `#state` rather than `#upload` — see the record page's own copy of this pair
+  // for both.
+  attachDrawing(SURFACE, document.getElementById('state'));
   attachGutter(SURFACE, document.getElementById('gutter-note'));
   attachStatus(SURFACE, document.getElementById('statusbar'));
 }
@@ -893,8 +921,8 @@ def render_slide_editor(
         + (_ACE_SURFACE if ace else Markup(""))
         # The editor's whole toolkit — the preferences (`EDITOR`, `INDENT`,
         # `KEYMAPS`), the mark toolbar, the uploader, the gutter and the status
-        # strip. Inlined rather than picked apart: the four `attach*` calls this
-        # page makes are the four the record page makes, and taking three
+        # strip. Inlined rather than picked apart: the five `attach*` calls this
+        # page makes are the five the record page makes, and taking three
         # functions out of a block that declares thirty would be a second copy of
         # whichever three, going stale on the commit that changes the first.
         #

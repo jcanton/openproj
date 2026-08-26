@@ -23,9 +23,10 @@ def render_static(
 ) -> tuple[str, ...]:
     """The pages, and the images they name. Returns what it wrote, in order.
 
-    Without the copy an exported plan renders every uploaded figure as a broken
-    image — the markdown points at `assets/…` relative to the page, which is
-    exactly right and exactly useless if the directory is not there.
+    Without the copy an exported plan renders every uploaded figure or drawing
+    as a broken image — the markdown points at `assets/…` or `drawings/…`
+    relative to the page, which is exactly right and exactly useless if the
+    directory is not there.
 
     The names come back rather than being restated by the caller, because they
     already were: the export grew from three pages to six and the CLI went on
@@ -37,9 +38,13 @@ def render_static(
     pointed at is a repository at all — None omits the column.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
-    assets = (repo / "assets") if repo else None
-    if assets and assets.is_dir():
-        shutil.copytree(assets, out_dir / "assets", dirs_exist_ok=True)
+    # Both directories, and by name rather than by "every directory here": the
+    # export writes into a place a person chose, and copying whatever happened
+    # to be beside the plan is not the same promise.
+    for named in ("assets", "drawings"):
+        source = (repo / named) if repo else None
+        if source and source.is_dir():
+            shutil.copytree(source, out_dir / named, dirs_exist_ok=True)
     written: list[str] = []
     for name, html in (
         ("index.html", render_records(index, edited=edited, now=now)),

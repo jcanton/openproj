@@ -10,7 +10,15 @@ from ..index import Index
 from ..model import MAX_BODY_BYTES, Record
 from .env import _fragment
 from .hill import _hill_html
-from .tokens import HISTORY_MARKS, PEOPLE_FIELDS, PRIORITIES, _human, _read_date
+from .tokens import (
+    DRAWING_ART,
+    DRAWING_SIZE_MARKS,
+    HISTORY_MARKS,
+    PEOPLE_FIELDS,
+    PRIORITIES,
+    _human,
+    _read_date,
+)
 
 # The control bar, for every view that filters something. The field list is a
 # parameter because the people page filters by role, kind and status while the
@@ -1030,6 +1038,23 @@ const FORMATS = [
   // whichever of the two they are looking at.
   {label: '![]', title: 'Image  —  size it with {width=60}, a bare number is per cent',
    upload: true},
+  // The drawings button, beside the image button because that is where jcanton
+  // put it — 2026-08-26: "it should live next to the figure button just on top
+  // of the editor and not be visible in preview mode, just in the editing
+  // modes". It was a control of its own in `.editbar` up there with Slide and
+  // the view switcher, on the argument (still true, and still not the point)
+  // that a menu listing what a body embeds is page chrome rather than a mark
+  // that writes at a selection. Placement was the ask, so placement moved: the
+  // conceptual split survives in the branch this takes in `attachEditing`,
+  // which wires nothing and writes nothing — `attachDrawing` owns the press,
+  // exactly as it did when the button was rendered on the server.
+  //
+  // Two things come free with the move and both were part of the ask. The bar
+  // is `.markbar`, which `article.record.view-view .markbar { display: none }`
+  // already withholds from the reading view — so the button is in the editing
+  // modes and out of the preview. And a `.mark` among `.mark`s is styled by the
+  // rules the other sixteen are, rather than by `.editbar`'s segments.
+  {label: '', title: 'Drawings', draw: true},
   // No shortcut on the last three: every letter this page could spare is spoken
   // for, and none of them is something anybody inserts twice a minute.
   // `chooses` is an offset and a length into the inserted text, so the word you
@@ -1045,6 +1070,14 @@ const FORMATS = [
 // it IS markup and nothing of anybody's reaches it — the value is the constant
 // `HISTORY_MARKS` in `render.py`.
 const HISTORY_ART = {{ history_art|tojson }};
+
+// And the drawings button's own, arriving the same way and for the same reason.
+// `tokens.py`'s `DRAWING_ART`, which is where the glyph moved to when the button
+// became a `FORMATS` entry.
+const DRAW_ART = {{ draw_art|tojson }};
+
+// The size toggle's pair, arriving the same way — one shown at a time.
+const DRAW_SIZE_ART = {{ size_art|tojson }};
 
 // The room's undo history, once there is a room wired to this box. Declared here
 // and assigned in `_COEDIT`, which is a separate `<script>` inlined AFTER this
@@ -1953,7 +1986,7 @@ function attachStatus(surface, bar) {
   return {refresh};
 }
 
-function attachEditing(surface, bar) {
+function attachEditing(surface, bar, creating) {
   const area = surface.el;
   // The two history buttons, so their disabled state can be kept honest. Empty
   // on a bar that was never drawn, which is what makes `syncHistory` a no-op on
@@ -2000,6 +2033,38 @@ function attachEditing(surface, bar) {
         // thirteen of fourteen buttons on this bar were once mouse-only.
         button.onmousedown = event => { event.preventDefault(); step(mark.history); };
         button.onclick = event => { if (event.detail === 0) step(mark.history); };
+      } else if (mark.draw) {
+        // The one button in this bar that neither writes markdown nor moves a
+        // stack: it opens the drawings menu, and `attachDrawing` — which runs
+        // AFTER this function, on both pages that call the pair — is what wires
+        // the press. Nothing is bound here.
+        //
+        // Named by CLASS, like `upload` beside it and for the reason written
+        // there: `test_the_toolbar_and_the_keymap_do_not_cancel_each_other`
+        // drives every `.mark` in this bar and asserts each one writes
+        // markdown, so a button that writes none has to be tellable from the
+        // ones that do by something other than the words on it.
+        //
+        // Withheld from the create form, which has no record for a drawing to
+        // belong to yet — the same gate the button carried as a `not creating`
+        // guard in the template while it was rendered on the server, moved here
+        // with it. Slide is absent there on the same grounds. (Written as prose
+        // rather than by quoting the Jinja tag: this file IS a Jinja template,
+        // and the tag quoted inside a JS comment is a tag Jinja opens.)
+        //
+        // A PARAMETER and not the page's own `CREATING`: that `const` is
+        // declared in `detail.py`'s script, which is a different `<script>`
+        // from this one, and the slide editor — the other page that calls this
+        // — declares no such name at all. Reading it from here would be a
+        // `ReferenceError` on one of the two pages, and `typeof` is not the
+        // hatch it looks like: a `const` in its temporal dead zone THROWS on
+        // `typeof`, which is the trap `COEDIT_HISTORY`'s own comment above
+        // already records this file falling into once.
+        if (creating) continue;
+        button.classList.add('draw');
+        button.id = 'drawing';
+        button.innerHTML = DRAW_ART;
+        button.setAttribute('aria-label', mark.title);
       } else if (mark.upload) {
         // Named as what it IS, beside `hist`, and not left to be told apart by
         // its copy. `test_the_toolbar_and_the_keymap_do_not_cancel_each_other`
@@ -2336,6 +2401,632 @@ function attachUploads(surface, status) {
     event.preventDefault();
     area.classList.remove('dropping');
     [...(event.dataTransfer?.files || [])].forEach(send);
+  });
+}
+
+// The drawings this body embeds, in the order it embeds them, each with the
+// span of source that names it. A span, taken from the match itself, and not
+// a search for the id performed afterward: two embeds of one id are ONE row —
+// deduped keeping the first occurrence — but the row's span still has to be
+// THAT occurrence's, not whichever one a later `indexOf(id)` happened to
+// find, because this file's ids, unlike a placeholder token, can legitimately
+// repeat. That is the mistake `attachUploads`'s own `indexOf`, above, does
+// not make, because it only ever has one placeholder to find.
+const DRAWING_SRC =
+  /!\[([^\]]*)\]\((drawings\/(draw-[0-9a-f]{6})\.png)\)/g;
+
+function drawingsIn(text) {
+  const found = [], seen = new Set();
+  for (const m of text.matchAll(DRAWING_SRC)) {
+    if (seen.has(m[3])) continue;
+    seen.add(m[3]);
+    found.push({id: m[3], path: m[2], alt: m[1], from: m.index, to: m.index + m[0].length});
+  }
+  return found;
+}
+
+// Fetched on the first press of the drawing button and cached for the rest of
+// the tab's life — never carried on the page the way Ace is, because 594 KB is
+// a keymap and 5.5 MB is a whole second application that most readers who open
+// a record will never press the button for. A second press costs nothing: the
+// bundle cannot change while this tab has been open.
+let EXCALIDRAW = null;
+
+async function excalidraw(status) {
+  if (EXCALIDRAW) return EXCALIDRAW;
+  // Said here and not left silent: 5.5 MB over even a fast connection is
+  // seconds, and a button that stalls with nothing on screen reads as broken
+  // rather than as working.
+  status.textContent = 'loading the drawing editor…';
+  // `fetch` rejects outright on a dropped connection or an aborted request,
+  // and neither of those is caught here — the caller wraps this call and
+  // tears the popup down with a sentence, the same treatment the other three
+  // fetches in `openDrawing` give a failure. A non-2xx response, though, does
+  // NOT reject: `.text()` on a 404 or 500 resolves with whatever body the
+  // server sent, which this function would otherwise inject as a script — so
+  // `response.ok` is checked here, explicitly, rather than left to surface as
+  // whatever `eval`ing an error page happens to do.
+  const response = await fetch('/static/excalidraw.js');
+  if (!response.ok) throw new Error(`the bundle answered ${response.status}`);
+  const source = await response.text();
+  // An inline script, and not `<script src>`: the policy's `script-src
+  // 'unsafe-inline'` allows a script whose BODY is written in rather than
+  // fetched, and grants no `'self'` that a `src` pointing at the same file
+  // could be refused or allowed by — a `src` attribute here is refused
+  // outright. The fetch that read the bundle's text a line up is
+  // `connect-src 'self'`, which the policy does grant, so fetch-and-inject is
+  // the one door that opens.
+  const tag = document.createElement('script');
+  tag.textContent = source;
+  // The marker `tests/test_editor.py`'s widened script probe looks for: the
+  // one inline script this page ever injects at runtime, named so a future
+  // one the probe was not written for reads as new rather than as this one.
+  tag.dataset.injectedBundle = 'excalidraw';
+  document.head.appendChild(tag);
+  EXCALIDRAW = window.ExcalidrawLib;
+  return EXCALIDRAW;
+}
+
+// Mirrors `MAX_ASSET_BYTES` at web.py:612, and cannot import it: `web.py`
+// imports `render`, so the reverse import would be a cycle. A second literal
+// held together by a test rather than a shared source, the same trade
+// `NO_VALUE` above makes against `index.NO_VALUE` in Python. Checked before
+// the POST, so a drawing over the ceiling is answered with a sentence and the
+// strokes still in the popup, rather than by a 413 that arrives after the
+// bytes — and the work — are already on their way to the server.
+const MAX_DRAWING_BYTES = 2 * 1024 * 1024;
+
+// The popup's chrome: a header carrying Save and Close, and the stage
+// Excalidraw mounts into. Built once per open rather than templated on the
+// page, because it exists for a few minutes of one person's session and
+// every other page that never touches a drawing should not carry its markup.
+function drawPopup(label) {
+  const overlay = document.createElement('div');
+  overlay.className = 'drawpopup';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', label);
+  const box = document.createElement('div');
+  box.className = 'drawbox';
+  const head = document.createElement('div');
+  head.className = 'drawhead';
+  // **Full page, and not the Fullscreen API.** jcanton, 2026-08-26: "can we
+  // have a fullscreen toggle button to make the draw window full screen? or
+  // maybe full page size instead of full screen, so we don't have the browser
+  // going to a different space on mac. whatever is easier". Full page is both
+  // the one he preferred and the easier one — `.drawpopup` is already
+  // `position: fixed; inset: 0`, so the whole viewport is covered and the only
+  // thing between the drawing and the edges is `.drawbox`'s own
+  // `min(96vw, 1100px)` cap. The toggle takes the cap off. Nothing here calls
+  // `requestFullscreen`, so nothing moves the window to another macOS Space and
+  // there is no `fullscreenchange` state to keep this button honest against.
+  //
+  // Two icons and no words, on the left of the bar: "maybe in the [save][close]
+  // bar on top of the draw area but on the left side and with two
+  // expand/contract icons instead of text". `sized` below swaps the drawing and
+  // the name together.
+  //
+  // **Not `aria-pressed`.** A toggle button in the ARIA sense keeps ONE label
+  // and reports its state separately, which is right when the label is a noun
+  // the state qualifies. Here the icon is the whole control and it names the
+  // ACTION — brackets pointing out mean "take the whole page", pointing in mean
+  // "give it back" — so the accessible name has to say the same thing the
+  // drawing does, and a `aria-pressed` beside a name that already changed would
+  // be the state announced twice and disagreeing with itself. Two alternating
+  // actions, said once each.
+  const bigger = document.createElement('button');
+  bigger.type = 'button';
+  bigger.id = 'draw-size';
+  bigger.className = 'grow';
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.id = 'draw-save';
+  save.textContent = 'Save';
+  // Disabled until Excalidraw actually mounts: `save.onclick` reaches into
+  // `api`, which is `null` for as long as the bundle is still loading, and a
+  // press in that window would throw rather than do nothing.
+  save.disabled = true;
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.id = 'draw-close';
+  close.textContent = 'Close';
+  // First in the bar, and `.drawhead .grow`'s `margin-right: auto` is what puts
+  // it against the left edge while Save and Close stay against the right — the
+  // bar is `justify-content: flex-end`, so a plain `order` would have moved all
+  // three. Apart from the two that END the session, because this one only
+  // changes how much room they have.
+  head.append(bigger, save, close);
+  // The question a close attempt over unsaved strokes raises, in place of
+  // Save and Close rather than beside them — built once, here, so it exists
+  // before there is ever anything to ask about. See `openDrawing`'s own
+  // comment for why this is an in-page question and not `confirm()`; the
+  // shape — a sentence, then the two answers — matches `detail.py`'s delete
+  // flow (`detail.py:1941-1962`) on purpose.
+  const ask = document.createElement('div');
+  ask.className = 'drawask';
+  ask.hidden = true;
+  const why = document.createElement('span');
+  why.className = 'asking';
+  why.textContent = 'This drawing has unsaved strokes. Closing throws them away.';
+  const keep = document.createElement('button');
+  keep.type = 'button';
+  keep.className = 'keep';
+  keep.textContent = 'Keep drawing';
+  const discard = document.createElement('button');
+  discard.type = 'button';
+  discard.className = 'discard';
+  discard.textContent = 'Discard';
+  ask.append(why, keep, discard);
+  head.append(ask);
+  const stage = document.createElement('div');
+  stage.className = 'drawstage';
+  box.append(head, stage);
+  overlay.append(box);
+  return {overlay, box, stage, head, bigger, save, close, ask, keep, discard};
+}
+
+// One popup at a time. Nothing stops a second `openproj:draw` firing while the
+// first is still on screen — the menu is still reachable behind it — and two
+// Excalidraw roots stacked on one page is not a state worth reaching just to
+// find out what it does.
+let DRAWING_OPEN = false;
+
+// Mounts the popup for `entry` — a row from `drawingsIn`, or `null` for
+// "+ drawing" — and owns its whole lifecycle: load, fetch, mount, save, close.
+// **Said once.** Every sentence below used to be written to `status` and then
+// passed to `announce` as well, which is what `attachUploads` above still does
+// and is right for it: its strip is `#upload`, and `announce` writes to
+// `#state`, so the two are different cells and the second is the one a screen
+// reader is listening to.
+//
+// This function's `status` IS `#state` now (see `detail.py`'s `attachDrawing`
+// call for why it moved), and it carries `role="status"`, so assigning its
+// `textContent` is already the announcement. Announcing on top of it hit
+// `announce`'s repeat path — same text, so it blanks the cell and restores it on
+// a `setTimeout(0)` to make a live region speak twice — and left the message
+// empty for a tick. `test_a_second_drawing_cannot_be_opened_over_the_first`
+// reads it synchronously after the press and caught exactly that.
+async function openDrawing(surface, status, entry) {
+  // Said rather than left silent: a control that visibly does nothing is
+  // worse than no control at all, the same rule the size ceiling and every
+  // refused save already follow. The menu is still reachable behind an open
+  // popup, so this is not a hypothetical press.
+  if (DRAWING_OPEN) {
+    status.textContent = 'a drawing is already open — close it first';
+    return;
+  }
+  DRAWING_OPEN = true;
+  const button = document.getElementById('drawing');
+  const {overlay, box, stage, head, bigger, save, close, ask, keep, discard} = drawPopup(
+    entry ? `Editing ${entry.id}` : 'A new drawing'
+  );
+  document.body.appendChild(overlay);
+
+  // Which size the popup opens at, remembered the way the theme, the palette and
+  // the table's widths are: somebody who wants the drawing editor big wants it
+  // big every time, and re-pressing this on every open is the kind of small toll
+  // that makes a control feel like an apology. `localStorage` and not
+  // `sessionStorage`, on the same argument — this is a preference, not where a
+  // tab happened to come from.
+  //
+  // Read through `remembered`, so a browser that refuses to store simply always
+  // opens at the smaller size rather than throwing on the way to the canvas.
+  const SIZE = 'openproj:drawing:full';
+  function sized(full) {
+    box.classList.toggle('full', full);
+    // The drawing and the name together, always: the icon shows what the next
+    // press DOES, so at full page it is the contract pair and the words are the
+    // words for going back.
+    bigger.innerHTML = full ? DRAW_SIZE_ART.small : DRAW_SIZE_ART.full;
+    const says = full ? 'Smaller' : 'Full page';
+    bigger.setAttribute('aria-label', says);
+    bigger.title = says;
+  }
+  sized(remembered.get(SIZE) === 'yes');
+  bigger.onclick = () => {
+    const full = !box.classList.contains('full');
+    sized(full);
+    remembered.set(SIZE, full ? 'yes' : 'no');
+    // Excalidraw sizes its canvas from its container and watches it, so the
+    // resize needs no telling — but the keyboard does: the press left focus on
+    // this button, and the point of the press was to draw in the bigger box.
+    if (api) api.focusContainer();
+  };
+
+  let root = null, api = null, etag = null, closed = false, mounted = null;
+
+  // The raw close: unmounts and removes the overlay, no question asked. Every
+  // caller below that already told the person what happened — a fetch that
+  // failed, a response that was refused, a save that just succeeded — calls
+  // THIS directly, because there is nothing of theirs left in the popup to
+  // lose. `closeAttempt`, further down, is the only path that asks first, and
+  // it is the one wired to Close and to Escape.
+  function teardown() {
+    if (closed) return;
+    closed = true;
+    DRAWING_OPEN = false;
+    if (root) root.unmount();
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+    button.focus();
+  }
+
+  // What "unsaved" means, decided on purpose rather than left to
+  // Excalidraw's `onChange`: it fires on mount, on pointer-move, on
+  // selection and on scroll, so a flag set by onChange firing AT ALL would
+  // ask on a popup nobody touched as readily as on ten minutes of real
+  // strokes. A guard that cries wolf trains people to dismiss it on reflex,
+  // and then it is not there the one time it matters — the failure this
+  // whole function exists to prevent, and the one a naive dirty flag would
+  // reintroduce.
+  //
+  // So there is no running flag. A close attempt instead compares the scene
+  // AS IT STANDS against the array Excalidraw was mounted with — by count
+  // first (an element added or removed), then, element by element, on the
+  // fields an actual stroke, drag, resize, restyle or reorder would move:
+  // position, size, angle, the point list a line or freedraw carries, its
+  // text, and the handful of style fields a person can change without moving
+  // anything. Left out on purpose: each element's own `version`/
+  // `versionNonce`/`updated` bookkeeping, which Excalidraw bumps on more than
+  // a content change (normalising on mount, for one) — keying dirt to those
+  // would be exactly the false-positive failure this exists to avoid. Array order is
+  // kept, deliberately: bringing a shape to front or back changes nothing
+  // this list reads, but it is still a real edit and it does move the
+  // element's position in the array `getSceneElements()` returns.
+  function signature(elements) {
+    return elements.map(el => JSON.stringify([
+      el.id, el.type, el.x, el.y, el.width, el.height, el.angle, el.points,
+      el.text, el.fontSize, el.fontFamily, el.strokeColor, el.backgroundColor,
+      el.fillStyle, el.strokeWidth, el.strokeStyle, el.roughness, el.opacity,
+      el.groupIds,
+    ]));
+  }
+  function isDirty() {
+    // Nothing mounted yet — Close pressed while the bundle was still
+    // loading, or while a fetch for an existing drawing was still in
+    // flight. Nothing of the person's is in the popup to lose either way.
+    if (!api) return false;
+    const now = signature(api.getSceneElements());
+    return now.length !== mounted.length || now.some((sig, i) => sig !== mounted[i]);
+  }
+
+  // Shown in place of Save and Close, hidden in place of the question — the
+  // same shape `detail.py`'s delete flow uses for `.confirming`, and the same
+  // reason: an in-page question can say which popup this is (there can only
+  // ever be one, `DRAWING_OPEN` sees to that, but the wording still names the
+  // drawing) and does not stop the CDP harness's own commands the way a
+  // native `confirm()` would.
+  const asking = state => {
+    ask.hidden = !state;
+    save.hidden = state;
+    close.hidden = state;
+    if (state) keep.focus();
+  };
+  // Backing out of the question hands the keyboard back to the drawing, not to
+  // a button that has just been hidden — without this, `document.activeElement`
+  // falls to `<body>` and the next Escape is nobody's.
+  keep.onclick = () => { asking(false); if (api) api.focusContainer(); };
+  discard.onclick = () => teardown();
+
+  // The close a person actually presses: Close, or Escape with no question
+  // already up. Asks once, if there is unsaved work; answering "discard" or
+  // finding nothing dirty goes straight to `teardown`.
+  function closeAttempt() {
+    if (isDirty()) { asking(true); return; }
+    teardown();
+  }
+  function onKey(event) {
+    if (event.key !== 'Escape') return;
+    // **Escape belongs to Excalidraw, except on this popup's own chrome.**
+    //
+    // jcanton, 2026-08-26: "sometimes the excalidraw editor seems to crash and
+    // close without warning". It is not a crash and there is nothing in the
+    // console — it is this listener. Reproduced in headless Chrome: open a
+    // drawing, touch nothing, press Escape once, and the popup is gone. The
+    // guard below never even runs, because `isDirty` is honestly false — an
+    // untouched drawing has nothing to lose — so `closeAttempt` goes straight
+    // to `teardown` and the editor vanishes with no question and no sentence.
+    //
+    // Escape is a key a person presses CONSTANTLY inside Excalidraw: it drops a
+    // selection, leaves a tool, closes Excalidraw's own panels. While the
+    // pointer is in the canvas Excalidraw takes the key itself and this never
+    // fired, which is exactly why it read as random — the popup only died when
+    // focus happened to be somewhere else, which is where it lands after a
+    // click on the dark backdrop, and where it starts out on the drawings
+    // button behind the overlay.
+    //
+    // So: the question first (below), then this. An Escape pressed on Save,
+    // Close, or either answer to the question is somebody addressing the
+    // dialog, and closes it. An Escape pressed anywhere else — in the drawing,
+    // on the backdrop, on the page behind — is not this listener's, and the
+    // popup stays. `activeElement` and not `event.target`: the question is
+    // "where is this person working", and a synthetic event dispatched on
+    // `document` (which is how `tests/test_editor.py` drives every other
+    // two-level Escape in this app) has a target that answers nothing.
+    if (!ask.hidden) { asking(false); return; }
+    if (!head.contains(document.activeElement)) return;
+    // Two levels, matching the delete flow's own Escape (`detail.py:1959-1962`):
+    // with the question up, Escape backs OUT OF THE QUESTION rather than out
+    // of the popup — a single reflexive Escape must not both dismiss the
+    // question and lose the drawing. That branch is above the focus guard on
+    // purpose: the question hides Save and Close and focuses `keep`, so it is
+    // reachable either way, but reading it first says which of the two rules
+    // wins if they ever disagree.
+    //
+    // Still the one `keydown` listener `openDrawing` binds on `document`, and
+    // it still calls neither `stopPropagation` nor `preventDefault`: Excalidraw
+    // sees every Escape this page ever gets, exactly as it did before any of
+    // this existed.
+    closeAttempt();
+  }
+  document.addEventListener('keydown', onKey);
+  close.onclick = closeAttempt;
+
+  // A control that visibly does nothing is worse than no control: this file's
+  // own rule, applied here for the one fetch in `openDrawing` that used to
+  // have no `try`/`catch` at all. Left bare, a dropped connection or a 5xx
+  // on 5.5 MB left the popup reading "loading the drawing editor…" for ever,
+  // `Save` still disabled, and an unhandled rejection wherever `lib` was next
+  // used — the same failure the other three fetches below already tear down
+  // for.
+  let lib;
+  try {
+    lib = await excalidraw(status);
+  } catch (error) {
+    status.textContent = `the drawing editor could not be loaded — ${error.message}`;
+    teardown();
+    return;
+  }
+  if (closed) return; // Close was pressed while the bundle was still loading.
+
+  let initial = {elements: [], appState: {}, files: {}};
+  if (entry) {
+    status.textContent = `opening ${entry.id}…`;
+    let response;
+    try {
+      response = await fetch(`/${entry.path}`);
+    } catch (error) {
+      status.textContent = `${entry.path} could not be opened — ${error.message}`;
+      teardown();
+      return;
+    }
+    if (closed) return;
+    if (!response.ok) {
+      status.textContent = `${entry.path} could not be opened`;
+      teardown();
+      return;
+    }
+    // Load-bearing twice for the price of once, exactly as `docs/drawings.md`
+    // ("Serving") says: the same string is both the cache token this fetch
+    // just revalidated against and the compare-and-swap token the next PUT
+    // sends back as `If-Match`.
+    etag = response.headers.get('etag');
+    const blob = await response.blob();
+    let loaded;
+    try {
+      loaded = await lib.loadSceneOrLibraryFromBlob(blob, null, null);
+    } catch (error) {
+      status.textContent = `${entry.path} does not read back as a drawing — ${error.message}`;
+      teardown();
+      return;
+    }
+    if (loaded.type !== lib.MIME_TYPES.excalidraw) {
+      status.textContent = `${entry.path} is a library file, not a drawing`;
+      teardown();
+      return;
+    }
+    initial = loaded.data;
+  }
+  if (closed) return;
+
+  root = lib.createRoot(stage);
+  root.render(lib.React.createElement(lib.Excalidraw, {
+    initialData: initial,
+    excalidrawAPI: a => { api = a; },
+    // Hidden, not merely left to fail. pica and image-blob-reduce build a
+    // `data:text/javascript;base64` Worker to probe `createImageBitmap` and a
+    // `blob:` Worker to resize, and the policy is `default-src 'none'` with no
+    // `worker-src` and no `blob:` anywhere in it — both constructions are
+    // refused, so inserting a raster image into a drawing WILL fail.
+    // jcanton accepted the gap on 2026-08-26: a control that is not offered,
+    // rather than one that silently does nothing. Do not restore this without
+    // a `worker-src`/`blob:` grant to go with it.
+    UIOptions: {tools: {image: false}},
+    // The keyboard goes into the drawing, which is where somebody who just
+    // opened a drawing editor is going to use it. Two things follow, and both
+    // were bugs without it: Excalidraw's own single-key tool shortcuts (`r`,
+    // `o`, `d`) work from the moment the popup is up rather than after a first
+    // click on the canvas, and Escape is Excalidraw's — see `onKey`, where the
+    // popup used to die on one.
+    //
+    // Focus was on `#drawing` until this, a button now sitting UNDER the
+    // overlay: a modal whose focus is outside itself is one whose Tab walks the
+    // page behind it, which `aria-modal="true"` on the overlay claims is not
+    // there.
+    //
+    // Excalidraw's own prop and not `api.focusContainer()` after the render
+    // call, which was written first and measured doing nothing at all:
+    // `root.render` is React 18's, so it returns before the tree commits and
+    // `api` is still `null` on the next line. `document.activeElement` was
+    // `<body>` and `r` did not pick the rectangle.
+    autoFocus: true,
+  }));
+  // The baseline `isDirty` compares against: `initial.elements` is exactly
+  // what Excalidraw was just told to mount — `[]` for a new drawing,
+  // `loaded.data.elements` for one just fetched — not a second read taken
+  // back off `api`, which would be answering "did mounting change anything"
+  // rather than "did the PERSON change anything".
+  mounted = signature(initial.elements);
+  save.disabled = false;
+  status.textContent = entry ? `editing ${entry.id}` : 'drawing a new picture';
+
+  save.onclick = async () => {
+    const elements = api.getSceneElements();
+    const files = api.getFiles();
+    const blob = await lib.exportToBlob({
+      elements, files, mimeType: 'image/png',
+      appState: {...api.getAppState(), exportEmbedScene: true},
+    });
+    // Checked here, client-side, before the POST: `MAX_ASSET_BYTES` is
+    // checked again on the server, but by then the answer is a 413 and the
+    // strokes are gone. A vector scene is nowhere near this in practice — the
+    // spike measured 5.6% of the ceiling for a 30-element drawing with ten
+    // text labels — so this is a guard against the unusual case, not the
+    // ordinary one.
+    if (blob.size > MAX_DRAWING_BYTES) {
+      status.textContent = `that drawing is ${Math.ceil(blob.size / 1024)} KB; the limit `
+        + `is ${MAX_DRAWING_BYTES / 1024} KB — simplify it, or ask for the ceiling to be raised`;
+      return;
+    }
+    status.textContent = 'saving…';
+    // An upload is a commit like any other, so the shell's banner is told
+    // before it starts and told its sha afterwards — both save paths commit,
+    // a re-save of an existing drawing as much as a new one, and without this
+    // a save announced itself to every tab including this one, landing "The
+    // plan changed." over the very popup that made the change.
+    dispatchEvent(new Event('openproj:writing'));
+    let committed = null;
+    try {
+      const response = entry
+        ? await fetch(`/api/drawing/${entry.id}`, {
+            method: 'PUT',
+            headers: {'content-type': 'image/png', 'if-match': etag},
+            body: blob,
+          })
+        : await fetch('/api/drawing', {
+            method: 'POST', headers: {'content-type': 'image/png'}, body: blob,
+          });
+      const answer = await answerOf(response);
+      if (response.status === 409) {
+        // The loser is refused in one sentence, verbatim, and their strokes
+        // are gone from the file — but not from the screen. The popup stays
+        // open with the drawing still in it: a conflict dialog that also
+        // throws away the work it refused would be the worse of the two
+        // losses, and there is nothing else here that could show it again.
+        status.textContent = refusal(answer, 409);
+        return;
+      }
+      if (!response.ok) {
+        status.textContent = refusal(answer, response.status);
+        return;
+      }
+      committed = answer.commit;
+      if (!entry) {
+        // No splice on a re-save, ever: the path is stable, so the second and
+        // every later save rewrites the same file and the body is not touched
+        // at all — see "Where the bytes live" in `docs/drawings.md`. Only a
+        // brand-new drawing needs a line written for it to be found by, and
+        // it goes in at the caret through `surface.splice`, the same
+        // undo-safe boundary `attachUploads` writes an upload's path through.
+        const {from, to} = surface.caret();
+        surface.splice(from, to, `![](${answer.path})`);
+      } else {
+        etag = `"${answer.etag}"`;
+      }
+      status.textContent = `${answer.path} saved`;
+      // `teardown`, not `closeAttempt`: a save that just succeeded put every
+      // stroke on the server, so there is nothing left for `isDirty` to
+      // protect — asking here would be asking whether to discard work that
+      // is already safe. This is also draw-Save-then-Close's whole answer:
+      // Save already closes the popup on success, so there is no separate
+      // Close press left for a question to interrupt.
+      teardown();
+    } catch (error) {
+      status.textContent = `that drawing was not saved — ${error.message}`;
+    } finally {
+      dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
+    }
+  };
+}
+
+// The drawings button and the menu it opens, and now the popup a press
+// mounts. The button is already in the markup (`.editbar`'s own, not a
+// seventeenth `FORMATS` entry, because a menu is page chrome and not a
+// formatting mark), and nothing outside this function builds the popover,
+// fills it or reads what was pressed in it.
+function attachDrawing(surface, status) {
+  const button = document.getElementById('drawing');
+  // Withheld from a reader the server would refuse a write from, on both pages
+  // that draw it — a page with no button is the ordinary case, not a null this
+  // wiring could walk into.
+  if (!button) return;
+
+  const menu = document.createElement('div');
+  menu.className = 'drawmenu';
+  menu.hidden = true;
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', 'Drawings in this document');
+
+  // Under the button, in the page's coordinates — parked on the body for the
+  // reason every list `park` carries one is: an ancestor with `overflow` would
+  // otherwise clip it, and nothing about this button's home in `.editbar`
+  // promises there is none.
+  function place() {
+    const at = button.getBoundingClientRect();
+    menu.style.left = (at.left + scrollX) + 'px';
+    menu.style.top = (at.bottom + scrollY) + 'px';
+  }
+
+  park(button, menu, () => { if (!menu.hidden) place(); });
+
+  function close() {
+    if (menu.hidden) return;
+    menu.hidden = true;
+    menu.replaceChildren();
+    button.setAttribute('aria-expanded', 'false');
+  }
+
+  // Recomputed every time the menu opens: no stored state, and nothing this
+  // popover owns can drift from a body somebody just finished typing a
+  // drawing's markdown into by hand.
+  function open() {
+    const rows = drawingsIn(surface.text());
+    menu.replaceChildren(...[null, ...rows].map(entry => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.setAttribute('role', 'menuitem');
+      item.textContent = entry ? entry.id : '+ drawing';
+      item.onclick = () => choose(entry);
+      return item;
+    }));
+    menu.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+    place();
+    menu.querySelector('button').focus();
+    announce(rows.length
+      ? `${rows.length} drawing${rows.length === 1 ? '' : 's'} in this document. `
+        + '+ drawing to start another.'
+      : 'No drawings in this document yet. + drawing to start one.');
+  }
+
+  function choose(entry) {
+    close();
+    button.focus();
+    surface.el.dispatchEvent(new CustomEvent('openproj:draw', {detail: entry}));
+  }
+
+  button.setAttribute('aria-haspopup', 'true');
+  button.setAttribute('aria-expanded', 'false');
+  button.onclick = () => (menu.hidden ? open() : close());
+
+  // Anywhere outside the button and the menu itself closes it — `mousedown`,
+  // to match the moment `park`'s other lists close on rather than waiting for
+  // a `click` that a dismissed popover would never get to see.
+  document.addEventListener('mousedown', event => {
+    if (menu.hidden || event.target === button || menu.contains(event.target)) return;
+    close();
+  });
+  menu.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    close();
+    button.focus();
+  });
+
+  // `openDrawing` owns everything from here: the fetch-on-press loader, the
+  // popup, both save paths. `entry` is the row that was pressed, or `null`
+  // for "+ drawing" — the same detail `choose` dispatched above.
+  surface.el.addEventListener('openproj:draw', event => {
+    openDrawing(surface, status, event.detail);
   });
 }
 
@@ -3355,5 +4046,7 @@ def _combobox_html(
               "linkable": [], "live": False}
     )
     return _fragment(
-        _COMBOBOX, suggest=data, max_body_bytes=MAX_BODY_BYTES, history_art=HISTORY_MARKS
+        _COMBOBOX, suggest=data, max_body_bytes=MAX_BODY_BYTES,
+        history_art=HISTORY_MARKS, draw_art=DRAWING_ART,
+        size_art=DRAWING_SIZE_MARKS,
     )

@@ -926,6 +926,15 @@ _DETAIL = """
       goes from the thing furthest from the document (the slide it makes) to the
       document itself, and then to the one control that destroys it. Delete stays
       last on its own merits, which the comment below still gives. -#}
+  {#- Drawings is NOT here. It was, between Slide and the switcher, on the
+      argument that a menu listing what a body embeds is page chrome rather
+      than a formatting mark — the same argument Slide is built on two comments
+      up. jcanton, 2026-08-26: "the excalidraw button should not be up there
+      where you put it: it should live next to the figure button just on top of
+      the editor and not be visible in preview mode, just in the editing
+      modes". So it is a `FORMATS` entry in `controls.py` now, drawn into
+      `#marks` beside the image button, and this bar is back to Slide, the
+      three views and Delete. -#}
   <p class="editbar">{% if not creating %}{{ slidebar }}{% endif %}{{ viewbar }}{%
     if not creating %}
     <button type="button" class="delete">Delete</button>{% endif %}</p>
@@ -1560,7 +1569,36 @@ const TITLED = document.querySelector('.title-field');
 // shared block. Nothing below this line touches `.value` or a selection.
 const SURFACE = bodySurface(BODY);
 attachUploads(SURFACE, document.getElementById('upload'));
-attachEditing(SURFACE, document.getElementById('marks'));
+attachEditing(SURFACE, document.getElementById('marks'), CREATING);
+// **`#state`, not `#upload`.** jcanton, 2026-08-26, with a screenshot of the
+// edit-only view: "it's the 'saved' message, which in side-by-side prints on one
+// line perfectly well but in the normal edit view doesn't. should we move this
+// message higher up in the [save] [reset] saved bar?"
+//
+// `#upload` is a `.markbar` cell sharing a flex line with seventeen toolbar
+// buttons, so it gets whatever width they leave — plenty beside a half-page
+// editor in the split view, four wrapped lines beside the same toolbar in the
+// full-width one, pushing the toolbar row to four times its height. The commit
+// bar has the whole page and one short sentence in it.
+//
+// It was already going there and this only stops it going to two places at
+// once: `announce` writes to `#state` when the page has one (`shell.py`), and
+// every sentence `openDrawing` produces is announced as well as shown. The
+// screenshot has the message twice for exactly that reason — once wrapped in
+// the toolbar, once on one line in the commit bar. Passing `#state` here makes
+// the two the same cell, which is what `announce`'s own repeat path is written
+// to handle.
+//
+// `attachUploads` above keeps `#upload`. Its sentences are shorter, nobody has
+// reported them wrapping, and moving a control's status because a NEIGHBOUR's
+// wrapped is a change made without a measurement behind it.
+//
+// AFTER `attachEditing`, and that order is load-bearing now: the drawings
+// button is a `FORMATS` entry, so it does not exist until the line above has
+// drawn the bar. `attachDrawing` returns on a missing `#drawing` rather than
+// throwing — which is the right answer for the table and the cycle page, and
+// would be a silently dead button here.
+attachDrawing(SURFACE, document.getElementById('state'));
 // A `[` in the document offers the records it could point at, and a word with a
 // slash or a hash in it offers the pull requests. No element of its own: the
 // popup hangs off the body and the caret it sits under is the surface's to

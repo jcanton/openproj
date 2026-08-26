@@ -569,11 +569,11 @@ def test_the_media_type_of_an_asset_is_not_written_down_twice(index: Index):
     what to call it. Written separately, a fifth format added to one and forgotten
     in the other is an image that draws on the site and silently stops travelling
     — which nobody would find until a deck arrived somewhere without it."""
-    from openproj.render import _ASSET_MEDIA, _ASSET_SRC
+    from openproj.render import _ASSET_MEDIA, _EMBED_SRC
 
     for suffix in _ASSET_MEDIA:
-        assert _ASSET_SRC.fullmatch(f"assets/0123456789abcdef{suffix}"), suffix
-    assert not _ASSET_SRC.fullmatch("assets/0123456789abcdef.svg")
+        assert _EMBED_SRC.fullmatch(f"assets/0123456789abcdef{suffix}"), suffix
+    assert not _EMBED_SRC.fullmatch("assets/0123456789abcdef.svg")
 
 
 def test_the_deck_reaches_no_network(index: Index):

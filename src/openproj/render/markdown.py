@@ -117,8 +117,17 @@ _ASSET_MEDIA = {
 }
 # Written as a repository-relative path so the markdown reads the same in git, on
 # GitHub and in the tool; only the prefix in front of it changes.
-_ASSET_SRC = re.compile(
-    r"assets/([0-9a-f]{16}(?:" + "|".join(re.escape(s) for s in _ASSET_MEDIA) + "))"
+#
+# Group 1 carries the DIRECTORY as well as the name, which it did not when there
+# was one directory and every reader could re-add `assets/` by hand. With two
+# there is no prefix to re-add, and a caller that guessed would guess wrong for
+# half the embeds. The drawings arm is pinned to `.png` rather than sharing
+# `_ASSET_MEDIA`'s alternation, so that map stays the single source for the
+# *asset* format list — which is what the comment above it asks for.
+_EMBED_SRC = re.compile(
+    r"((?:assets/[0-9a-f]{16}(?:"
+    + "|".join(re.escape(s) for s in _ASSET_MEDIA)
+    + r")|drawings/draw-[0-9a-f]{6}\.png))"
 )
 
 
@@ -281,15 +290,15 @@ def _image(
         # not. The value reaching here has already been through `_ATTR_SAFE`, so
         # it cannot carry a semicolon, a quote or a second declaration.
         token.attrSet("style", size)
-    asset = _ASSET_SRC.fullmatch(source)
-    if not asset:
+    embed = _EMBED_SRC.fullmatch(source)
+    if not embed:
         alt = self.renderInlineAsText(token.children, options, env) if token.children else ""
         return str(Markup('<a href="{}">{} (external image)</a>').format(source, alt or "image"))
-    # `or` and not an `if`: an asset the reader could not fetch falls back to the
+    # `or` and not an `if`: an embed the reader could not fetch falls back to the
     # path, which is what every other page draws. Missing bytes must cost the
     # picture and not the page.
-    inlined = env.get("assets", {}).get(asset.group(1))
-    token.attrSet("src", inlined or links.asset + asset.group(1))
+    inlined = env.get("assets", {}).get(embed.group(1))
+    token.attrSet("src", inlined or links.repo + embed.group(1))
     return RendererHTML.image(self, tokens, idx, options, env)
 
 
@@ -419,14 +428,16 @@ def _inlined_assets(bodies: Iterable[str], read: Callable[[str], bytes | None]) 
     """
     found: dict[str, str] = {}
     for body in bodies:
-        for name in _ASSET_SRC.findall(body):
-            if name in found:
+        # A path now, not a bare name — group(1) carries the directory, and a
+        # reader who forgot that would build `assets/assets/…` and read nothing.
+        for path in _EMBED_SRC.findall(body):
+            if path in found:
                 continue
-            data = read(name)
+            data = read(path)
             if data is None:
                 continue
-            media = _ASSET_MEDIA["." + name.rsplit(".", 1)[1]]
-            found[name] = f"data:{media};base64,{base64.b64encode(data).decode('ascii')}"
+            media = _ASSET_MEDIA["." + path.rsplit(".", 1)[1]]
+            found[path] = f"data:{media};base64,{base64.b64encode(data).decode('ascii')}"
     return found
 
 
