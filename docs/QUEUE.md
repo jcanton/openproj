@@ -87,6 +87,30 @@ and each says why it is still here.
 
 ## What is still owed
 
+* **The drawing popup may still vanish for a second reason, and it has not been
+  found.** jcanton reported it on 2026-08-26 as "sometimes the excalidraw editor
+  seems to crash and close without warning". One cause was found and fixed the
+  same day — the popup's own Escape closed a clean drawing silently, reproduced
+  in headless Chrome, and `docs/drawings.md` has the whole account under "The
+  popup, and what it asks before it closes". But jcanton then said he thinks he
+  has seen it "even after drawing a couple of lines and without pressing
+  escape", which the Escape fix does not explain: with strokes on the canvas
+  `isDirty` is true, so that path raises the question rather than closing.
+
+  What was ruled out, all measured in headless Chrome on the day: no console
+  error and no CSP violation through a normal session; text, every font family
+  in the picker, and the library panel all leave the popup alive; the
+  `"Liberation Sans": error` in `document.fonts` is the dropped face's sentinel
+  and is silent. What was NOT ruled out, and is where to look next: the popup
+  also tears itself down on a failed bundle fetch, an unreadable PNG, a
+  non-2xx on the drawing, and a scene that will not parse — each with a
+  sentence, but only in the small status strip above the editor, which is easy
+  to miss when the thing you were looking at was a full-screen editor. If it
+  is one of those, the fix is to say it where the popup was rather than to stop
+  closing. Left open at jcanton's word — "let's leave it for now I'll come back
+  to you if I see it happen again" — so this entry exists to make sure the
+  ruled-out list is not re-derived from scratch.
+
 * **Inserting a raster image into a drawing is blocked, on purpose, by the same
   policy that blocks everything else it forbids.** pica and image-blob-reduce,
   which Excalidraw's own image tool uses to resize a pasted photo, each
