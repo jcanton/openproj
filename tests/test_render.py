@@ -6079,11 +6079,21 @@ def test_the_record_page_offers_every_kind_but_the_one_it_is(
     to answer it would be a second copy of `Rung.under` in a template.
     """
     page = server_pages["record"]
-    assert '<button type="button" class="rekind">Change kind</button>' in page
+    # The CHIP is the control — there is no separate link. It is a button
+    # wherever there is a server, and the stylesheet dresses it back down to a
+    # chip until the record is being edited; a control that appeared when you
+    # started editing would move the heading under the pointer.
+    assert re.search(r'<button type="button"\s+class="chip kind-\w+ kindchip">', page), (
+        "the kind chip is not the control that changes it"
+    )
     picker = re.search(r'<select class="becomes">(.*?)</select>', page, re.S)
     assert picker, "the record page has no kind picker"
+    # The blank is what makes CHOOSING fire `change`: without it the first kind
+    # is already selected when the picker opens, and picking it is a no-op the
+    # page cannot tell from having not picked.
+    assert '<option value="" selected>' in picker.group(1), picker.group(1)[:200]
 
-    offered = re.findall(r'value="(\w+)"', picker.group(1))
+    offered = [k for k in re.findall(r'value="(\w*)"', picker.group(1)) if k]
     only = next(iter(seed_index.plan))
     is_now = seed_index.records[only].kind
     assert is_now not in offered, f"the picker offers {is_now}, which it already is"
@@ -6106,5 +6116,6 @@ def test_a_rendered_file_offers_no_way_to_change_a_kind(rendered: Path):
     # substring trap `pages.py` was written about, and it caught this test on its
     # first run. A rule with no markup to match is inert, which is the normal
     # state of half the sheet in an exported file.
-    assert not re.search(r'<button[^>]*class="rekind"', body)
+    assert not re.search(r'class="chip kind-\w+ kindchip"', body)
     assert not re.search(r'<div class="rekinding"', body)
+    assert not re.search(r'<select class="becomes"', body)

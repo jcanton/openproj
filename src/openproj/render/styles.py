@@ -1134,17 +1134,34 @@ textarea.body-field { min-height: var(--writing, 60vh); resize: vertical; }
 .rekinding .reach { margin: 0; font-size: 13px; color: var(--muted); }
 .rekinding .why { margin: 0; font-size: 12px; color: var(--danger); }
 .rekinding .why[hidden] { display: none; }
-.rekinding select.becomes { font: inherit; font-size: 13px; }
-/* The control that opens it, beside the chip it is about. Quiet, because it sits
-   under the heading on every record page and is pressed on almost none of them —
-   the chip is the fact and this is the way to change it. */
-button.rekind {
-  margin-left: .5rem; font: inherit; font-size: 11px;
-  background: none; border: 0; padding: 0; cursor: pointer;
-  color: var(--muted); text-decoration: underline;
+/* The kind the panel is asking about, written in by the script. Bold like the
+   title beside it, because the sentence is about the two of them. */
+.rekinding .into { font-weight: 600; }
+/* **The chip is the control, and it looks like a chip until it is one.**
+   Rendered as a `<button>` wherever there is a server — a control that APPEARED
+   when you started editing would move the heading under the pointer — so
+   everything the browser gives a button is taken back off it here, and the chip
+   rules above dress it exactly as the `<span>` a rendered file draws.
+
+   `font: inherit` and not a font stack: the chip's own size and weight come from
+   `.chip`, and a button that restates them is a second place to change one. */
+button.kindchip {
+  font: inherit; letter-spacing: inherit; text-transform: inherit;
+  cursor: default; -webkit-appearance: none; appearance: none;
 }
-button.rekind:hover { color: var(--accent); }
-button.rekind[hidden] { display: none; }
+/* What it is while the record is being edited, and only then. The pointer and
+   the underline are the whole affordance: the chip is already accented and
+   already bordered, so anything louder would be a new kind of thing on a line
+   that has one thing on it. */
+.record.editing button.kindchip { cursor: pointer; text-decoration: underline;
+                                  text-decoration-style: dotted;
+                                  text-underline-offset: 2px; }
+.record.editing button.kindchip:hover { border-color: var(--accent); }
+button.kindchip[hidden] { display: none; }
+/* The picker that replaces it. Sized to the chip it stands in for rather than to
+   its own longest option, so opening it does not shove the heading sideways. */
+.becomeswrap[hidden] { display: none; }
+.becomeswrap select.becomes { font: inherit; font-size: 11px; }
 
 /* The promotion bar. Hidden while the record is being edited: promoting carries
    the STORED body across, so offering it over a textarea somebody is halfway

@@ -5753,7 +5753,9 @@ def test_a_bulk_write_needs_a_writer_like_every_other_door(secure_client: httpx.
     assert answer.status_code == 401, answer.text
 
 
-def _walked(url: str, profile: Path, steps: list[tuple[str, str]]) -> str:
+def _walked(
+    url: str, profile: Path, steps: list[tuple[str, str]], report: tuple[int, ...] = (),
+):
     """Drive a real browser through a sequence of pages, and report the last answer.
 
     `in_a_live_page` polls ONE expression until it answers, which is the right
@@ -5773,14 +5775,20 @@ def _walked(url: str, profile: Path, steps: list[tuple[str, str]]) -> str:
 
     with _devtools(chrome(), url, profile) as (call, said):
         time.sleep(3)
-        answer = None
+        answers = []
         for expression, seconds in steps:
             try:
-                answer = _evaluated(call, expression, patient=True)
+                answers.append(_evaluated(call, expression, patient=True))
             except Exception:  # noqa: BLE001 - a navigation took the context with it
-                answer = None
+                answers.append(None)
             time.sleep(seconds)
-        return answer, said
+        # One answer by default, which is what a walk that only cares where it
+        # ended wants. `report` names the steps whose answers a caller keeps, in
+        # order, and the last one is always among them — a walk asks its final
+        # question for a reason.
+        if not report:
+            return answers[-1], said
+        return [answers[at] for at in (*report, len(answers) - 1)], said
 
 
 def test_a_deleted_record_sends_a_real_browser_back_where_it_came_from(
@@ -6029,19 +6037,24 @@ def test_a_kind_change_takes_two_closed_vocabularies_and_nothing_else(
 def test_the_kind_control_actually_changes_the_kind_in_a_real_browser(
     live_server: str, tmp_path: Path,
 ):
-    """The panel, the picker and the press, driven end to end.
+    """The chip, the picker and the press, driven end to end — and **measured**,
+    because the first version of this test asked the DOM and shipped a control
+    nobody could see.
 
-    Written because a stale selector shipped past every other test here. The
-    route's own tests were green — it works — and the render test was green: the
-    button and the panel are in the markup. What was broken sat between them: one
-    `querySelector` in the wiring loop still named the class the markup had
-    before it was renamed, so it threw HALFWAY through, after `open.onclick` had
-    been attached and before `going.onclick` was. The panel opened, the picker
-    worked, and pressing Change it did nothing at all — no error, no console
-    line, no navigation.
+    Two failures in a row came through here, and they are two different lessons.
 
-    That is the shape this test exists for: a control that is drawn, is
-    reachable, and is connected to nothing. Only pressing it finds that.
+    The first: one `querySelector` in the wiring loop named the class the markup
+    had before it was renamed, so it threw halfway through — after `onclick` was
+    attached to the opener and before it was attached to the confirm. The panel
+    opened, the picker worked, pressing Change it did nothing. Only pressing the
+    button finds a control that is drawn, reachable and connected to nothing.
+
+    The second, and it is the one this file already had a name for: the picker
+    was inside a `.sr-only` label. `getClientRects()` is empty for it, `width` is
+    one pixel, and `document.querySelector` finds it perfectly well — so a test
+    that asked whether it existed passed while the reader saw "Make Chaff optics
+    ?" with nothing to choose from. If a claim is about pixels, look at the
+    pixels: this asks for a box with real width, and it would have failed.
     """
     made = httpx.post(
         f"{live_server}/api/record",
@@ -6059,22 +6072,62 @@ def test_the_kind_control_actually_changes_the_kind_in_a_real_browser(
     assert made.status_code == 201, made.text
     leaf = made.json()["id"]
 
+    # A raw string: the JS regex below carries `\s`, which Python reads as an
+    # unknown escape and warns about. A warning in a test file is a line
+    # everybody learns to scroll past.
+    seen = r"""(() => {
+      const box = el => el && el.getBoundingClientRect();
+      const chip = document.querySelector('button.kindchip');
+      const picker = document.querySelector('select.becomes');
+      const panel = document.querySelector('.rekinding');
+      return JSON.stringify({
+        chip: !!chip && !chip.hidden && box(chip).width > 0,
+        picker: !!picker && box(picker).width > 0 && box(picker).height > 0,
+        panel: !!panel && !panel.hidden && box(panel).width > 0,
+        asking: panel
+          ? panel.querySelector('.asking').textContent.replace(/\s+/g, ' ').trim()
+          : null,
+      });
+    })()"""
+
     answer, said = _walked(
         f"{live_server}/detail/{leaf}", tmp_path / "kindprofile",
         [
-            ("document.querySelector('button.rekind').click()", 1),
+            # Reading is reading: the chip must not answer a press here.
+            ("document.querySelector('button.kindchip').click()", 1),
+            (seen, 0),
+            # Into the side-by-side view, which is one of the two the chip is
+            # live in — and the one the request named.
+            ("document.getElementById('view-both').click()", 2),
+            ("document.querySelector('button.kindchip').click()", 1),
+            (seen, 0),
             ("""(() => {
                  const picker = document.querySelector('select.becomes');
                  picker.value = 'task';
                  picker.dispatchEvent(new Event('change'));
                  return picker.value;
                })()""", 1),
+            (seen, 0),
             ("document.querySelector('.rekinding button.really').click()", 5),
-            # The new id is the server's, so the claim is the KIND and the fact
-            # that the address moved at all — not a string this test could have
-            # written down in advance.
+            # The new id is the server's, so the claim is the KIND and that the
+            # address moved at all — not a string this test could know in advance.
             ("""location.pathname.startsWith('/detail/task-')
                   + ' ' + document.querySelector('.eyebrow .chip').textContent.trim()""", 0),
         ],
+        report=(1, 4, 6),
     )
-    assert answer == "true Task", (answer, said)
+    reading, opened, asking = answer[0], answer[1], answer[2]
+
+    assert json.loads(reading)["picker"] is False, (
+        "the chip opened the picker on a record nobody is editing"
+    )
+    assert json.loads(opened)["picker"] is True, (
+        f"the picker is not on the screen after pressing the chip: {opened}"
+    )
+    assert json.loads(opened)["chip"] is False, "the chip and its picker are both up"
+
+    confirming = json.loads(asking)
+    assert confirming["panel"] is True, f"choosing a kind asked nothing: {asking}"
+    assert confirming["asking"] == "Make Chaff optics a task?", confirming["asking"]
+
+    assert answer[-1] == "true Task", (answer, said)

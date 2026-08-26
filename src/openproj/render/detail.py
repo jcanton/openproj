@@ -1046,31 +1046,60 @@ _DETAIL = """
       </select>
     </label></p>
   {%- else %}
-  {#- The chip, and — where there is a server to ask — the one control that can
-      change it. Here rather than in the facts list because the kind is what the
-      record IS: it decides which fields the page even offers, so a picker for it
-      belongs beside the name and not among the values it governs. -#}
-  <p class="eyebrow"><span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span>{%
-    if editable %}<button type="button" class="rekind">Change kind</button>{%
-    endif %}</p>
+  {#- **The chip IS the control** — jcanton, 2026-08-26: "instead of a hyperlink
+      it would be better to make the kind chip clickable when in edit or
+      side-by-side mode, and that opens the selector that then pops up the
+      confirmation if changed".
+
+      It replaced a "Change kind" link beside the chip, which was a second thing
+      on the line saying what the first thing was about. A control is identified
+      by what it is: the chip already says the kind, so the chip is where the
+      kind is changed — the same argument the status made when it stopped being
+      a chip beside a hill and became the hill.
+
+      **Only while the record is being edited.** Reading a record is reading, and
+      a chip that looks pressable on a page nobody is editing is an invitation to
+      a write. `.record.editing` is the class the view switcher sets for both the
+      edit view and the side-by-side one, which is exactly the pair asked for.
+
+      Rendered as a `<button>` whenever there is a server, and dressed back down
+      to a chip by the stylesheet until the record is being edited: a control that
+      APPEARS when you start editing would move the heading under the pointer. -#}
+  <p class="eyebrow">{% if editable %}<button type="button"
+    class="chip kind-{{ e.kind }} kindchip">{{ e.kind|human }}</button><label
+    class="becomeswrap" hidden><span class="sr-only">Change this record's kind</span
+    ><select class="becomes">
+      {#- A blank first, selected, so that CHOOSING is what fires `change` —
+          without it the first kind in the list is already chosen the moment the
+          picker opens, and picking it is a no-op the page cannot tell from
+          having not picked at all. Every other kind but the one it is: filtered
+          from the ladder rather than from a list written beside it, so a rung
+          added to `KINDS` is offered without a second edit. Which of them THIS
+          record can become is the server's question — it depends on what it is
+          filed under and what is filed under it, and a page that answered it
+          would be a second copy of `Rung.under` in a template. -#}
+      <option value="" selected>Change kind…</option>{% for k in kinds %}{%
+        if k != e.kind %}<option value="{{ k }}">{{ k|human }}</option>{%
+        endif %}{% endfor %}</select></label>{% else %}<span
+    class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span>{% endif %}</p>
   {%- if editable %}
   {#- Asked before it is done, and it says the expensive part out loud: the id
       carries the kind, so this mints a new record and retires this one. Every
-      other write on this page edits the file in front of you. -#}
-  {#- Classes and not ids, for the reason the delete control's own comment
-      gives: this page can hold every record in the plan at once, and a control
-      resolved by `getElementById` acts on whichever record happens to be first.
-      Everything below is found through the article it belongs to. -#}
+      other write on this page edits the file in front of you.
+
+      The chosen kind is written in here by the script rather than picked in
+      here, which is the fix for the version that shipped: the picker was inside
+      an `.sr-only` label, so the panel drew "Make Chaff optics ?" with nothing
+      to choose from — visually gone, and found perfectly well by every test that
+      asked the DOM for it. The question a confirmation asks has to be a sentence
+      somebody can read.
+
+      Classes and not ids, for the reason the delete control's own comment gives:
+      this page can hold every record in the plan at once, and a control resolved
+      by `getElementById` acts on whichever record happens to be first. -#}
   <div class="rekinding" hidden>
     <p class="asking">Make <strong>{{ e.title }}</strong>
-      <label class="sr-only">a different kind
-      {#- Every kind but the one it already is. Filtered in the template from the
-          ladder itself rather than from a list built beside it, so a rung added
-          to `KINDS` is offered here without a second edit — and the server
-          refuses the ones this particular record cannot become, which is a
-          question about its parent and its children and not about the ladder. -#}
-      <select class="becomes">{% for k in kinds %}{% if k != e.kind %}<option
-        value="{{ k }}">{{ k|human }}</option>{% endif %}{% endfor %}</select></label>?</p>
+      <span class="into"></span>?</p>
     <p class="reach">The id carries the kind, so this makes a NEW record and
       retires <code>{{ e.id }}</code>. Everything filed under it or waiting on it
       is repointed in the same commit; the old id stops resolving.</p>
@@ -1879,48 +1908,80 @@ if (!CREATING) {
 // the second press sends that list back. A confirmation whose text the page
 // wrote itself is a confirmation that can drift from what the server will do.
 for (const article of document.querySelectorAll('article.record')) {
-  const open = article.querySelector('button.rekind');
-  if (!open) continue;
+  const chip = article.querySelector('button.kindchip');
+  if (!chip) continue;
+  const wrap = article.querySelector('.becomeswrap');
+  const picker = article.querySelector('select.becomes');
   const ask = article.querySelector('.rekinding');
+  const into = ask.querySelector('.into');
   const why = ask.querySelector('.why');
   const acts = ask.querySelector('.acts');
   const going = ask.querySelector('button.really');
-  const picker = ask.querySelector('select.becomes');
   // What the server said would be lost, once it has said it. Cleared whenever
   // the question changes, so a confirmation collected for one kind can never be
   // spent on another.
   let losing = null;
 
-  const asking = state => {
-    ask.hidden = !state;
-    open.hidden = state;
+  // Back to the chip. Everything that could be open closes, because there is no
+  // arrangement of the two where both being up says anything.
+  const resting = () => {
+    ask.hidden = true;
+    wrap.hidden = true;
+    chip.hidden = false;
     why.hidden = true;
     acts.hidden = false;
     losing = null;
     going.textContent = 'Change it';
-    if (state) ask.querySelector('button.keep').focus();
+    picker.value = '';
   };
-  open.onclick = () => asking(true);
-  ask.querySelector('button.keep').onclick = () => asking(false);
-  ask.onkeydown = event => { if (event.key === 'Escape') asking(false); };
-  // A different kind is a different question, so an answer given about the last
-  // one is not an answer to this one.
+  resting();
+
+  // The chip is the control, and only while the record is being edited — which
+  // is `.editing`, the class the view switcher sets for the edit view AND the
+  // side-by-side one. Reading a record is reading; a chip that answers a press
+  // on a page nobody is editing is an invitation to a write.
+  chip.onclick = () => {
+    if (!article.classList.contains('editing')) return;
+    chip.hidden = true;
+    wrap.hidden = false;
+    picker.focus();
+  };
+  // Leaving edit mode puts it away. Otherwise the picker outlives the mode that
+  // justified it, and the next reader finds a control the page no longer offers.
+  addEventListener('openproj:editing', () => {
+    if (!article.classList.contains('editing')) resting();
+  });
+
   picker.onchange = () => {
+    if (!picker.value) { resting(); return; }
     losing = null;
     why.hidden = true;
+    acts.hidden = false;
     going.textContent = 'Change it';
+    // The sentence, written from the choice — and from the OPTION rather than
+    // from the value, so the panel says the word the page already drew ("In
+    // progress", not `in_progress`). `human` is the table's and the timeline's;
+    // this page has never had one, and adding a second copy of a map to write
+    // one sentence is how two pages come to disagree about a word.
+    //
+    // The article is computed rather than carried: `_an` is Python's, the five
+    // kinds are the whole vocabulary, and a vowel is a vowel. It exists at all
+    // because "a issue" was on screen for a week the day issues joined the
+    // ladder.
+    const word = picker.selectedOptions[0].textContent.trim();
+    into.textContent = `${/^[aeiou]/i.test(word) ? 'an' : 'a'} ${word.toLowerCase()}`;
+    ask.hidden = false;
+    ask.querySelector('button.keep').focus();
   };
+  ask.querySelector('button.keep').onclick = () => resting();
+  ask.onkeydown = event => { if (event.key === 'Escape') resting(); };
 
   going.onclick = async () => {
     going.disabled = true;
     dispatchEvent(new Event('openproj:writing'));
     let committed = null;
     try {
-      const body = {
-        base_commit: BASE.value,
-        id: article.id,
-        kind: picker.value,
-      };
+      const body = {base_commit: BASE.value, id: article.id, kind: picker.value};
       // Only on the second press, and only the list the server itself sent.
       if (losing) body.drops = losing;
       const response = await fetch('/api/rekind', {
@@ -1937,8 +1998,7 @@ for (const article of document.querySelectorAll('article.record')) {
         // `test_no_write_path_reads_a_key_a_conflict_does_not_carry` exists for:
         // a 409 from the STORE answers with a report and no `detail`, and this
         // 409 is not that one — but a call site that knows the difference is a
-        // call site that will be wrong the day it stops being true. The shell's
-        // formatter is the one place allowed to know.
+        // call site that will be wrong the day it stops being true.
         why.textContent = refusal(answer, response.status);
         going.textContent = 'Change it anyway';
         going.disabled = false;
