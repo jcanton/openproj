@@ -18,6 +18,8 @@ from pages import elements, headings, lit, render_source, selects
 from openproj.index import Index, build_index
 from openproj.model import Config, load_repo
 from openproj.render import (
+    PRIORITIES,
+    PRIORITY_GLYPH,
     ROUTES,
     STATIC,
     STATUS_GLYPH,
@@ -5146,3 +5148,188 @@ def test_a_record_that_is_not_there_is_an_empty_page_and_not_a_KeyError(seed_ind
 
     assert "task-ffffff" not in page
     assert "<article" not in page
+
+
+def _hovered(browser: str, page: str, where: Path, selector: str) -> dict:
+    """Lay a page out, put the real pointer on a row of `selector`, and report.
+
+    `Input.dispatchMouseEvent` and not `element.dispatchEvent`, for the reason
+    `pressed_in` gives about presses: a synthetic event is `isTrusted: false` and
+    runs no default action, so it moves no pointer and sets no `:hover`. A test
+    that dispatched one would report `hovered: false` against a rule that works,
+    or worse — pass while reading the un-hovered state.
+    """
+    import json
+    import shutil
+    import time
+
+    from browser import _devtools, _evaluated
+
+    where.write_text(page)
+    # A fresh profile every time. `_devtools` finds the port by reading
+    # `DevToolsActivePort` out of the profile, so a file left by a previous Chrome
+    # names a port nothing is listening on and the connection is refused before
+    # the page has been asked anything — which reads as "the browser would not
+    # start" rather than as "this directory has been used before". `tmp_path` is
+    # fresh per test, so this only bites a probe run by hand; it is one line.
+    profile = where.parent / f"{where.stem}-profile"
+    shutil.rmtree(profile, ignore_errors=True)
+    with _devtools(browser, where.as_uri(), profile) as (call, _said):
+        time.sleep(2.0)
+        at = _evaluated(call, f"""(() => {{
+          const table = document.querySelector({json.dumps(selector)});
+          if (!table) return null;
+          const rows = [...table.querySelectorAll('tbody tr')]
+            .filter(r => r.getClientRects().length);
+          if (!rows.length) return null;
+          const row = rows[Math.min(2, rows.length - 1)];
+          row.scrollIntoView({{block: 'center'}});
+          const box = row.getBoundingClientRect();
+          return [Math.round(box.left + box.width / 2), Math.round(box.top + box.height / 2)];
+        }})()""")
+        assert at, f"{selector} drew no rows to point at"
+        call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": at[0], "y": at[1]})
+        time.sleep(0.3)
+        return _evaluated(call, f"""(() => {{
+          const row = [...document.querySelectorAll({json.dumps(selector)} + ' tbody tr')]
+            .find(r => r.matches(':hover'));
+          if (!row) return {{hovered: false}};
+          const cells = [...row.children].filter(c => c.getClientRects().length);
+          const wash = c => getComputedStyle(c).backgroundImage;
+          return {{
+            hovered: true,
+            cells: cells.length,
+            washed: cells.filter(c => wash(c) !== 'none').length,
+            grounds: [...new Set(cells.map(c => getComputedStyle(c).backgroundColor))],
+          }};
+        }})()""")
+
+
+# Every table in the app, and the page that draws it. Five, which is the whole
+# reason the rule is in the shell: a rule per table is five chances to draw one
+# idea four different ways.
+_EVERY_TABLE = (
+    # The records list is `index.html`: it is the page the tool opens on, so it
+    # takes the root name. `#records` is the table inside it.
+    ("index.html", "#records"),
+    ("table.html", "#rows"),
+    ("people.html", "#roles"),
+    # The cycle page is the server's and `render_static` never writes it, so it
+    # comes from `server_pages` instead. Two tables, two stylesheets away from
+    # the three above.
+    ("cycle", "table.load"),
+    ("cycle", "#bets"),
+)
+
+
+@pytest.mark.parametrize("page,selector", _EVERY_TABLE)
+def test_the_row_under_the_pointer_is_washed_on_every_table(
+    rendered: Path, server_pages: dict[str, str], page: str, selector: str, tmp_path: Path
+):
+    """jcanton, 2026-08-26: "table rows ... very lightly highlighted with theme
+    colour when hovering over one with the mouse, which makes it easier to see
+    where you are on wide tables".
+
+    Every cell of the row, and that is the assertion rather than a detail. The
+    table's id and title columns are `position: sticky` and paint an opaque
+    background of their own so the rest of the table can pass underneath them, so
+    a colour on the `<tr>` is drawn *under* those two and they are the only cells
+    that do not answer — on the widest table in the app, which is the one this was
+    asked for. `tr.can-hold` learned that already; this is the same lesson kept.
+
+    Five tables and one rule, so all five are asked. `#bets` and `table.load` load
+    a different stylesheet from `#rows`, and `#roles` a third.
+    """
+    from browser import chrome
+
+    source = server_pages["cycle"] if page == "cycle" else read(rendered, page)
+    stem = f"{page.removesuffix('.html')}-{selector.strip('#.')}"
+    got = _hovered(chrome(), source, tmp_path / f"{stem}.html", selector)
+
+    assert got["hovered"], f"{selector} on {page}: the pointer did not land on a row"
+    assert got["cells"], f"{selector} on {page}: the row drew no cells"
+    assert got["washed"] == got["cells"], (
+        f"{selector} on {page}: {got['washed']} of {got['cells']} cells are washed, so the "
+        f"row is highlighted in pieces"
+    )
+
+
+def test_the_wash_does_not_take_away_the_ground_it_is_drawn_over(
+    views: dict[str, str], tmp_path: Path
+):
+    """The wash says "your pointer is here" and nothing about the record. Every
+    other tint on these cells says something *about* the record — a blocker, a
+    dependency being waited on, a value inherited from the work below — and if the
+    wash were a `background-color` it would have to win against them to be seen,
+    which means erasing them: hover a blocked row and the thing the row is telling
+    you goes away exactly while you are pointing at it.
+
+    So it is a `background-image`, a different property, and the cascade never
+    puts the two in competition. What is asserted is that composition and not the
+    colour: the grounds under the pointer are the same strings they were before
+    the pointer arrived.
+
+    Asked of `/table`, because it is the page where a row has grounds worth
+    keeping — the frozen `--surface`, the severity tints, `td.inherited`.
+
+    **The one cell actually under the pointer is exempt, and that is the second
+    half of the claim.** `td.edit:hover` gives an editable cell its own ground, so
+    a reader can tell the cell they are about to open from the ten beside it; a
+    row wash that took THAT away would have replaced a control's affordance with a
+    decoration. So the cell matching `:hover` is expected to change and every
+    other cell in the row is expected not to — which is only checkable in a
+    browser, since both facts are the cascade resolving.
+    """
+    import json
+    import time
+
+    from browser import _devtools, _evaluated, chrome, measured_on_a_phone  # noqa: F401
+
+    where = tmp_path / "grounds.html"
+    where.write_text(views["table"])
+    with _devtools(chrome(), where.as_uri(), tmp_path / "grounds-profile") as (call, _said):
+        time.sleep(2.0)
+        before = _evaluated(call, """(() => {
+          const rows = [...document.querySelectorAll('#rows tbody tr')]
+            .filter(r => r.getClientRects().length);
+          const row = rows[Math.min(2, rows.length - 1)];
+          row.scrollIntoView({block: 'center'});
+          row.dataset.probe = '1';
+          return [...row.children].filter(c => c.getClientRects().length)
+            .map(c => getComputedStyle(c).backgroundColor);
+        })()""")
+        at = _evaluated(call, """(() => {
+          const box = document.querySelector('#rows tr[data-probe]').getBoundingClientRect();
+          return [Math.round(box.left + box.width / 2), Math.round(box.top + box.height / 2)];
+        })()""")
+        call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": at[0], "y": at[1]})
+        time.sleep(0.3)
+        during = _evaluated(call, """(() => {
+          const row = document.querySelector('#rows tr[data-probe]');
+          if (!row.matches(':hover')) return null;
+          return [...row.children].filter(c => c.getClientRects().length).map(c => ({
+            ground: getComputedStyle(c).backgroundColor,
+            wash: getComputedStyle(c).backgroundImage !== 'none',
+            under: c.matches(':hover'),
+          }));
+        })()""")
+
+    assert during is not None, "the pointer did not land on the row it measured"
+    assert all(cell["wash"] for cell in during), (
+        f"only {sum(cell['wash'] for cell in during)} of {len(during)} cells took the wash"
+    )
+    elsewhere = [
+        (was, cell) for was, cell in zip(before, during, strict=True) if not cell["under"]
+    ]
+    assert [cell["ground"] for _, cell in elsewhere] == [was for was, _ in elsewhere], (
+        "the wash took away a ground it was drawn over: "
+        f"{json.dumps(before)} became {json.dumps([c['ground'] for c in during])}"
+    )
+    assert any(cell["under"] for cell in during), (
+        "no cell reported itself under the pointer, so the exemption above proved nothing"
+    )
+    # And the frozen columns are still opaque, or the table scrolls visibly under
+    # them. A fully transparent ground on either is the defect this guards.
+    assert "rgba(0, 0, 0, 0)" not in before[:2], (
+        f"the frozen pair is not opaque: {before[:2]}"
+    )

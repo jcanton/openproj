@@ -351,6 +351,21 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
      Amber rather than red for the same reason — being blocked is normal. */
   --waiting: #fdf0dd;
   --band: #c3d6de;
+  /* Where the pointer is, on a table wide enough to lose your place in.
+     **Translucent, and that is the whole design.** Every other tint here is an
+     opaque colour because it is the cell's ground and stands for something — a
+     blocker, a waiting dependency, a row that can take the one in your hand.
+     This one stands for nothing about the record at all; it says only "your
+     pointer is here", and it has to be able to say that over any of the others
+     without taking their meaning away. So it is a wash rather than a ground, it
+     is the ONE token defined once instead of four times, and the reason it can
+     be is exactly that: a wash over the theme's own ground is right in every
+     theme by construction, where an opaque value would need one per block.
+     Derived from `--accent`, so a base16 scheme that redefines the accent moves
+     this with it — custom properties substitute at use, not here.
+     9%: enough to follow at a glance across fourteen columns, light enough that
+     the chips and the severity grounds under it read unchanged. */
+  --row-hover: color-mix(in srgb, var(--accent) 9%, transparent);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -1569,6 +1584,46 @@ tr.nothing .hint { margin: 0 0 .75rem; }
    div child of #main — the id at (1,0,0) is the only source for every property
    except `[hidden]`'s UA `display: none`, which wins while the attribute is
    present exactly as it should (checked with tests/cascade.py, not assumed). */
+/* **The row under the pointer, on every table in the app.** Here rather than in
+   any one page's sheet because there are five of them — the records list, the
+   table, the people page's roles, the cycle's roster and its betting table — and
+   only this stylesheet is on all five. A rule per table is five chances to draw
+   the same idea four different ways.
+
+   **On the cells and not on the `<tr>`**, which is the same lesson `tr.can-hold`
+   already paid for: the table's two frozen columns paint an opaque background of
+   their own so the rest of the table can pass underneath them, so a colour on
+   the row is drawn *under* the id and the title and those two cells are the ones
+   that do not answer.
+
+   **`background-image` and not `background`, and this is the part worth reading.**
+   A colour would have to WIN against every ground these cells already carry —
+   the frozen `--surface`, `td.sev-cell-blocker`, `td.inherited`, `td.waiting`,
+   `tr.context` — and winning means erasing them: hover a blocked row and the
+   thing the row is telling you goes away exactly while you are pointing at it. A
+   translucent image is a different property, so the cascade never puts the two in
+   competition. Each cell keeps its own `background-color` and takes the wash on
+   top, and because the wash is over an opaque colour the frozen columns stay
+   opaque and nothing shows through them.
+
+   The `#main` is deliberate and it is doing one job: `background:` is a shorthand
+   that also sets `background-image: none`, so every one of those rules is a
+   competing declaration for this property at its own weight —
+   `td[data-col="blocked_by"].waiting` is (0,2,1) and would beat a bare
+   `tbody tr:hover > td` at (0,1,3). With the id this is (1,1,4) and the wash
+   paints on every cell of the row or on none, which is the only version of this
+   that is not a puzzle. Every table in the app is inside `<main id="main">`.
+
+   `@media (hover: hover)` because a touch device has no pointer to follow and
+   keeps the last-tapped `:hover` until something else is tapped — a phone would
+   otherwise be left with one row lit for no reason, which is a highlight that
+   means the opposite of what this one means. */
+@media (hover: hover) {
+  #main tbody tr:hover > td,
+  #main tbody tr:hover > th {
+    background-image: linear-gradient(var(--row-hover), var(--row-hover));
+  }
+}
 #pile { border-left: 3px solid var(--sev-warn); background: var(--sev-warn-soft);
         padding: .6rem .8rem; margin: 0 0 1rem; font-size: 13px; font-weight: 600;
         overflow-wrap: anywhere; }
