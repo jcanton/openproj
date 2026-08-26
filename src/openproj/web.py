@@ -3360,8 +3360,14 @@ def create_app(
         written, blob = await _write_or_refuse(
             store.put_drawing, path, data, base, user.login, f"redraw {path}"
         )
-        if written.outcome != "committed":
-            raise HTTPException(409, written.conflict)
+        # Through `_result`, the house shape every other write route answers
+        # in, and not a bare `HTTPException(409, written.conflict)`: that
+        # serialises as `{"detail": …}`, and the shell's `refusal()` reads
+        # `answer.conflict` on a 409 — so a drawing conflict answered in
+        # `detail` fell through to the generic "somebody changed this first"
+        # instead of the sentence this route means to show.
+        if written.outcome == "conflict":
+            return _result(written, base)
         commit = store.head()
         await announce(commit, [])
         return JSONResponse(
