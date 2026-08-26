@@ -1428,3 +1428,74 @@ def test_a_refused_pull_request_is_not_fatal(tmp_path: Path):
     # Durable regardless: the branch on the REMOTE holds the original commit.
     reference = pygit2.Repository(str(remote_path)).references.get(f"refs/heads/{branch}")
     assert reference is not None and str(reference.target) == ours.commit
+
+
+# --------------------------------------------------------------------------- #
+# A drawing is written by blob id, and never decoded
+#
+# `WriteResult` has no `.committed`; a refusal is `outcome == "conflict"` with
+# the sentence in `.conflict`, the same shape `_verdict` builds for every other
+# write. `put_drawing` compares blob ids and never runs a PNG through `read`.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_drawing_is_written_and_its_blob_id_comes_back(store: Store):
+    png = b"\x89PNG\r\n\x1a\n" + b"first"
+    written, blob = store.put_drawing(
+        "drawings/draw-a1b2c3.png", png, None, "jcanton", "draw draw-a1b2c3"
+    )
+    assert written.outcome == "committed"
+    assert store.read_asset(store.head(), "drawings/draw-a1b2c3.png") == png
+    assert store.blob_id(store.head(), "drawings/draw-a1b2c3.png") == blob
+
+
+def test_creating_a_drawing_over_one_that_exists_is_refused(store: Store):
+    png = b"\x89PNG\r\n\x1a\n"
+    store.put_drawing("drawings/draw-a1b2c3.png", png, None, "jcanton", "draw")
+    written, _ = store.put_drawing(
+        "drawings/draw-a1b2c3.png", png + b"other", None, "jcanton", "draw"
+    )
+    assert written.outcome == "conflict"
+    # The bytes that were there are the bytes that are there.
+    assert store.read_asset(store.head(), "drawings/draw-a1b2c3.png") == png
+
+
+def test_a_drawing_saved_against_a_stale_blob_is_refused_and_says_so(store: Store):
+    """There is no third drawing that is both people's intent, so the refusal
+    is the whole of the answer — the same argument `_merge_body`'s docstring
+    makes about CRDTs, applied to bytes no line merge can touch."""
+    png = b"\x89PNG\r\n\x1a\n"
+    _, first = store.put_drawing("drawings/draw-a1b2c3.png", png, None, "a", "draw")
+    store.put_drawing("drawings/draw-a1b2c3.png", png + b"theirs", first, "b", "draw")
+
+    written, _ = store.put_drawing(
+        "drawings/draw-a1b2c3.png", png + b"mine", first, "a", "draw"
+    )
+    assert written.outcome == "conflict"
+    assert "somebody changed this drawing while you had it open" in written.conflict
+    assert store.read_asset(store.head(), "drawings/draw-a1b2c3.png") == png + b"theirs"
+
+
+def test_saving_a_drawing_unchanged_mints_no_commit(store: Store):
+    """An empty commit on the decision log says a decision was made when none
+    was — the bug `store.py` records being fixed twice already."""
+    png = b"\x89PNG\r\n\x1a\n"
+    _, blob = store.put_drawing("drawings/draw-a1b2c3.png", png, None, "a", "draw")
+    head = store.head()
+
+    written, again = store.put_drawing("drawings/draw-a1b2c3.png", png, blob, "a", "draw")
+    assert written.outcome == "committed"
+    assert again == blob
+    assert store.head() == head
+
+
+def test_a_drawing_never_reaches_the_merge_ladder(store: Store):
+    """A PNG through `write_all` is `AttributeError` today, and that crash is
+    the GOOD outcome: latin-1-decoding it to make the crash go away gets a
+    clean line merge that prepends `---\\n{}\\n---\\n` to the magic number and
+    answers 200 with a real sha. This test is the tripwire on that road."""
+    png = b"\x89PNG\r\n\x1a\n" + b"body"
+    store.put_drawing("drawings/draw-a1b2c3.png", png, None, "a", "draw")
+    stored = store.read_asset(store.head(), "drawings/draw-a1b2c3.png")
+    assert stored is not None and stored.startswith(b"\x89PNG\r\n\x1a\n")
+    assert not stored.startswith(b"---")

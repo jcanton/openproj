@@ -1434,9 +1434,16 @@ class Store:
             except UnicodeDecodeError:
                 # Three genuinely different byte states and at least one is not
                 # text: there is no line merge to run. Content-addressed assets
-                # cannot get here — same bytes are the same path — so this is a
-                # hand-committed binary, and it parks rather than crashing the
-                # pusher's thread.
+                # cannot get here — same bytes are the same path — so this used
+                # to mean a hand-committed binary, and it parks rather than
+                # crashing the pusher's thread.
+                #
+                # And a concurrently-edited drawing is now a ROUTINE way in, not
+                # only a hand-committed file: two people who both saved one drawing
+                # land here. The behaviour is right and the consequence is worth
+                # saying out loud — the whole commit parks to `refs/openproj/
+                # stranded-<sha>` after a 200 has already gone out, and nothing
+                # tells the person who pressed Save.
                 refusals.append(
                     f"{path} — changed on both sides and not text, so there is no merge to run."
                 )
@@ -1650,9 +1657,12 @@ class Store:
         """Store bytes under a name derived from their content, and return it.
 
         Content-addressed, so the same file uploaded twice is the same path and
-        the second upload writes nothing. An asset is never edited, so there is no
-        base to compare against, nothing to merge, and no conflict that can exist
-        — which is why this needs none of `write_all`'s compare-and-swap.
+        the second upload writes nothing. A CONTENT-ADDRESSED asset is never
+        edited, so there is no base to compare against, nothing to merge, and no
+        conflict that can exist — which is why this needs none of `write_all`'s
+        compare-and-swap. That is a property of this directory and not of every
+        binary in the repository: a drawing is mutable and goes through
+        `put_drawing`, which compares blob ids because it has to.
 
         It needs the lock. This once took none, and concurrent with a save on
         the threadpool libgit2 refuses the commit outright with "current tip is
@@ -1694,6 +1704,89 @@ class Store:
         except KeyError:
             return None
         return entry.data if entry.type_str == "blob" else None
+
+    def blob_id(self, commit: str, path: str) -> str | None:
+        """The id of the bytes at this path, as a string, or None.
+
+        Public because a route needs it: it is the ETag a drawing is served
+        with AND the token the next save compares against, which is one string
+        doing both jobs. `read_asset` would answer with the bytes, and the
+        question here is only whether they moved.
+        """
+        found = _blob_at(self._repo, commit, path)
+        return None if found is None else str(found)
+
+    def put_drawing(
+        self, path: str, data: bytes, base_blob: str | None, author: str, message: str
+    ) -> tuple[WriteResult, str]:
+        """One drawing, rewritten in place, compared by blob id and never decoded.
+
+        Not `write_all`, and the reason is not tidiness. `_commit` calls
+        `content.encode("utf-8")` and `read` decodes, so a PNG through that path
+        is an `AttributeError` or a `UnicodeDecodeError` — neither in
+        `WRITE_FAILURES`, so both are unhandled 500s. That is the good outcome.
+        Make those crashes go away by decoding latin-1 first and `_split` sees
+        no `---`, hands the whole binary to `_merge_body`'s LINE merge, and
+        `_merge` returns `f"---\n{front}---\n{body}"`: eleven bytes in front of
+        the PNG magic number, on a clean merge, committed, answered 200 with a
+        real sha, on a branch that cannot be force-pushed.
+
+        Not a flag on `write_all` either. It would touch the signature,
+        `_commit`, `_attempt`'s base/current read pair and `_verdict` — whose
+        own docstring says it was extracted so write-time and replay-time
+        conflict semantics cannot drift, which widening it IS. And the decision
+        is per-path, not per-call: a flag cannot express one commit holding a
+        `.md` and a `.png`.
+
+        `base_blob` is None for a create, and then an existing file is a
+        refusal: check and write are inside one lock, which is the `O_EXCL` the
+        record mint has nowhere and this can afford because the path IS the id.
+
+        Returns the result and the new blob id, which the caller serves as an
+        ETag and the next save hands back as `base_blob`.
+        """
+        with self._writing:
+            # Before anything else, and for `put_asset`'s stated reason: while
+            # the plan is forked no route may answer as though this service can
+            # take work, and the refusal for a drawing has to be the one a save
+            # gets. The pile gate too — an unlanded drawing is a broken image on
+            # every page the moment the instance recycles.
+            self._refuse_forked()
+            self._refuse_swamped()
+            parent = self.head()
+            stored = _blob_at(self._repo, parent, path)
+            if base_blob is None and stored is not None:
+                return (
+                    WriteResult(
+                        commit=None,
+                        outcome="conflict",
+                        conflict=f"{path} — that drawing already exists. This is a bug in "
+                        f"the mint, not something you did.",
+                    ),
+                    str(stored),
+                )
+            if base_blob is not None and str(stored) != base_blob:
+                return (
+                    WriteResult(
+                        commit=None,
+                        outcome="conflict",
+                        conflict=f"{path} — somebody changed this drawing while you had it "
+                        f"open, and a drawing has no merge. Reopen it.",
+                    ),
+                    "" if stored is None else str(stored),
+                )
+            blob = self._repo.create_blob(data)
+            if blob == stored:
+                # Required, not optional. `store.py` records the same bug being
+                # fixed twice: an empty commit on the decision log says a
+                # decision was made when none was. A drawing saved with nothing
+                # changed is the commonest way to make one.
+                return WriteResult(commit=parent, outcome="committed", pushed=False), str(blob)
+            tree = self._insert(self._repo, self._tree(parent), path.split("/"), blob)
+            who = pygit2.Signature(author, f"{author}@users.noreply.github.com")
+            self._repo.create_commit(_BRANCH, who, _BOT, message, tree, [parent])
+            written = self._finish(self.head(), "committed")
+        return written, str(blob)
 
     def write(
         self, path: str, content: str, base_commit: str, author: str, message: str
