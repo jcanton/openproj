@@ -1722,6 +1722,12 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
         const menu = document.querySelector('.drawmenu');
         menu.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
         const closedByEscape = menu.hidden;
+        // What `hidden` actually did to the box, which the attribute above
+        // cannot say. See the assertion for the bug this caught.
+        const closedBox = (r => [Math.round(r.width), Math.round(r.height)])(
+          menu.getBoundingClientRect()
+        );
+        const closedDisplay = getComputedStyle(menu).display;
         const focusedAfterEscape = document.activeElement === button;
 
         // A second press of the button while its own menu is open closes it —
@@ -1768,7 +1774,8 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
         document.querySelector('.drawmenu button').click();
 
         return {namedForReaders, marks: inMarks.length, beside, markStyled, inTheMarkBar,
-                shownInPreview, shownWhileEditing, openRows, expandedOpen,
+                shownInPreview, shownWhileEditing, closedBox, closedDisplay,
+                openRows, expandedOpen,
                 closedByEscape, focusedAfterEscape,
                 openBeforeSecondPress, closedBySecondPress, expandedAfterSecondPress,
                 openAfterOwnMousedown, openAfterInsideMousedown, closedByOutsideMousedown,
@@ -1804,6 +1811,21 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
         "from the preview, it is just gone"
     )
     assert got["closedByEscape"], "Escape did not close the menu"
+    # And that closing it took the BOX away, not only the attribute. jcanton,
+    # 2026-08-26: "the dropdown menu doesn't completely disappear sometimes".
+    # The UA stylesheet's `[hidden] { display: none }` loses to any author rule
+    # that sets `display`, on cascade origin and regardless of specificity, and
+    # `.drawmenu` sets `display: flex` — so `menu.hidden = true` changed nothing
+    # about layout. What hid it well enough to ship is the `replaceChildren()`
+    # on the same line: an emptied menu collapses to its own padding and border,
+    # which measured 162x10 and is the thin bar in the screenshot. Asserted on
+    # the used pixels, because every cheaper question — the attribute, the class
+    # — was already true while the bar was on screen.
+    assert got["closedBox"] == [0, 0], (
+        f"the closed menu still lays out a {got['closedBox'][0]}x{got['closedBox'][1]} box "
+        f"(display: {got['closedDisplay']}) — `[hidden]` needs a rule of its own here, the "
+        "same one `.drawhead .drawask[hidden]` already carries"
+    )
     assert got["focusedAfterEscape"], "Escape closed the menu but did not give the button back"
     assert got["openBeforeSecondPress"], "the first of the pair did not even open it"
     assert got["closedBySecondPress"], "a second press over an open menu did not close it"
@@ -8134,6 +8156,71 @@ def test_the_fetch_and_inject_delivery_is_clean_under_the_real_policy(
     )
 
 
+def test_the_rooms_own_commit_does_not_reload_the_page_under_the_person_in_it(
+    live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
+    tmp_path: Path,
+):
+    """jcanton, 2026-08-26: "I drew three shapes in a new drawing and the window
+    simply closed. I didn't touch escape nor any other key, nor did I click
+    outside the drawing window. I think the page gets auto-reloaded when this
+    happens!"
+
+    It was auto-reloading, and nothing about it was specific to drawings — a
+    drawing popup is simply the only thing on this page holding unsaved state
+    that a reload can take, which is why this is what finally made it visible.
+
+    `saving` in `_COEDIT` is the shell's writing/wrote pairing, and it is set by
+    the room's `t: 'saving'` frame — which `web.py`'s `_commit_room` BROADCASTS
+    to every member, including for the commit the quiet window makes that nobody
+    pressed. The `saved` branch then read `const mine = saving` to decide whether
+    to `location.reload()`, so "the tab that pressed Save" was every tab in the
+    room, and the room's own twenty-second commit (`coedit.QUIET_SECONDS`)
+    reloaded all of them.
+
+    Driven the way it happens rather than by poking the flag: put something in
+    the body, open a drawing, draw in it, and then do what a person drawing
+    does — stop typing. The sentinel is a `window` property, so it cannot
+    survive a navigation however the navigation came about, and it is the
+    assertion rather than the popup, which could vanish for its own reasons.
+
+    Slow on purpose. The quiet window is the thing under test and it is twenty
+    real seconds; a version of this that reached in and shortened it would be
+    asserting against a timer this application does not ship.
+    """
+    url = f"{live_server}/detail/{TASK}?both"
+    with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
+        time.sleep(3)
+        assert _evaluated(call, "!!document.querySelector('.ace_editor')"), (
+            "this has to be the room, and the room is the editor a person gets by "
+            "default — on `?editor=plain` there is no socket and nothing to test"
+        )
+        _evaluated(call, "window.__sentinel = 'alive'")
+
+        # Something for the room to commit. Without it the quiet window has
+        # nothing pending and never fires, which is why an earlier version of
+        # this walk sat happily through thirty seconds and proved nothing.
+        _evaluated(call, "SURFACE.splice(0, 0, 'a change nobody saved\\n')")
+        time.sleep(1)
+
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelector('.drawmenu button').click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-rectangle\"]').click()")
+        _drag(call, *FIRST_SHAPE)
+
+        # Past `coedit.QUIET_SECONDS`, with the person doing nothing at all.
+        time.sleep(26)
+
+        alive = _evaluated(call, "window.__sentinel || 'GONE'", patient=True)
+        assert alive == "alive", (
+            "the page navigated while somebody was drawing in it — the room's own "
+            "commit reloaded the tab, and every unsaved stroke went with it"
+        )
+        assert _evaluated(call, "!!document.querySelector('.drawpopup')"), (
+            "the page survived but the drawing popup did not"
+        )
+
+
 def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
     live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
     tmp_path: Path,
@@ -8156,7 +8243,7 @@ def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
        else, because the whole point of a stable path is that the body never
        has to be found and edited again.
     """
-    url = f"{live_server}/detail/{TASK}?editor=plain"
+    url = f"{live_server}/detail/{TASK}?both"
     with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
         time.sleep(2)
         _evaluated(call, "document.getElementById('drawing').click()")
@@ -8169,14 +8256,14 @@ def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
         _drag(call, *SECOND_SHAPE)
         time.sleep(0.2)
 
-        original_body = _evaluated(call, "document.querySelector('[name=body]').value")
+        original_body = _evaluated(call, "SURFACE.text()")
         assert "drawings/draw-" not in original_body, "the body already named a drawing"
 
         _evaluated(call, "document.getElementById('draw-save').click()")
         assert _until(call, "!document.querySelector('.drawpopup')"), (
             "the popup did not close itself after a successful save"
         )
-        after_create = _evaluated(call, "document.querySelector('[name=body]').value")
+        after_create = _evaluated(call, "SURFACE.text()")
         match = re.search(r"draw-[0-9a-f]{6}", after_create)
         assert match, f"no drawing id landed in the body: {after_create!r}"
         drawing_id = match.group(0)
@@ -8220,13 +8307,13 @@ def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
         _drag(call, *THIRD_SHAPE)
         time.sleep(0.2)
 
-        before_resave = _evaluated(call, "document.querySelector('[name=body]').value")
+        before_resave = _evaluated(call, "SURFACE.text()")
         _evaluated(call, "document.getElementById('draw-save').click()")
         assert _until(
             call,
             f"document.getElementById('upload').textContent === 'drawings/{drawing_id}.png saved'",
         )
-        after_resave = _evaluated(call, "document.querySelector('[name=body]').value")
+        after_resave = _evaluated(call, "SURFACE.text()")
         assert after_resave == before_resave, (
             "a re-save touched the markdown — the whole reason a drawing lives at a "
             "stable path is that this never has to happen"
@@ -8262,7 +8349,7 @@ def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(
     its etag) and the moment Save is pressed against it — the same window a
     second tab or a second person would occupy.
     """
-    url = f"{live_server}/detail/{TASK}?editor=plain"
+    url = f"{live_server}/detail/{TASK}?both"
     with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
         time.sleep(2)
         _evaluated(call, "document.getElementById('drawing').click()")
@@ -8274,7 +8361,7 @@ def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(
         _evaluated(call, "document.getElementById('draw-save').click()")
         assert _until(call, "!document.querySelector('.drawpopup')")
 
-        body = _evaluated(call, "document.querySelector('[name=body]').value")
+        body = _evaluated(call, "SURFACE.text()")
         drawing_id = re.search(r"draw-[0-9a-f]{6}", body).group(0)
 
         call("Page.enable")
@@ -8300,7 +8387,7 @@ def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(
         _evaluated(call, "document.querySelector('[data-testid=\"toolbar-ellipse\"]').click()")
         _drag(call, *SECOND_SHAPE)
         time.sleep(0.2)
-        before = _evaluated(call, "document.querySelector('[name=body]').value")
+        before = _evaluated(call, "SURFACE.text()")
         _evaluated(call, "document.getElementById('draw-save').click()")
 
         expected = (
@@ -8313,7 +8400,7 @@ def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(
         assert _evaluated(call, "!!document.querySelector('.drawpopup')"), (
             "the popup closed on a refusal — the strokes in it went with it"
         )
-        after = _evaluated(call, "document.querySelector('[name=body]').value")
+        after = _evaluated(call, "SURFACE.text()")
         assert after == before, "a refused save still touched the markdown"
 
 
@@ -8339,7 +8426,7 @@ def test_closing_unsaved_strokes_asks_first_and_keep_drawing_preserves_them(
        has to read as identical to itself, or every reader who opens a
        drawing to look at it gets asked a question that means nothing.
     """
-    url = f"{live_server}/detail/{TASK}?editor=plain"
+    url = f"{live_server}/detail/{TASK}?both"
     with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
         time.sleep(2)
         _evaluated(call, "document.getElementById('drawing').click()")
@@ -8375,7 +8462,7 @@ def test_closing_unsaved_strokes_asks_first_and_keep_drawing_preserves_them(
         assert _until(call, "!document.querySelector('.drawpopup')"), (
             "keep drawing left the popup unable to save cleanly afterward"
         )
-        body = _evaluated(call, "document.querySelector('[name=body]').value")
+        body = _evaluated(call, "SURFACE.text()")
         match = re.search(r"draw-[0-9a-f]{6}", body)
         assert match, f"no drawing id landed in the body: {body!r}"
         drawing_id = match.group(0)
@@ -8437,7 +8524,7 @@ def test_escape_backs_out_of_the_question_and_discard_throws_the_drawing_away(
     under the overlay, or after a click on the dark backdrop. Both are one
     keystroke from where a person actually is.
     """
-    url = f"{live_server}/detail/{TASK}?editor=plain"
+    url = f"{live_server}/detail/{TASK}?both"
     with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
         time.sleep(2)
         _evaluated(call, "document.getElementById('drawing').click()")
@@ -8541,7 +8628,7 @@ def test_escape_backs_out_of_the_question_and_discard_throws_the_drawing_away(
         assert _evaluated(call, "!document.querySelector('.drawpopup')"), (
             "Discard left the popup on screen"
         )
-        body = _evaluated(call, "document.querySelector('[name=body]').value")
+        body = _evaluated(call, "SURFACE.text()")
         assert "drawings/draw-" not in body, (
             "a discarded drawing still left an embed in the body — nothing was ever posted "
             "for one to reference"

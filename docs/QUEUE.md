@@ -87,29 +87,36 @@ and each says why it is still here.
 
 ## What is still owed
 
-* **The drawing popup may still vanish for a second reason, and it has not been
-  found.** jcanton reported it on 2026-08-26 as "sometimes the excalidraw editor
-  seems to crash and close without warning". One cause was found and fixed the
-  same day — the popup's own Escape closed a clean drawing silently, reproduced
-  in headless Chrome, and `docs/drawings.md` has the whole account under "The
-  popup, and what it asks before it closes". But jcanton then said he thinks he
-  has seen it "even after drawing a couple of lines and without pressing
-  escape", which the Escape fix does not explain: with strokes on the canvas
-  `isDirty` is true, so that path raises the question rather than closing.
+* **Found: the room's own commit was reloading the page.** Kept because the
+  hunt is the expensive half. jcanton reported the drawing popup vanishing on
+  2026-08-26; the first cause found was the popup's own Escape, fixed the same
+  day, and he then said he had seen it "even after drawing a couple of lines and
+  without pressing escape", which that fix does not explain.
 
-  What was ruled out, all measured in headless Chrome on the day: no console
-  error and no CSP violation through a normal session; text, every font family
-  in the picker, and the library panel all leave the popup alive; the
-  `"Liberation Sans": error` in `document.fonts` is the dropped face's sentinel
-  and is silent. What was NOT ruled out, and is where to look next: the popup
-  also tears itself down on a failed bundle fetch, an unreadable PNG, a
-  non-2xx on the drawing, and a scene that will not parse — each with a
-  sentence, but only in the small status strip above the editor, which is easy
-  to miss when the thing you were looking at was a full-screen editor. If it
-  is one of those, the fix is to say it where the popup was rather than to stop
-  closing. Left open at jcanton's word — "let's leave it for now I'll come back
-  to you if I see it happen again" — so this entry exists to make sure the
-  ruled-out list is not re-derived from scratch.
+  It was `location.reload()`, and nothing about it was specific to drawings.
+  `saving` in `_COEDIT` is the shell's writing/wrote pairing and is set by the
+  room's `t: 'saving'` frame, which `web.py`'s `_commit_room` BROADCASTS to
+  every member — including for the commit the quiet window makes that nobody
+  pressed. The `saved` branch read `const mine = saving` to decide whether to
+  reload, so "the tab that pressed Save" was every tab in the room, and the
+  room's own twenty-second commit (`coedit.QUIET_SECONDS`) reloaded all of them.
+  A drawing popup is simply the only thing on that page holding unsaved state a
+  reload can take, which is why a drawing is what finally made it visible; the
+  same reload has been taking the read view out from under everybody else in
+  every room since the room shipped.
+
+  Fixed by giving "this tab pressed Save" a flag of its own, which is what the
+  reload branch's comment already claimed the code did.
+  `test_the_rooms_own_commit_does_not_reload_the_page_under_the_person_in_it`
+  fails without it. **The lesson worth keeping: every drawing test was written
+  against `?editor=plain`**, so no test in this repository had a room in it and
+  the whole class was invisible. They are on `?both` now — jcanton, 2026-08-26:
+  "you should use the ace editor by default in your tests from now on".
+
+  Still open, and much smaller: pressing Save with a drawing popup open reloads
+  the page and takes the strokes, because the record's own save path ends in
+  `location.reload()` by design. Self-inflicted rather than spontaneous, and
+  nobody has hit it.
 
 * **Inserting a raster image into a drawing is blocked, on purpose, by the same
   policy that blocks everything else it forbids.** pica and image-blob-reduce,

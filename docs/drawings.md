@@ -458,6 +458,51 @@ leaves its focus on a button underneath itself. That was `api.focusContainer()` 
 `root.render(...)` first, and it was measured doing nothing at all: `root.render` is React
 18's, so it returns before the tree commits and `api` is still `null` on the next line.
 
+## The page reloaded, and it was never the drawing
+
+jcanton, 2026-08-26, after the Escape fix: "I drew three shapes in a new drawing and the
+window simply closed. I didn't touch escape nor any other key, nor did I click outside the
+drawing window. I think the page gets auto-reloaded when this happens!" He was right, and
+the cause is not in this feature at all.
+
+`saving` in `_COEDIT` is the shell's writing/wrote pairing, and it is set by the room's
+`t: 'saving'` frame — which `web.py`'s `_commit_room` BROADCASTS to every member of the
+room, including for the commit the quiet window makes that nobody pressed. The `saved`
+branch then read `const mine = saving` to decide whether to `location.reload()`. So "the
+tab that pressed Save" was every tab in the room, and the room's own commit after twenty
+seconds of quiet (`coedit.QUIET_SECONDS`) reloaded all of them.
+
+Reproduced against a live server: put anything in the body, open a drawing, draw in it,
+and then do what a person drawing does — stop typing. Twenty seconds later the page
+navigates. A drawing popup is simply the only thing on that page holding unsaved state a
+reload can take, which is why a drawing is what made a bug that has been there since the
+room shipped finally visible.
+
+Fixed in `editor.py` by giving "this tab pressed Save" a flag of its own (`asked`), which
+is what the reload branch's own comment already claimed the code did:
+"Only the tab that asked: everybody else in the room is still typing, and a commit
+somebody else made is not a reason to reload the page in front of you."
+
+**Every drawing test was written against `?editor=plain`**, which has no socket and no
+room, so nothing in this repository had a room in it and the whole class was invisible.
+They drive `?both` now — the editor a person actually gets. jcanton, same day: "you should
+use the ace editor by default in your tests from now on."
+
+## The menu that did not quite go away
+
+Same day: "the dropdown menu doesn't completely disappear sometimes". `close()` sets
+`menu.hidden = true` and empties it, and the UA stylesheet's `[hidden] { display: none }`
+loses to any author rule that sets `display` — on cascade origin, regardless of
+specificity. `.drawmenu` sets `display: flex`, so the attribute changed nothing about
+whether the box was laid out; what made it look like it mostly worked is the
+`replaceChildren()` on the same line, which collapses the menu to its own padding and
+border. Measured in Chrome at 1200px: 162x71 open, **162x10 closed** — the thin bordered
+bar under the button in jcanton's screenshot.
+
+`.drawmenu[hidden] { display: none; }`, written out explicitly, exactly as
+`.drawhead .drawask[hidden]` beside it already had to be. The trap was already documented
+in this stylesheet and this rule was written without it anyway.
+
 ## The spike, which came first
 
 No openproj code was written until a throwaway spike answered the questions the CSP

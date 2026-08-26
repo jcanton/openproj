@@ -935,6 +935,19 @@ article.record .editbar { margin-bottom: .4rem; }
 .drawmenu button:hover, .drawmenu button:focus-visible {
   background: var(--accent); color: var(--on-accent); outline: none;
 }
+/* `[hidden]` written out explicitly, exactly as `.drawhead .drawask[hidden]`
+   below has to be — and missed here, which jcanton reported on 2026-08-26 as
+   "the dropdown menu doesn't completely disappear sometimes".
+
+   The UA stylesheet's `[hidden] { display: none }` loses to ANY author rule
+   that sets `display`, on cascade origin alone and regardless of specificity.
+   `.drawmenu` sets `display: flex`, so `close()` setting `menu.hidden = true`
+   changed nothing about whether the box was laid out. What made it look like it
+   mostly worked is the `replaceChildren()` on the same line: an emptied menu
+   collapses to its own padding and border and no more. Measured in Chrome at
+   1200px — open 162x71, closed 162x10 — which is the thin bordered bar under
+   the button in jcanton's screenshot, not a rendering artefact. */
+.drawmenu[hidden] { display: none; }
 /* The popup `openDrawing` mounts Excalidraw into. `position: fixed; inset: 0`
    over the whole page rather than parked beside the button the way
    `.drawmenu` is: a menu is a few words under where you pressed, and an
