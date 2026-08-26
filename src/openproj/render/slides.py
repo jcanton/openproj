@@ -917,8 +917,8 @@ def render_slide_editor(
         + (_ACE_SURFACE if ace else Markup(""))
         # The editor's whole toolkit — the preferences (`EDITOR`, `INDENT`,
         # `KEYMAPS`), the mark toolbar, the uploader, the gutter and the status
-        # strip. Inlined rather than picked apart: the four `attach*` calls this
-        # page makes are the four the record page makes, and taking three
+        # strip. Inlined rather than picked apart: the five `attach*` calls this
+        # page makes are the five the record page makes, and taking three
         # functions out of a block that declares thirty would be a second copy of
         # whichever three, going stale on the commit that changes the first.
         #

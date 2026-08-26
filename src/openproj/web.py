@@ -272,7 +272,7 @@ def _refusal(error: Exception) -> HTTPException:
 async def _write_or_refuse(write, /, *args, **kwargs):
     """Run one store write off the event loop, and answer rather than crash.
 
-    The narrow waist every HTTP write already had: each of the seven routes ends
+    The narrow waist every HTTP write already had: each of the ten routes ends
     in exactly one `asyncio.to_thread(store.…)` call, so wrapping that call is
     the whole of the write path and nothing else. Kept as a function rather than
     an `@app.exception_handler`, because `WRITE_FAILURES` is true of a *write*
@@ -281,9 +281,10 @@ async def _write_or_refuse(write, /, *args, **kwargs):
     as though it were.
 
     `test_no_write_route_escapes_the_refusal` (`tests/test_web.py`) reads this
-    file as syntax and holds the shape — every `store.write`, `store.write_all`
-    and `store.put_asset` outside `_commit_room` is the first argument here — so
-    the eighth write route cannot be added without it.
+    file as syntax and holds the shape — every `store.write`, `store.write_all`,
+    `store.put_asset`, `store.put_drawing` and `store.remove` outside
+    `_commit_room` is the first argument here — so a write route added outside
+    this shape goes unnoticed rather than refused.
     """
     try:
         return await asyncio.to_thread(write, *args, **kwargs)
