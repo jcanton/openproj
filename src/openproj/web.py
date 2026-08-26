@@ -17,8 +17,9 @@ regex before anything is concatenated, and the directory comes from its prefix.
 `<directory>/<id>.md` for every rung of the ladder — issues and notes included,
 through the one pattern `KINDS` derives — is the shape of it, and every path
 added since is admitted the same way and by nothing else: `cycles/<n>.md` by a
-number, `assets/<sha>` by the hash of the bytes, and `people/<login>.md` by
-`model.LOGIN_PATTERN` (see `PUT /api/icon`). No route takes a path, a directory
+number, `assets/<sha>` by the hash of the bytes, `people/<login>.md` by
+`model.LOGIN_PATTERN` (see `PUT /api/icon`), and `drawings/<drawing id>.png` by
+`DRAWING_PATTERN`. No route takes a path, a directory
 or a file name from a request — `POST /api/promote` writes two files and takes
 neither of their names, because a record id and a kind decide both. This matters
 more than usual because branch protection means a bad write cannot be
@@ -618,6 +619,15 @@ IMAGE_TYPES = {
     "image/webp": ".webp",
 }
 ASSET_PATTERN = re.compile(r"^[0-9a-f]{16}\.(png|jpg|gif|webp)$")
+
+DRAWING_DIR = "drawings"
+DRAWING_SUFFIX = ".png"
+# A drawing is named by its id alone. Kept separate from `ID_PATTERN` for the
+# reason `CYCLE_PATTERN` gives below it: the record id pattern is what keeps the
+# writable surface closed by construction, and widening it to admit a fifth
+# shape is how that property gets lost by degrees. `\A`/`\Z` and not `^`/`$`,
+# which admit a trailing newline.
+DRAWING_PATTERN = re.compile(r"\Adraw-[0-9a-f]{6}\Z")
 
 _DEV_SECRETS = {"", "dev-secret", "change-me", "secret"}
 
@@ -3219,6 +3229,103 @@ def create_app(
             # The name IS the hash of the contents, so this bytes-for-bytes
             # cannot change under a cache.
             headers={"cache-control": "public, max-age=31536000, immutable"},
+        )
+
+    def _drawing_path(name: str) -> str:
+        stem, _, suffix = name.rpartition(".")
+        if not DRAWING_PATTERN.match(stem) or f".{suffix}" != DRAWING_SUFFIX:
+            raise HTTPException(404, "no such drawing")
+        return f"{DRAWING_DIR}/{name}"
+
+    async def _drawing_body(request: Request) -> bytes:
+        """The bytes of a drawing, checked the way `/api/asset` checks an
+        upload, through a narrower door. `IMAGE_TYPES` is untouched — a
+        drawing is `image/png` alone, because that is the one format
+        Excalidraw exports to this route — and the byte ceiling is
+        `MAX_ASSET_BYTES` again rather than a second number that could drift
+        from it. The signature check exists because the content-type header
+        is what the client claims, not what the bytes are.
+        """
+        kind = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if kind != "image/png":
+            raise HTTPException(415, "a drawing is a PNG")
+        data = await request.body()
+        if len(data) > MAX_ASSET_BYTES:
+            raise HTTPException(
+                413, f"that drawing is {len(data) // 1024} KB; the limit is "
+                     f"{MAX_ASSET_BYTES // 1024} KB"
+            )
+        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise HTTPException(422, "that is not a PNG")
+        return data
+
+    @app.get("/drawings/{name}")
+    def drawing(name: str, request: Request) -> Response:
+        path = _drawing_path(name)
+        head = store.head()
+        blob = store.blob_id(head, path)
+        if blob is None:
+            raise HTTPException(404, "no such drawing")
+        tag = f'"{blob}"'
+        if request.headers.get("if-none-match") == tag:
+            return Response(status_code=304, headers={"etag": tag, "cache-control": "no-cache"})
+        data = store.read_asset(head, path)
+        if data is None:
+            raise HTTPException(404, "no such drawing")
+        return Response(
+            data,
+            media_type="image/png",
+            # NOT `immutable`. The asset route earns that header by the name
+            # being the hash of the contents, and a drawing's name is its id —
+            # the bytes under it change. `no-cache` means revalidate, not do
+            # not store, and the ETag turns the revalidation into a 304
+            # whenever the drawing has not moved.
+            headers={"etag": tag, "cache-control": "no-cache"},
+        )
+
+    @app.post("/api/drawing")
+    async def draw(request: Request) -> JSONResponse:
+        user = writer(request)
+        data = await _drawing_body(request)
+        # The mint, here and never from the client, for the reason `/api/record`
+        # gives: an id supplied by a browser is a path supplied by a browser
+        # once it becomes `drawings/<id>.png`. Retried, because unlike a record
+        # this CAN check — the path is the id, so there is no `<id>--<slug>`
+        # ambiguity, and `put_drawing` does the check under the same lock it
+        # writes in. At a thousand drawings the birthday bound is about 3%.
+        for _ in range(8):
+            drawing_id = f"draw-{secrets.token_hex(3)}"
+            path = f"{DRAWING_DIR}/{drawing_id}{DRAWING_SUFFIX}"
+            written, blob = await _write_or_refuse(
+                store.put_drawing, path, data, None, user.login, f"draw {path}"
+            )
+            if written.outcome == "committed":
+                commit = store.head()
+                await announce(commit, [])
+                return JSONResponse(
+                    {"id": drawing_id, "path": path, "etag": blob, "commit": commit}
+                )
+        raise HTTPException(500, "could not mint a drawing id")
+
+    @app.put("/api/drawing/{drawing_id}")
+    async def redraw(drawing_id: str, request: Request) -> JSONResponse:
+        user = writer(request)
+        if not DRAWING_PATTERN.match(drawing_id):
+            raise HTTPException(404, "no such drawing")
+        base = request.headers.get("if-match", "").strip('"')
+        if not base:
+            raise HTTPException(428, "say which version of the drawing you started from")
+        data = await _drawing_body(request)
+        path = f"{DRAWING_DIR}/{drawing_id}{DRAWING_SUFFIX}"
+        written, blob = await _write_or_refuse(
+            store.put_drawing, path, data, base, user.login, f"redraw {path}"
+        )
+        if written.outcome != "committed":
+            raise HTTPException(409, written.conflict)
+        commit = store.head()
+        await announce(commit, [])
+        return JSONResponse(
+            {"id": drawing_id, "path": path, "etag": blob, "commit": commit}
         )
 
     @app.post("/api/record")
