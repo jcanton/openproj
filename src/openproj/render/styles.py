@@ -1148,6 +1148,16 @@ textarea.body-field { min-height: var(--writing, 60vh); resize: vertical; }
 button.kindchip {
   font: inherit; letter-spacing: inherit; text-transform: inherit;
   cursor: default; -webkit-appearance: none; appearance: none;
+  /* **3px, which is the app's corner and not the chip's 2px.** Every control on
+     every page shares one rectangle — `test_every_control_on_every_page_is_drawn
+     _the_same` measures it in a browser precisely because a rule that named the
+     controls somebody thought of reached none of the ones they did not. This is
+     a control, so it owes the app its corner.
+
+     The pixel it costs is invisible and the alternative was not: excusing it by
+     name is the shape that census exists to refuse, and giving every chip 3px to
+     match would move a shape on six pages to settle an argument about one. */
+  border-radius: 3px;
 }
 /* What it is while the record is being edited, and only then. The pointer and
    the underline are the whole affordance: the chip is already accented and

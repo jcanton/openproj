@@ -1080,8 +1080,15 @@ _DETAIL = """
           would be a second copy of `Rung.under` in a template. -#}
       <option value="" selected>Change kind…</option>{% for k in kinds %}{%
         if k != e.kind %}<option value="{{ k }}">{{ k|human }}</option>{%
-        endif %}{% endfor %}</select></label>{% else %}<span
-    class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span>{% endif %}</p>
+        endif %}{% endfor %}</select></label>{%
+    else %}{#- The start tag stays on ONE line, and it matters: a rendered
+        file's chip is asserted verbatim by
+        `test_the_detail_page_wears_the_same_chips_every_other_view_wears`, and
+        a newline inside a start tag is a newline in the bytes. The `-#}` below
+        eats the gap between this comment and the span, so the two of them are
+        adjacent in the output without the tag having to share a line with
+        anything. -#}<span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span>{%
+    endif %}</p>
   {%- if editable %}
   {#- Asked before it is done, and it says the expensive part out loud: the id
       carries the kind, so this mints a new record and retires this one. Every
