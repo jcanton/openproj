@@ -622,6 +622,32 @@ function treeHtml(rungs) {
     each.map(one => `<span class="rung ${one}"></span>`).join('') + '</span>';
 }
 
+// **The cells a bulk edit will write, as record ids and one column.**
+//
+// **Declared here, above `cell()`, and the position is load-bearing.** `const`
+// is not hoisted, `cell()` reads `PICKED` on every draw, and `draw()` runs while
+// this script is still being evaluated. Written further down — beside the
+// functions that use them, which is where they were first put — the very first
+// draw threw a ReferenceError out of the temporal dead zone: the table drew
+// nothing at all, on every load, with one console line as the only symptom, and
+// six unrelated browser tests failed saying "the page reported nothing".
+//
+// Ids and not elements, for the reason `AT` is a row id and a column: `draw()`
+// replaces every cell after every save, so an element held here is detached by
+// the time anything reads it. `cell()` puts the class back from this set on the
+// way past.
+//
+// ONE column, and that is the safety model rather than a convenience. A
+// selection that could span columns is a selection that can write a status into
+// an appetite, and the gesture that would do it — dragging across a row — is the
+// one people make by accident. Picking a cell in a different column REPLACES the
+// selection, so the wrong thing is not reachable at all.
+const PICKED = new Set();
+let PICKED_FIELD = null;
+// Where a shift range measures from: the last cell picked without shift, which
+// is what every list in every file manager means by an anchor.
+let PICKED_FROM = null;
+
 function cell(row, key, place) {
   const mark = (MARKS[row.id] || {})[key];
   const note = mark ? mark.messages.join(' · ') : '';
@@ -683,6 +709,11 @@ function cell(row, key, place) {
     // rebuilt from the index after every write, and a blocker that has just been
     // marked done takes its ground with it.
     key === 'blocked_by' && row.blocked_by > 0 ? 'waiting' : '',
+    // In the selection a bulk edit will write. Read from `PICKED` at draw time
+    // rather than kept on the element, because `draw()` replaces every cell in
+    // the table after every save — a class put on a node is gone the next time
+    // anything happens, which is exactly when a selection has to survive.
+    PICKED.has(row.id) && key === PICKED_FIELD ? 'picked' : '',
     ground,
   ].filter(Boolean).join(' ');
   const named = (FIELD_LABELS[key] || key).toLowerCase();
@@ -1240,6 +1271,142 @@ function askFor(cell, status, fields) {
   };
 }
 
+// jcanton, 2026-08-26: "would it be possible to edit the same cell in multiple
+// rows by something like ctrl/shift+click".
+// Declared at the top of this script, above `cell()` — see the note there.
+
+function unpick(redraw) {
+  if (!PICKED.size && !PICKED_FIELD) return;
+  PICKED.clear();
+  PICKED_FIELD = null;
+  PICKED_FROM = null;
+  if (redraw !== false) draw();
+}
+
+// The ids of the rows on screen, in the order they are drawn — which is the
+// order a shift range means. Read off the DOM and not off `DATA`, because the
+// table is sorted and filtered in the browser and a range is what the reader can
+// see between the two cells they clicked.
+function pickableRows() {
+  return [...tbody.querySelectorAll('tr[data-id]')]
+    .map(row => row.dataset.id)
+    .filter(id => id !== DRAFT_ID);
+}
+
+function pick(cell, extend) {
+  const field = cell.dataset.field;
+  const id = cell.dataset.record;
+  if (!field || !id) return;
+  // A different column is a different question, so the old answer goes.
+  if (PICKED_FIELD !== field) {
+    PICKED.clear();
+    PICKED_FIELD = field;
+    PICKED_FROM = null;
+  }
+  if (extend && PICKED_FROM) {
+    const rows = pickableRows();
+    const from = rows.indexOf(PICKED_FROM);
+    const to = rows.indexOf(id);
+    if (from !== -1 && to !== -1) {
+      for (const between of rows.slice(Math.min(from, to), Math.max(from, to) + 1))
+        PICKED.add(between);
+      draw();
+      sayPicked();
+      return;
+    }
+  }
+  // Toggling, so the same gesture takes a cell back out — a selection you can
+  // only add to is a selection you have to start again.
+  if (PICKED.has(id)) PICKED.delete(id);
+  else PICKED.add(id);
+  PICKED_FROM = id;
+  if (!PICKED.size) PICKED_FIELD = null;
+  draw();
+  sayPicked();
+}
+
+// Said out loud, because the marks on the cells are the only other thing that
+// says it and a reader who is not looking at the screen has nothing. The column
+// is named as well as counted: "3 cells" is true of a selection in any of
+// fourteen columns and useless in all of them.
+function sayPicked() {
+  if (!PICKED.size) { announce('Selection cleared'); return; }
+  const named = (FIELD_LABELS[PICKED_FIELD] || PICKED_FIELD).toLowerCase();
+  announce(PICKED.size === 1
+    ? `1 ${named} cell selected`
+    : `${PICKED.size} ${named} cells selected — editing one writes all of them`);
+}
+
+// **One field, every selected record, one commit.** `PATCH /api/records` and not
+// a loop over the singular route: the second call in a loop is written against
+// the commit the first one made, so a conflict halfway leaves half the selection
+// written on a protected branch with no way to say which half.
+async function saveCells(cell, value) {
+  const field = cell.dataset.field;
+  const ids = pickableRows().filter(id => PICKED.has(id));
+  const box = document.getElementById('row-conflict');
+  box.hidden = true;
+  box.textContent = '';
+  let coerced;
+  try {
+    coerced = coerce(EDITABLE[field], value);
+  } catch (error) {
+    announce(`${field} ${error.message}`);
+    return;
+  }
+  // The status gate, asked of every row before any of them is written. One row
+  // that cannot be `ready` without an assignee refuses the whole edit and says
+  // which rows they are — the singular route ASKS, through `askFor`, and asking
+  // here would be one panel per row over a gesture whose whole point is doing it
+  // once. Naming them is what lets somebody fix them and try again.
+  if (field === 'status') {
+    const short = ids.filter(id => missingFor(DATA.rows[id] || {}, coerced).length);
+    if (short.length) {
+      box.hidden = false;
+      box.textContent = short.length === ids.length
+        ? `None of these can be ${human(coerced)} yet: ${short.join(', ')}. `
+          + 'Each needs a field it has not got.'
+        : `${short.join(', ')} cannot be ${human(coerced)} yet, so nothing was written. `
+          + 'Fix those rows, or take them out of the selection.';
+      return;
+    }
+  }
+  dispatchEvent(new Event('openproj:writing'));
+  let committed = null;
+  try {
+    const response = await fetch('/api/records', {
+      method: 'PATCH', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({base_commit: BASE.value, ids, fields: {[field]: coerced}}),
+    });
+    const answer = await answerOf(response);
+    if (response.status === 409) {
+      box.hidden = false;
+      box.textContent = refusal(answer, 409);
+      return;
+    }
+    if (!response.ok) {
+      announce(refusal(answer, response.status));
+      return;
+    }
+    committed = answer.commit;
+    BASE.value = answer.commit;
+    for (const id of ids) {
+      markSaved(answer, id);
+      Object.assign(DATA.rows[id], {[field]: coerced});
+    }
+    announce(`${ids.length} ${(FIELD_LABELS[field] || field).toLowerCase()} `
+      + `cell${ids.length === 1 ? '' : 's'} saved in one commit`);
+    // The selection has done its job. Leaving it up invites a second bulk write
+    // nobody meant, from a gesture as small as opening the next cell.
+    unpick(false);
+    draw();
+    await refreshProblems();
+    draw();
+  } finally {
+    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
+  }
+}
+
 async function saveCell(cell, value, extra) {
   const field = cell.dataset.field;
   const box = document.getElementById('row-conflict');
@@ -1414,6 +1581,13 @@ function openEditor(cell) {
     // created yet, which is a change to a variable and not to the repository.
     // Same editor, same key handling, one branch at the end of it.
     if (abandoned || input.value === was) draw();
+    // A selection of more than one takes the whole selection, and only when the
+    // cell being closed is IN it: opening some other cell while a selection is up
+    // is an ordinary single edit, and treating it as a bulk one would write a
+    // column somebody never touched.
+    else if (cell.dataset.record && PICKED.size > 1
+             && PICKED_FIELD === cell.dataset.field && PICKED.has(cell.dataset.record))
+      saveCells(cell, input.value);
     else if (cell.dataset.record) saveCell(cell, input.value);
     else stage(field, input.value);
   };
@@ -2371,6 +2545,35 @@ if (EDITABLE) {
     openEditor(cell);
   });
 
+  // **Picking cells for a bulk edit.** cmd on a Mac and ctrl everywhere else —
+  // `metaKey || ctrlKey`, which is what every list on either platform means, and
+  // asking the platform instead would be a second thing to get wrong.
+  //
+  // On `click` and not on `mousedown`, so a modifier-drag across cells selects
+  // text the way it always has. And `preventDefault` on the press, because
+  // cmd-click already means something to the browser on a link and shift-click
+  // means "extend the text selection" everywhere — a range picked with shift
+  // would otherwise arrive with half the table highlighted behind it.
+  tbody.addEventListener('mousedown', event => {
+    if ((event.metaKey || event.ctrlKey || event.shiftKey)
+        && event.target.closest('td.edit')) event.preventDefault();
+  });
+  tbody.addEventListener('click', event => {
+    const cell = event.target.closest('td.edit');
+    if (event.metaKey || event.ctrlKey) {
+      if (cell) { event.preventDefault(); pick(cell, false); }
+      return;
+    }
+    if (event.shiftKey) {
+      if (cell) { event.preventDefault(); pick(cell, true); }
+      return;
+    }
+    // Any plain click anywhere in the table puts the selection down. A selection
+    // that survives an ordinary click is a selection somebody has forgotten
+    // about, and the next cell they open writes six records.
+    if (PICKED.size) unpick();
+  });
+
   tbody.addEventListener('keydown', event => {
     // Escape abandons the row nobody has created yet, from anywhere inside it.
     // The two controls it has are marks rather than words, and a person who
@@ -2484,6 +2687,15 @@ tbody.addEventListener('click', event => {
 // `why` is a parameter and not only the cell's own: a row refusing to hold
 // another one is the same event — a cell answering instead of acting — and the
 // sentence belongs to the pair rather than to the cell.
+// Escape with nothing open puts the selection down, which is what Escape means
+// everywhere else on this page — it closes an editor, it abandons a draft row,
+// and it cancels a move. A selection is the fourth thing it can be holding.
+addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || !PICKED.size) return;
+  if (tbody.querySelector('td.edit input, td.edit select')) return;
+  unpick();
+});
+
 function refuse(cell, why) {
   announce(why || cell.dataset.why);
   cell.classList.add('refused');
@@ -3329,6 +3541,22 @@ td.sev-cell-warn { background: var(--sev-warn-soft); }
    otherwise was a 12px hint at the top of the page. */
 td.edit { cursor: cell; }
 td.edit:hover { background: var(--surface-2); box-shadow: inset 0 -1px 0 var(--line-strong); }
+/* A cell a bulk edit will write. An inset ring and not a ground, for the reason
+   the row wash in the shell is not a ground either: these cells already carry
+   `td.sev-cell-blocker`, `td.inherited` and the rest, and a selection that
+   erased them would hide the thing you are selecting *because of*.
+   `inset` so it is drawn inside a collapsed table's borders — an outset shadow
+   on a cell in a collapsed table is not a dimmer line, it is no line, which this
+   table has already shipped once on its frozen edge.
+   `--accent` because it is the same "you did this" colour as the focus ring and
+   the chosen facet, and a selection is exactly that. */
+td.picked { box-shadow: inset 0 0 0 2px var(--accent); }
+/* The pointer's own hover shadow would replace the ring on the one cell you are
+   about to open — the two are the same property. Both, so the cell under the
+   pointer still says it is editable and still says it is selected. */
+td.picked.edit:hover {
+  box-shadow: inset 0 0 0 2px var(--accent), inset 0 -1px 0 var(--line-strong);
+}
 td.refused { background: var(--surface-2); }
 /* A value this record did not name: its reviewers, taken from the work filed
    under it. A ground rather than an italic or a bracket, because the cell is a

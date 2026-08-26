@@ -18,6 +18,8 @@ from pages import elements, headings, lit, render_source, selects
 from openproj.index import Index, build_index
 from openproj.model import Config, load_repo
 from openproj.render import (
+    PRIORITIES,
+    PRIORITY_GLYPH,
     ROUTES,
     STATIC,
     STATUS_GLYPH,
@@ -5701,3 +5703,325 @@ def test_a_table_with_no_fit_of_its_own_scrolls_rather_than_wraps(
                 f"wrapping something rather than by having room"
             )
     assert seen >= 4, f"only {seen} unfitted tables were measured, and there are four"
+
+# **Which pointer the reader has, said at launch.** The wash is inside
+# `@media (hover: hover)`, and what headless Chrome answers there depends on the
+# host: this laptop reports `hover` and CI's Linux reports `none`. So a test that
+# took the default asserted one thing here and its opposite there — the worst
+# shape a test can have, because the machine that gates the merge disagreed with
+# the machine the change was written on about a rule correct on both.
+#
+# `Emulation.setEmulatedMedia` cannot say it, and that is measured rather than
+# assumed: forcing `hover: none` through it left `matchMedia('(hover: hover)')`
+# answering true. It carries `prefers-*` and the media type and ignores this
+# feature outright. `--blink-settings` is what the engine reads.
+#
+# 2 is HOVER_HOVER and 4 is POINTER_FINE; 1 is "none" for both, which is what a
+# phone is. Both are here because the query has two sides and only asking one of
+# them would leave the wash free to paint on a touch screen.
+_A_MOUSE = (
+    "--blink-settings=primaryHoverType=2,availableHoverTypes=2,"
+    "primaryPointerType=4,availablePointerTypes=4",
+)
+_A_TOUCHSCREEN = (
+    "--blink-settings=primaryHoverType=1,availableHoverTypes=1,"
+    "primaryPointerType=1,availablePointerTypes=1",
+)
+
+
+def _hovered(
+    browser: str, page: str, where: Path, selector: str,
+    flags: tuple[str, ...] = _A_MOUSE,
+) -> dict:
+    """Lay a page out, put the real pointer on a row of `selector`, and report.
+
+    `Input.dispatchMouseEvent` and not `element.dispatchEvent`, for the reason
+    `pressed_in` gives about presses: a synthetic event is `isTrusted: false` and
+    runs no default action, so it moves no pointer and sets no `:hover`. A test
+    that dispatched one would report `hovered: false` against a rule that works,
+    or worse — pass while reading the un-hovered state.
+    """
+    import json
+    import shutil
+    import time
+
+    from browser import _devtools, _evaluated
+
+    where.write_text(page)
+    # A fresh profile every time. `_devtools` finds the port by reading
+    # `DevToolsActivePort` out of the profile, so a file left by a previous Chrome
+    # names a port nothing is listening on and the connection is refused before
+    # the page has been asked anything — which reads as "the browser would not
+    # start" rather than as "this directory has been used before". `tmp_path` is
+    # fresh per test, so this only bites a probe run by hand; it is one line.
+    profile = where.parent / f"{where.stem}-profile"
+    shutil.rmtree(profile, ignore_errors=True)
+    with _devtools(browser, where.as_uri(), profile, flags) as (call, _said):
+        time.sleep(2.0)
+        at = _evaluated(call, f"""(() => {{
+          const table = document.querySelector({json.dumps(selector)});
+          if (!table) return null;
+          const rows = [...table.querySelectorAll('tbody tr')]
+            .filter(r => r.getClientRects().length);
+          if (!rows.length) return null;
+          const row = rows[Math.min(2, rows.length - 1)];
+          row.scrollIntoView({{block: 'center'}});
+          const box = row.getBoundingClientRect();
+          return [Math.round(box.left + box.width / 2), Math.round(box.top + box.height / 2)];
+        }})()""")
+        assert at, f"{selector} drew no rows to point at"
+        call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": at[0], "y": at[1]})
+        time.sleep(0.3)
+        return _evaluated(call, f"""(() => {{
+          const row = [...document.querySelectorAll({json.dumps(selector)} + ' tbody tr')]
+            .find(r => r.matches(':hover'));
+          if (!row) return {{hovered: false}};
+          const cells = [...row.children].filter(c => c.getClientRects().length);
+          const wash = c => getComputedStyle(c).backgroundImage;
+          return {{
+            hovered: true,
+            cells: cells.length,
+            washed: cells.filter(c => wash(c) !== 'none').length,
+            grounds: [...new Set(cells.map(c => getComputedStyle(c).backgroundColor))],
+          }};
+        }})()""")
+
+
+# Every table in the app, and the page that draws it. Five, which is the whole
+# reason the rule is in the shell: a rule per table is five chances to draw one
+# idea four different ways.
+_EVERY_TABLE = (
+    # The records list is `index.html`: it is the page the tool opens on, so it
+    # takes the root name. `#records` is the table inside it.
+    ("index.html", "#records"),
+    ("table.html", "#rows"),
+    ("people.html", "#roles"),
+    # The cycle page is the server's and `render_static` never writes it, so it
+    # comes from `server_pages` instead. Two tables, two stylesheets away from
+    # the three above.
+    ("cycle", "table.load"),
+    ("cycle", "#bets"),
+)
+
+
+@pytest.mark.parametrize("page,selector", _EVERY_TABLE)
+def test_the_row_under_the_pointer_is_washed_on_every_table(
+    rendered: Path, server_pages: dict[str, str], page: str, selector: str, tmp_path: Path
+):
+    """jcanton, 2026-08-26: "table rows ... very lightly highlighted with theme
+    colour when hovering over one with the mouse, which makes it easier to see
+    where you are on wide tables".
+
+    Every cell of the row, and that is the assertion rather than a detail. The
+    table's id and title columns are `position: sticky` and paint an opaque
+    background of their own so the rest of the table can pass underneath them, so
+    a colour on the `<tr>` is drawn *under* those two and they are the only cells
+    that do not answer — on the widest table in the app, which is the one this was
+    asked for. `tr.can-hold` learned that already; this is the same lesson kept.
+
+    Five tables and one rule, so all five are asked. `#bets` and `table.load` load
+    a different stylesheet from `#rows`, and `#roles` a third.
+    """
+    from browser import chrome
+
+    source = server_pages["cycle"] if page == "cycle" else read(rendered, page)
+    stem = f"{page.removesuffix('.html')}-{selector.strip('#.')}"
+    got = _hovered(chrome(), source, tmp_path / f"{stem}.html", selector)
+
+    assert got["hovered"], f"{selector} on {page}: the pointer did not land on a row"
+    assert got["cells"], f"{selector} on {page}: the row drew no cells"
+    assert got["washed"] == got["cells"], (
+        f"{selector} on {page}: {got['washed']} of {got['cells']} cells are washed, so the "
+        f"row is highlighted in pieces"
+    )
+
+
+def test_a_touch_screen_gets_no_wash_at_all(rendered: Path, tmp_path: Path):
+    """The other side of `@media (hover: hover)`, and the reason it is there.
+
+    A touch device has no pointer to follow, and it keeps the last-tapped
+    `:hover` until something else is tapped — so a phone would be left with one
+    row lit for no reason, which is a highlight meaning the opposite of what this
+    one means. The reader cannot move a pointer off it, because there is none.
+
+    Worth its own test because the query is invisible from the CSS side: a rule
+    inside a media query that never matches and a rule that matches and does
+    nothing look identical in every assertion except this one.
+    """
+    from browser import chrome
+
+    got = _hovered(chrome(), read(rendered, "table.html"), tmp_path / "touch.html",
+                   "#rows", _A_TOUCHSCREEN)
+
+    # The tap still sets `:hover` — that is exactly the browser behaviour this
+    # guards against — so the row IS hovered and simply takes no wash.
+    assert got["hovered"], "the press did not land, so this proves nothing"
+    assert got["washed"] == 0, (
+        f"{got['washed']} of {got['cells']} cells are washed on a touch screen, which "
+        f"would leave one row lit with no pointer to move off it"
+    )
+
+
+def test_the_wash_does_not_take_away_the_ground_it_is_drawn_over(
+    views: dict[str, str], tmp_path: Path
+):
+    """The wash says "your pointer is here" and nothing about the record. Every
+    other tint on these cells says something *about* the record — a blocker, a
+    dependency being waited on, a value inherited from the work below — and if the
+    wash were a `background-color` it would have to win against them to be seen,
+    which means erasing them: hover a blocked row and the thing the row is telling
+    you goes away exactly while you are pointing at it.
+
+    So it is a `background-image`, a different property, and the cascade never
+    puts the two in competition. What is asserted is that composition and not the
+    colour: the grounds under the pointer are the same strings they were before
+    the pointer arrived.
+
+    Asked of `/table`, because it is the page where a row has grounds worth
+    keeping — the frozen `--surface`, the severity tints, `td.inherited`.
+
+    **The one cell actually under the pointer is exempt, and that is the second
+    half of the claim.** `td.edit:hover` gives an editable cell its own ground, so
+    a reader can tell the cell they are about to open from the ten beside it; a
+    row wash that took THAT away would have replaced a control's affordance with a
+    decoration. So the cell matching `:hover` is expected to change and every
+    other cell in the row is expected not to — which is only checkable in a
+    browser, since both facts are the cascade resolving.
+    """
+    import json
+    import time
+
+    from browser import _devtools, _evaluated, chrome
+
+    where = tmp_path / "grounds.html"
+    where.write_text(views["table"])
+    with _devtools(
+        chrome(), where.as_uri(), tmp_path / "grounds-profile", _A_MOUSE
+    ) as (call, _said):
+        time.sleep(2.0)
+        before = _evaluated(call, """(() => {
+          const rows = [...document.querySelectorAll('#rows tbody tr')]
+            .filter(r => r.getClientRects().length);
+          const row = rows[Math.min(2, rows.length - 1)];
+          row.scrollIntoView({block: 'center'});
+          row.dataset.probe = '1';
+          return [...row.children].filter(c => c.getClientRects().length)
+            .map(c => getComputedStyle(c).backgroundColor);
+        })()""")
+        at = _evaluated(call, """(() => {
+          const box = document.querySelector('#rows tr[data-probe]').getBoundingClientRect();
+          return [Math.round(box.left + box.width / 2), Math.round(box.top + box.height / 2)];
+        })()""")
+        call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": at[0], "y": at[1]})
+        time.sleep(0.3)
+        during = _evaluated(call, """(() => {
+          const row = document.querySelector('#rows tr[data-probe]');
+          if (!row.matches(':hover')) return null;
+          return [...row.children].filter(c => c.getClientRects().length).map(c => ({
+            ground: getComputedStyle(c).backgroundColor,
+            wash: getComputedStyle(c).backgroundImage !== 'none',
+            under: c.matches(':hover'),
+          }));
+        })()""")
+
+    assert during is not None, "the pointer did not land on the row it measured"
+    assert all(cell["wash"] for cell in during), (
+        f"only {sum(cell['wash'] for cell in during)} of {len(during)} cells took the wash"
+    )
+    elsewhere = [
+        (was, cell) for was, cell in zip(before, during, strict=True) if not cell["under"]
+    ]
+    assert [cell["ground"] for _, cell in elsewhere] == [was for was, _ in elsewhere], (
+        "the wash took away a ground it was drawn over: "
+        f"{json.dumps(before)} became {json.dumps([c['ground'] for c in during])}"
+    )
+    assert any(cell["under"] for cell in during), (
+        "no cell reported itself under the pointer, so the exemption above proved nothing"
+    )
+    # And the frozen columns are still opaque, or the table scrolls visibly under
+    # them. A fully transparent ground on either is the defect this guards.
+    assert "rgba(0, 0, 0, 0)" not in before[:2], (
+        f"the frozen pair is not opaque: {before[:2]}"
+    )
+
+
+def test_the_betting_table_says_what_a_bet_is_being_made_against(
+    server_pages: dict[str, str], seed_index: Index
+):
+    """jcanton, 2026-08-26: "it's missing priority, that's very important field".
+
+    A bet is a decision about what matters most against a fixed appetite, and the
+    one field that says what matters was on the table, the graph, the timeline and
+    the record page — everywhere except the room where the decision is made.
+
+    Between status and appetite, which is the order the question is asked in: what
+    state is this in, how much does it matter, how much is it worth.
+    """
+    page = server_pages["cycle"]
+    # This table's own head and no other. The cycle page draws three tables, and
+    # a `<th>` regex over the whole page reads the roster's columns first — which
+    # is how the first draft of this test failed against a page that was right.
+    head = re.search(r'<table id="bets".*?</thead>', page, re.S)
+    assert head, "the betting table has no header row"
+    columns = [name.strip() for name in
+               re.findall(r'class="sorter">([^<]*)</button>', head.group(0))]
+    assert "priority" in columns, columns
+    assert columns.index("status") < columns.index("priority") < columns.index("appetite"), (
+        f"priority is not between what a record IS and what it is worth: {columns}"
+    )
+    # Every candidate carries one, drawn from the same ladder as everywhere else.
+    for value in PRIORITIES:
+        assert f'value="{value}"' in page, f"the picker cannot choose {value}"
+
+
+def test_the_betting_tables_closed_sets_are_chosen_and_never_typed(
+    server_pages: dict[str, str]
+):
+    """Status and priority are ladders with six and five rungs. Free text over a
+    closed set is how `in progres` gets written into the corpus, and the corpus is
+    a protected branch — `_reject_bad_status` would refuse it at the door now, but
+    a control that can express something the model will refuse is a control that
+    wastes somebody's afternoon at a meeting.
+
+    So they are `<select>`s, and the assertion is that they carry the ladder and
+    the marks. The glyph is half of what a status says — it is the channel that
+    survives colour blindness — and a picker that drops it is a picker whose open
+    state says less than the cell it replaced.
+    """
+    page = server_pages["cycle"]
+    for field, ladder, glyphs in (
+        ("status", STATUSES, STATUS_GLYPH), ("priority", PRIORITIES, PRIORITY_GLYPH)
+    ):
+        picker = re.search(
+            rf'<select class="pick[^"]*" data-field="{field}".*?</select>', page, re.S
+        )
+        assert picker, f"{field} is not a picker"
+        chosen = picker.group(0)
+        for rung in ladder:
+            assert f'value="{rung}"' in chosen, f"{field} cannot choose {rung}"
+            assert glyphs[rung] in chosen, f"{field}'s {rung} lost its mark"
+        assert "<input" not in chosen, f"{field} can still be typed into"
+
+
+def test_a_carried_row_may_be_repriced_but_not_re_bet(server_pages: dict[str, str]):
+    """A row carried in from an earlier cycle has its checkbox disabled: stamping
+    a second cycle onto it would move the deadline its overrun is measured against
+    and forgive the slip.
+
+    That is a rule about the BET and about nothing else. Its priority and its
+    status are facts about the work, and a meeting that decides a carried pitch
+    now matters less than it did has to be able to say so.
+    """
+    page = server_pages["cycle"]
+    carried = re.findall(r'<tr data-id="[^"]*" class="carried">.*?</tr>', page, re.S)
+    if not carried:
+        pytest.skip("the frozen corpus has no carried bet in this cycle")
+    for row in carried:
+        assert "disabled" in re.search(r'<input type="checkbox".*?>', row, re.S).group(0), (
+            "a carried row can be bet into this cycle again"
+        )
+        for field in ("status", "priority"):
+            picker = re.search(rf'<select class="pick[^"]*"[^>]*data-field="{field}"', row)
+            assert picker and "disabled" not in picker.group(0), (
+                f"a carried row cannot have its {field} changed"
+            )
