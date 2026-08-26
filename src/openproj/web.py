@@ -48,6 +48,7 @@ import secrets
 import threading
 import time
 from collections import deque
+from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 from typing import Literal, NamedTuple
@@ -74,6 +75,7 @@ from .index import Index, build_index, cascade_of
 from .model import (
     CONFIG_FILES,
     ID_PATTERN,
+    KIND_NAMES,
     KINDS,
     MAX_BODY_BYTES,
     MAX_SLIDE_BYTES,
@@ -99,6 +101,7 @@ from .model import (
     record_paths_in,
     shaping_document,
     split_front_matter,
+    unread_fields,
     validate_all,
     what_json_can_carry,
     why_it_will_not_read,
@@ -1239,7 +1242,9 @@ def _named(fields: dict, known: tuple[str, ...]) -> str:
     return ", ".join(chosen)
 
 
-def _patched(original: str, fields: dict, body: str | None, path: str) -> str:
+def _patched(
+    original: str, fields: dict, body: str | None, path: str, drop: Sequence[str] = ()
+) -> str:
     """The file with those fields applied, or a refusal naming the file.
 
     About the file being edited, not about the edit. `patch_text` loads the
@@ -1250,7 +1255,7 @@ def _patched(original: str, fields: dict, body: str | None, path: str) -> str:
     is not a record; this is what Save says when they try anyway.
     """
     try:
-        return patch_text(original, fields, body)
+        return patch_text(original, fields, body, drop)
     except Exception as error:  # noqa: BLE001 - a file in git can be anything
         raise HTTPException(
             422,
@@ -2785,6 +2790,236 @@ def create_app(
         if written.commit:
             await announce(written.commit, [record_id])
         return _result(written, base)
+
+    def _rekind_plan(index, record, kind: str) -> tuple[list[str], list[str]]:
+        """What changing this record's kind would refuse, and what it would drop.
+
+        Both computed before anything is written, and both handed back to the
+        page BEFORE it commits — the fields are a compare-and-swap on the shape
+        of the change, exactly as `also` is for a cascading delete. A reader who
+        was shown "this drops its appetite and its assignees" and then had
+        something else dropped was not asked.
+        """
+        rung = RUNG[kind]
+        refusals: list[str] = []
+
+        # Where it sits. A pitch is filed under a project and a task may be
+        # filed under either a pitch or a project, so pitch->task keeps its
+        # parent and task->pitch under a pitch does not.
+        if record.parent:
+            above = index.records.get(record.parent)
+            if above is None:
+                refusals.append(
+                    f"{record.id} names {record.parent} as its parent and that record "
+                    "is not in the plan"
+                )
+            elif above.kind not in rung.under:
+                refusals.append(
+                    f"a {kind} cannot be filed under {_an(above.kind)} and {record.id} "
+                    f"is under {record.parent}. Move it first, or take its parent off"
+                )
+
+        # What sits under it. `under` is per rung, so a pitch with tasks under it
+        # can become a project (a task may be filed under a project) and cannot
+        # become a task (nothing is filed under a task).
+        below = sorted(
+            other.id for other in index.records.values() if other.parent == record.id
+        )
+        stranded = [
+            other for other in below if kind not in RUNG[index.records[other].kind].under
+        ]
+        if stranded:
+            refusals.append(
+                f"{_and_then(stranded)} {'is' if len(stranded) == 1 else 'are'} filed "
+                f"under {record.id}, and nothing may be filed under {_an(kind)}. "
+                "Move them first"
+            )
+
+        # What it would stop being able to say. `unread_fields` is the ladder's
+        # own answer and the same one the editors ask, so a field this drops is
+        # a field the new kind would not have offered.
+        drops = sorted(
+            field for field in unread_fields(kind)
+            if getattr(record, field, None) not in (None, "", [], False)
+        )
+        return refusals, drops
+
+    @app.post("/api/rekind")
+    async def rekind(request: Request) -> JSONResponse:
+        """Change a record's kind, by making a new record and retiring the old one.
+
+        **The id carries the kind, so changing the kind changes the id.** That is
+        the whole reason this is a route and not a field on `PATCH
+        /api/record/{id}`: `pitch-b20000` cannot become a task without becoming
+        `task-<something>`, because `ID_PATTERN` and `_directory_for` both read
+        the prefix, and `validate_all` refuses a record whose prefix and kind
+        disagree. The alternative — freeing ids from kinds — was weighed with
+        jcanton on 2026-08-26 and refused: it moves the seam that turns an id
+        into a path, and it points every id in git history, every PR link and
+        every note at a file that no longer exists.
+
+        So: mint the new id, carry the record across, repoint everything that
+        named the old one, and remove it. **One commit**, through `write_all`,
+        for the reason promotion and the cascading delete use it — this is one
+        decision, and a `git log` showing a task appear, four tasks get a new
+        parent and a pitch vanish says six things that are not true. It also has
+        no half-done state: a plan where the new record exists and its children
+        still point at the old one is not a state anybody can be asked to repair,
+        on a protected branch.
+
+        **No trail field** — jcanton's call in the same conversation. The commit
+        message says what happened and git has the rest; a `was:` in the
+        frontmatter is a field the validator, the table and the detail page all
+        have to learn for a rename that happens rarely.
+
+        `drop` is a compare-and-swap on the SHAPE of the change, like `also` on a
+        delete: the page sends the fields it told the reader would be lost, and a
+        mismatch is a 409 rather than a write nobody agreed to.
+        """
+        user = writer(request)
+        payload = await _sent(request)
+        record_id = str(payload.get("id") or "")
+        kind = payload.get("kind")
+        if not ID_PATTERN.match(record_id):
+            raise HTTPException(400, f"{record_id!r} is not a record id")
+        if kind not in KIND_NAMES:
+            raise HTTPException(422, f"{kind!r} is not a kind")
+        was = _kind_for(record_id)
+        if kind == was:
+            raise HTTPException(422, f"{record_id} is already {_an(kind)}")
+
+        base = _base_in(store, payload)
+        path = _path_for(store, base, record_id)
+        if path is None:
+            raise HTTPException(404, f"no record {record_id!r}")
+
+        _, index = index_now()
+        record = index.records.get(record_id)
+        if record is None:
+            raise HTTPException(404, f"no record {record_id!r}")
+
+        refusals, drops = _rekind_plan(index, record, kind)
+        if refusals:
+            raise HTTPException(409, ". ".join(refusals))
+        # **Losing a field is a question before it is a write**, the shape the
+        # cascading delete already uses for `also`. A record that loses nothing
+        # goes straight through — there is no question to ask — and one that
+        # would lose something is refused until the page sends back the list it
+        # showed the reader. Sending a list that does not match what the server
+        # computes is the same refusal: it means the plan moved under the panel,
+        # and a reader who was shown "this drops its appetite" and then lost its
+        # owner as well was not asked.
+        shown = payload.get("drops")
+        if drops and shown is None:
+            # A `JSONResponse` and not an `HTTPException`, so the list travels
+            # beside the sentence. The page has to send the same list back to
+            # confirm, and re-deriving it by parsing prose the server wrote is
+            # how a confirmation comes to mean something other than what it said.
+            return JSONResponse(
+                {
+                    "detail": (
+                        f"making {record_id} {_an(kind)} drops {_and_then(drops)}, because "
+                        f"{_an(kind)} does not read "
+                        f"{'that field' if len(drops) == 1 else 'those fields'}. "
+                        "Nothing was changed."
+                    ),
+                    "drops": drops,
+                },
+                status_code=409,
+            )
+        if shown is not None and sorted(shown) != drops:
+            raise HTTPException(
+                409,
+                "the plan changed while that was open: making "
+                f"{record_id} {_an(kind)} now drops "
+                f"{_and_then(drops) or 'nothing'}. Nothing was changed — read it "
+                "again and decide.",
+            )
+
+        # A fresh id, minted the way `POST /api/record` mints one. Collisions are
+        # not checked here for the same reason they are not there: six hex bytes
+        # against a plan of hundreds, and `write_all` refuses a path that already
+        # holds something anyway.
+        new_id = f"{PREFIX[kind]}-{secrets.token_hex(3)}"
+        original = store.read(base, path)
+        # One pass: the two fields that change, and the fields the new rung does
+        # not read taken out. `patch_text` cannot remove a key by setting it to
+        # `None` — that writes `field:` with nothing after it, which is a field
+        # that is present and empty, and `validate_all` reads the difference.
+        content = _patched(
+            original, {"id": new_id, "kind": kind}, None, path, drop=drops
+        )
+        try:
+            candidate = parse_text(content, path)
+        except ValueError as error:
+            raise HTTPException(
+                422, f"that would not read back as a record: {why_it_will_not_read(error)}"
+            ) from None
+
+        files: dict[str, str | None] = {
+            f"{DIRECTORY[kind]}/{new_id}.md": content,
+            path: None,
+        }
+
+        # Everything that named the old id, in the four fields that hold one.
+        # `blocks` is not among them: it is derived in `build_index` and never
+        # stored, so repointing it here would be writing down a fact the index
+        # computes — the invariant this repository states first.
+        for other in index.records.values():
+            if other.id == record_id:
+                continue
+            fields: dict = {}
+            if other.parent == record_id:
+                fields["parent"] = new_id
+            for name in ("depends_on", "pitched_into", "became"):
+                held = getattr(other, name, None)
+                if held and record_id in held:
+                    fields[name] = [new_id if one == record_id else one for one in held]
+            if not fields:
+                continue
+            where = _path_for(store, base, other.id)
+            if where is None:
+                raise HTTPException(
+                    409, f"{other.id} names {record_id} and its file could not be found"
+                )
+            files[where] = _patched(store.read(base, where), fields, None, where)
+
+        # The same loop question the batch write asks, and for the same reason:
+        # a shape that only exists once every one of these files has moved is a
+        # shape this write would create.
+        after = {one.id: one for one in index.records.values() if one.id != record_id}
+        after[candidate.id] = candidate
+        loop = loop_made(candidate, after.values())
+        if loop:
+            raise HTTPException(409, loop)
+
+        written = await _write_or_refuse(
+            store.write_all,
+            files,
+            base_commit=base,
+            author=user.login,
+            message=f"{new_id}: was {record_id}, {was} becomes {kind}",
+        )
+        if written.outcome == "conflict":
+            return _result(written, base)
+        if written.commit:
+            await announce(written.commit, [record_id, new_id, *sorted(
+                one for one in index.records if one != record_id
+                and _path_for(store, base, one) in files
+            )])
+        return JSONResponse(
+            {
+                "id": new_id,
+                "was": record_id,
+                "dropped": drops,
+                "outcome": written.outcome,
+                "commit": written.commit,
+                "conflict": written.conflict,
+                "head": base,
+                "pushed": written.pushed,
+            },
+            status_code=200,
+        )
 
     @app.patch("/api/records")
     async def save_many(request: Request) -> JSONResponse:

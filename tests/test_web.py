@@ -274,6 +274,64 @@ def save_many(client: httpx.Client, ids: list[str], fields: dict, *, base=None):
     )
 
 
+def rekind(
+    client: httpx.Client, record_id: str, kind: str, *, base=None, drops=None,
+    confirming=False,
+):
+    """Change a record's kind, which makes a new record and retires the old one.
+
+    `confirming` walks the route's own two-step: ask, and if the answer is "this
+    drops these fields", send that list back. It is what the page does, and a
+    caller that wants the write rather than the question should not have to know
+    which fields a rung happens not to read — a note carries a default priority
+    and an issue does not read one, which is not a fact any caller of this helper
+    is about.
+    """
+    base = base or head(client)
+    body = {"base_commit": base, "id": record_id, "kind": kind}
+    if drops is not None:
+        body["drops"] = drops
+    answer = client.post("/api/rekind", json=body)
+    if confirming and answer.status_code == 409 and "drops" in answer.json():
+        return client.post(
+            "/api/rekind", json={**body, "drops": answer.json()["drops"]}
+        )
+    return answer
+
+
+def a_lone_project(client: httpx.Client) -> str:
+    """A project with no parent and nothing filed under it.
+
+    The corpus's own project has a pitch under it, and nothing may be filed under
+    a product — so it is the case the route refuses, not the case that shows what
+    a rung stops reading. This one is a codebase somebody wrote down as a project
+    and then decided was a container.
+    """
+    made = create(client, {
+        "kind": "project", "title": "Spare codebase", "status": "shaping",
+        "owner": "ann", "priority": "high",
+    })
+    assert made.status_code == 201, made.text
+    return made.json()["id"]
+
+
+def a_leaf_pitch(client: httpx.Client) -> str:
+    """A pitch under the project with nothing filed under it.
+
+    The corpus's own pitch has three tasks under it, and nothing may be filed
+    under a task — so it is the case the route refuses, not the case it exists
+    for. This is jcanton's example: a pitch that turns out to be one task.
+    """
+    made = create(client, {
+        "kind": "pitch", "title": "Chaff optics", "parent": PROJECT,
+        # `shaping` and not `ready`: a ready record needs somebody on it, and
+        # what is under test is the kind and not the status gate.
+        "status": "shaping", "owner": "ann", "person_weeks": 2,
+    })
+    assert made.status_code == 201, made.text
+    return made.json()["id"]
+
+
 def remove(client: httpx.Client, record_id: str, *, base=None, also=None):
     """A DELETE carries a body, which is unusual and deliberate.
 
@@ -4880,6 +4938,13 @@ def wedged_writes(client: TestClient, note: str) -> dict[str, object]:
         # refuse whole rather than half.
         "PATCH /api/records": save_many(client, [OTHER, PITCH], {"priority": "high"},
                                         base=base),
+        # The kind door, driven at the same note `POST /api/promote` uses. It has
+        # to be a change this route would otherwise ALLOW, or it refuses on its
+        # own terms before the store is ever asked and this census would be
+        # watching the wrong refusal: a note has no parent, nothing filed under
+        # it, and carries none of the fields an issue does not read, so nothing
+        # stands between the request and the wedged store.
+        "POST /api/rekind": rekind(client, note, "issue", base=base, confirming=True),
         "POST /api/record": create(client, {"kind": "note", "title": "made while wedged"}),
         "DELETE /api/record/{id}": remove(client, DONE, base=base),
         "POST /api/promote": client.post(
@@ -4909,7 +4974,7 @@ def wedged_writes(client: TestClient, note: str) -> dict[str, object]:
 
 
 def test_every_write_route_refuses_in_words_while_the_plan_is_forked(forked: Forked):
-    """Ten routes, not the one the audit happened to test — and the refusal
+    """Eleven routes, not the one the audit happened to test — and the refusal
     they briefly lost when the push left the request path, restored at the gate.
 
     The write path cannot meet the fork any more, and for one revision of this
@@ -4946,6 +5011,7 @@ def test_every_write_route_refuses_in_words_while_the_plan_is_forked(forked: For
     driven = {
         ("PATCH", "/api/record/{record_id}"),
         ("PATCH", "/api/records"),
+        ("POST", "/api/rekind"),
         ("POST", "/api/record"),
         ("DELETE", "/api/record/{record_id}"),
         ("POST", "/api/promote"),
@@ -5843,3 +5909,383 @@ def test_a_bulk_write_needs_a_writer_like_every_other_door(secure_client: httpx.
         "/api/records", json={"base_commit": "0" * 40, "ids": [PROJECT], "fields": {}}
     )
     assert answer.status_code == 401, answer.text
+
+
+def _walked(
+    url: str, profile: Path, steps: list[tuple[str, str]], report: tuple[int, ...] = (),
+):
+    """Drive a real browser through a sequence of pages, and report the last answer.
+
+    `in_a_live_page` polls ONE expression until it answers, which is the right
+    shape for "wait until this page is ready" and the wrong one for "do this,
+    then that": every poll is a fresh evaluation, so a walk with steps has to
+    carry its own state on `window` and race its own loop. Two attempts at that
+    oscillated and reported nothing.
+
+    So this is explicit: each step is (what to do, how long to wait), the waits
+    are real seconds because there is no virtual clock in a live session, and a
+    navigation that kills the context mid-evaluate is tolerated — the page still
+    goes, and the answer to that step is not the one being read.
+    """
+    import time
+
+    from browser import _devtools, _evaluated, chrome
+
+    with _devtools(chrome(), url, profile) as (call, said):
+        time.sleep(3)
+        answers = []
+        for expression, seconds in steps:
+            try:
+                answers.append(_evaluated(call, expression, patient=True))
+            except Exception:  # noqa: BLE001 - a navigation took the context with it
+                answers.append(None)
+            time.sleep(seconds)
+        # One answer by default, which is what a walk that only cares where it
+        # ended wants. `report` names the steps whose answers a caller keeps, in
+        # order, and the last one is always among them — a walk asks its final
+        # question for a reason.
+        if not report:
+            return answers[-1], said
+        return [answers[at] for at in (*report, len(answers) - 1)], said
+
+
+def test_a_deleted_record_sends_a_real_browser_back_where_it_came_from(
+    live_server: str, tmp_path: Path,
+):
+    """jcanton, 2026-08-26: "the back path after edit/delete sometimes simply
+    goes back to the main page, would be nice if it sent always to the previous
+    page". Deleting was the place it did not.
+
+    Away is not optional — the page is about a record that no longer exists, and
+    the shell reloads it when it hears the commit — so the only question is
+    where. It went to the landing deliberately, on the argument that a deleted
+    issue's reader sent to the table lands on a plan view that never showed it.
+    The remembered origin is not the table though: it is the view they were
+    actually standing on, and it is never this record's own page, because a
+    record page does not stamp one.
+
+    A real journey, because the claim is about a store that survives a
+    navigation and the two pages either side of it are the only place that is
+    true. It is also the only way to see this at all: the decision is
+    `location.href = …`, and the shim that could record that cannot run the
+    record page — its editor asks the DOM for things a phantom does not have.
+
+    `OTHER` because it is a leaf. A record with work filed under it opens the
+    cascade confirmation instead, which is a different button and a bigger claim.
+    """
+    answer, said = _walked(
+        f"{live_server}/table", tmp_path / "profile",
+        [
+            # Standing on the table is what leaves the stamp this is about.
+            ("location.pathname", 1),
+            (f"location.href = {json.dumps(live_server + '/detail/' + OTHER)}", 3),
+            # The bar is drawn by the page's own script; the confirmation by the
+            # handler that takes the first press.
+            ("""[...document.querySelectorAll('button')]
+                 .find(b => b.textContent.trim() === 'Delete').click()""", 1),
+            ("""[...document.querySelectorAll('button')]
+                 .find(b => b.textContent.trim() === 'Delete it').click()""", 4),
+            ("location.pathname + location.search", 0),
+        ],
+    )
+    assert answer == "/table", (answer, said)
+
+
+def test_changing_a_kind_makes_one_new_record_and_retires_the_old_one(
+    client: TestClient, repo_path: Path
+):
+    """jcanton, 2026-08-26: "I'd like to be able to change the kind for records.
+    e.g. from pitch to task."
+
+    **The id carries the kind, so changing the kind changes the id.** That is why
+    this is a route and not a field on `PATCH /api/record/{id}`: `ID_PATTERN` and
+    `_directory_for` both read the prefix, and `validate_all` refuses a record
+    whose prefix and kind disagree. Freeing ids from kinds was the alternative
+    and was weighed and refused — it moves the seam that turns an id into a path,
+    and points every id in git history at a file that no longer exists.
+
+    So it is one commit that makes a record, moves everything that named the old
+    one, and removes it. One, for the reason promotion and the cascading delete
+    are one: a `git log` showing a task appear and a pitch vanish separately says
+    two things that are not true, and a plan where the new record exists and the
+    old file is still there is not a state anybody can be asked to repair on a
+    protected branch.
+    """
+    leaf = a_leaf_pitch(client)
+    before = git_head(repo_path)
+
+    answer = rekind(client, leaf, "task")
+    assert answer.status_code == 200, answer.text
+    new = answer.json()["id"]
+    assert new.startswith("task-"), new
+    assert answer.json()["was"] == leaf
+
+    commit = commit_at(repo_path, git_head(repo_path))
+    assert len(commit.parents) == 1, "a kind change is one commit, not a merge"
+    assert str(commit.parents[0].id) == before
+    touched = {
+        delta.new_file.path
+        for delta in commit.tree.diff_to_tree(commit.parents[0].tree).deltas
+    }
+    assert touched == {f"pitches/{leaf}.md", f"tasks/{new}.md"}, touched
+
+    plan = index_of(client)["plan"]
+    assert leaf not in plan, "the old record is still in the plan"
+    assert plan[new]["kind"] == "task"
+    # Everything else about it survives. The kind is what changed; a rename that
+    # quietly dropped the title or the parent would be a different feature.
+    assert plan[new]["title"] == "Chaff optics"
+    assert plan[new]["parent"] == PROJECT
+
+
+def test_a_kind_change_repoints_everything_that_named_the_record(
+    client: TestClient, repo_path: Path
+):
+    """The half that makes this safe rather than merely possible. A record whose
+    id has changed and whose dependants still name the old one is a plan with a
+    dangling edge in it — reported as a blocker, on a protected branch, about a
+    change somebody made on purpose.
+
+    So the four fields that hold an id — `parent`, `depends_on`, `pitched_into`
+    and `became` — are rewritten in the SAME commit. `blocks` is not among them
+    and must not be: it is derived in `build_index` and never stored, and writing
+    it here would be recording a fact the index computes, which is the first
+    invariant this repository states.
+    """
+    leaf = a_leaf_pitch(client)
+    assert save(client, TASK, {"depends_on": [leaf]}).status_code == 200
+
+    answer = rekind(client, leaf, "task")
+    assert answer.status_code == 200, answer.text
+    new = answer.json()["id"]
+
+    commit = commit_at(repo_path, git_head(repo_path))
+    touched = {
+        delta.new_file.path
+        for delta in commit.tree.diff_to_tree(commit.parents[0].tree).deltas
+    }
+    assert PATH in touched, f"the record that waited on it was not repointed: {touched}"
+
+    plan = index_of(client)["plan"]
+    assert plan[TASK]["depends_on"] == [new]
+    assert not [
+        problem for problem in index_of(client)["problems"] if leaf in str(problem)
+    ], "the plan still has a problem naming the retired id"
+
+
+def test_a_kind_change_that_would_strand_a_record_is_refused_by_name(
+    client: TestClient, repo_path: Path
+):
+    """`under` is per rung: a task may be filed under a pitch or a project, and
+    nothing at all may be filed under a task. So the corpus's own pitch — which
+    has three tasks under it — cannot become one.
+
+    Named, and refused before anything is written. "That is not allowed" sends
+    somebody to read the ladder; naming the three records that would be stranded
+    tells them what to move.
+    """
+    before = git_head(repo_path)
+    answer = rekind(client, PITCH, "task")
+
+    assert answer.status_code == 409, answer.text
+    detail = answer.json()["detail"]
+    for stranded in (TASK, OTHER):
+        assert stranded in detail, detail
+    assert git_head(repo_path) == before, "a refused kind change moved the plan"
+
+
+def test_a_kind_change_that_would_orphan_the_record_is_refused_by_name(
+    client: TestClient, repo_path: Path
+):
+    """The other direction: the record's own parent. A note is filed under
+    nothing, so a pitch under a project cannot become one without being moved
+    first — and the refusal says which record it is under, because that is the
+    thing to change.
+    """
+    leaf = a_leaf_pitch(client)
+    before = git_head(repo_path)
+
+    answer = rekind(client, leaf, "note")
+    assert answer.status_code == 409, answer.text
+    assert PROJECT in answer.json()["detail"], answer.json()["detail"]
+    assert git_head(repo_path) == before
+
+
+def test_losing_a_field_to_a_kind_change_is_asked_before_it_is_done(
+    client: TestClient, repo_path: Path
+):
+    """A rung reads the fields it reads. A product is a container — nobody is
+    assigned to a codebase and a codebase is not `in_progress` — so a project
+    becoming one loses its owner, its priority and its status.
+
+    Asked, and asked with the LIST beside the sentence rather than only inside
+    it: the page has to send the same list back to confirm, and re-deriving it by
+    parsing prose the server wrote is how a confirmation comes to mean something
+    other than what it said. The same shape as `also` on a cascading delete.
+    """
+    lone = a_lone_project(client)
+    before = git_head(repo_path)
+    asked = rekind(client, lone, "product")
+
+    assert asked.status_code == 409, asked.text
+    assert asked.json()["drops"] == ["owner", "priority", "status"], asked.json()
+    for field in asked.json()["drops"]:
+        assert field in asked.json()["detail"], asked.json()["detail"]
+    assert git_head(repo_path) == before, "the question wrote something"
+
+    # Confirmed, and the fields LEAVE the file rather than sitting in it empty:
+    # a product carrying `status:` is a product reading a field its rung does not
+    # have, and `validate_all` knows the difference.
+    done = rekind(client, lone, "product", drops=asked.json()["drops"])
+    assert done.status_code == 200, done.text
+    new = done.json()["id"]
+    text = file_at(repo_path, git_head(repo_path), f"products/{new}.md")
+    for field in asked.json()["drops"]:
+        assert f"{field}:" not in text, f"{field} is still in the file"
+    assert not [
+        problem for problem in index_of(client)["problems"] if problem["record_id"] == new
+    ], "the new record has a problem the change was supposed to prevent"
+
+
+def test_a_confirmation_collected_for_one_change_cannot_be_spent_on_another(
+    client: TestClient, repo_path: Path
+):
+    """The compare-and-swap on the shape. A reader who was shown "this drops its
+    owner" and then lost its appetite as well was not asked — so a `drops` that
+    does not match what the server computes is a refusal, not a write.
+    """
+    lone = a_lone_project(client)
+    before = git_head(repo_path)
+    answer = rekind(client, lone, "product", drops=["owner"])
+
+    assert answer.status_code == 409, answer.text
+    assert "read it again" in answer.json()["detail"], answer.json()["detail"]
+    assert git_head(repo_path) == before
+
+
+def test_a_kind_change_needs_a_writer(secure_client: TestClient):
+    """Reads are public here by design and writes are not, and a new write door is
+    a new place to forget that.
+
+    Its own test, and not a first line on the one below: the lock in `store.py`
+    is per repository, so `client` and `secure_client` cannot both be asked for
+    in one test — the second app to open the repository is refused, and the
+    failure is a `StoreLocked` at fixture setup rather than anything about the
+    route. `live_server` says the same thing in its own docstring.
+    """
+    assert secure_client.post(
+        "/api/rekind", json={"base_commit": "0" * 40, "id": PITCH, "kind": "task"}
+    ).status_code == 401
+
+
+def test_a_kind_change_takes_two_closed_vocabularies_and_nothing_else(
+    client: TestClient,
+):
+    """An id matched against the one record pattern, and a kind out of the
+    ladder. No path, no directory, no file name.
+    """
+    assert rekind(client, PITCH, "banana").status_code == 422
+    assert rekind(client, "not-an-id", "task").status_code == 400
+    assert rekind(client, "task-ffffff", "pitch").status_code == 404
+    # Already that kind is a refusal rather than a no-op commit: a plan whose log
+    # says a pitch became a pitch is a log nobody can read.
+    assert rekind(client, PITCH, "pitch").status_code == 422
+
+
+def test_the_kind_control_actually_changes_the_kind_in_a_real_browser(
+    live_server: str, tmp_path: Path,
+):
+    """The chip, the picker and the press, driven end to end — and **measured**,
+    because the first version of this test asked the DOM and shipped a control
+    nobody could see.
+
+    Two failures in a row came through here, and they are two different lessons.
+
+    The first: one `querySelector` in the wiring loop named the class the markup
+    had before it was renamed, so it threw halfway through — after `onclick` was
+    attached to the opener and before it was attached to the confirm. The panel
+    opened, the picker worked, pressing Change it did nothing. Only pressing the
+    button finds a control that is drawn, reachable and connected to nothing.
+
+    The second, and it is the one this file already had a name for: the picker
+    was inside a `.sr-only` label. `getClientRects()` is empty for it, `width` is
+    one pixel, and `document.querySelector` finds it perfectly well — so a test
+    that asked whether it existed passed while the reader saw "Make Chaff optics
+    ?" with nothing to choose from. If a claim is about pixels, look at the
+    pixels: this asks for a box with real width, and it would have failed.
+    """
+    made = httpx.post(
+        f"{live_server}/api/record",
+        json={
+            "base_commit": httpx.get(f"{live_server}/healthz").json()["head"],
+            "fields": {
+                "kind": "pitch", "title": "Chaff optics", "parent": PROJECT,
+                "status": "shaping", "owner": "ann", "person_weeks": 2,
+            },
+            "body": None,
+        },
+        cookies={SESSION_COOKIE: sign_session(ANN, SECRET)},
+        timeout=30,
+    )
+    assert made.status_code == 201, made.text
+    leaf = made.json()["id"]
+
+    # A raw string: the JS regex below carries `\s`, which Python reads as an
+    # unknown escape and warns about. A warning in a test file is a line
+    # everybody learns to scroll past.
+    seen = r"""(() => {
+      const box = el => el && el.getBoundingClientRect();
+      const chip = document.querySelector('button.kindchip');
+      const picker = document.querySelector('select.becomes');
+      const panel = document.querySelector('.rekinding');
+      return JSON.stringify({
+        chip: !!chip && !chip.hidden && box(chip).width > 0,
+        picker: !!picker && box(picker).width > 0 && box(picker).height > 0,
+        panel: !!panel && !panel.hidden && box(panel).width > 0,
+        asking: panel
+          ? panel.querySelector('.asking').textContent.replace(/\s+/g, ' ').trim()
+          : null,
+      });
+    })()"""
+
+    answer, said = _walked(
+        f"{live_server}/detail/{leaf}", tmp_path / "kindprofile",
+        [
+            # Reading is reading: the chip must not answer a press here.
+            ("document.querySelector('button.kindchip').click()", 1),
+            (seen, 0),
+            # Into the side-by-side view, which is one of the two the chip is
+            # live in — and the one the request named.
+            ("document.getElementById('view-both').click()", 2),
+            ("document.querySelector('button.kindchip').click()", 1),
+            (seen, 0),
+            ("""(() => {
+                 const picker = document.querySelector('select.becomes');
+                 picker.value = 'task';
+                 picker.dispatchEvent(new Event('change'));
+                 return picker.value;
+               })()""", 1),
+            (seen, 0),
+            ("document.querySelector('.rekinding button.really').click()", 5),
+            # The new id is the server's, so the claim is the KIND and that the
+            # address moved at all — not a string this test could know in advance.
+            ("""location.pathname.startsWith('/detail/task-')
+                  + ' ' + document.querySelector('.eyebrow .chip').textContent.trim()""", 0),
+        ],
+        report=(1, 4, 6),
+    )
+    reading, opened, asking = answer[0], answer[1], answer[2]
+
+    assert json.loads(reading)["picker"] is False, (
+        "the chip opened the picker on a record nobody is editing"
+    )
+    assert json.loads(opened)["picker"] is True, (
+        f"the picker is not on the screen after pressing the chip: {opened}"
+    )
+    assert json.loads(opened)["chip"] is False, "the chip and its picker are both up"
+
+    confirming = json.loads(asking)
+    assert confirming["panel"] is True, f"choosing a kind asked nothing: {asking}"
+    assert confirming["asking"] == "Make Chaff optics a task?", confirming["asking"]
+
+    assert answer[-1] == "true Task", (answer, said)

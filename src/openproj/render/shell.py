@@ -2764,17 +2764,35 @@ if (ORIGIN) {
   forThisTab.set(ORIGIN_KEY, JSON.stringify({
     href: location.pathname + location.search, label: ORIGIN,
   }));
-} else {
+}
+
+// An address off a store is an address somebody's devtools can write, and an
+// `href` is the one field here a scheme can be smuggled into. `ORIGIN_PATH` is
+// the allowlist, and it is a template variable rather than a literal for a
+// reason worth knowing: this block is inside a Python string that is not raw, so
+// a backslash written here is eaten before the browser ever sees it. Writing the
+// pattern here first made it an unterminated character class — a SyntaxError
+// that costs the whole script and not one line.
+const ORIGIN_PATH = new RegExp({{ origin_path|tojson }});
+
+// **Where you came from, or nothing.** A function rather than the inline read it
+// was, because a second caller turned up: deleting a record navigates away, and
+// the page it should navigate to is the page the back link would have taken you
+// to. Two reads of one store, with one allowlist between them and one place to
+// change if the shape ever moves.
+//
+// Guarded, so a caller may ask on a page that stamped rather than read — the
+// question "where did I come from" is answerable anywhere, and the answer on a
+// view is simply the view before it, which is nothing anybody wants.
+function cameFrom() {
   const from = forThisTab.map(ORIGIN_KEY);
-  // An address off a store is an address somebody's devtools can write, and an
-  // `href` is the one field here a scheme can be smuggled into. `ORIGIN_PATH` is
-  // the allowlist, and it is a template variable rather than a literal for a
-  // reason worth knowing: this block is inside a Python string that is not raw,
-  // so a backslash written here is eaten before the browser ever sees it.Writing
-  // the pattern here first made it an unterminated character class — a
-  // SyntaxError that costs the whole script and not one line.
-  const ORIGIN_PATH = new RegExp({{ origin_path|tojson }});
-  if (typeof from.href === 'string' && ORIGIN_PATH.test(from.href) && from.label) {
+  if (typeof from.href !== 'string' || !ORIGIN_PATH.test(from.href) || !from.label) return null;
+  return {href: from.href, label: from.label};
+}
+
+if (!ORIGIN) {
+  const from = cameFrom() || {};
+  if (from.href) {
     // Every article, because the static export writes the whole corpus into one
     // `detail.html` and each record in it carries its own back link. `a.origin`
     // and not `.back a`: the sign-in control the shell fills in later is also

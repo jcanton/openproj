@@ -1188,6 +1188,74 @@ textarea.body-field { min-height: var(--writing, 60vh); resize: vertical; }
 .confirming .why { margin: 0; font-size: 12px; color: var(--danger); }
 .confirming .why[hidden] { display: none; }
 
+/* Changing the kind asks the same shape of question as deleting, so it is drawn
+   the same way — a second panel that looked slightly different would read as a
+   different kind of decision, and it is not: each writes something to the plan
+   that the page cannot take back.
+
+   The wording above is deliberate and worth leaving alone. Every page inlines
+   this whole stylesheet, and one test reads the create form for the phrase the
+   three retired "create" links used to start with, to prove they are gone —
+   `test_the_kind_is_a_dropdown_and_switching_keeps_what_was_typed`. A comment is
+   not markup and a substring cannot tell the difference, so ordinary prose here
+   failed a test about links this file has nothing to do with. Repeating the
+   phrase to explain it would have failed it again, which is why this paragraph
+   does not.
+
+   It is NOT the danger colour, and that is the one difference worth having.
+   Deleting destroys a record; this one carries it across, keeps its title and
+   its document, and repoints everything that named it. What it costs is the id,
+   which the `.reach` line says in words. A red box over a rename teaches people
+   to read red boxes as "probably fine". */
+.rekinding { display: flex; flex-direction: column; align-items: flex-start;
+             gap: .5rem; max-width: 46ch; margin: 0 0 1rem;
+             padding: .6rem .75rem; border: 1px solid var(--line-strong);
+             border-radius: 3px; background: var(--surface); }
+.rekinding[hidden] { display: none; }
+.rekinding .asking { margin: 0; font-size: 13px; }
+.rekinding .acts { display: flex; gap: .4rem; }
+.rekinding .reach { margin: 0; font-size: 13px; color: var(--muted); }
+.rekinding .why { margin: 0; font-size: 12px; color: var(--danger); }
+.rekinding .why[hidden] { display: none; }
+/* The kind the panel is asking about, written in by the script. Bold like the
+   title beside it, because the sentence is about the two of them. */
+.rekinding .into { font-weight: 600; }
+/* **The chip is the control, and it looks like a chip until it is one.**
+   Rendered as a `<button>` wherever there is a server — a control that APPEARED
+   when you started editing would move the heading under the pointer — so
+   everything the browser gives a button is taken back off it here, and the chip
+   rules above dress it exactly as the `<span>` a rendered file draws.
+
+   `font: inherit` and not a font stack: the chip's own size and weight come from
+   `.chip`, and a button that restates them is a second place to change one. */
+button.kindchip {
+  font: inherit; letter-spacing: inherit; text-transform: inherit;
+  cursor: default; -webkit-appearance: none; appearance: none;
+  /* **3px, which is the app's corner and not the chip's 2px.** Every control on
+     every page shares one rectangle — `test_every_control_on_every_page_is_drawn
+     _the_same` measures it in a browser precisely because a rule that named the
+     controls somebody thought of reached none of the ones they did not. This is
+     a control, so it owes the app its corner.
+
+     The pixel it costs is invisible and the alternative was not: excusing it by
+     name is the shape that census exists to refuse, and giving every chip 3px to
+     match would move a shape on six pages to settle an argument about one. */
+  border-radius: 3px;
+}
+/* What it is while the record is being edited, and only then. The pointer and
+   the underline are the whole affordance: the chip is already accented and
+   already bordered, so anything louder would be a new kind of thing on a line
+   that has one thing on it. */
+.record.editing button.kindchip { cursor: pointer; text-decoration: underline;
+                                  text-decoration-style: dotted;
+                                  text-underline-offset: 2px; }
+.record.editing button.kindchip:hover { border-color: var(--accent); }
+button.kindchip[hidden] { display: none; }
+/* The picker that replaces it. Sized to the chip it stands in for rather than to
+   its own longest option, so opening it does not shove the heading sideways. */
+.becomeswrap[hidden] { display: none; }
+.becomeswrap select.becomes { font: inherit; font-size: 11px; }
+
 /* The promotion bar. Hidden while the record is being edited: promoting carries
    the STORED body across, so offering it over a textarea somebody is halfway
    through is offering to promote a document they cannot see.

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from datetime import date
 
 from markupsafe import Markup, escape
 
@@ -1142,7 +1141,77 @@ _DETAIL = """
       </select>
     </label></p>
   {%- else %}
-  <p class="eyebrow"><span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span></p>
+  {#- **The chip IS the control** — jcanton, 2026-08-26: "instead of a hyperlink
+      it would be better to make the kind chip clickable when in edit or
+      side-by-side mode, and that opens the selector that then pops up the
+      confirmation if changed".
+
+      It replaced a "Change kind" link beside the chip, which was a second thing
+      on the line saying what the first thing was about. A control is identified
+      by what it is: the chip already says the kind, so the chip is where the
+      kind is changed — the same argument the status made when it stopped being
+      a chip beside a hill and became the hill.
+
+      **Only while the record is being edited.** Reading a record is reading, and
+      a chip that looks pressable on a page nobody is editing is an invitation to
+      a write. `.record.editing` is the class the view switcher sets for both the
+      edit view and the side-by-side one, which is exactly the pair asked for.
+
+      Rendered as a `<button>` whenever there is a server, and dressed back down
+      to a chip by the stylesheet until the record is being edited: a control that
+      APPEARS when you start editing would move the heading under the pointer. -#}
+  <p class="eyebrow">{% if editable %}<button type="button"
+    class="chip kind-{{ e.kind }} kindchip">{{ e.kind|human }}</button><label
+    class="becomeswrap" hidden><span class="sr-only">Change this record's kind</span
+    ><select class="becomes">
+      {#- A blank first, selected, so that CHOOSING is what fires `change` —
+          without it the first kind in the list is already chosen the moment the
+          picker opens, and picking it is a no-op the page cannot tell from
+          having not picked at all. Every other kind but the one it is: filtered
+          from the ladder rather than from a list written beside it, so a rung
+          added to `KINDS` is offered without a second edit. Which of them THIS
+          record can become is the server's question — it depends on what it is
+          filed under and what is filed under it, and a page that answered it
+          would be a second copy of `Rung.under` in a template. -#}
+      <option value="" selected>Change kind…</option>{% for k in kinds %}{%
+        if k != e.kind %}<option value="{{ k }}">{{ k|human }}</option>{%
+        endif %}{% endfor %}</select></label>{%
+    else %}{#- The start tag stays on ONE line, and it matters: a rendered
+        file's chip is asserted verbatim by
+        `test_the_detail_page_wears_the_same_chips_every_other_view_wears`, and
+        a newline inside a start tag is a newline in the bytes. The `-#}` below
+        eats the gap between this comment and the span, so the two of them are
+        adjacent in the output without the tag having to share a line with
+        anything. -#}<span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span>{%
+    endif %}</p>
+  {%- if editable %}
+  {#- Asked before it is done, and it says the expensive part out loud: the id
+      carries the kind, so this mints a new record and retires this one. Every
+      other write on this page edits the file in front of you.
+
+      The chosen kind is written in here by the script rather than picked in
+      here, which is the fix for the version that shipped: the picker was inside
+      an `.sr-only` label, so the panel drew "Make Chaff optics ?" with nothing
+      to choose from — visually gone, and found perfectly well by every test that
+      asked the DOM for it. The question a confirmation asks has to be a sentence
+      somebody can read.
+
+      Classes and not ids, for the reason the delete control's own comment gives:
+      this page can hold every record in the plan at once, and a control resolved
+      by `getElementById` acts on whichever record happens to be first. -#}
+  <div class="rekinding" hidden>
+    <p class="asking">Make <strong>{{ e.title }}</strong>
+      <span class="into"></span>?</p>
+    <p class="reach">The id carries the kind, so this makes a NEW record and
+      retires <code>{{ e.id }}</code>. Everything filed under it or waiting on it
+      is repointed in the same commit; the old id stops resolving.</p>
+    <p class="why" role="alert" hidden></p>
+    <span class="acts">
+      <button type="button" class="really">Change it</button>
+      <button type="button" class="keep">Keep it</button>
+    </span>
+  </div>
+  {%- endif %}
   {%- endif %}
   {#- One slot for the record's name in both modes: the read span and the title
       box swap inside the heading, so pressing Write changes what the name is
@@ -1934,6 +2003,133 @@ if (!CREATING) {
   document.getElementById('reset').onclick = resetEdits;
 }
 
+// Changing a record's KIND, which is the one edit on this page that does not
+// edit the record: the id carries the kind, so the server mints a new record,
+// repoints everything that named the old one and retires it — all in one commit.
+//
+// Two presses, like deleting, and for the same reason: this is not reversible
+// from the page. And a THIRD where something would be lost — a rung that does
+// not read a field this record has written down. The server refuses the first
+// attempt with the list, the panel says it in the words the server chose, and
+// the second press sends that list back. A confirmation whose text the page
+// wrote itself is a confirmation that can drift from what the server will do.
+for (const article of document.querySelectorAll('article.record')) {
+  const chip = article.querySelector('button.kindchip');
+  if (!chip) continue;
+  const wrap = article.querySelector('.becomeswrap');
+  const picker = article.querySelector('select.becomes');
+  const ask = article.querySelector('.rekinding');
+  const into = ask.querySelector('.into');
+  const why = ask.querySelector('.why');
+  const acts = ask.querySelector('.acts');
+  const going = ask.querySelector('button.really');
+  // What the server said would be lost, once it has said it. Cleared whenever
+  // the question changes, so a confirmation collected for one kind can never be
+  // spent on another.
+  let losing = null;
+
+  // Back to the chip. Everything that could be open closes, because there is no
+  // arrangement of the two where both being up says anything.
+  const resting = () => {
+    ask.hidden = true;
+    wrap.hidden = true;
+    chip.hidden = false;
+    why.hidden = true;
+    acts.hidden = false;
+    losing = null;
+    going.textContent = 'Change it';
+    picker.value = '';
+  };
+  resting();
+
+  // The chip is the control, and only while the record is being edited — which
+  // is `.editing`, the class the view switcher sets for the edit view AND the
+  // side-by-side one. Reading a record is reading; a chip that answers a press
+  // on a page nobody is editing is an invitation to a write.
+  chip.onclick = () => {
+    if (!article.classList.contains('editing')) return;
+    chip.hidden = true;
+    wrap.hidden = false;
+    picker.focus();
+  };
+  // Leaving edit mode puts it away. Otherwise the picker outlives the mode that
+  // justified it, and the next reader finds a control the page no longer offers.
+  addEventListener('openproj:editing', () => {
+    if (!article.classList.contains('editing')) resting();
+  });
+
+  picker.onchange = () => {
+    if (!picker.value) { resting(); return; }
+    losing = null;
+    why.hidden = true;
+    acts.hidden = false;
+    going.textContent = 'Change it';
+    // The sentence, written from the choice — and from the OPTION rather than
+    // from the value, so the panel says the word the page already drew ("In
+    // progress", not `in_progress`). `human` is the table's and the timeline's;
+    // this page has never had one, and adding a second copy of a map to write
+    // one sentence is how two pages come to disagree about a word.
+    //
+    // The article is computed rather than carried: `_an` is Python's, the five
+    // kinds are the whole vocabulary, and a vowel is a vowel. It exists at all
+    // because "a issue" was on screen for a week the day issues joined the
+    // ladder.
+    const word = picker.selectedOptions[0].textContent.trim();
+    into.textContent = `${/^[aeiou]/i.test(word) ? 'an' : 'a'} ${word.toLowerCase()}`;
+    ask.hidden = false;
+    ask.querySelector('button.keep').focus();
+  };
+  ask.querySelector('button.keep').onclick = () => resting();
+  ask.onkeydown = event => { if (event.key === 'Escape') resting(); };
+
+  going.onclick = async () => {
+    going.disabled = true;
+    dispatchEvent(new Event('openproj:writing'));
+    let committed = null;
+    try {
+      const body = {base_commit: BASE.value, id: article.id, kind: picker.value};
+      // Only on the second press, and only the list the server itself sent.
+      if (losing) body.drops = losing;
+      const response = await fetch('/api/rekind', {
+        method: 'POST', headers: {'content-type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+      const answer = await response.json().catch(() => ({}));
+      if (response.status === 409 && Array.isArray(answer.drops)) {
+        // Not a refusal so much as the question this gesture could not ask until
+        // the server had worked out the answer.
+        losing = answer.drops;
+        why.hidden = false;
+        // `refusal` and not `answer.detail`, which is the shape of the bug
+        // `test_no_write_path_reads_a_key_a_conflict_does_not_carry` exists for:
+        // a 409 from the STORE answers with a report and no `detail`, and this
+        // 409 is not that one — but a call site that knows the difference is a
+        // call site that will be wrong the day it stops being true.
+        why.textContent = refusal(answer, response.status);
+        going.textContent = 'Change it anyway';
+        going.disabled = false;
+        return;
+      }
+      if (!response.ok) {
+        why.hidden = false;
+        why.textContent = refusal(answer, response.status);
+        going.disabled = false;
+        return;
+      }
+      committed = answer.commit;
+      // The record you were reading has a new id, so this is the one write on
+      // this page that has somewhere else to be afterwards.
+      location.href = {{ links.record|tojson }} + answer.id;
+    } catch (error) {
+      why.hidden = false;
+      why.textContent = 'The server could not be reached. Nothing was changed.';
+      going.disabled = false;
+    } finally {
+      dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
+    }
+  };
+}
+
 // Deleting a record. Two presses and a named record between them, and every
 // element found through the article it belongs to rather than by id — this page
 // can hold more than one record, and a destructive control resolved by
@@ -1988,14 +2184,24 @@ for (const article of document.querySelectorAll('article.record')) {
       return;
     }
     if (answer.ok) {
-      // To the landing, because the page you are on is about a record that no
-      // longer exists: staying here would show a 404 on the next reload, and
-      // reloading it is what the shell does when it hears the commit. The
-      // landing and not the table — this page belongs to every record, and a
-      // deleted issue's or note's reader sent to the table lands on a plan
-      // view that never showed the record they came from. Same retarget as
-      // the back link at the top of the page.
-      location.href = {{ links.records|tojson }};
+      // Away, because the page you are on is about a record that no longer
+      // exists: staying here would show a 404 on the next reload, and reloading
+      // it is what the shell does when it hears the commit.
+      //
+      // **Where the back link would have taken you** — jcanton, 2026-08-26: "the
+      // back path after edit/delete sometimes simply goes back to the main page,
+      // would be nice if it sent always to the previous page". This was the
+      // place it did not. It went to the landing deliberately, on the argument
+      // that a deleted issue's reader sent to the table lands on a plan view
+      // that never showed it; but the remembered origin is not the table, it is
+      // the view they were actually standing on, and it is never this record's
+      // own page because a record page does not stamp one.
+      //
+      // The landing stays as the fallback, for the tab that has no origin —
+      // a record opened in a new tab, or reached by typing the address.
+      // `cameFrom` is the shell's, and it is the same read the back link makes.
+      const back = typeof cameFrom === 'function' ? cameFrom() : null;
+      location.href = back ? back.href : {{ links.records|tojson }};
       return;
     }
     // Refused, and the reason is the useful part: "pitch-b20000 cannot be
@@ -2912,9 +3118,25 @@ def _new_rows() -> list[dict]:
             id=f"{PREFIX[kind]}-000000",
             kind=kind,
             title="",
-            # Today, because a date field that starts empty is a date field
-            # somebody leaves empty. This is a blank; nothing is overwritten.
-            assigned_on=date.today(),
+            # **Empty, and not today.** It was today, on the argument that a date
+            # field which starts empty is a date field somebody leaves empty —
+            # jcanton, 2026-08-26, reversing it: "assigned date default to empty
+            # would be better than default=today".
+            #
+            # The argument was answering the wrong risk. `assigned_on` is the one
+            # date the whole schedule is derived FROM, and a record created today
+            # is very often work that starts next cycle or work somebody is
+            # writing down so as not to lose it. Prefilling today does not stop
+            # anybody leaving it wrong, it makes wrong the DEFAULT and silent:
+            # the record schedules itself from a date nobody chose, and the only
+            # sign is a bar in the right place on the timeline for the wrong
+            # reason.
+            #
+            # Empty is not silent. `validate_all` already asks for this field at
+            # `in_progress` and nowhere else — "work in progress needs the date it
+            # was assigned" — so a record that never gets one is fine until it
+            # starts, and then says so beside itself.
+            assigned_on=None,
         )
         # One form on the page, so one prefix. The detail page's is the record's
         # id, because that page can hold sixteen of them at once.
