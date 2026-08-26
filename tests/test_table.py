@@ -2008,7 +2008,15 @@ def test_the_kind_is_a_dropdown_and_switching_keeps_what_was_typed(new_page: str
     """It was three links, and following one was a fresh page — so a title typed
     before realising it should be a pitch was a title typed twice."""
     assert '<select id="kind">' in new_page
-    assert "make a" not in new_page, "the links this replaced"
+    # The shape of the links this replaced — `<a href="…?kind=x">make a x
+    # instead</a>` — and not the bare words "make a", which is what this asked
+    # for and which every byte of this page has to avoid, inlined script and its
+    # comments included. It cost a real failure: a comment added on 2026-08-26
+    # reading "to make a live region speak twice" turned this red, in a file
+    # nothing about kinds had been touched in. A page-wide substring search for
+    # ordinary English is a tripwire under prose, and the assertion it was
+    # standing in for is about markup.
+    assert ">make a " not in new_page, "the links this replaced"
     assert re.search(r"KIND\.onchange = \(\) => \{\s*showKind\(\);", new_page)
     assert "location.href" not in re.search(r"function showKind.*?\n\}", new_page, re.S).group(0)
 
