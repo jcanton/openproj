@@ -60,7 +60,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from pydantic import BaseModel
 from starlette.websockets import WebSocketDisconnect
 
-from . import __version__, coedit, render
+from . import __version__, coedit, render, vendor
 from .auth import (
     OAuthError,
     User,
@@ -619,6 +619,19 @@ IMAGE_TYPES = {
     "image/webp": ".webp",
 }
 ASSET_PATTERN = re.compile(r"^[0-9a-f]{16}\.(png|jpg|gif|webp)$")
+
+# `GET /static/{name}` exists for exactly one file so far: the vendored
+# Excalidraw bundle is fetched on the first press of the drawing button rather
+# than carried on every page, so something has to answer that fetch. This is
+# an allowlist of vendored names, not a directory listing — the writable
+# surface is closed by construction (this module's docstring), and a route
+# that took its file name from the request and opened `static/<name>` would
+# open the readable surface the same way a path traversal always does. Every
+# name here is checked in exactly once, by hand, alongside what it should be
+# served as; there is no name this dict does not already know about.
+STATIC_ALLOWLIST = {
+    "excalidraw.js": "application/javascript",
+}
 
 DRAWING_DIR = "drawings"
 DRAWING_SUFFIX = ".png"
@@ -3213,6 +3226,33 @@ def create_app(
             await announce(commit, [])
         return JSONResponse(
             {"path": path, "url": f"/{path}", "fresh": fresh, "commit": commit}
+        )
+
+    @app.get("/static/{name}")
+    def vendored(name: str) -> Response:
+        """A vendored file, over HTTP — the one gap Task 6 found: nothing
+        served `static/` before this, because every other vendored library is
+        read off disk and inlined into a rendered page rather than fetched by
+        the browser on its own. `STATIC_ALLOWLIST` is the whole check; `name`
+        never reaches a filesystem path except as a key into it, so `..`, an
+        encoded slash folded into one path segment, or a name simply not in
+        the dict all end here rather than at `vendor._static_dir()`. Not a
+        `StaticFiles` mount: this repository has never had one, and a mount's
+        whole feature is taking a path from the request — everything else
+        here takes an id and derives the path itself instead.
+        """
+        media_type = STATIC_ALLOWLIST.get(name)
+        if media_type is None:
+            raise HTTPException(404, "no such vendored file")
+        data = (vendor._static_dir() / name).read_bytes()
+        return Response(
+            data,
+            media_type=media_type,
+            # Honest here in a way it would not be for a drawing: a vendored
+            # file changes only with a release, so a byte-identical `name`
+            # really does mean byte-identical content, forever, the same
+            # promise `/assets/{name}` makes for a content-addressed upload.
+            headers={"cache-control": "public, max-age=31536000, immutable"},
         )
 
     @app.get("/assets/{name}")

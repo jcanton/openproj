@@ -2967,6 +2967,42 @@ def test_an_asset_name_that_is_not_a_hash_never_becomes_a_path(client: TestClien
         assert client.get(f"/assets/{name}").status_code == 404, name
 
 
+def test_the_static_route_serves_only_the_allowlisted_name(client: TestClient):
+    """`GET /static/{name}` did not exist before the Excalidraw bundle needed
+    something to answer `fetch('/static/excalidraw.js')`. The route is an
+    allowlist rather than a directory listing, so this checks both directions:
+    the one name on it is served, correctly, and a file that is genuinely
+    sitting in `static/` — `ace.js`, vendored and checksummed the same as
+    `excalidraw.js` — is still refused for not being the one name that is."""
+    from openproj.render import _static_dir
+
+    response = client.get("/static/excalidraw.js")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/javascript"
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert response.content == (_static_dir() / "excalidraw.js").read_bytes()
+
+    for name in ("ace.js", "VENDOR.md", "SHA256SUMS", "nope.js"):
+        assert client.get(f"/static/{name}").status_code == 404, name
+
+
+def test_a_static_name_that_is_not_the_allowlisted_one_never_becomes_a_path(
+    client: TestClient,
+):
+    """The same shape as the asset route's own test, for the same reason: the
+    writable surface is closed by construction and the readable one this route
+    adds has to be too. None of these ever reach `vendor._static_dir()` — they
+    fail the dict lookup before any path is built at all."""
+    # A bare ".." is not in this list: httpx's own URL normalization resolves
+    # `/static/..` down to `/` before the request leaves the client, the same
+    # dot-segment removal any browser does, so it never reaches this route at
+    # all. `%2e%2e` is the same two characters, percent-encoded, which survives
+    # that normalization and lets the *server's* own handling of a literal
+    # ".." be the thing under test rather than an artifact of the client.
+    for name in ("../config/defaults.yaml", "..%2Fconfig", "%2e%2e", "sub/excalidraw.js"):
+        assert client.get(f"/static/{name}").status_code == 404, name
+
+
 def test_a_stored_image_is_drawn_and_a_remote_one_is_not(client: TestClient):
     """A remote image would make the page fetch from the network, which is what
     inlining every library was for. One in the repository travels with the clone
