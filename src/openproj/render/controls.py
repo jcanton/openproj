@@ -2441,7 +2441,15 @@ let DRAWING_OPEN = false;
 // Mounts the popup for `entry` — a row from `drawingsIn`, or `null` for
 // "+ drawing" — and owns its whole lifecycle: load, fetch, mount, save, close.
 async function openDrawing(surface, status, entry) {
-  if (DRAWING_OPEN) return;
+  // Said rather than left silent: a control that visibly does nothing is
+  // worse than no control at all, the same rule the size ceiling and every
+  // refused save already follow. The menu is still reachable behind an open
+  // popup, so this is not a hypothetical press.
+  if (DRAWING_OPEN) {
+    status.textContent = 'a drawing is already open — close it first';
+    announce(status.textContent);
+    return;
+  }
   DRAWING_OPEN = true;
   const button = document.getElementById('drawing');
   const {overlay, stage, save, close} = drawPopup(

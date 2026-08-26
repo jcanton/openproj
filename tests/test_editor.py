@@ -1776,6 +1776,41 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
     assert got["heardNew"] is None, '"+ drawing" is a new drawing, and null says so'
 
 
+def test_a_second_drawing_cannot_be_opened_over_the_first(client: TestClient, tmp_path: Path):
+    """`DRAWING_OPEN` refuses a second `openproj:draw` while a popup is still
+    on screen — the menu is still reachable behind it, and two Excalidraw
+    roots stacked on one page is not a state worth reaching just to see what
+    it does. The refusal used to be silent; this is the guard's own comment
+    ("a control that visibly does nothing is worse than no control"), asserted
+    for the first time rather than merely quoted.
+
+    Dispatched directly on the surface rather than through the menu: the menu
+    is already covered by the tests above, and what this one is actually about
+    is the second call into `openDrawing`, from wherever it comes.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "second-drawing.html", 1200,
+        """
+        const area = document.querySelector('textarea[name=body]');
+        area.dispatchEvent(new CustomEvent('openproj:draw', {detail: null}));
+        const firstStatus = document.getElementById('upload').textContent;
+        const firstPopups = document.querySelectorAll('.drawpopup').length;
+        area.dispatchEvent(new CustomEvent('openproj:draw', {detail: null}));
+        return {
+          firstStatus, firstPopups,
+          secondStatus: document.getElementById('upload').textContent,
+          popupsAfterSecond: document.querySelectorAll('.drawpopup').length,
+        };
+        """,
+    )
+    assert got["firstPopups"] == 1, "the first press did not even open a popup"
+    assert got["firstStatus"] == "loading the drawing editor…"
+    assert got["popupsAfterSecond"] == 1, "a second popup was mounted over the first"
+    assert got["secondStatus"] == "a drawing is already open — close it first", (
+        "the guard went quiet again"
+    )
+
+
 def test_no_page_echoes_the_dates_it_is_asking_for(page: str):
     """The create form was the first page to lose the ISO echo, on the grounds
     that its two date boxes are the only dates on screen and had nothing to be
@@ -7873,7 +7908,22 @@ def _png_text_chunks(data: bytes) -> dict[bytes, bytes]:
 
 _WATCH_INJECTIONS_AND_OPEN = r"""
 (async () => {
-  if (!window.__armed) {
+  // Installed exactly once, gated on its OWN flag and set before anything
+  // below it can throw — decoupled from whether the clicks that arm the
+  // popup (next block) ever succeed. `in_a_live_page` polls this whole
+  // expression again every 250ms with NO initial delay, so the first poll can
+  // land before `attachDrawing` has wired `#drawing`'s handler or built
+  // `.drawmenu` at all. A version of this hook that reinstalled itself on
+  // every failed retry wrapped `Element.prototype.appendChild` a second time
+  // on top of the first — each wrap closing over whatever `appendChild`
+  // already was, so the ONE real `document.head.appendChild(tag)` the loader
+  // makes walked through both layers and was counted twice. Measured at
+  // ~4-7% of runs before this fix, always the same diff: `injected ==
+  // ['inline:excalidraw', 'inline:excalidraw']` — a probe whose own setup
+  // double-installs under a retry, reporting two injections for one, on the
+  // one test guarding the riskiest half of this feature.
+  if (!window.__hooked) {
+    window.__hooked = true;
     window.__violations = [];
     document.addEventListener('securitypolicyviolation', event => {
       window.__violations.push(event.effectiveDirective + ' <- ' + String(event.blockedURI));
@@ -7891,8 +7941,19 @@ _WATCH_INJECTIONS_AND_OPEN = r"""
       }
       return append.call(this, node);
     };
-    document.getElementById('drawing').click();
-    document.querySelector('.drawmenu button').click();
+  }
+  // Arming is the other half, and it is allowed to fail and retry as many
+  // times as the page takes to be ready: nothing here throws, so a poll that
+  // lands too early costs nothing and the next one tries again. `?.click()`
+  // on a button that is not there yet, or whose handler is not wired yet, is
+  // a silent no-op rather than a `TypeError` — and the menu row is CHECKED
+  // before it is clicked, rather than clicked and left to throw if `open()`
+  // has not run yet.
+  if (!window.__armed) {
+    document.getElementById('drawing')?.click();
+    const row = document.querySelector('.drawmenu button');
+    if (!row) return null;
+    row.click();
     window.__armed = true;
     return null;
   }
