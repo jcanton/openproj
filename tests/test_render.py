@@ -211,7 +211,9 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(
     # is the one vendored script inlined into no page at all, checked on its own
     # further down.
     inlined = sorted(
-        path.name for path in static.iterdir() if path.suffix == ".js" and path.name != "excalidraw.js"
+        path.name
+        for path in static.iterdir()
+        if path.suffix == ".js" and path.name != "excalidraw.js"
     )
     assert len(inlined) == 4, inlined
 

@@ -39,7 +39,7 @@ from test_web import (
     file_at,
     git_head,
     head,
-    live_server,
+    live_server,  # noqa: F401 — a fixture, requested by name below
     save,
 )
 
@@ -7773,7 +7773,9 @@ return {
 """
 
 
-def test_a_reader_of_the_slide_editor_gets_no_surface_and_no_toolbar(repo_path: Path, tmp_path: Path):
+def test_a_reader_of_the_slide_editor_gets_no_surface_and_no_toolbar(
+    repo_path: Path, tmp_path: Path
+):
     """The other half of the same fix, and the one that matters more: `MAY_WRITE`
     gates the call to `bodySurface` exactly as it gated the old call to
     `aceSurface`, so a reader the server would refuse a save from still gets
@@ -7986,7 +7988,8 @@ _WATCH_INJECTIONS_AND_OPEN = r"""
 
 
 def test_the_fetch_and_inject_delivery_is_clean_under_the_real_policy(
-    live_server: str, tmp_path: Path
+    live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
+    tmp_path: Path,
 ):
     """The spike proved fetch and inject are each individually allowed —
     `connect-src 'self'` grants the fetch that reads the bundle's text,
@@ -8026,7 +8029,8 @@ def test_the_fetch_and_inject_delivery_is_clean_under_the_real_policy(
 
 
 def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
-    live_server: str, tmp_path: Path
+    live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
+    tmp_path: Path,
 ):
     """The round trip `docs/drawings.md` says is testable today, driven
     exactly the way it says to drive it: a real Chrome over DevTools, real
@@ -8084,7 +8088,8 @@ def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
         (async () => {{
           const blob = await (await fetch('/drawings/{drawing_id}.png')).blob();
           const loaded = await EXCALIDRAW.loadSceneOrLibraryFromBlob(blob, null, null);
-          return {{count: loaded.data.elements.length, types: loaded.data.elements.map(e => e.type)}};
+          return {{count: loaded.data.elements.length,
+                   types: loaded.data.elements.map(e => e.type)}};
         }})()
         """)
         assert round_trip == {"count": 2, "types": ["rectangle", "ellipse"]}, round_trip
@@ -8126,7 +8131,8 @@ def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
         (async () => {{
           const blob = await (await fetch('/drawings/{drawing_id}.png')).blob();
           const loaded = await EXCALIDRAW.loadSceneOrLibraryFromBlob(blob, null, null);
-          return {{count: loaded.data.elements.length, types: loaded.data.elements.map(e => e.type)}};
+          return {{count: loaded.data.elements.length,
+                   types: loaded.data.elements.map(e => e.type)}};
         }})()
         """)
         assert resaved_round_trip == {
@@ -8135,7 +8141,10 @@ def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
         assert not [line for line in said if "Content Security Policy" in line], said
 
 
-def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(live_server: str, tmp_path: Path):
+def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(
+    live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
+    tmp_path: Path,
+):
     """"The loser is refused, in one sentence, and their strokes are gone" —
     from the file. `docs/drawings.md` is explicit that a conflict dialog which
     also throws away the work it refused is the worse of the two losses, so
@@ -8203,7 +8212,8 @@ def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(live_server: str, 
 
 
 def test_closing_unsaved_strokes_asks_first_and_keep_drawing_preserves_them(
-    live_server: str, tmp_path: Path
+    live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
+    tmp_path: Path,
 ):
     """Task 11's own gap: `teardown` used to be the popup's only close path,
     reached from Close with no question asked at all — draw for ten minutes,
@@ -8293,7 +8303,8 @@ def test_closing_unsaved_strokes_asks_first_and_keep_drawing_preserves_them(
 
 
 def test_escape_backs_out_of_the_question_and_discard_throws_the_drawing_away(
-    live_server: str, tmp_path: Path
+    live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
+    tmp_path: Path,
 ):
     """The other half of `closeAttempt`'s contract, and the one the delete flow
     at `detail.py:1959-1962` already sets the shape for: Escape is two levels,
@@ -8319,7 +8330,10 @@ def test_escape_backs_out_of_the_question_and_discard_throws_the_drawing_away(
         _drag(call, 550, 300, 700, 430)
         time.sleep(0.2)
 
-        escape = "document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))"
+        escape = (
+            "document.dispatchEvent("
+            "new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))"
+        )
 
         # First Escape: unsaved work, so it raises the question rather than
         # closing the popup outright.

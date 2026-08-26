@@ -565,7 +565,8 @@ def test_every_write_a_page_makes_is_announced_before_and_after_it(
     # save button, so the pair is collapsed into the single write it is before
     # asking whether the count below balances.
     if "'/api/drawing'" in fetches and "`/api/drawing/${entry.id}`" in fetches:
-        fetches = [url for url in fetches if url not in ("'/api/drawing'", "`/api/drawing/${entry.id}`")]
+        both = ("'/api/drawing'", "`/api/drawing/${entry.id}`")
+        fetches = [url for url in fetches if url not in both]
         fetches.append("'/api/drawing' or `/api/drawing/${entry.id}`, never both")
     assert fetches, route
     # And a write that is not a fetch at all. The detail page's Save goes over
