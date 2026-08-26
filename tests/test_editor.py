@@ -7788,3 +7788,355 @@ def test_a_reader_of_the_slide_editor_gets_no_surface_and_no_toolbar(repo_path: 
     assert got["marks"] == 0, "a reader was drawn a toolbar with nothing behind it"
     assert got["said"] == "", "a reader was drawn a status strip with nothing behind it"
 
+
+# --- the drawing popup, mounted for real, over a real origin ----------------
+#
+# `measured_in` cannot drive this page at all: 0 of 6 runs completed mount
+# plus two exports at its usual ~5000ms budget, 3 of 6 at 60000ms, all 6 only
+# at 600000ms, and not cleanly monotonically along the way (`docs/drawings.md`,
+# "Five helpers, not one"). So nothing below uses it. Every test here drives a
+# real Chrome over DevTools against `live_server`'s real uvicorn — the same
+# shape `tests/test_coedit.py` already uses three times — because that is the
+# only mode that can actually fetch `/static/excalidraw.js`, mount it, and
+# carry exported PNG bytes back out as something a Python test can read.
+
+
+def test_the_client_side_drawing_ceiling_matches_the_servers(client: TestClient):
+    """`MAX_DRAWING_BYTES` in the rendered page is a literal and not a template
+    variable — `render/` cannot import `MAX_ASSET_BYTES` from `web.py`, because
+    `web.py` imports `render` and the reverse import would be a cycle. The same
+    trade `NO_VALUE` makes against `index.NO_VALUE`
+    (`test_empty_is_spelled_the_same_on_both_sides_of_the_wire`), and the same
+    risk: nothing but this test stops the two drifting, and a drift would let
+    an oversized drawing through the client's own guard only for the server to
+    answer it with a 413 after the strokes are already on their way there.
+    """
+    page = client.get(f"/detail/{TASK}").text
+    assert "const MAX_DRAWING_BYTES = 2 * 1024 * 1024;" in page
+    assert MAX_ASSET_BYTES == 2 * 1024 * 1024, (
+        "web.py's own ceiling moved, and the client's literal was not updated with it"
+    )
+
+
+def _drag(call, x1: float, y1: float, x2: float, y2: float) -> None:
+    """A real, trusted drag on the canvas: `Input.dispatchMouseEvent`, not a
+    synthetic `pointerdown`/`pointerup` a script could dispatch on its own.
+    Excalidraw's shape tools read a genuine pointer down, a genuine move and a
+    genuine up — the same three DevTools already sends `pressed_in`'s single
+    click through, extended to a drag because a shape needs two points and
+    `pressed_in` only ever presses one."""
+    for kind, x, y, buttons in (
+        ("mousePressed", x1, y1, 1), ("mouseMoved", x2, y2, 1), ("mouseReleased", x2, y2, 0),
+    ):
+        call("Input.dispatchMouseEvent", {
+            "type": kind, "x": x, "y": y, "button": "left", "buttons": buttons, "clickCount": 1,
+        })
+        time.sleep(0.05)
+
+
+def _until(call, expression: str, seconds: float = 20) -> object:
+    """`expression`, asked again every quarter second until it answers
+    something truthy — `in_a_live_page`'s own wait, pulled out here because
+    these tests ask it of more than one condition over one page's life rather
+    than once at the end of it."""
+    deadline = time.monotonic() + seconds
+    value = None
+    while time.monotonic() < deadline:
+        value = _evaluated(call, expression, patient=True)
+        if value:
+            return value
+        time.sleep(0.25)
+    raise AssertionError(f"never became true within {seconds}s: {expression}")
+
+
+def _png_text_chunks(data: bytes) -> dict[bytes, bytes]:
+    """Every `tEXt` chunk's key and value, read by walking the file's own
+    chunk structure rather than trusted from a comment about what
+    `exportToBlob` is supposed to write. The structural claim this backs is
+    "the scene really is in the PNG, under this key" — never a byte count,
+    because Excalidraw's roughness draws from a random seed and the same scene
+    exported twice does not land on the same size (`docs/drawings.md`, "Five
+    helpers, not one")."""
+    assert data[:8] == b"\x89PNG\r\n\x1a\n", "not a PNG at all"
+    chunks: dict[bytes, bytes] = {}
+    pos = 8
+    while pos < len(data):
+        length = int.from_bytes(data[pos:pos + 4], "big")
+        kind = data[pos + 4:pos + 8]
+        body = data[pos + 8:pos + 8 + length]
+        if kind == b"tEXt":
+            key, _, value = body.partition(b"\x00")
+            chunks[key] = value
+        pos += 8 + length + 4
+    return chunks
+
+
+_WATCH_INJECTIONS_AND_OPEN = r"""
+(async () => {
+  if (!window.__armed) {
+    window.__violations = [];
+    document.addEventListener('securitypolicyviolation', event => {
+      window.__violations.push(event.effectiveDirective + ' <- ' + String(event.blockedURI));
+    });
+    // Widened the same way `_WATCH_THE_NETWORK` was widened, above: a `src`
+    // is refused where the plain `.textContent` script this page injects is
+    // not, so both have to be caught for the zero below to mean anything.
+    window.__injected = [];
+    const append = Element.prototype.appendChild;
+    Element.prototype.appendChild = function (node) {
+      if (node && node.tagName === 'SCRIPT') {
+        window.__injected.push(
+          node.src ? 'src' : `inline:${node.dataset.injectedBundle || '(unmarked)'}`
+        );
+      }
+      return append.call(this, node);
+    };
+    document.getElementById('drawing').click();
+    document.querySelector('.drawmenu button').click();
+    window.__armed = true;
+    return null;
+  }
+  if (!document.querySelector('.drawpopup .excalidraw')) return null;
+  // A frame raced against a timeout rather than trusted alone: rAF is
+  // unreliable on this exact page under a virtual clock, and this harness
+  // has no virtual clock to race against — but the race costs nothing and
+  // keeps this probe shaped the same way as the ones that do need it.
+  await new Promise(resolve => {
+    let settled = false;
+    requestAnimationFrame(() => { if (!settled) { settled = true; resolve(); } });
+    setTimeout(() => { if (!settled) { settled = true; resolve(); } }, 300);
+  });
+  const before = {
+    violations: window.__violations.slice(), injected: window.__injected.slice(),
+  };
+  // The forced failure: a REAL `<script src>`, refused because `script-src`
+  // grants no `'self'` for a fetched script to match — the same shape
+  // `test_no_editor_asks_for_a_script_after_the_page_has_loaded` uses for Ace.
+  const control = document.createElement('script');
+  control.src = '/static/excalidraw.js';
+  document.body.appendChild(control);
+  await new Promise(r => setTimeout(r, 300));
+  return {
+    before,
+    after: {violations: window.__violations.slice(), injected: window.__injected.slice()},
+  };
+})()
+"""
+
+
+def test_the_fetch_and_inject_delivery_is_clean_under_the_real_policy(
+    live_server: str, tmp_path: Path
+):
+    """The spike proved fetch and inject are each individually allowed —
+    `connect-src 'self'` grants the fetch that reads the bundle's text,
+    `script-src 'unsafe-inline'` grants the inline injection — but never
+    exercised the pair together: it inlined all 9.1MB into one `file://` page
+    instead of fetching anything (`docs/drawings.md`, "The spike, which came
+    first"). This is that pair, against a real origin, with the
+    forced-failure control every CSP probe in this file carries: a real
+    `<script src>` really is refused where the marked inline injection is not,
+    so the zero violations below are evidence the probe could have failed and
+    did not — not an assertion that could only ever pass.
+    """
+    drawn, said = in_a_live_page(
+        chrome(), f"{live_server}/detail/{TASK}?editor=plain",
+        _WATCH_INJECTIONS_AND_OPEN, tmp_path / "profile", seconds=30,
+    )
+    before, after = drawn["before"], drawn["after"]
+    assert before["violations"] == [], (
+        f"the real fetch-and-inject path tripped the policy: {before['violations']}"
+    )
+    assert before["injected"] == ["inline:excalidraw"], (
+        "the only script injected at runtime by the time the popup mounted was not "
+        f"exactly one, marked as the vendored bundle: {before['injected']}"
+    )
+    # The console is not asked for silence here the way the other CSP probes in
+    # this file ask it: the forced-failure control a few lines down is a real
+    # policy violation and prints a real console line about it, on purpose, in
+    # this same session — the `securitypolicyviolation` event above already IS
+    # the authoritative zero, over the window that matters.
+
+    assert after["injected"] == before["injected"] + ["src"], (
+        f"the forced-failure control was not even injected: {after['injected']}"
+    )
+    assert any("script-src" in line for line in after["violations"]), (
+        f"the policy did not refuse the injected <script src>: {after['violations']}"
+    )
+
+
+def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
+    live_server: str, tmp_path: Path
+):
+    """The round trip `docs/drawings.md` says is testable today, driven
+    exactly the way it says to drive it: a real Chrome over DevTools, real
+    strokes, against a real origin. Three claims, told as one story because
+    they are one story —
+
+    1. a new drawing splices its markdown exactly once, at the caret, and
+       nowhere else;
+    2. the bytes the server now serves read back — through the app's own
+       already-loaded `EXCALIDRAW.loadSceneOrLibraryFromBlob`, not a second
+       implementation of the format — as the same elements that were drawn,
+       structurally (a `tEXt` chunk under the right key, the right element
+       count and types) and never by an exact byte count, which Excalidraw's
+       own random seed makes meaningless;
+    3. a re-save of that same drawing — after a reload, reopened through the
+       menu, with a third shape added — changes the PNG and changes nothing
+       else, because the whole point of a stable path is that the body never
+       has to be found and edited again.
+    """
+    url = f"{live_server}/detail/{TASK}?editor=plain"
+    with _devtools(chrome(), url, tmp_path / "profile") as (call, said):
+        time.sleep(2)
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelector('.drawmenu button').click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-rectangle\"]').click()")
+        _drag(call, 300, 300, 480, 430)
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-ellipse\"]').click()")
+        _drag(call, 550, 300, 700, 430)
+        time.sleep(0.2)
+
+        original_body = _evaluated(call, "document.querySelector('[name=body]').value")
+        assert "drawings/draw-" not in original_body, "the body already named a drawing"
+
+        _evaluated(call, "document.getElementById('draw-save').click()")
+        assert _until(call, "!document.querySelector('.drawpopup')"), (
+            "the popup did not close itself after a successful save"
+        )
+        after_create = _evaluated(call, "document.querySelector('[name=body]').value")
+        match = re.search(r"draw-[0-9a-f]{6}", after_create)
+        assert match, f"no drawing id landed in the body: {after_create!r}"
+        drawing_id = match.group(0)
+        assert after_create == f"![](drawings/{drawing_id}.png){original_body}", (
+            "the splice put something other than the bare embed in at the caret, or "
+            "put it somewhere other than the caret"
+        )
+
+        served = httpx.get(f"{live_server}/drawings/{drawing_id}.png")
+        assert served.status_code == 200
+        assert set(_png_text_chunks(served.content)) == {b"application/vnd.excalidraw+json"}, (
+            "the exported PNG carries no scene, or carries it under a different key"
+        )
+        round_trip = _evaluated(call, f"""
+        (async () => {{
+          const blob = await (await fetch('/drawings/{drawing_id}.png')).blob();
+          const loaded = await EXCALIDRAW.loadSceneOrLibraryFromBlob(blob, null, null);
+          return {{count: loaded.data.elements.length, types: loaded.data.elements.map(e => e.type)}};
+        }})()
+        """)
+        assert round_trip == {"count": 2, "types": ["rectangle", "ellipse"]}, round_trip
+
+        # Reload, and reopen the SAME drawing through the menu — not a fresh
+        # popup addressed by hand, but the seam a person actually presses.
+        call("Page.enable")
+        call("Page.navigate", {"url": url})
+        _until(call, "!!document.getElementById('drawing')")
+        _evaluated(call, "document.getElementById('drawing').click()")
+        rows = _until(
+            call, "[...document.querySelectorAll('.drawmenu button')].map(b => b.textContent)"
+        )
+        assert rows == ["+ drawing", drawing_id], rows
+        _evaluated(call, "document.querySelectorAll('.drawmenu button')[1].click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+        assert _until(
+            call, f"document.getElementById('upload').textContent === 'editing {drawing_id}'"
+        )
+
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-diamond\"]').click()")
+        _drag(call, 300, 450, 480, 550)
+        time.sleep(0.2)
+
+        before_resave = _evaluated(call, "document.querySelector('[name=body]').value")
+        _evaluated(call, "document.getElementById('draw-save').click()")
+        assert _until(
+            call,
+            f"document.getElementById('upload').textContent === 'drawings/{drawing_id}.png saved'",
+        )
+        after_resave = _evaluated(call, "document.querySelector('[name=body]').value")
+        assert after_resave == before_resave, (
+            "a re-save touched the markdown — the whole reason a drawing lives at a "
+            "stable path is that this never has to happen"
+        )
+        assert after_resave == after_create, "the body moved between the two saves, not just in one"
+
+        resaved_round_trip = _evaluated(call, f"""
+        (async () => {{
+          const blob = await (await fetch('/drawings/{drawing_id}.png')).blob();
+          const loaded = await EXCALIDRAW.loadSceneOrLibraryFromBlob(blob, null, null);
+          return {{count: loaded.data.elements.length, types: loaded.data.elements.map(e => e.type)}};
+        }})()
+        """)
+        assert resaved_round_trip == {
+            "count": 3, "types": ["rectangle", "ellipse", "diamond"],
+        }, resaved_round_trip
+        assert not [line for line in said if "Content Security Policy" in line], said
+
+
+def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(live_server: str, tmp_path: Path):
+    """"The loser is refused, in one sentence, and their strokes are gone" —
+    from the file. `docs/drawings.md` is explicit that a conflict dialog which
+    also throws away the work it refused is the worse of the two losses, so
+    this is what "the popup stays open with the work still in it" means asked
+    of a real save against a real conflict, not merely inferred from the code.
+
+    An ordinary `httpx` client plays the somebody else: it changes the
+    drawing, over the wire, between the moment the popup opens (and captures
+    its etag) and the moment Save is pressed against it — the same window a
+    second tab or a second person would occupy.
+    """
+    url = f"{live_server}/detail/{TASK}?editor=plain"
+    with _devtools(chrome(), url, tmp_path / "profile") as (call, said):
+        time.sleep(2)
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelector('.drawmenu button').click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-rectangle\"]').click()")
+        _drag(call, 300, 300, 480, 430)
+        time.sleep(0.2)
+        _evaluated(call, "document.getElementById('draw-save').click()")
+        assert _until(call, "!document.querySelector('.drawpopup')")
+
+        body = _evaluated(call, "document.querySelector('[name=body]').value")
+        drawing_id = re.search(r"draw-[0-9a-f]{6}", body).group(0)
+
+        call("Page.enable")
+        call("Page.navigate", {"url": url})
+        _until(call, "!!document.getElementById('drawing')")
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelectorAll('.drawmenu button')[1].click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+        assert _until(
+            call, f"document.getElementById('upload').textContent === 'editing {drawing_id}'"
+        )
+
+        # Somebody else changes the same drawing from outside this browser,
+        # against the very etag the popup just captured.
+        current = httpx.get(f"{live_server}/drawings/{drawing_id}.png")
+        elsewhere = httpx.put(
+            f"{live_server}/api/drawing/{drawing_id}",
+            content=PNG + b"someone else's edit entirely",
+            headers={"content-type": "image/png", "if-match": current.headers["etag"]},
+        )
+        assert elsewhere.status_code == 200, elsewhere.text
+
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-ellipse\"]').click()")
+        _drag(call, 550, 300, 700, 430)
+        time.sleep(0.2)
+        before = _evaluated(call, "document.querySelector('[name=body]').value")
+        _evaluated(call, "document.getElementById('draw-save').click()")
+
+        expected = (
+            f"drawings/{drawing_id}.png — somebody changed this drawing while you had it "
+            "open, and a drawing has no merge. Reopen it."
+        )
+        assert _until(
+            call, f"document.getElementById('upload').textContent === {expected!r}"
+        ), _evaluated(call, "document.getElementById('upload').textContent")
+        assert _evaluated(call, "!!document.querySelector('.drawpopup')"), (
+            "the popup closed on a refusal — the strokes in it went with it"
+        )
+        after = _evaluated(call, "document.querySelector('[name=body]').value")
+        assert after == before, "a refused save still touched the markdown"
+
