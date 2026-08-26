@@ -73,6 +73,37 @@ and each says why it is still here.
 
 ## What is still owed
 
+* **Drawings, drawn here.** Designed 2026-08-26, written up in full at
+  `docs/drawings.md` — read that rather than a summary here, because the rejected
+  shapes carry the reasoning and one of them corrupts files.
+
+  The short version: Excalidraw, vendored as our own single-file build and fetched
+  on the first press of a button in the `.editbar`, opens in a popup over the
+  editor. A drawing is a PNG exported with `exportEmbedScene`, so the file is both
+  the picture and its own editable scene; it lives at `drawings/draw-a1b2c3.png`,
+  one flat top-level directory, and an embed is ordinary image markdown that
+  GitHub renders. The menu lists the drawings this body embeds, by id, in embed
+  order, scanned out of the body text with no stored state.
+
+  Content-addressed `assets/` was the nearly-free shape and was refused: it mints
+  a new path on every save, so every save must splice the body — a body write
+  racing the record editor's own save through the merge ladder. A stable path
+  makes that race not exist, and that is what the extra day buys.
+
+  A PNG must never reach `write_all`. `_commit` calls `.encode("utf-8")` and
+  `read` decodes, so today a binary through that path is an unhandled 500 — and
+  that is the good outcome, because latin-1-decoding it to make the crash go away
+  gets a clean line merge that prepends `---\n{}\n---\n` to the PNG magic number
+  and answers 200 with a real sha. Hence `Store.put_drawing`, which compares blob
+  ids and never decodes.
+
+  Nothing is built until a throwaway spike answers what the CSP asks: whether the
+  bundle runs at all under `default-src 'none'` with no worker, no `blob:` and no
+  wasm, whether the PNG export path avoids the harfbuzz subsetter, how big an
+  `en`-only non-splitting build really is, and how big a real drawing is against
+  the 2 MB ceiling. Red on wasm or fonts and the fallback ships the storage and
+  menu half against excalidraw.com, which is a strict prefix of the same design.
+
 * **A save should not wait for GitHub.** Designed 2026-08-24, written up in full at
   `docs/deferred-push.md` — read that rather than a summary here, because the
   reasoning is the expensive half and the rejected shapes matter as much as the
