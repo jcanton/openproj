@@ -242,7 +242,8 @@ _CYCLE = """
         Both are offered on a carried row. What a carried row may not have is a
         second cycle stamped onto it, which is the checkbox; its priority is a
         fact about the work and stays as editable as anybody's. -#}
-    <td><select class="pick" data-field="status" aria-label="{{ row.title }} status">
+    <td><select class="pick {{ status_class(row.status) }}" data-field="status"
+        aria-label="{{ row.title }} status">
       {% for value in statuses %}<option value="{{ value }}"
         {{- ' selected' if value == row.status else '' }}>{{ mark('status', value) }}{{
         value|human }}</option>{% endfor %}</select></td>
@@ -586,6 +587,16 @@ for (const pick of document.querySelectorAll('#bets select.pick')) {
   pick.onchange = () => {
     if (pick.value === was) return;
     was = pick.value;
+    // The rung's own colour travels with the picker, so the status column still
+    // reads DOWN at a glance — which is the whole reason it was a chip and not a
+    // word. Rewritten on change rather than left on the value it was drawn with:
+    // a picker showing `Done` in the ready tint is worse than an uncoloured one,
+    // because it is confidently wrong. The class list is rebuilt from `st-`
+    // rather than toggled, so nothing has to know which rung it was.
+    if (pick.dataset.field === 'status') {
+      pick.className = [...pick.classList].filter(one => !one.startsWith('st-')).join(' ')
+        + ' st-' + pick.value;
+    }
     pend(pick.closest('tr').dataset.id, pick.dataset.field, pick.value);
   };
 }
@@ -996,6 +1007,9 @@ input.rate { width: 4rem; }
   color: inherit; background: var(--bg);
   border: 1px solid var(--surface-2); border-radius: 2px; padding: .1rem .15rem;
 }
+/* The rung's colour comes from the shell, where `select.pick.st-X` is generated
+   beside `.chip.st-X` from the one loop over `STATUSES` — see the note there.
+   Nothing about the ladder is written in this file. */
 #bets select.pick:hover { border-color: var(--line); }
 #bets select.pick:focus { border-color: var(--accent); }
 /* The border is the hover affordance, not the focus one. Suppressing the outline

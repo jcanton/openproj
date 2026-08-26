@@ -622,6 +622,32 @@ function treeHtml(rungs) {
     each.map(one => `<span class="rung ${one}"></span>`).join('') + '</span>';
 }
 
+// **The cells a bulk edit will write, as record ids and one column.**
+//
+// **Declared here, above `cell()`, and the position is load-bearing.** `const`
+// is not hoisted, `cell()` reads `PICKED` on every draw, and `draw()` runs while
+// this script is still being evaluated. Written further down — beside the
+// functions that use them, which is where they were first put — the very first
+// draw threw a ReferenceError out of the temporal dead zone: the table drew
+// nothing at all, on every load, with one console line as the only symptom, and
+// six unrelated browser tests failed saying "the page reported nothing".
+//
+// Ids and not elements, for the reason `AT` is a row id and a column: `draw()`
+// replaces every cell after every save, so an element held here is detached by
+// the time anything reads it. `cell()` puts the class back from this set on the
+// way past.
+//
+// ONE column, and that is the safety model rather than a convenience. A
+// selection that could span columns is a selection that can write a status into
+// an appetite, and the gesture that would do it — dragging across a row — is the
+// one people make by accident. Picking a cell in a different column REPLACES the
+// selection, so the wrong thing is not reachable at all.
+const PICKED = new Set();
+let PICKED_FIELD = null;
+// Where a shift range measures from: the last cell picked without shift, which
+// is what every list in every file manager means by an anchor.
+let PICKED_FROM = null;
+
 function cell(row, key, place) {
   const mark = (MARKS[row.id] || {})[key];
   const note = mark ? mark.messages.join(' · ') : '';
@@ -1245,26 +1271,9 @@ function askFor(cell, status, fields) {
   };
 }
 
-// **The cells a bulk edit will write, as record ids and one column.**
-//
 // jcanton, 2026-08-26: "would it be possible to edit the same cell in multiple
 // rows by something like ctrl/shift+click".
-//
-// Ids and not elements, for the reason `AT` is a row id and a column: `draw()`
-// replaces every cell in the table after every save, so an element held here is
-// detached by the time anything reads it. `cellHtml` puts the class back from
-// this set on the way past.
-//
-// ONE column, and that is the whole safety model rather than a convenience. A
-// selection that could span columns is a selection that can write a status into
-// an appetite, and the gesture that would do it — dragging across a row — is the
-// one people make by accident. Picking a cell in a different column REPLACES the
-// selection instead of extending it, so the wrong thing is not reachable at all.
-const PICKED = new Set();
-let PICKED_FIELD = null;
-// Where a shift range measures from. The last cell picked without shift, which
-// is what every list in every file manager means by an anchor.
-let PICKED_FROM = null;
+// Declared at the top of this script, above `cell()` — see the note there.
 
 function unpick(redraw) {
   if (!PICKED.size && !PICKED_FIELD) return;

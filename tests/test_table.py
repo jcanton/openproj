@@ -2586,7 +2586,15 @@ def test_the_narrow_layout_drops_the_columns_that_are_lookups(page: str):
     from cascade import _blocks
 
     for prelude, body in _blocks(styles):
-        if not prelude.startswith("@media"):
+        # A WIDTH query, which is what this is about. The claim is that nothing
+        # decides the table's layout from a width written in CSS — the breakpoint
+        # that drifted was `@media (max-width: 1100px)` against floors that put
+        # the real minimum at 1354. `@media (hover: hover)` is not that: it asks
+        # what kind of pointer the reader has, which is a fact no arithmetic here
+        # can measure and no fit can disagree with. The row wash lives in one, on
+        # `td`, and refusing it here would be this test enforcing its own name
+        # rather than its reason.
+        if not prelude.startswith("@media") or "width" not in prelude:
             continue
         assert not re.search(r"\.shed-|data-col|--sticky|\btable\b|\bt[hd]\b", body), (
             f"the breakpoint that drifted is back, inside `{prelude}`: {body.strip()[:160]}"

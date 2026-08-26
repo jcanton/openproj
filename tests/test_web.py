@@ -266,6 +266,14 @@ def save(client: httpx.Client, record_id: str, fields: dict, *, base=None, body=
     )
 
 
+def save_many(client: httpx.Client, ids: list[str], fields: dict, *, base=None):
+    """One gesture is one PATCH is one commit, however many records it names."""
+    return client.patch(
+        "/api/records",
+        json={"base_commit": base or head(client), "ids": ids, "fields": fields},
+    )
+
+
 def remove(client: httpx.Client, record_id: str, *, base=None, also=None):
     """A DELETE carries a body, which is unusual and deliberate.
 
@@ -295,13 +303,19 @@ def index_of(client: httpx.Client) -> dict:
 def bet_rows(page: str) -> list[tuple[str, str, str]]:
     """(id, kind, status) per row of the betting table.
 
-    Read off the chips rather than off bare cells: a chip is markup, and the
-    regex that read `<td>ready</td>` did not fail when the cell grew one — it
+    Read off the markup each column actually draws, and the two are no longer the
+    same shape: kind is still a chip, and status is a `<select class="pick st-…">`
+    since it became editable. Both carry the rung in a class, which is the point
+    — a picker that dropped the ladder's colour would have taken the one column a
+    room reads DOWN and made it ink.
+
+    Matched on markup and not on cell text, which is the older lesson here: the
+    regex that read `<td>ready</td>` did not fail when the cell grew a chip, it
     matched nothing and left three assertions passing over an empty list.
     """
     return re.findall(
         r'<tr data-id="([^"]+)"[^>]*>.*?<span class="chip kind-(\w+)">'
-        r'.*?<span class="chip st-(\w+)">',
+        r'.*?<select class="pick st-(\w+)"',
         page,
         re.S,
     )
@@ -2627,9 +2641,15 @@ def test_the_bet_lists_what_to_pick_up_before_what_is_running(
 def test_the_bet_table_names_a_status_in_the_colour_every_other_page_uses(
     client: TestClient, repo_path: Path
 ):
-    """One chip everywhere a status is named. The betting table said `in_progress`
-    in the same ink as the title beside it, so the one column a room reads down
-    was the one column with nothing to read down."""
+    """One ladder everywhere a status is named. The betting table said
+    `in_progress` in the same ink as the title beside it, so the one column a
+    room reads down was the one column with nothing to read down.
+
+    It is a `<select>` here now rather than a `<span class="chip">`, because a
+    betting table is filled in and a status is a closed set — and the rung's
+    colour came with it. The shell generates `select.pick.st-X` from the same
+    loop over `STATUSES` that generates `.chip.st-X`, so a rung added to the
+    ladder cannot get a colour in one place and not the other."""
     client.put(
         "/api/cycle/46",
         json={"base_commit": git_head(repo_path),
@@ -2640,8 +2660,11 @@ def test_the_bet_table_names_a_status_in_the_colour_every_other_page_uses(
 
     assert rows
     for record_id, kind, status in rows:
-        assert f'<span class="chip st-{status}">' in page, record_id
+        assert f'<select class="pick st-{status}"' in page, record_id
         assert f'<span class="chip kind-{kind}">' in page, record_id
+        # The colour is generated, not written out here: the rule has to exist
+        # for this rung or the class on the control names nothing.
+        assert f"select.pick.st-{status} {{" in page, f"{record_id}: no rule for st-{status}"
     assert "In progress" in page or "in_progress" not in [s for _, _, s in rows]
     assert ">in_progress<" not in page, "the identifier is the class, never the word"
 
@@ -4706,6 +4729,12 @@ def wedged_writes(client: TestClient, note: str) -> dict[str, object]:
     base = head(client)
     return {
         "PATCH /api/record/{id}": save(client, OTHER, {"priority": "high"}, base=base),
+        # The bulk door. Driven with two ids, because one id through this route
+        # is the singular route's shape and would not exercise what is different
+        # about it — and what is different is exactly what a forked plan has to
+        # refuse whole rather than half.
+        "PATCH /api/records": save_many(client, [OTHER, PITCH], {"priority": "high"},
+                                        base=base),
         "POST /api/record": create(client, {"kind": "note", "title": "made while wedged"}),
         "DELETE /api/record/{id}": remove(client, DONE, base=base),
         "POST /api/promote": client.post(
@@ -4724,7 +4753,7 @@ def wedged_writes(client: TestClient, note: str) -> dict[str, object]:
 
 
 def test_every_write_route_refuses_in_words_while_the_plan_is_forked(forked: Forked):
-    """Seven routes, not the one the audit happened to test — and the refusal
+    """Eight routes, not the one the audit happened to test — and the refusal
     they briefly lost when the push left the request path, restored at the gate.
 
     The write path cannot meet the fork any more, and for one revision of this
@@ -4760,6 +4789,7 @@ def test_every_write_route_refuses_in_words_while_the_plan_is_forked(forked: For
     answers = wedged_writes(forked.client, forked.note)
     driven = {
         ("PATCH", "/api/record/{record_id}"),
+        ("PATCH", "/api/records"),
         ("POST", "/api/record"),
         ("DELETE", "/api/record/{record_id}"),
         ("POST", "/api/promote"),
@@ -5513,14 +5543,6 @@ def test_a_repository_that_is_not_an_owner_and_a_repo_is_refused_and_named(
         assert "config/defaults.yaml" in page.text, (
             "the file was dropped and the page does not say so"
         )
-
-
-def save_many(client: httpx.Client, ids: list[str], fields: dict, *, base=None):
-    """One gesture is one PATCH is one commit, however many records it names."""
-    return client.patch(
-        "/api/records",
-        json={"base_commit": base or head(client), "ids": ids, "fields": fields},
-    )
 
 
 def test_a_column_written_across_a_selection_is_one_commit(

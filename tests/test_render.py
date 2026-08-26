@@ -5150,6 +5150,28 @@ def test_a_record_that_is_not_there_is_an_empty_page_and_not_a_KeyError(seed_ind
     assert "<article" not in page
 
 
+def _a_mouse(call) -> None:
+    """Tell this Chrome it has a mouse.
+
+    **Headless Chrome has no pointing device, so `@media (hover: hover)` is
+    FALSE in it**, and the wash lives inside that query — which is right, because
+    a touch device keeps the last-tapped `:hover` until something else is tapped
+    and would otherwise be left with one row lit for no reason.
+
+    So the tests failed on CI and passed on this laptop, which is the worst shape
+    a test can have: the machine that gates the merge disagreed with the machine
+    the change was written on, about a rule that was correct on both.
+    `Emulation.setEmulatedMedia` says which reader is being asked about, in the
+    same way `--force-prefers-reduced-motion` does for the block beside it in the
+    shell. Without it these tests assert nothing at all — every cell reports no
+    wash and the assertion is that they all agree.
+    """
+    call("Emulation.setEmulatedMedia",
+         {"features": [{"name": "hover", "value": "hover"},
+                       {"name": "any-hover", "value": "hover"},
+                       {"name": "pointer", "value": "fine"}]})
+
+
 def _hovered(browser: str, page: str, where: Path, selector: str) -> dict:
     """Lay a page out, put the real pointer on a row of `selector`, and report.
 
@@ -5175,6 +5197,7 @@ def _hovered(browser: str, page: str, where: Path, selector: str) -> dict:
     profile = where.parent / f"{where.stem}-profile"
     shutil.rmtree(profile, ignore_errors=True)
     with _devtools(browser, where.as_uri(), profile) as (call, _said):
+        _a_mouse(call)
         time.sleep(2.0)
         at = _evaluated(call, f"""(() => {{
           const table = document.querySelector({json.dumps(selector)});
@@ -5283,11 +5306,12 @@ def test_the_wash_does_not_take_away_the_ground_it_is_drawn_over(
     import json
     import time
 
-    from browser import _devtools, _evaluated, chrome, measured_on_a_phone  # noqa: F401
+    from browser import _devtools, _evaluated, chrome
 
     where = tmp_path / "grounds.html"
     where.write_text(views["table"])
     with _devtools(chrome(), where.as_uri(), tmp_path / "grounds-profile") as (call, _said):
+        _a_mouse(call)
         time.sleep(2.0)
         before = _evaluated(call, """(() => {
           const rows = [...document.querySelectorAll('#rows tbody tr')]

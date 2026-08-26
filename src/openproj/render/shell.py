@@ -1130,8 +1130,17 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
     hover card — "why type and priority chips look different from the status
     ones, the border!". Three chips on one line that are three shapes read as
     three kinds of thing. -#}
+{#- `select.pick` beside the chip, and generated from the same loop rather than
+    written out in the cycle page's own sheet. The betting table's status column
+    was a chip and is a picker now — it has to be chosen, not typed, because a
+    ladder is a closed set — and a control drawn in the page's own ink would have
+    taken the ladder away to buy editability. Five hand-written rules there would
+    be a second copy of this ladder, which is the thing this loop exists to
+    prevent: a rung added in `STATUSES` must not need a second edit to get a
+    colour. -#}
 {% for s in statuses %}
-.chip.st-{{ s }} { background: var(--st-{{ s }}-soft); color: var(--st-{{ s }}-text);
+.chip.st-{{ s }},
+select.pick.st-{{ s }} { background: var(--st-{{ s }}-soft); color: var(--st-{{ s }}-text);
                    border: 1px solid var(--st-{{ s }}-line); }
 {%- endfor %}
 /* Kind never competes with status for attention: no hue, only a hairline. One
@@ -1612,7 +1621,7 @@ tr.nothing .hint { margin: 0 0 .75rem; }
    `td[data-col="blocked_by"].waiting` is (0,2,1) and would beat a bare
    `tbody tr:hover > td` at (0,1,3). With the id this is (1,1,4) and the wash
    paints on every cell of the row or on none, which is the only version of this
-   that is not a puzzle. Every table in the app is inside `<main id="main">`.
+   that is not a puzzle. Every table in the app is inside the page's one main element.
 
    `@media (hover: hover)` because a touch device has no pointer to follow and
    keeps the last-tapped `:hover` until something else is tapped — a phone would
