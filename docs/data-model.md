@@ -83,6 +83,20 @@ visible to half the application. `record_paths_in` is the one place that decides
 reading a tree at a commit and for the CLI globbing a disk, and a file below a plan directory is
 named on every page and by `openproj check` with the move that fixes it.
 
+`drawings/` is a ninth directory, and it is flat for a different reason: it holds no records at all,
+one PNG per drawing, named by the drawing's id (`drawings/draw-a1b2c3.png`) — and unlike `assets/`,
+it is **mutable**, rewritten in place on every edit through `Store.put_drawing`. It is invisible to
+the record model by construction, not by omission. `record_paths_in` (`model.py:244-295`) never gets
+as far as asking whether a drawing's directory is one it wants: the loop's own `if not
+path.endswith(".md")` continue, at `model.py:277-278`, drops every non-markdown path before that
+question is ever put to it. `_plan_files` (`model.py:1611`) only ever `rglob`s `*.md` in the first
+place, and `SEARCH_FIELDS` (`index.py:484-487`) reads record fields and never a blob. Say the
+consequence out loud, because it is the unpleasant one: a mistyped drawing path in a body is a
+**silent broken image** — no banner, no `openproj check` line, nothing sees it because nothing here
+was ever built to look. And `seed/` ships no drawings, because `cli.py`'s `_seed_files` filters to
+`.md` and `.yaml` (`cli.py:163-174`), so a seeded body naming a drawing would name a file that is
+not there.
+
 ## Two populations: `Index.records` and `Index.plan`
 
 `build_index` (`index.py`) turns the parsed files into one in-memory `Index`, which holds the same
