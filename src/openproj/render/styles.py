@@ -1106,9 +1106,18 @@ textarea.body-field { min-height: var(--writing, 60vh); resize: vertical; }
 .confirming .why[hidden] { display: none; }
 
 /* Changing the kind asks the same shape of question as deleting, so it is drawn
-   the same way and the rules are shared rather than copied — a second panel that
-   looked slightly different would read as a different kind of decision, and it is
-   not: both make a change to the plan that the page cannot take back.
+   the same way — a second panel that looked slightly different would read as a
+   different kind of decision, and it is not: each writes something to the plan
+   that the page cannot take back.
+
+   The wording above is deliberate and worth leaving alone. Every page inlines
+   this whole stylesheet, and one test reads the create form for the phrase the
+   three retired "create" links used to start with, to prove they are gone —
+   `test_the_kind_is_a_dropdown_and_switching_keeps_what_was_typed`. A comment is
+   not markup and a substring cannot tell the difference, so ordinary prose here
+   failed a test about links this file has nothing to do with. Repeating the
+   phrase to explain it would have failed it again, which is why this paragraph
+   does not.
 
    It is NOT the danger colour, and that is the one difference worth having.
    Deleting destroys a record; this one carries it across, keeps its title and

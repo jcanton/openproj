@@ -5997,17 +5997,27 @@ def test_a_confirmation_collected_for_one_change_cannot_be_spent_on_another(
     assert git_head(repo_path) == before
 
 
-def test_a_kind_change_needs_a_writer_and_a_kind_that_exists(
-    client: TestClient, secure_client: TestClient
-):
-    """The door, and the two values it takes. Both are closed vocabularies: an id
-    matched against the one record pattern, and a kind out of the ladder. No
-    path, no directory, no file name.
+def test_a_kind_change_needs_a_writer(secure_client: TestClient):
+    """Reads are public here by design and writes are not, and a new write door is
+    a new place to forget that.
+
+    Its own test, and not a first line on the one below: the lock in `store.py`
+    is per repository, so `client` and `secure_client` cannot both be asked for
+    in one test — the second app to open the repository is refused, and the
+    failure is a `StoreLocked` at fixture setup rather than anything about the
+    route. `live_server` says the same thing in its own docstring.
     """
     assert secure_client.post(
         "/api/rekind", json={"base_commit": "0" * 40, "id": PITCH, "kind": "task"}
     ).status_code == 401
 
+
+def test_a_kind_change_takes_two_closed_vocabularies_and_nothing_else(
+    client: TestClient,
+):
+    """An id matched against the one record pattern, and a kind out of the
+    ladder. No path, no directory, no file name.
+    """
     assert rekind(client, PITCH, "banana").status_code == 422
     assert rekind(client, "not-an-id", "task").status_code == 400
     assert rekind(client, "task-ffffff", "pitch").status_code == 404
