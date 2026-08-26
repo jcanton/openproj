@@ -266,6 +266,14 @@ def save(client: httpx.Client, record_id: str, fields: dict, *, base=None, body=
     )
 
 
+def save_many(client: httpx.Client, ids: list[str], fields: dict, *, base=None):
+    """One gesture is one PATCH is one commit, however many records it names."""
+    return client.patch(
+        "/api/records",
+        json={"base_commit": base or head(client), "ids": ids, "fields": fields},
+    )
+
+
 def remove(client: httpx.Client, record_id: str, *, base=None, also=None):
     """A DELETE carries a body, which is unusual and deliberate.
 
@@ -295,13 +303,19 @@ def index_of(client: httpx.Client) -> dict:
 def bet_rows(page: str) -> list[tuple[str, str, str]]:
     """(id, kind, status) per row of the betting table.
 
-    Read off the chips rather than off bare cells: a chip is markup, and the
-    regex that read `<td>ready</td>` did not fail when the cell grew one — it
+    Read off the markup each column actually draws, and the two are no longer the
+    same shape: kind is still a chip, and status is a `<select class="pick st-…">`
+    since it became editable. Both carry the rung in a class, which is the point
+    — a picker that dropped the ladder's colour would have taken the one column a
+    room reads DOWN and made it ink.
+
+    Matched on markup and not on cell text, which is the older lesson here: the
+    regex that read `<td>ready</td>` did not fail when the cell grew a chip, it
     matched nothing and left three assertions passing over an empty list.
     """
     return re.findall(
         r'<tr data-id="([^"]+)"[^>]*>.*?<span class="chip kind-(\w+)">'
-        r'.*?<span class="chip st-(\w+)">',
+        r'.*?<select class="pick st-(\w+)"',
         page,
         re.S,
     )
@@ -2627,9 +2641,15 @@ def test_the_bet_lists_what_to_pick_up_before_what_is_running(
 def test_the_bet_table_names_a_status_in_the_colour_every_other_page_uses(
     client: TestClient, repo_path: Path
 ):
-    """One chip everywhere a status is named. The betting table said `in_progress`
-    in the same ink as the title beside it, so the one column a room reads down
-    was the one column with nothing to read down."""
+    """One ladder everywhere a status is named. The betting table said
+    `in_progress` in the same ink as the title beside it, so the one column a
+    room reads down was the one column with nothing to read down.
+
+    It is a `<select>` here now rather than a `<span class="chip">`, because a
+    betting table is filled in and a status is a closed set — and the rung's
+    colour came with it. The shell generates `select.pick.st-X` from the same
+    loop over `STATUSES` that generates `.chip.st-X`, so a rung added to the
+    ladder cannot get a colour in one place and not the other."""
     client.put(
         "/api/cycle/46",
         json={"base_commit": git_head(repo_path),
@@ -2640,8 +2660,11 @@ def test_the_bet_table_names_a_status_in_the_colour_every_other_page_uses(
 
     assert rows
     for record_id, kind, status in rows:
-        assert f'<span class="chip st-{status}">' in page, record_id
+        assert f'<select class="pick st-{status}"' in page, record_id
         assert f'<span class="chip kind-{kind}">' in page, record_id
+        # The colour is generated, not written out here: the rule has to exist
+        # for this rung or the class on the control names nothing.
+        assert f"select.pick.st-{status} {{" in page, f"{record_id}: no rule for st-{status}"
     assert "In progress" in page or "in_progress" not in [s for _, _, s in rows]
     assert ">in_progress<" not in page, "the identifier is the class, never the word"
 
@@ -4706,6 +4729,12 @@ def wedged_writes(client: TestClient, note: str) -> dict[str, object]:
     base = head(client)
     return {
         "PATCH /api/record/{id}": save(client, OTHER, {"priority": "high"}, base=base),
+        # The bulk door. Driven with two ids, because one id through this route
+        # is the singular route's shape and would not exercise what is different
+        # about it — and what is different is exactly what a forked plan has to
+        # refuse whole rather than half.
+        "PATCH /api/records": save_many(client, [OTHER, PITCH], {"priority": "high"},
+                                        base=base),
         "POST /api/record": create(client, {"kind": "note", "title": "made while wedged"}),
         "DELETE /api/record/{id}": remove(client, DONE, base=base),
         "POST /api/promote": client.post(
@@ -4724,7 +4753,7 @@ def wedged_writes(client: TestClient, note: str) -> dict[str, object]:
 
 
 def test_every_write_route_refuses_in_words_while_the_plan_is_forked(forked: Forked):
-    """Seven routes, not the one the audit happened to test — and the refusal
+    """Eight routes, not the one the audit happened to test — and the refusal
     they briefly lost when the push left the request path, restored at the gate.
 
     The write path cannot meet the fork any more, and for one revision of this
@@ -4760,6 +4789,7 @@ def test_every_write_route_refuses_in_words_while_the_plan_is_forked(forked: For
     answers = wedged_writes(forked.client, forked.note)
     driven = {
         ("PATCH", "/api/record/{record_id}"),
+        ("PATCH", "/api/records"),
         ("POST", "/api/record"),
         ("DELETE", "/api/record/{record_id}"),
         ("POST", "/api/promote"),
@@ -5513,3 +5543,145 @@ def test_a_repository_that_is_not_an_owner_and_a_repo_is_refused_and_named(
         assert "config/defaults.yaml" in page.text, (
             "the file was dropped and the page does not say so"
         )
+
+
+def test_a_column_written_across_a_selection_is_one_commit(
+    client: httpx.Client, repo_path: Path
+):
+    """jcanton, 2026-08-26, on editing the same cell in several rows at once, and
+    then on what that should leave behind: "one commit for the whole edit".
+
+    A `git log` on a plan is the team's record of decisions, and it is the reason
+    promotion and the cascading delete are one commit each. Six commits saying
+    "status ready" describe six decisions that were never made — somebody made
+    one, about six records, and the history should be able to say so.
+
+    Asserted on the repository and not on the answer: three files in one commit
+    with one parent is the claim, and a route that looped over the singular PATCH
+    would answer 200 with a sha just the same.
+    """
+    before = git_head(repo_path)
+    ids = [PROJECT, PITCH, OTHER]
+    answer = save_many(client, ids, {"priority": "very_high"})
+    assert answer.status_code == 200, answer.text
+
+    after = git_head(repo_path)
+    assert after != before
+    commit = commit_at(repo_path, after)
+    assert len(commit.parents) == 1, "a bulk write is one commit, not a merge"
+    assert str(commit.parents[0].id) == before, "and it is written on the commit it was sent"
+    touched = {
+        delta.new_file.path
+        for delta in commit.tree.diff_to_tree(commit.parents[0].tree).deltas
+    }
+    assert len(touched) == len(ids), f"one commit should hold {len(ids)} files, held {touched}"
+    for record_id in ids:
+        path = next(one for one in touched if record_id in one)
+        assert "priority: very_high" in file_at(repo_path, after, path), record_id
+    # The message names the count and the field, and the field name comes from
+    # the model's own order rather than from the payload — see `_named`.
+    assert commit.message.splitlines()[0] == f"{len(ids)} records: priority"
+
+
+def test_a_bulk_write_that_would_refuse_any_record_writes_none(
+    client: httpx.Client, repo_path: Path
+):
+    """The half-done state is the whole reason this route exists rather than a
+    loop over the singular one, so it is the thing to test hardest.
+
+    A selection with one impossible record in it — a status no vocabulary
+    defines — must leave the repository exactly where it was. Written as a loop,
+    the records before the bad one are already committed on a protected branch by
+    the time it refuses, and nothing on the client can say which those were.
+    """
+    before = git_head(repo_path)
+    answer = save_many(client, [PROJECT, PITCH], {"status": "nonsense"})
+    assert answer.status_code == 422, answer.text
+    assert git_head(repo_path) == before, "a refused bulk write moved the plan"
+
+    # And the same for a record that is not there at all: the 404 is about one id
+    # and the other one must not have been written on its way to finding out.
+    answer = save_many(client, [PROJECT, "task-ffffff"], {"priority": "low"})
+    assert answer.status_code == 404
+    assert git_head(repo_path) == before, "a 404 on one id still wrote another"
+    assert "task-ffffff" in answer.json()["detail"]
+
+
+def test_a_bulk_write_merges_around_an_edit_it_does_not_overlap(
+    client: httpx.Client, repo_path: Path
+):
+    """`base_commit` makes every write here a compare-and-swap, and a bulk write
+    touches more files than any other — so it has the most to lose from a plan
+    that moved while the page was open.
+
+    It loses nothing, and that is the store's design rather than this route's:
+    `write_all` swaps per path and `_merge` reconciles per FIELD, so somebody
+    changing an owner while this page was open does not turn a bulk priority edit
+    into a conflict. Written down here because the first draft of this test
+    assumed the opposite and the route was right — two people editing two
+    different columns is exactly what field-level merge exists to make invisible.
+    """
+    base = head(client)
+    assert save(client, PITCH, {"owner": "cy"}).status_code == 200
+
+    answer = save_many(client, [PROJECT, PITCH], {"priority": "very_low"}, base=base)
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["outcome"] == "merged"
+
+    at = git_head(repo_path)
+    kept = file_at(repo_path, at, f"pitches/{PITCH}.md")
+    assert "owner: cy" in kept, "the bulk write overwrote somebody else's column"
+    assert "priority: very_low" in kept, "and it did not write its own"
+
+
+def test_a_bulk_write_refuses_when_it_overlaps_the_same_field(
+    client: httpx.Client, repo_path: Path
+):
+    """The other half: a genuine overlap, on the same field of the same record,
+    refuses — and refuses for the WHOLE selection.
+
+    That is what a bulk write has that a loop over the singular route cannot
+    have. Written as a loop, the records before the conflicting one are already
+    committed on a protected branch by the time it refuses, and nothing on the
+    client can say which those were.
+    """
+    base = head(client)
+    assert save(client, PITCH, {"priority": "medium"}).status_code == 200
+    moved = git_head(repo_path)
+
+    answer = save_many(client, [PROJECT, PITCH], {"priority": "very_low"}, base=base)
+    assert answer.status_code == 409, answer.text
+    assert answer.json()["outcome"] == "conflict"
+    assert git_head(repo_path) == moved, "a conflicting bulk write committed anyway"
+    # Nothing half-applied. The record nobody else touched is in the same
+    # selection and must be untouched too.
+    assert "priority: very_low" not in file_at(repo_path, moved, f"projects/{PROJECT}.md")
+
+
+def test_a_bulk_write_refuses_more_records_than_a_gesture_can_mean(client: httpx.Client):
+    """A bound and not a policy. The gesture that reaches this route is a
+    cmd-click selection in a table, so the realistic number is two to twenty;
+    what this stops is a payload naming every record in the plan and holding the
+    single writer lock while every one of them is read, patched and parsed.
+
+    Refused out loud and naming the number, because a silent truncation would
+    write *some* of the selection — which is the half-done state the route is
+    built around not having.
+    """
+    from openproj.web import MAX_BULK_RECORDS
+
+    answer = save_many(
+        client, [f"task-{n:06d}" for n in range(MAX_BULK_RECORDS + 1)], {"priority": "low"}
+    )
+    assert answer.status_code == 422
+    assert str(MAX_BULK_RECORDS) in answer.json()["detail"]
+
+
+def test_a_bulk_write_needs_a_writer_like_every_other_door(secure_client: httpx.Client):
+    """Reads are public here by design and writes are not, and a new write door is
+    a new place to forget that. `writer()` is the first line of the route for the
+    same reason it is the first line of the other four."""
+    answer = secure_client.patch(
+        "/api/records", json={"base_commit": "0" * 40, "ids": [PROJECT], "fields": {}}
+    )
+    assert answer.status_code == 401, answer.text

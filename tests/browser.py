@@ -178,10 +178,20 @@ def measured_in(
 
 
 @contextmanager
-def _devtools(browser: str, url: str, profile: Path):
+def _devtools(browser: str, url: str, profile: Path, flags: tuple[str, ...] = ()):
     """One headless Chrome on one page, and the two things a caller needs from
     it: `call(method, params)` for any DevTools method, and the list the console
     accumulates into.
+
+    `flags` is how a test asks about a machine that is not this one, and it is
+    the same knob `measured_in` has for `--force-prefers-reduced-motion`. The
+    user here is the hover wash: headless Chrome's pointer depends on the host —
+    a Mac reports `(hover: hover)` and CI's Linux reports `(hover: none)` — so a
+    test that took the default asserted one thing here and its opposite there.
+    `Emulation.setEmulatedMedia` cannot fix it, and that was measured rather than
+    assumed: it carries `prefers-*` and the media TYPE and ignores `hover`
+    outright, so forcing `hover: none` through it changed nothing at all.
+    `--blink-settings` is what the engine actually reads.
 
     Split out of `in_a_live_page` when a second question needed the same plumbing
     — a *trusted* press, which is `Input.dispatchMouseEvent` and therefore a
@@ -198,7 +208,7 @@ def _devtools(browser: str, url: str, profile: Path):
 
     profile.mkdir(parents=True, exist_ok=True)
     chrome_process = subprocess.Popen(
-        [browser, "--headless=new", "--disable-gpu", "--no-first-run",
+        [browser, "--headless=new", "--disable-gpu", "--no-first-run", *flags,
          "--remote-debugging-port=0", f"--user-data-dir={profile}", "about:blank"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )

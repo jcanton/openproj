@@ -2586,7 +2586,15 @@ def test_the_narrow_layout_drops_the_columns_that_are_lookups(page: str):
     from cascade import _blocks
 
     for prelude, body in _blocks(styles):
-        if not prelude.startswith("@media"):
+        # A WIDTH query, which is what this is about. The claim is that nothing
+        # decides the table's layout from a width written in CSS — the breakpoint
+        # that drifted was `@media (max-width: 1100px)` against floors that put
+        # the real minimum at 1354. `@media (hover: hover)` is not that: it asks
+        # what kind of pointer the reader has, which is a fact no arithmetic here
+        # can measure and no fit can disagree with. The row wash lives in one, on
+        # `td`, and refusing it here would be this test enforcing its own name
+        # rather than its reason.
+        if not prelude.startswith("@media") or "width" not in prelude:
             continue
         assert not re.search(r"\.shed-|data-col|--sticky|\btable\b|\bt[hd]\b", body), (
             f"the breakpoint that drifted is back, inside `{prelude}`: {body.strip()[:160]}"
@@ -5625,3 +5633,138 @@ def test_the_table_teaches_its_gestures_beside_the_search_box(seed_root: Path):
                 and "aside" in e.attrs.get("class", "").split()], (
         "the reader's table promises gestures it has no server for"
     )
+
+
+# Modifier bits as `Input.dispatchMouseEvent` counts them. Named, because `4` and
+# `8` in a call to a debugger protocol are two numbers nobody can read back.
+_ALT, _CTRL, _META, _SHIFT = 1, 2, 4, 8
+
+
+def _picking(browser: str, page: str, where: Path, steps: list[tuple[str, int]]) -> dict:
+    """Click a sequence of cells with modifiers held, and report the selection.
+
+    **Trusted presses, through DevTools.** A synthetic `MouseEvent` carries
+    `isTrusted: false` and — the part that matters here — whatever `metaKey` the
+    test chose to put on it, which means a test built from them proves the
+    handler reads a property it was handed rather than that the gesture works.
+    It also cannot show the thing this gesture had to get right: that holding a
+    modifier does not leave half the table highlighted as text behind it.
+
+    Each step is a CSS selector for the cell to press and the modifier bitmask to
+    hold. The selection is read back as record ids and the one column they share.
+    """
+    import json
+    import shutil
+    import time
+
+    from browser import _devtools, _evaluated
+
+    where.write_text(page)
+    profile = where.parent / f"{where.stem}-profile"
+    shutil.rmtree(profile, ignore_errors=True)
+    with _devtools(browser, where.as_uri(), profile) as (call, _said):
+        time.sleep(2.5)
+        for selector, modifiers in steps:
+            at = _evaluated(call, f"""(() => {{
+              const cell = document.querySelector({json.dumps(selector)});
+              if (!cell) return null;
+              cell.scrollIntoView({{block: 'center'}});
+              const box = cell.getBoundingClientRect();
+              return [Math.round(box.left + box.width / 2),
+                      Math.round(box.top + box.height / 2)];
+            }})()""")
+            assert at, f"no cell matched {selector}"
+            for kind in ("mousePressed", "mouseReleased"):
+                call("Input.dispatchMouseEvent", {
+                    "type": kind, "x": at[0], "y": at[1], "button": "left",
+                    "clickCount": 1, "modifiers": modifiers,
+                    "buttons": 1 if kind == "mousePressed" else 0,
+                })
+                time.sleep(0.08)
+            time.sleep(0.35)
+        return _evaluated(call, """(() => {
+          const picked = [...document.querySelectorAll('#rows td.picked')];
+          return {
+            ids: picked.map(c => c.dataset.record),
+            fields: [...new Set(picked.map(c => c.dataset.field))],
+            // What a modifier-click must NOT have left behind: half the table
+            // highlighted as text, which is what shift-click means to a browser
+            // everywhere else.
+            selectedText: (getSelection().toString() || '').trim().length,
+          };
+        })()""")
+
+
+def _priority_cells(page: str) -> list[str]:
+    """Selectors for the priority cells, in the order the table draws them."""
+    return [f'#rows tr:nth-of-type({n}) td[data-field="priority"]' for n in (1, 2, 3)]
+
+
+def test_a_modifier_click_picks_a_cell_and_shift_takes_the_range(page: str, tmp_path: Path):
+    """jcanton, 2026-08-26: "would it be possible to edit the same cell in
+    multiple rows by something like ctrl/shift+click", and then: "with cmd
+    instead of ctrl for mac, as usual".
+
+    Both, and the handler asks `metaKey || ctrlKey` rather than the platform —
+    that is what every list on either platform means, and sniffing the platform
+    is a second thing to get wrong. This asks with cmd, which is the one a Mac
+    reader will actually press.
+
+    The range is over the rows the table is DRAWING, not over the plan: this
+    table is sorted and filtered in the browser, and a range means what the
+    reader can see between the two cells they clicked.
+    """
+    from browser import chrome
+
+    first, _second, third = _priority_cells(page)
+    got = _picking(chrome(), page, tmp_path / "range.html",
+                   [(first, _META), (third, _SHIFT)])
+
+    assert len(got["ids"]) == 3, f"cmd then shift picked {got['ids']}"
+    assert got["fields"] == ["priority"], got["fields"]
+    assert not got["selectedText"], (
+        "shift-clicking left text selected behind the range, so the gesture "
+        "highlighted the table as well as picking it"
+    )
+
+
+def test_a_selection_is_one_column_and_picking_another_replaces_it(
+    page: str, tmp_path: Path
+):
+    """**The whole safety model, and it is a refusal rather than a warning.**
+
+    A selection that could span columns is a selection that can write a status
+    into an appetite, and the gesture that would do it — dragging across a row —
+    is the one people make by accident. So picking a cell in a different column
+    does not extend the selection, it replaces it: the wrong thing is not
+    reachable, rather than reachable and refused later.
+    """
+    from browser import chrome
+
+    first, second, _third = _priority_cells(page)
+    other = '#rows tr:nth-of-type(1) td[data-field="status"]'
+    got = _picking(chrome(), page, tmp_path / "columns.html",
+                   [(first, _META), (second, _META), (other, _META)])
+
+    assert got["fields"] == ["status"], (
+        f"a selection spans {got['fields']}, so one edit could write two columns"
+    )
+    assert len(got["ids"]) == 1, f"the priority cells stayed picked: {got['ids']}"
+
+
+def test_a_plain_click_puts_the_selection_down(page: str, tmp_path: Path):
+    """A selection that survives an ordinary click is a selection somebody has
+    forgotten about — and the next cell they open writes six records.
+
+    So any click without a modifier, anywhere in the table body, clears it. The
+    cost is that a selection cannot be assembled with pauses that involve
+    clicking something else, which is the right way round: this gesture is worth
+    exactly as much as it is predictable.
+    """
+    from browser import chrome
+
+    first, second, _third = _priority_cells(page)
+    got = _picking(chrome(), page, tmp_path / "clear.html",
+                   [(first, _META), (second, _META), (second, 0)])
+
+    assert not got["ids"], f"{got['ids']} survived a plain click"
