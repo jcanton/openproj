@@ -16,7 +16,7 @@ from markupsafe import escape
 from pages import elements, headings, lit, render_source, selects
 
 from openproj.index import Index, build_index
-from openproj.model import Config, load_repo
+from openproj.model import KIND_NAMES, Config, load_repo
 from openproj.render import (
     PRIORITIES,
     PRIORITY_GLYPH,
@@ -6054,3 +6054,51 @@ def test_the_create_form_opens_with_no_date_in_the_box(server_pages: dict[str, s
         "the box no longer says when the field becomes required, so an empty one "
         "is empty with nothing to say it will be asked for"
     )
+
+
+def test_the_record_page_offers_every_kind_but_the_one_it_is(
+    server_pages: dict[str, str], seed_index: Index
+):
+    """jcanton, 2026-08-26: change a record's kind "from the record editing page
+    (where there's the little chip)".
+
+    Beside the chip, because the kind is what the record IS: it decides which
+    fields the page even offers, so a control for it belongs next to the name and
+    not among the values it governs.
+
+    The list is filtered from the ladder rather than written beside it, so a rung
+    added to `KINDS` is offered without a second edit. Which of them this
+    particular record can actually become is the server's question — it depends
+    on what it is filed under and what is filed under it — and a page that tried
+    to answer it would be a second copy of `Rung.under` in a template.
+    """
+    page = server_pages["record"]
+    assert '<button type="button" class="rekind">Change kind</button>' in page
+    picker = re.search(r'<select class="rekind-to">(.*?)</select>', page, re.S)
+    assert picker, "the record page has no kind picker"
+
+    offered = re.findall(r'value="(\w+)"', picker.group(1))
+    only = next(iter(seed_index.plan))
+    is_now = seed_index.records[only].kind
+    assert is_now not in offered, f"the picker offers {is_now}, which it already is"
+    assert set(offered) == set(KIND_NAMES) - {is_now}, offered
+
+
+def test_a_rendered_file_offers_no_way_to_change_a_kind(rendered: Path):
+    """The static export has no server to mint an id, move the file or repoint
+    what named it — so it draws the chip and no control, the same way it draws
+    every other value and no editor.
+
+    Asserted because this control is the one on the page whose absence is easy to
+    get wrong: it is drawn from `editable`, which is "there is a server", and a
+    control that appeared in an exported file would be a button that silently
+    does nothing in the copy most likely to be mailed to somebody.
+    """
+    body = read(rendered, "detail.html")
+    # The MARKUP and not the word. Every page inlines the whole stylesheet, so
+    # `.rekinding { … }` is in these bytes on every page including this one — the
+    # substring trap `pages.py` was written about, and it caught this test on its
+    # first run. A rule with no markup to match is inert, which is the normal
+    # state of half the sheet in an exported file.
+    assert not re.search(r'<button[^>]*class="rekind"', body)
+    assert not re.search(r'<div class="rekinding"', body)

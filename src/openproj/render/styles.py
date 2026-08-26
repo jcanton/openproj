@@ -1105,6 +1105,38 @@ textarea.body-field { min-height: var(--writing, 60vh); resize: vertical; }
 .confirming .why { margin: 0; font-size: 12px; color: var(--danger); }
 .confirming .why[hidden] { display: none; }
 
+/* Changing the kind asks the same shape of question as deleting, so it is drawn
+   the same way and the rules are shared rather than copied — a second panel that
+   looked slightly different would read as a different kind of decision, and it is
+   not: both make a change to the plan that the page cannot take back.
+
+   It is NOT the danger colour, and that is the one difference worth having.
+   Deleting destroys a record; this one carries it across, keeps its title and
+   its document, and repoints everything that named it. What it costs is the id,
+   which the `.reach` line says in words. A red box over a rename teaches people
+   to read red boxes as "probably fine". */
+.rekinding { display: flex; flex-direction: column; align-items: flex-start;
+             gap: .5rem; max-width: 46ch; margin: 0 0 1rem;
+             padding: .6rem .75rem; border: 1px solid var(--line-strong);
+             border-radius: 3px; background: var(--surface); }
+.rekinding[hidden] { display: none; }
+.rekinding .asking { margin: 0; font-size: 13px; }
+.rekinding .acts { display: flex; gap: .4rem; }
+.rekinding .reach { margin: 0; font-size: 13px; color: var(--muted); }
+.rekinding .why { margin: 0; font-size: 12px; color: var(--danger); }
+.rekinding .why[hidden] { display: none; }
+.rekinding select { font: inherit; font-size: 13px; }
+/* The control that opens it, beside the chip it is about. Quiet, because it sits
+   under the heading on every record page and is pressed on almost none of them —
+   the chip is the fact and this is the way to change it. */
+button.rekind {
+  margin-left: .5rem; font: inherit; font-size: 11px;
+  background: none; border: 0; padding: 0; cursor: pointer;
+  color: var(--muted); text-decoration: underline;
+}
+button.rekind:hover { color: var(--accent); }
+button.rekind[hidden] { display: none; }
+
 /* The promotion bar. Hidden while the record is being edited: promoting carries
    the STORED body across, so offering it over a textarea somebody is halfway
    through is offering to promote a document they cannot see.

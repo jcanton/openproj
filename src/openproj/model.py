@@ -10,7 +10,7 @@ from __future__ import annotations
 import io
 import math
 import re
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Literal, NamedTuple
@@ -2991,17 +2991,34 @@ def split_front_matter(text: str) -> tuple[str, str]:
     return (front, body) if sep else ("", text)
 
 
-def patch_text(original: str, fields: dict, body: str | None = None) -> str:
+def patch_text(
+    original: str, fields: dict, body: str | None = None, drop: Sequence[str] = ()
+) -> str:
     """Apply only the named fields to a file, leaving everything else byte-identical.
 
     Round-trip, not re-serialise: a person's comments, key order, blank lines and
     list style survive a save. "Edit it in git if you prefer" stops being true the
     first time a save reformats somebody's file, and nobody comes back after that.
+
+    `drop` REMOVES keys, which setting a field to `None` does not: `None` is a
+    value, it round-trips as `field:` with nothing after it, and every reader
+    then sees a field that is present and empty rather than one that is not
+    there. The two are different to `validate_all` — a product carrying
+    `status:` is a product that reads a field its rung does not have — and the
+    one caller that needs the difference is changing a record's kind, where the
+    fields the new rung does not read have to leave the file rather than sit in
+    it blank.
+
+    Silent about a key that is not there, because the caller computing which
+    fields a rung does not read has no reason to know which of them this
+    particular file happened to write down.
     """
     front, existing_body = split_front_matter(original)
     yaml = YAML()
     yaml.preserve_quotes = True
     mapping = yaml.load(front) or {}
+    for key in drop:
+        mapping.pop(key, None)
     for key, value in fields.items():
         mapping[key] = value
     stream = io.StringIO()

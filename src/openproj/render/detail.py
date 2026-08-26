@@ -1046,7 +1046,41 @@ _DETAIL = """
       </select>
     </label></p>
   {%- else %}
-  <p class="eyebrow"><span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span></p>
+  {#- The chip, and — where there is a server to ask — the one control that can
+      change it. Here rather than in the facts list because the kind is what the
+      record IS: it decides which fields the page even offers, so a picker for it
+      belongs beside the name and not among the values it governs. -#}
+  <p class="eyebrow"><span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span>{%
+    if editable %}<button type="button" class="rekind">Change kind</button>{%
+    endif %}</p>
+  {%- if editable %}
+  {#- Asked before it is done, and it says the expensive part out loud: the id
+      carries the kind, so this mints a new record and retires this one. Every
+      other write on this page edits the file in front of you. -#}
+  {#- Classes and not ids, for the reason the delete control's own comment
+      gives: this page can hold every record in the plan at once, and a control
+      resolved by `getElementById` acts on whichever record happens to be first.
+      Everything below is found through the article it belongs to. -#}
+  <div class="rekinding" hidden>
+    <p class="asking">Make <strong>{{ e.title }}</strong>
+      <label class="sr-only">a different kind
+      {#- Every kind but the one it already is. Filtered in the template from the
+          ladder itself rather than from a list built beside it, so a rung added
+          to `KINDS` is offered here without a second edit — and the server
+          refuses the ones this particular record cannot become, which is a
+          question about its parent and its children and not about the ladder. -#}
+      <select class="rekind-to">{% for k in kinds %}{% if k != e.kind %}<option
+        value="{{ k }}">{{ k|human }}</option>{% endif %}{% endfor %}</select></label>?</p>
+    <p class="reach">The id carries the kind, so this makes a NEW record and
+      retires <code>{{ e.id }}</code>. Everything filed under it or waiting on it
+      is repointed in the same commit; the old id stops resolving.</p>
+    <p class="why" role="alert" hidden></p>
+    <span class="acts">
+      <button type="button" class="really">Change it</button>
+      <button type="button" class="keep">Keep it</button>
+    </span>
+  </div>
+  {%- endif %}
   {%- endif %}
   {#- One slot for the record's name in both modes: the read span and the title
       box swap inside the heading, so pressing Write changes what the name is
@@ -1832,6 +1866,96 @@ function resetEdits() {
 }
 if (!CREATING) {
   document.getElementById('reset').onclick = resetEdits;
+}
+
+// Changing a record's KIND, which is the one edit on this page that does not
+// edit the record: the id carries the kind, so the server mints a new record,
+// repoints everything that named the old one and retires it — all in one commit.
+//
+// Two presses, like deleting, and for the same reason: this is not reversible
+// from the page. And a THIRD where something would be lost — a rung that does
+// not read a field this record has written down. The server refuses the first
+// attempt with the list, the panel says it in the words the server chose, and
+// the second press sends that list back. A confirmation whose text the page
+// wrote itself is a confirmation that can drift from what the server will do.
+for (const article of document.querySelectorAll('article.record')) {
+  const open = article.querySelector('button.rekind');
+  if (!open) continue;
+  const ask = article.querySelector('.rekinding');
+  const why = ask.querySelector('.why');
+  const acts = ask.querySelector('.acts');
+  const going = ask.querySelector('button.really');
+  const picker = ask.querySelector('select.rekind-to');
+  // What the server said would be lost, once it has said it. Cleared whenever
+  // the question changes, so a confirmation collected for one kind can never be
+  // spent on another.
+  let losing = null;
+
+  const asking = state => {
+    ask.hidden = !state;
+    open.hidden = state;
+    why.hidden = true;
+    acts.hidden = false;
+    losing = null;
+    going.textContent = 'Change it';
+    if (state) ask.querySelector('button.keep').focus();
+  };
+  open.onclick = () => asking(true);
+  ask.querySelector('button.keep').onclick = () => asking(false);
+  ask.onkeydown = event => { if (event.key === 'Escape') asking(false); };
+  // A different kind is a different question, so an answer given about the last
+  // one is not an answer to this one.
+  picker.onchange = () => {
+    losing = null;
+    why.hidden = true;
+    going.textContent = 'Change it';
+  };
+
+  going.onclick = async () => {
+    going.disabled = true;
+    dispatchEvent(new Event('openproj:writing'));
+    let committed = null;
+    try {
+      const body = {
+        base_commit: BASE.value,
+        id: article.id,
+        kind: picker.value,
+      };
+      // Only on the second press, and only the list the server itself sent.
+      if (losing) body.drops = losing;
+      const response = await fetch('/api/rekind', {
+        method: 'POST', headers: {'content-type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+      const answer = await response.json().catch(() => ({}));
+      if (response.status === 409 && Array.isArray(answer.drops)) {
+        // Not a refusal so much as the question this gesture could not ask until
+        // the server had worked out the answer.
+        losing = answer.drops;
+        why.hidden = false;
+        why.textContent = answer.detail;
+        going.textContent = 'Change it anyway';
+        going.disabled = false;
+        return;
+      }
+      if (!response.ok) {
+        why.hidden = false;
+        why.textContent = refusal(answer, response.status);
+        going.disabled = false;
+        return;
+      }
+      committed = answer.commit;
+      // The record you were reading has a new id, so this is the one write on
+      // this page that has somewhere else to be afterwards.
+      location.href = {{ links.record|tojson }} + answer.id;
+    } catch (error) {
+      why.hidden = false;
+      why.textContent = 'The server could not be reached. Nothing was changed.';
+      going.disabled = false;
+    } finally {
+      dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
+    }
+  };
 }
 
 // Deleting a record. Two presses and a named record between them, and every
