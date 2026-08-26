@@ -335,11 +335,31 @@ probe while breaking its spirit. It was widened in the same commit to also catch
 inline injection, so the zero violations it asserts is evidence the probe could have failed
 rather than an assertion that could only ever pass.
 
-The control goes in the `.editbar` beside `{{ slidebar }}` (`detail.py:1024`,
-`slides.py:152`), not as a seventeenth entry in `FORMATS`. A menu is page chrome, not a
-formatting mark, and it keeps `tests/test_editor.py:1566-1571` and `:2236` and the 40rem
-wrap query calibrated to "sixteen buttons needing 561px" (`styles.py:222-229`) out of the
-change.
+The control **is** the seventeenth entry in `FORMATS`, beside the image button, and it
+was not always. It shipped in the `.editbar` beside `{{ slidebar }}` on the argument that
+a menu listing what a body embeds is page chrome rather than a formatting mark — which is
+a true statement about what the control IS and simply not a statement about where it
+goes. jcanton, 2026-08-26, on the shipped branch: "the excalidraw button should not be up
+there where you put it: it should live next to the figure button just on top of the editor
+and not be visible in preview mode, just in the editing modes", and "the button should
+also have the same style as the other buttons above the editor, not the current style of
+the view switching buttons".
+
+So it moved, and two of the three asks came free with the move. `.markbar` is the row
+`article.record.view-view .markbar { display: none }` already withholds from the reading
+view, so "not visible in preview mode" is the placement rather than a rule of its own. A
+`.mark` among `.mark`s takes the box, border and hover of the sixteen beside it, so
+"the same style as the other buttons" is one leftover rule for the size of the glyph
+(`.marks .draw svg`, 13px, matching `.hist`).
+
+What the old placement really bought was avoiding three edits, and they were made rather
+than avoided: the glyph moved to `tokens.py` as `DRAWING_ART` (`controls.py` cannot import
+`detail.py`, which imports it), the create-form gate became `attachEditing`'s third
+argument (`CREATING` is declared in a `<script>` the slide editor does not have), and
+`attachDrawing` now runs AFTER `attachEditing`, because the button it wires does not exist
+until the bar is drawn. The 40rem wrap query's "sixteen buttons needing 561px"
+(`styles.py:222-229`) is now seventeen; the numbers in that comment are the measurement
+that was taken, left as taken, and the query reaches well past both.
 
 The button carries the Excalidraw icon — jcanton, 2026-08-26 — inline SVG like every other
 mark in this bar, because `test_no_page_reaches_the_network` (`tests/test_render.py:177`)
@@ -409,6 +429,34 @@ and only with no question up does it close the popup — bound as one branch of
 the same `document`-level `keydown` listener the popup already had, rather
 than a second listener, so Excalidraw's own reading of Escape (to drop a
 selection) is unaffected.
+
+**And Escape reaches the popup only from the popup's own chrome**, which is a third
+level added after the fact. jcanton, 2026-08-26: "sometimes the excalidraw editor seems
+to crash and close without warning". It was not a crash and there was nothing in the
+console: it was this listener. Reproduced in headless Chrome — open a drawing, touch
+nothing, press Escape once, popup gone. The unsaved-work guard never even ran, because
+`isDirty` was honestly false; an untouched drawing has nothing to lose, so `closeAttempt`
+went straight to `teardown` and the editor vanished with no question and no sentence.
+
+It read as random because Excalidraw takes Escape itself while the pointer is in the
+canvas, so the listener only ever fired when focus was somewhere else — on the drawings
+button under the overlay, where focus started, or on the page after a click on the dark
+backdrop. Both are one keystroke from where a person actually is, and Escape is a key
+Excalidraw asks for constantly: it drops a selection, leaves a tool, closes Excalidraw's
+own panels.
+
+The rule now: the question first, then `head.contains(document.activeElement)`. An Escape
+on Save, Close or either answer to the question is somebody addressing the dialog and
+closes it; an Escape anywhere else is not this listener's. `activeElement` rather than
+`event.target`, because the question is where the person is working and a synthetic event
+dispatched on `document` — how every other two-level Escape in this app is driven — has a
+target that answers nothing. Alongside it, `autoFocus: true` on the Excalidraw
+element: the keyboard goes into the drawing, so Excalidraw takes Escape itself and the
+focus guard is the backstop rather than the whole defence, its single-key tool shortcuts
+work from the moment the popup is up, and a modal claiming `aria-modal="true"` no longer
+leaves its focus on a button underneath itself. That was `api.focusContainer()` after
+`root.render(...)` first, and it was measured doing nothing at all: `root.render` is React
+18's, so it returns before the tree commits and `api` is still `null` on the next line.
 
 ## The spike, which came first
 
@@ -563,7 +611,12 @@ function over body text; and now, over a real origin, the round trip itself.
   one as a resource inside its own distributed binary. `dataUri()` returns it the same
   `local:` sentinel it returns for Xiaolai, below, and Excalidraw's own font metadata marks
   Liberation Sans `private:` true, an internal metrics-fallback face never offered in the
-  font picker, so the cut changes nothing a person using this tool can choose. The full
+  font picker, so the cut changes nothing a person using this tool can choose. What it does
+leave, measured in headless Chrome on 2026-08-26 while chasing an unrelated report: a text
+element puts `"Liberation Sans"` into `document.fonts` with `status: "error"`. It is the
+sentinel failing to resolve, it is silent — nothing reaches the console — and the canvas
+draws in the fallback, which is what a private metrics face is for. Recorded because the
+next person to read `document.fonts` on this page will see it and wonder. The full
   texts, one per family, are in `static/excalidraw-fonts-LICENSE.txt`; the per-file licence
   requirement `static/VENDOR.md` states applies to all 24.
 - **CJK is out.** Confirmed almost exactly: Xiaolai, 209 files, 12,667,492 B, under

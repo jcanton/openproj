@@ -10,7 +10,14 @@ from ..index import Index
 from ..model import MAX_BODY_BYTES, Record
 from .env import _fragment
 from .hill import _hill_html
-from .tokens import HISTORY_MARKS, PEOPLE_FIELDS, PRIORITIES, _human, _read_date
+from .tokens import (
+    DRAWING_ART,
+    HISTORY_MARKS,
+    PEOPLE_FIELDS,
+    PRIORITIES,
+    _human,
+    _read_date,
+)
 
 # The control bar, for every view that filters something. The field list is a
 # parameter because the people page filters by role, kind and status while the
@@ -1030,6 +1037,23 @@ const FORMATS = [
   // whichever of the two they are looking at.
   {label: '![]', title: 'Image  —  size it with {width=60}, a bare number is per cent',
    upload: true},
+  // The drawings button, beside the image button because that is where jcanton
+  // put it — 2026-08-26: "it should live next to the figure button just on top
+  // of the editor and not be visible in preview mode, just in the editing
+  // modes". It was a control of its own in `.editbar` up there with Slide and
+  // the view switcher, on the argument (still true, and still not the point)
+  // that a menu listing what a body embeds is page chrome rather than a mark
+  // that writes at a selection. Placement was the ask, so placement moved: the
+  // conceptual split survives in the branch this takes in `attachEditing`,
+  // which wires nothing and writes nothing — `attachDrawing` owns the press,
+  // exactly as it did when the button was rendered on the server.
+  //
+  // Two things come free with the move and both were part of the ask. The bar
+  // is `.markbar`, which `article.record.view-view .markbar { display: none }`
+  // already withholds from the reading view — so the button is in the editing
+  // modes and out of the preview. And a `.mark` among `.mark`s is styled by the
+  // rules the other sixteen are, rather than by `.editbar`'s segments.
+  {label: '', title: 'Drawings', draw: true},
   // No shortcut on the last three: every letter this page could spare is spoken
   // for, and none of them is something anybody inserts twice a minute.
   // `chooses` is an offset and a length into the inserted text, so the word you
@@ -1045,6 +1069,11 @@ const FORMATS = [
 // it IS markup and nothing of anybody's reaches it — the value is the constant
 // `HISTORY_MARKS` in `render.py`.
 const HISTORY_ART = {{ history_art|tojson }};
+
+// And the drawings button's own, arriving the same way and for the same reason.
+// `tokens.py`'s `DRAWING_ART`, which is where the glyph moved to when the button
+// became a `FORMATS` entry.
+const DRAW_ART = {{ draw_art|tojson }};
 
 // The room's undo history, once there is a room wired to this box. Declared here
 // and assigned in `_COEDIT`, which is a separate `<script>` inlined AFTER this
@@ -1953,7 +1982,7 @@ function attachStatus(surface, bar) {
   return {refresh};
 }
 
-function attachEditing(surface, bar) {
+function attachEditing(surface, bar, creating) {
   const area = surface.el;
   // The two history buttons, so their disabled state can be kept honest. Empty
   // on a bar that was never drawn, which is what makes `syncHistory` a no-op on
@@ -2000,6 +2029,38 @@ function attachEditing(surface, bar) {
         // thirteen of fourteen buttons on this bar were once mouse-only.
         button.onmousedown = event => { event.preventDefault(); step(mark.history); };
         button.onclick = event => { if (event.detail === 0) step(mark.history); };
+      } else if (mark.draw) {
+        // The one button in this bar that neither writes markdown nor moves a
+        // stack: it opens the drawings menu, and `attachDrawing` — which runs
+        // AFTER this function, on both pages that call the pair — is what wires
+        // the press. Nothing is bound here.
+        //
+        // Named by CLASS, like `upload` beside it and for the reason written
+        // there: `test_the_toolbar_and_the_keymap_do_not_cancel_each_other`
+        // drives every `.mark` in this bar and asserts each one writes
+        // markdown, so a button that writes none has to be tellable from the
+        // ones that do by something other than the words on it.
+        //
+        // Withheld from the create form, which has no record for a drawing to
+        // belong to yet — the same gate the button carried as a `not creating`
+        // guard in the template while it was rendered on the server, moved here
+        // with it. Slide is absent there on the same grounds. (Written as prose
+        // rather than by quoting the Jinja tag: this file IS a Jinja template,
+        // and the tag quoted inside a JS comment is a tag Jinja opens.)
+        //
+        // A PARAMETER and not the page's own `CREATING`: that `const` is
+        // declared in `detail.py`'s script, which is a different `<script>`
+        // from this one, and the slide editor — the other page that calls this
+        // — declares no such name at all. Reading it from here would be a
+        // `ReferenceError` on one of the two pages, and `typeof` is not the
+        // hatch it looks like: a `const` in its temporal dead zone THROWS on
+        // `typeof`, which is the trap `COEDIT_HISTORY`'s own comment above
+        // already records this file falling into once.
+        if (creating) continue;
+        button.classList.add('draw');
+        button.id = 'drawing';
+        button.innerHTML = DRAW_ART;
+        button.setAttribute('aria-label', mark.title);
       } else if (mark.upload) {
         // Named as what it IS, beside `hist`, and not left to be told apart by
         // its copy. `test_the_toolbar_and_the_keymap_do_not_cancel_each_other`
@@ -2464,7 +2525,7 @@ function drawPopup(label) {
   stage.className = 'drawstage';
   box.append(head, stage);
   overlay.append(box);
-  return {overlay, stage, save, close, ask, keep, discard};
+  return {overlay, stage, head, save, close, ask, keep, discard};
 }
 
 // One popup at a time. Nothing stops a second `openproj:draw` firing while the
@@ -2487,7 +2548,7 @@ async function openDrawing(surface, status, entry) {
   }
   DRAWING_OPEN = true;
   const button = document.getElementById('drawing');
-  const {overlay, stage, save, close, ask, keep, discard} = drawPopup(
+  const {overlay, stage, head, save, close, ask, keep, discard} = drawPopup(
     entry ? `Editing ${entry.id}` : 'A new drawing'
   );
   document.body.appendChild(overlay);
@@ -2561,7 +2622,10 @@ async function openDrawing(surface, status, entry) {
     close.hidden = state;
     if (state) keep.focus();
   };
-  keep.onclick = () => asking(false);
+  // Backing out of the question hands the keyboard back to the drawing, not to
+  // a button that has just been hidden — without this, `document.activeElement`
+  // falls to `<body>` and the next Escape is nobody's.
+  keep.onclick = () => { asking(false); if (api) api.focusContainer(); };
   discard.onclick = () => teardown();
 
   // The close a person actually presses: Close, or Escape with no question
@@ -2573,18 +2637,46 @@ async function openDrawing(surface, status, entry) {
   }
   function onKey(event) {
     if (event.key !== 'Escape') return;
+    // **Escape belongs to Excalidraw, except on this popup's own chrome.**
+    //
+    // jcanton, 2026-08-26: "sometimes the excalidraw editor seems to crash and
+    // close without warning". It is not a crash and there is nothing in the
+    // console — it is this listener. Reproduced in headless Chrome: open a
+    // drawing, touch nothing, press Escape once, and the popup is gone. The
+    // guard below never even runs, because `isDirty` is honestly false — an
+    // untouched drawing has nothing to lose — so `closeAttempt` goes straight
+    // to `teardown` and the editor vanishes with no question and no sentence.
+    //
+    // Escape is a key a person presses CONSTANTLY inside Excalidraw: it drops a
+    // selection, leaves a tool, closes Excalidraw's own panels. While the
+    // pointer is in the canvas Excalidraw takes the key itself and this never
+    // fired, which is exactly why it read as random — the popup only died when
+    // focus happened to be somewhere else, which is where it lands after a
+    // click on the dark backdrop, and where it starts out on the drawings
+    // button behind the overlay.
+    //
+    // So: the question first (below), then this. An Escape pressed on Save,
+    // Close, or either answer to the question is somebody addressing the
+    // dialog, and closes it. An Escape pressed anywhere else — in the drawing,
+    // on the backdrop, on the page behind — is not this listener's, and the
+    // popup stays. `activeElement` and not `event.target`: the question is
+    // "where is this person working", and a synthetic event dispatched on
+    // `document` (which is how `tests/test_editor.py` drives every other
+    // two-level Escape in this app) has a target that answers nothing.
+    if (!ask.hidden) { asking(false); return; }
+    if (!head.contains(document.activeElement)) return;
     // Two levels, matching the delete flow's own Escape (`detail.py:1959-1962`):
     // with the question up, Escape backs OUT OF THE QUESTION rather than out
     // of the popup — a single reflexive Escape must not both dismiss the
-    // question and lose the drawing. This was already the one `keydown`
-    // listener `openDrawing` binds on `document` — that has to stay true,
-    // because Excalidraw's own canvas also reads Escape (to drop a
-    // selection) and a second listener could only add a chance of swallowing
-    // it before Excalidraw's own handler runs. So this branches on `ask`'s
-    // own state rather than adding a listener, and calls neither
-    // `stopPropagation` nor `preventDefault`: Excalidraw sees every Escape
-    // this page ever gets, exactly as it did before this guard existed.
-    if (!ask.hidden) { asking(false); return; }
+    // question and lose the drawing. That branch is above the focus guard on
+    // purpose: the question hides Save and Close and focuses `keep`, so it is
+    // reachable either way, but reading it first says which of the two rules
+    // wins if they ever disagree.
+    //
+    // Still the one `keydown` listener `openDrawing` binds on `document`, and
+    // it still calls neither `stopPropagation` nor `preventDefault`: Excalidraw
+    // sees every Escape this page ever gets, exactly as it did before any of
+    // this existed.
     closeAttempt();
   }
   document.addEventListener('keydown', onKey);
@@ -2665,6 +2757,24 @@ async function openDrawing(surface, status, entry) {
     // rather than one that silently does nothing. Do not restore this without
     // a `worker-src`/`blob:` grant to go with it.
     UIOptions: {tools: {image: false}},
+    // The keyboard goes into the drawing, which is where somebody who just
+    // opened a drawing editor is going to use it. Two things follow, and both
+    // were bugs without it: Excalidraw's own single-key tool shortcuts (`r`,
+    // `o`, `d`) work from the moment the popup is up rather than after a first
+    // click on the canvas, and Escape is Excalidraw's — see `onKey`, where the
+    // popup used to die on one.
+    //
+    // Focus was on `#drawing` until this, a button now sitting UNDER the
+    // overlay: a modal whose focus is outside itself is one whose Tab walks the
+    // page behind it, which `aria-modal="true"` on the overlay claims is not
+    // there.
+    //
+    // Excalidraw's own prop and not `api.focusContainer()` after the render
+    // call, which was written first and measured doing nothing at all:
+    // `root.render` is React 18's, so it returns before the tree commits and
+    // `api` is still `null` on the next line. `document.activeElement` was
+    // `<body>` and `r` did not pick the rectangle.
+    autoFocus: true,
   }));
   // The baseline `isDirty` compares against: `initial.elements` is exactly
   // what Excalidraw was just told to mount — `[]` for a new drawing,
@@ -3866,5 +3976,6 @@ def _combobox_html(
               "linkable": [], "live": False}
     )
     return _fragment(
-        _COMBOBOX, suggest=data, max_body_bytes=MAX_BODY_BYTES, history_art=HISTORY_MARKS
+        _COMBOBOX, suggest=data, max_body_bytes=MAX_BODY_BYTES,
+        history_art=HISTORY_MARKS, draw_art=DRAWING_ART,
     )

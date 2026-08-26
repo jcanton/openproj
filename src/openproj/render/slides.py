@@ -40,7 +40,7 @@ from ..model import Record, lead_text
 from ..vendor import _ace
 from .controls import _combobox_html
 from .deck import _DECK_STYLE, _deck_view, _said, _seeded, choosable, slide_html
-from .detail import _DRAW_BUTTON, _body_html, _fact_rows, _progress_view, _slidebar
+from .detail import _body_html, _fact_rows, _progress_view, _slidebar
 from .editor import _ACE_SURFACE, _ace_wanted
 from .env import _fragment
 from .markdown import _inlined_assets
@@ -149,7 +149,10 @@ _SLIDE = """
       end somebody can only find by pressing it, which is the argument that
       already kept a Delete off the create form. -#}
   {% if editable %}
-  <p class="editbar">{{ slidebar }}{{ drawbutton }}
+  {#- No drawings button here either: it is a `FORMATS` entry drawn into
+      `#marks` below, beside the image button. See `detail.py`'s copy of this
+      bar. -#}
+  <p class="editbar">{{ slidebar }}
     <span id="views" class="views" role="group" aria-label="How the document is shown">
       <a class="seg" href="{{ links.record }}{{ e.id }}?edit" aria-pressed="false"
          aria-label="Write" title="Write">
@@ -812,8 +815,12 @@ for (const grip of PANES.querySelectorAll(':scope > .pgrip')) {
 // `tests/test_editor.py`.
 if (SURFACE) {
   attachUploads(SURFACE, document.getElementById('upload'));
+  // `false`: a slide is edited on a record that already exists, so there is
+  // always something for a drawing to be embedded in.
+  attachEditing(SURFACE, document.getElementById('marks'), false);
+  // After `attachEditing`, which is what draws the button this wires — see the
+  // record page's own copy of this pair for why.
   attachDrawing(SURFACE, document.getElementById('upload'));
-  attachEditing(SURFACE, document.getElementById('marks'));
   attachGutter(SURFACE, document.getElementById('gutter-note'));
   attachStatus(SURFACE, document.getElementById('statusbar'));
 }
@@ -894,10 +901,6 @@ def render_slide_editor(
             editable=editable,
             base_commit=base_commit or "",
             slidebar=_slidebar(record.id, links, here=True),
-            # The same button `detail.py` draws, imported rather than redrawn —
-            # a second copy of 4,614 characters of path data is a second thing
-            # to keep byte-identical with the vendored mark it was lifted from.
-            drawbutton=_DRAW_BUTTON,
         )
         # **The library, then the surface, then this page's own script**, and
         # that order is load-bearing rather than tidy. These are classic scripts

@@ -898,12 +898,24 @@ article.record .editbar { margin-bottom: .4rem; }
 .editbar #drawing:hover, .editbar #drawing[aria-expanded="true"] {
   color: var(--accent); border-color: var(--accent);
 }
-/* The glyph is FILLED — Excalidraw's own `fill="currentColor"`, carried over
-   from the bundle rather than reworked into the stroke-only treatment
-   `.slide-view svg` uses for its triangle — so it is sized a shade under that
-   button's 15px, the same difference `.marks .hist svg`'s own comment gives
-   between a stroke and a glyph filling one box. */
-.editbar #drawing svg { display: block; width: 14px; height: 14px; }
+/* The drawings button, which is a `.mark` among `.mark`s now and takes the
+   whole of their box, border and hover from the rules above — jcanton,
+   2026-08-26: "the button should also have the same style as the other buttons
+   above the editor, not the current style of the view switching buttons". So
+   the only thing left to say here is the size of the glyph inside it, which is
+   the same thing `.marks .hist svg` has to say two rules up and for the same
+   reason: an SVG nothing sizes lays out at 0x0.
+
+   13px, matching `.hist` exactly rather than the 14px it wore in `.editbar`.
+   The old number was a shade under the 15px of the segments it sat between;
+   its neighbours are the history marks now, and matching them is what keeps
+   one bar reading as one bar. The glyph is FILLED — Excalidraw's own
+   `fill="currentColor"`, carried over from the bundle rather than reworked
+   into a stroke — which is why it can take the same box as a stroked icon
+   without looking heavier than one. */
+.marks .draw svg { display: block; width: 13px; height: 13px; }
+.marks .draw { display: inline-flex; align-items: center; justify-content: center;
+               line-height: 0; }
 /* The menu `attachDrawing` opens under the button, parked on the body the way
    every list here is. Not `.suggest`: that class lives in `_SUGGEST_STYLE`,
    which `render_slide_editor` — the other page this button draws on — never

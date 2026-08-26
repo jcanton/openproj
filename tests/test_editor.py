@@ -1553,6 +1553,14 @@ def test_the_toolbar_is_the_one_in_the_screenshot_and_that_overrules_a_count(
     to `.value` and destroys the browser's stack, so a history button was a
     button that did nothing the moment a second person joined. `Y.UndoManager`
     is what answers that, and they are the first two entries here now.
+
+    **Seventeen, and the seventeenth is not in the shot at all.** Drawings is
+    openproj's own and HackMD has no equivalent, so the shot cannot arbitrate
+    it. It sits after Image because jcanton asked for it there on 2026-08-26 —
+    "next to the figure button" — having first shipped it in `.editbar` beside
+    the view switcher. It is here rather than in a list of its own for the same
+    reason Image is: this table is the bar, and a button drawn into the bar from
+    somewhere else is a button this test cannot see.
     """
     page = client.get(f"/detail/{TASK}").text
     marks = re.search(r"const FORMATS = \[(.*?)\n\];", page, re.S).group(1)
@@ -1567,7 +1575,7 @@ def test_the_toolbar_is_the_one_in_the_screenshot_and_that_overrules_a_count(
         "Undo", "Redo",
         "Bold", "Italic", "Strikethrough", "Heading",
         "Code", "Code block", "Quote", "Bullet list", "Numbered list", "Check list",
-        "Link", "Image", "Table", "Horizontal rule",
+        "Link", "Image", "Drawings", "Table", "Horizontal rule",
     ]
     # Where the rules fall, and not merely how many there are: a separator in the
     # wrong place groups the buttons into a claim about them that is false.
@@ -1689,7 +1697,23 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
         const namedForReaders = {
           label: button.getAttribute('aria-label'), title: button.title,
         };
-        const outsideMarks = document.querySelectorAll('#marks button').length;
+        // The landing view is the reading one, and the whole bar this button
+        // now lives in is withheld there — "not be visible in preview mode,
+        // just in the editing modes". Asked of the used pixels rather than of
+        // the rule, because the rule is on `.markbar` and the button is a child
+        // of `#marks` inside it: `offsetParent` is null for anything in a
+        // `display: none` subtree, however the display got there.
+        const shownInPreview = !!button.offsetParent;
+        flipEditing();
+        await new Promise(settled => setTimeout(settled, 40));
+        const shownWhileEditing = !!button.offsetParent;
+        const inMarks = [...document.querySelectorAll('#marks button')];
+        // Where in the bar it sits, not merely that it is in it: the ask was
+        // "next to the figure button", and a button that landed at the far end
+        // beside the horizontal rule would pass a bare count.
+        const beside = inMarks[inMarks.indexOf(button) - 1]?.title;
+        const markStyled = button.classList.contains('mark');
+        const inTheMarkBar = !!button.closest('.markbar');
 
         // Escape closes the menu and hands the keyboard back to the button
         // that opened it — Task 7's own comment on this listener, unasserted
@@ -1743,7 +1767,8 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
         area.addEventListener('openproj:draw', event => { heardNew = event.detail; });
         document.querySelector('.drawmenu button').click();
 
-        return {namedForReaders, outsideMarks, openRows, expandedOpen,
+        return {namedForReaders, marks: inMarks.length, beside, markStyled, inTheMarkBar,
+                shownInPreview, shownWhileEditing, openRows, expandedOpen,
                 closedByEscape, focusedAfterEscape,
                 openBeforeSecondPress, closedBySecondPress, expandedAfterSecondPress,
                 openAfterOwnMousedown, openAfterInsideMousedown, closedByOutsideMousedown,
@@ -1753,7 +1778,31 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
     assert got["namedForReaders"] == {"label": "Drawings", "title": "Drawings"}, (
         "an icon with no words is a mystery glyph to a reader who cannot see it"
     )
-    assert got["outsideMarks"] == 16, "the menu is page chrome, not a seventeenth FORMATS mark"
+    # jcanton, 2026-08-26: "the excalidraw button should not be up there where
+    # you put it: it should live next to the figure button just on top of the
+    # editor and not be visible in preview mode, just in the editing modes",
+    # and "the button should also have the same style as the other buttons
+    # above the editor, not the current style of the view switching buttons".
+    # This asserted the opposite until then — `outsideMarks == 16`, "the menu is
+    # page chrome, not a seventeenth FORMATS mark" — which was a real argument
+    # about what the control IS and simply not an argument about where it goes.
+    assert got["marks"] == 17, "the drawings button is not in the toolbar at all"
+    assert got["beside"].startswith("Image"), (
+        "the drawings button is in the bar but not beside the figure button: it "
+        f"follows {got['beside']!r}"
+    )
+    assert got["markStyled"], (
+        "the button is in the mark bar wearing the view switcher's clothes"
+    )
+    assert got["inTheMarkBar"], (
+        "the button is not in `.markbar`, which is the row `article.record.view-view "
+        ".markbar` hides — so it would show in the reading view"
+    )
+    assert not got["shownInPreview"], "the drawings button is on screen in the reading view"
+    assert got["shownWhileEditing"], (
+        "the drawings button is hidden in the editing view too — it is not withheld "
+        "from the preview, it is just gone"
+    )
     assert got["closedByEscape"], "Escape did not close the menu"
     assert got["focusedAfterEscape"], "Escape closed the menu but did not give the button back"
     assert got["openBeforeSecondPress"], "the first of the pair did not even open it"
@@ -2220,7 +2269,7 @@ def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
     )
     assert got["undoneBold"] == "alpha beta", (
         "one undo did not take the wrap back off, and a wrap is the shape "
-        f"eleven of the sixteen buttons use — {got['undoneBold']!r}"
+        f"eleven of the seventeen buttons use — {got['undoneBold']!r}"
     )
 
     assert got["linked"] == {"text": "read [the notes](https://example.org/a?b=c)", "taken": True}
@@ -2232,8 +2281,12 @@ def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
         "the image button did not reach the upload path paste and drop use"
     )
     assert "![" not in got["wrote"], "and it wrote markdown into the box instead"
+    # Seventeen since 2026-08-26, when the drawings button moved out of
+    # `.editbar` and into this bar beside Image. The three rules and where they
+    # fall are the part this assertion is actually about, and neither moved: the
+    # new button joined the last group rather than starting one.
     assert got["bar"] == {
-        "buttons": 16,
+        "buttons": 17,
         "rules": 3,
         "before": ["Bold", "Code", "Link"],
         "rows": 1,
@@ -5485,6 +5538,11 @@ _VIM_ON = r"""
     // sizing figures the match stopped holding — so the run opened a file
     // dialog and then reported the button as one that does nothing.
     if (button.classList.contains('upload')) continue;
+    // Opens the drawings menu and writes nothing either, and skipped by class
+    // for the same reason — it moved into this bar on 2026-08-26, beside the
+    // image button, and a sweep that asserts every `.mark` writes markdown
+    // would report it inert.
+    if (button.classList.contains('draw')) continue;
     // Undo and redo write no markdown at all — they move a stack. Excluded here
     // rather than asserted as "wrote something", which they would pass by taking
     // back the mark before them and would therefore say nothing.
@@ -5569,8 +5627,9 @@ def test_the_toolbar_and_the_keymap_do_not_cancel_each_other(
 
     inert = [title for title, wrote in got["marks"] if not wrote]
     assert inert == [], f"these toolbar buttons do nothing with vim on: {inert}"
-    # Thirteen: the sixteen in the shot, less Image, less the two history buttons,
-    # which are not marks and are asserted where the stack they move is.
+    # Thirteen: the seventeen in the shot, less Image, less Drawings — neither
+    # of which writes markdown — less the two history buttons, which are not
+    # marks at all and are asserted where the stack they move is.
     assert len(got["marks"]) == 13, got["marks"]
 
     # The record, asserted rather than described: this is the call that would have
@@ -6361,7 +6420,13 @@ def test_every_button_on_the_toolbar_can_be_reached_at_a_window_that_is_not_wide
         patience=4800,
     )
 
-    assert got["width"] == width and got["buttons"] == 16, got
+    # Seventeen on the record page and sixteen on the create form, which is the
+    # drawings button and its own gate: it joined `FORMATS` on 2026-08-26 and
+    # `attachEditing` withholds it while creating, because nothing is stored yet
+    # for a drawing to be embedded in. The two numbers here are the only place
+    # that gate is asserted against a page actually rendered at a width.
+    expected = 17 if where == "detail" else 16
+    assert got["width"] == width and got["buttons"] == expected, got
     assert got["past"] < 0, (
         f"at {width}px the toolbar reaches {got['past']}px past the edge of the surface "
         f"it is drawn on, so the buttons on the end cannot be pressed: {got['flex']}"
@@ -7855,6 +7920,47 @@ def test_the_client_side_drawing_ceiling_matches_the_servers(client: TestClient)
     )
 
 
+# **The window every drawing test opens Chrome in, and it is a fix rather than a
+# preference.** `suite (editor)` went red on CI on a green branch, on the third
+# shape of `test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown`
+# and nowhere else: the re-save read back two elements where three had been
+# drawn. It reproduced nowhere locally — 3/3, then the whole file green — which
+# is what sent this to a measurement instead of a guess.
+#
+# Headless Chrome with no `--window-size` opens at 800x600, which is **756x469
+# of viewport**. `.drawbox` is `min(92vh, 800px)` tall, so the stage came out at
+# 725x388 sitting from y=62 to y=450.2 — and the diamond, the third shape, is
+# dragged from (300, 450) to (480, 550). The release is 81px BELOW the bottom of
+# the window; the press is 0.2px above the bottom edge of the canvas. A fifth of
+# one pixel of margin is not a test, it is a coin toss that this machine happened
+# to keep winning and CI's happened to lose, and when it lost the press landed on
+# the backdrop, no shape was drawn, and the export honestly held the two shapes
+# that were there.
+#
+# Measured with the same probe, at 1400x1000: 1400x913 of viewport, a stage of
+# 1100x756 running from y=100 to y=856, and all three drags — the furthest of
+# them ending at y=550 — comfortably inside it.
+#
+# It also buys back the thing being tested. At 756x469 Excalidraw renders its
+# **mobile** layout (`.excalidraw--mobile`, confirmed in the same probe): a
+# different toolbar in a different place, which is not the editor this feature
+# ships to anybody on a desktop and not the one these tests mean to be driving.
+DRAWING_WINDOW = ("--window-size=1400,1000",)
+
+
+# Where on the canvas a shape is dragged, stated once. Excalidraw's own UI sits
+# ON the canvas as floating islands, and at `DRAWING_WINDOW`'s size they are not
+# where they were at 800x600: with a shape tool active the properties panel
+# occupies x 159-359 / y 176-767, the tool bar x 438-948 / y 116-160, and the
+# zoom island x 159-371 / y 805-841. Measured, all three, and the three boxes
+# below all fall in clear canvas — the first pair of coordinates this file used
+# started at (300, 300), which is inside the properties panel and drew nothing at
+# all once the window grew.
+FIRST_SHAPE = (500, 300, 700, 430)
+SECOND_SHAPE = (800, 300, 1000, 430)
+THIRD_SHAPE = (500, 550, 700, 680)
+
+
 def _drag(call, x1: float, y1: float, x2: float, y2: float) -> None:
     """A real, trusted drag on the canvas: `Input.dispatchMouseEvent`, not a
     synthetic `pointerdown`/`pointerup` a script could dispatch on its own.
@@ -8051,16 +8157,16 @@ def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
        has to be found and edited again.
     """
     url = f"{live_server}/detail/{TASK}?editor=plain"
-    with _devtools(chrome(), url, tmp_path / "profile") as (call, said):
+    with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
         time.sleep(2)
         _evaluated(call, "document.getElementById('drawing').click()")
         _evaluated(call, "document.querySelector('.drawmenu button').click()")
         _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
 
         _evaluated(call, "document.querySelector('[data-testid=\"toolbar-rectangle\"]').click()")
-        _drag(call, 300, 300, 480, 430)
+        _drag(call, *FIRST_SHAPE)
         _evaluated(call, "document.querySelector('[data-testid=\"toolbar-ellipse\"]').click()")
-        _drag(call, 550, 300, 700, 430)
+        _drag(call, *SECOND_SHAPE)
         time.sleep(0.2)
 
         original_body = _evaluated(call, "document.querySelector('[name=body]').value")
@@ -8111,7 +8217,7 @@ def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
         )
 
         _evaluated(call, "document.querySelector('[data-testid=\"toolbar-diamond\"]').click()")
-        _drag(call, 300, 450, 480, 550)
+        _drag(call, *THIRD_SHAPE)
         time.sleep(0.2)
 
         before_resave = _evaluated(call, "document.querySelector('[name=body]').value")
@@ -8157,13 +8263,13 @@ def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(
     second tab or a second person would occupy.
     """
     url = f"{live_server}/detail/{TASK}?editor=plain"
-    with _devtools(chrome(), url, tmp_path / "profile") as (call, said):
+    with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
         time.sleep(2)
         _evaluated(call, "document.getElementById('drawing').click()")
         _evaluated(call, "document.querySelector('.drawmenu button').click()")
         _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
         _evaluated(call, "document.querySelector('[data-testid=\"toolbar-rectangle\"]').click()")
-        _drag(call, 300, 300, 480, 430)
+        _drag(call, *FIRST_SHAPE)
         time.sleep(0.2)
         _evaluated(call, "document.getElementById('draw-save').click()")
         assert _until(call, "!document.querySelector('.drawpopup')")
@@ -8192,7 +8298,7 @@ def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(
         assert elsewhere.status_code == 200, elsewhere.text
 
         _evaluated(call, "document.querySelector('[data-testid=\"toolbar-ellipse\"]').click()")
-        _drag(call, 550, 300, 700, 430)
+        _drag(call, *SECOND_SHAPE)
         time.sleep(0.2)
         before = _evaluated(call, "document.querySelector('[name=body]').value")
         _evaluated(call, "document.getElementById('draw-save').click()")
@@ -8234,14 +8340,14 @@ def test_closing_unsaved_strokes_asks_first_and_keep_drawing_preserves_them(
        drawing to look at it gets asked a question that means nothing.
     """
     url = f"{live_server}/detail/{TASK}?editor=plain"
-    with _devtools(chrome(), url, tmp_path / "profile") as (call, said):
+    with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
         time.sleep(2)
         _evaluated(call, "document.getElementById('drawing').click()")
         _evaluated(call, "document.querySelector('.drawmenu button').click()")
         _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
 
         _evaluated(call, "document.querySelector('[data-testid=\"toolbar-rectangle\"]').click()")
-        _drag(call, 300, 300, 480, 430)
+        _drag(call, *FIRST_SHAPE)
         time.sleep(0.2)
 
         _evaluated(call, "document.getElementById('draw-close').click()")
@@ -8318,16 +8424,55 @@ def test_escape_backs_out_of_the_question_and_discard_throws_the_drawing_away(
     for their own two-level Escapes. `onKey` is bound on `document` and reads
     only `event.key`, so a synthetic event reaches it exactly as a trusted one
     would; nothing here needs Excalidraw itself to react to the key.
+
+    **Escape reaches the popup only from the popup's own chrome**, which is the
+    third thing this walks and the reason the first press below is on Close
+    rather than on the key. jcanton, 2026-08-26: "sometimes the excalidraw
+    editor seems to crash and close without warning". It was this listener:
+    with nothing drawn, `isDirty` is honestly false, so an Escape that reached
+    `onKey` went straight through `closeAttempt` to `teardown` and the editor
+    was simply gone — no question, because there was nothing to ask about, and
+    no sentence anywhere. Excalidraw takes Escape itself while the pointer is in
+    the canvas, so it only bit when focus was elsewhere: on the drawings button
+    under the overlay, or after a click on the dark backdrop. Both are one
+    keystroke from where a person actually is.
     """
     url = f"{live_server}/detail/{TASK}?editor=plain"
-    with _devtools(chrome(), url, tmp_path / "profile") as (call, said):
+    with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
         time.sleep(2)
         _evaluated(call, "document.getElementById('drawing').click()")
         _evaluated(call, "document.querySelector('.drawmenu button').click()")
         _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
 
+        # The other half of the same fix, and the half that makes the Escape rule
+        # bearable: `autoFocus` puts the keyboard IN the drawing when the popup
+        # mounts, so Excalidraw takes Escape itself and the guard below is the
+        # backstop rather than the whole defence. Asserted through the shortcut
+        # it buys as well as through `activeElement`, because a container that
+        # holds focus and does not act on a key is focus that bought nothing —
+        # `r` is Excalidraw's own binding for the rectangle tool.
+        #
+        # `api.focusContainer()` after `root.render(...)` was written first and
+        # measured doing nothing: `root.render` is React 18's and returns before
+        # the tree commits, so `api` was still null on the next line,
+        # `document.activeElement` was `<body>`, and `r` picked nothing.
+        focused = _evaluated(call, """
+          !!(document.activeElement && document.activeElement.closest('.excalidraw'))
+        """)
+        assert focused, (
+            "the popup mounted with the keyboard still outside it — Excalidraw "
+            "never sees Escape, and Tab walks the page under the overlay"
+        )
+        for kind in ("rawKeyDown", "keyUp"):
+            call("Input.dispatchKeyEvent", {"type": kind, "key": "r", "code": "KeyR",
+                                            "windowsVirtualKeyCode": 82, "text": "r"})
+        time.sleep(0.3)
+        assert _evaluated(
+            call, "document.querySelector('[data-testid=\"toolbar-rectangle\"]').checked"
+        ), "the drawing holds focus but does not act on a key, which is not focus"
+
         _evaluated(call, "document.querySelector('[data-testid=\"toolbar-ellipse\"]').click()")
-        _drag(call, 550, 300, 700, 430)
+        _drag(call, *SECOND_SHAPE)
         time.sleep(0.2)
 
         escape = (
@@ -8335,9 +8480,25 @@ def test_escape_backs_out_of_the_question_and_discard_throws_the_drawing_away(
             "new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))"
         )
 
-        # First Escape: unsaved work, so it raises the question rather than
-        # closing the popup outright.
-        _evaluated(call, escape)
+        # An Escape pressed where the person is actually drawing is Excalidraw's
+        # and not this popup's: it leaves a tool and drops a selection, and it
+        # must not take the editor with it. `focusContainer` put the keyboard
+        # there when the popup mounted, so this is the ordinary case and not a
+        # contrived one.
+        stray = _evaluated(call, f"(() => {{ {escape}; return {{"
+                                 "popupThere: !!document.querySelector('.drawpopup'),"
+                                 "asking: !document.querySelector('.drawask').hidden,"
+                                 "}; })()")
+        assert stray == {"popupThere": True, "asking": False}, (
+            "an Escape pressed in the drawing reached the popup — with nothing "
+            f"drawn this is the close that reads as a crash: {stray}"
+        )
+
+        # Close: unsaved work, so it raises the question rather than closing the
+        # popup outright. This was a first Escape until 2026-08-26; the key
+        # cannot raise the question from inside the canvas any more, which is
+        # the whole point of the assertion above it.
+        _evaluated(call, "document.getElementById('draw-close').click()")
         first = _evaluated(call, """({
           popupThere: !!document.querySelector('.drawpopup'),
           asking: !document.querySelector('.drawask').hidden,
@@ -8358,6 +8519,19 @@ def test_escape_backs_out_of_the_question_and_discard_throws_the_drawing_away(
 
         # Close, pressed with the question not up and the drawing still
         # unsaved: it raises the question again rather than closing.
+        #
+        # And the other half of the focus rule, asserted on the way past: Escape
+        # pressed ON Close is somebody addressing the dialog, so it does reach
+        # the popup — the control is not unreachable from the keyboard, it is
+        # only unreachable from inside the canvas.
+        _evaluated(call, "document.getElementById('draw-close').focus()")
+        _evaluated(call, escape)
+        assert _evaluated(call, "!document.querySelector('.drawask').hidden"), (
+            "Escape on the Close button did not reach the popup — the dialog "
+            "cannot be dismissed from the keyboard at all"
+        )
+        _evaluated(call, "document.querySelector('.drawask .keep').click()")
+
         _evaluated(call, "document.getElementById('draw-close').click()")
         assert _evaluated(call, "!document.querySelector('.drawask').hidden"), (
             "Close skipped the question the second time it was pressed"
