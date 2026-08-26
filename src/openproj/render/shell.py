@@ -1130,8 +1130,13 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
     hover card — "why type and priority chips look different from the status
     ones, the border!". Three chips on one line that are three shapes read as
     three kinds of thing. -#}
-{#- `select.pick` beside the chip, and generated from the same loop rather than
-    written out in the cycle page's own sheet. The betting table's status column
+{#- `select.pick` beside the chip: a second RULE and not a second selector on
+    the first one, which cost a round — `test_a_status_carries_a_chip_palette_as_
+    well_as_a_fill` looks for the literal `.chip.st-thinking {`, and a selector
+    list moves the brace off the end of it. Two rules say the same thing to a
+    browser and leave that claim readable.
+
+    Generated from the same loop rather than The betting table's status column
     was a chip and is a picker now — it has to be chosen, not typed, because a
     ladder is a closed set — and a control drawn in the page's own ink would have
     taken the ladder away to buy editability. Five hand-written rules there would
@@ -1139,7 +1144,8 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
     prevent: a rung added in `STATUSES` must not need a second edit to get a
     colour. -#}
 {% for s in statuses %}
-.chip.st-{{ s }},
+.chip.st-{{ s }} { background: var(--st-{{ s }}-soft); color: var(--st-{{ s }}-text);
+                   border: 1px solid var(--st-{{ s }}-line); }
 select.pick.st-{{ s }} { background: var(--st-{{ s }}-soft); color: var(--st-{{ s }}-text);
                    border: 1px solid var(--st-{{ s }}-line); }
 {%- endfor %}

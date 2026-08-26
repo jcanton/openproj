@@ -5150,29 +5150,35 @@ def test_a_record_that_is_not_there_is_an_empty_page_and_not_a_KeyError(seed_ind
     assert "<article" not in page
 
 
-def _a_mouse(call) -> None:
-    """Tell this Chrome it has a mouse.
+# **Which pointer the reader has, said at launch.** The wash is inside
+# `@media (hover: hover)`, and what headless Chrome answers there depends on the
+# host: this laptop reports `hover` and CI's Linux reports `none`. So a test that
+# took the default asserted one thing here and its opposite there — the worst
+# shape a test can have, because the machine that gates the merge disagreed with
+# the machine the change was written on about a rule correct on both.
+#
+# `Emulation.setEmulatedMedia` cannot say it, and that is measured rather than
+# assumed: forcing `hover: none` through it left `matchMedia('(hover: hover)')`
+# answering true. It carries `prefers-*` and the media type and ignores this
+# feature outright. `--blink-settings` is what the engine reads.
+#
+# 2 is HOVER_HOVER and 4 is POINTER_FINE; 1 is "none" for both, which is what a
+# phone is. Both are here because the query has two sides and only asking one of
+# them would leave the wash free to paint on a touch screen.
+_A_MOUSE = (
+    "--blink-settings=primaryHoverType=2,availableHoverTypes=2,"
+    "primaryPointerType=4,availablePointerTypes=4",
+)
+_A_TOUCHSCREEN = (
+    "--blink-settings=primaryHoverType=1,availableHoverTypes=1,"
+    "primaryPointerType=1,availablePointerTypes=1",
+)
 
-    **Headless Chrome has no pointing device, so `@media (hover: hover)` is
-    FALSE in it**, and the wash lives inside that query — which is right, because
-    a touch device keeps the last-tapped `:hover` until something else is tapped
-    and would otherwise be left with one row lit for no reason.
 
-    So the tests failed on CI and passed on this laptop, which is the worst shape
-    a test can have: the machine that gates the merge disagreed with the machine
-    the change was written on, about a rule that was correct on both.
-    `Emulation.setEmulatedMedia` says which reader is being asked about, in the
-    same way `--force-prefers-reduced-motion` does for the block beside it in the
-    shell. Without it these tests assert nothing at all — every cell reports no
-    wash and the assertion is that they all agree.
-    """
-    call("Emulation.setEmulatedMedia",
-         {"features": [{"name": "hover", "value": "hover"},
-                       {"name": "any-hover", "value": "hover"},
-                       {"name": "pointer", "value": "fine"}]})
-
-
-def _hovered(browser: str, page: str, where: Path, selector: str) -> dict:
+def _hovered(
+    browser: str, page: str, where: Path, selector: str,
+    flags: tuple[str, ...] = _A_MOUSE,
+) -> dict:
     """Lay a page out, put the real pointer on a row of `selector`, and report.
 
     `Input.dispatchMouseEvent` and not `element.dispatchEvent`, for the reason
@@ -5196,8 +5202,7 @@ def _hovered(browser: str, page: str, where: Path, selector: str) -> dict:
     # fresh per test, so this only bites a probe run by hand; it is one line.
     profile = where.parent / f"{where.stem}-profile"
     shutil.rmtree(profile, ignore_errors=True)
-    with _devtools(browser, where.as_uri(), profile) as (call, _said):
-        _a_mouse(call)
+    with _devtools(browser, where.as_uri(), profile, flags) as (call, _said):
         time.sleep(2.0)
         at = _evaluated(call, f"""(() => {{
           const table = document.querySelector({json.dumps(selector)});
@@ -5277,6 +5282,32 @@ def test_the_row_under_the_pointer_is_washed_on_every_table(
     )
 
 
+def test_a_touch_screen_gets_no_wash_at_all(rendered: Path, tmp_path: Path):
+    """The other side of `@media (hover: hover)`, and the reason it is there.
+
+    A touch device has no pointer to follow, and it keeps the last-tapped
+    `:hover` until something else is tapped — so a phone would be left with one
+    row lit for no reason, which is a highlight meaning the opposite of what this
+    one means. The reader cannot move a pointer off it, because there is none.
+
+    Worth its own test because the query is invisible from the CSS side: a rule
+    inside a media query that never matches and a rule that matches and does
+    nothing look identical in every assertion except this one.
+    """
+    from browser import chrome
+
+    got = _hovered(chrome(), read(rendered, "table.html"), tmp_path / "touch.html",
+                   "#rows", _A_TOUCHSCREEN)
+
+    # The tap still sets `:hover` — that is exactly the browser behaviour this
+    # guards against — so the row IS hovered and simply takes no wash.
+    assert got["hovered"], "the press did not land, so this proves nothing"
+    assert got["washed"] == 0, (
+        f"{got['washed']} of {got['cells']} cells are washed on a touch screen, which "
+        f"would leave one row lit with no pointer to move off it"
+    )
+
+
 def test_the_wash_does_not_take_away_the_ground_it_is_drawn_over(
     views: dict[str, str], tmp_path: Path
 ):
@@ -5310,8 +5341,9 @@ def test_the_wash_does_not_take_away_the_ground_it_is_drawn_over(
 
     where = tmp_path / "grounds.html"
     where.write_text(views["table"])
-    with _devtools(chrome(), where.as_uri(), tmp_path / "grounds-profile") as (call, _said):
-        _a_mouse(call)
+    with _devtools(
+        chrome(), where.as_uri(), tmp_path / "grounds-profile", _A_MOUSE
+    ) as (call, _said):
         time.sleep(2.0)
         before = _evaluated(call, """(() => {
           const rows = [...document.querySelectorAll('#rows tbody tr')]
@@ -5407,7 +5439,7 @@ def test_the_betting_tables_closed_sets_are_chosen_and_never_typed(
         ("status", STATUSES, STATUS_GLYPH), ("priority", PRIORITIES, PRIORITY_GLYPH)
     ):
         picker = re.search(
-            rf'<select class="pick" data-field="{field}".*?</select>', page, re.S
+            rf'<select class="pick[^"]*" data-field="{field}".*?</select>', page, re.S
         )
         assert picker, f"{field} is not a picker"
         chosen = picker.group(0)
@@ -5435,7 +5467,7 @@ def test_a_carried_row_may_be_repriced_but_not_re_bet(server_pages: dict[str, st
             "a carried row can be bet into this cycle again"
         )
         for field in ("status", "priority"):
-            picker = re.search(rf'<select class="pick" data-field="{field}"[^>]*>', row)
+            picker = re.search(rf'<select class="pick[^"]*"[^>]*data-field="{field}"', row)
             assert picker and "disabled" not in picker.group(0), (
                 f"a carried row cannot have its {field} changed"
             )
