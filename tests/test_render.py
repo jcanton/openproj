@@ -125,6 +125,23 @@ def test_render_static_writes_every_page_and_says_which(rendered: Path, seed_ind
         assert render_static(seed_index, Path(directory)) == PAGES
 
 
+def test_the_export_carries_drawings_as_well_as_assets(seed_index, tmp_path: Path):
+    """Without the copy an exported plan renders every drawing as a broken
+    image — the markdown points at `drawings/…` relative to the page, which is
+    exactly right and exactly useless if the directory is not there. The same
+    sentence `export.py` already writes about assets."""
+    repo = tmp_path / "plan"
+    (repo / "assets").mkdir(parents=True)
+    (repo / "drawings").mkdir()
+    (repo / "assets" / "0123456789abcdef.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (repo / "drawings" / "draw-a1b2c3.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    out = tmp_path / "out"
+    render_static(seed_index, out, repo=repo)
+    assert (out / "assets" / "0123456789abcdef.png").is_file()
+    assert (out / "drawings" / "draw-a1b2c3.png").is_file()
+
+
 def fetches_nothing(body: str, where: str) -> None:
     """Every way a page can ask the network for a file, in one place.
 
