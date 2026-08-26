@@ -39,7 +39,7 @@ produces a PNG whose `tEXt` chunk holds the deflated scene. Reopening is
 `loadFromBlob` on the bytes the server just served. One file, no sidecar, no second
 source of truth that can drift from the first.
 
-Not SVG. `web.py:612-613` refuses SVG on purpose — "it is a document that can carry
+Not SVG. `web.py:613-614` refuses SVG on purpose — "it is a document that can carry
 script" — and a drawing is not the reason to reverse that. The drawing door accepts
 `image/png` and nothing else, so `IMAGE_TYPES` is not widened either.
 
@@ -51,12 +51,12 @@ One flat top-level directory, one file per drawing, the name is the id:
 drawings/draw-a1b2c3.png
 ```
 
-**Not `assets/`.** `Store.put_asset`'s docstring (`store.py:1650-1655`) is a guarantee
+**Not `assets/`.** `Store.put_asset`'s docstring (`store.py:1659-1663`) is a guarantee
 about the whole tree it writes into — an asset is never edited, so there is no base to
 compare against, nothing to merge, and no conflict that can exist, which is why it
 needs none of `write_all`'s compare-and-swap. A mutable file in `assets/` makes that
 sentence false about a directory whose `immutable, max-age=31536000` caching
-(`web.py:3219-3221`) and whose replay fast path (`_replay_one`, `store.py:1443`) both
+(`web.py:3229-3231`) and whose replay fast path (`_replay_one`, `store.py:1397`) both
 rest on it being true. A separate directory keeps the two guarantees visibly separate,
 and no existing asset test changes.
 
@@ -81,11 +81,11 @@ This is the part that corrupts, so it is written down before the code that avoid
 
 Three lines, read and verified:
 
-1. `store.py:1848` — `_commit` does `create_blob(content.encode("utf-8"))`. `bytes` has
+1. `store.py:1941` — `_commit` does `create_blob(content.encode("utf-8"))`. `bytes` has
    no `.encode`, so a PNG through `Store.write` is an `AttributeError`, which is not in
-   `WRITE_FAILURES` (`web.py:130-137`) and so is an unhandled 500 rather than a refusal.
+   `WRITE_FAILURES` (`web.py:131-138`) and so is an unhandled 500 rather than a refusal.
 2. `store.py:895` — `read` decodes UTF-8, so `_attempt`'s stale-base branch
-   (`store.py:1785`) raises `UnicodeDecodeError` on a stored PNG. Also not in
+   (`store.py:1894`) raises `UnicodeDecodeError` on a stored PNG. Also not in
    `WRITE_FAILURES`. Also a traceback.
 3. And the reason those two crashes are the *good* outcome: if anyone ever makes them
    go away by decoding latin-1 first, `_split` (`store.py:321-324`) sees no `---` and
@@ -109,7 +109,7 @@ def put_drawing(
 Assembled almost entirely from parts that already exist:
 
 - `with self._writing:` then `_refuse_forked()` and `_refuse_swamped()`, copied verbatim
-  from `put_asset` (`store.py:1667-1672`) and for its stated reason: while the plan is
+  from `put_asset` (`store.py:1677-1684`) and for its stated reason: while the plan is
   forked, no route may answer as though this service can take work.
 - `stored = _blob_at(self._repo, self.head(), path)` — `store.py:307`, which is
   `Store.read` without the decode. Blob-id compare-and-swap, never a decode.
@@ -119,25 +119,25 @@ Assembled almost entirely from parts that already exist:
 - `base_blob is not None` and `str(stored) != base_blob` → refuse, with the sentence in
   "Two people, one drawing" below.
 - `blob = create_blob(data)`, and `if blob == stored:` return without minting. Required,
-  not optional: `store.py:1765-1771` and `store.py:1406-1407` record the same bug being
+  not optional: `store.py:1778-1784` and `store.py:1406-1407` record the same bug being
   fixed twice — an empty commit on the decision log says a decision was made when none
   was.
 - otherwise `_insert` → `create_commit(_BRANCH, ...)` → `_finish(head, "committed")`,
-  exactly as `put_asset` does at `store.py:1677-1687`.
+  exactly as `put_asset` does at `store.py:1689-1697`.
 
 **Not a flag on `write_all`.** It would touch five sites — the `dict[str, str | None]`
 signature, `_commit` and its `.encode`, `_attempt`'s already-gone probe and its
 base/current read pair, and `_verdict` — and `_verdict`'s own docstring
-(`store.py:576-580`) says it was extracted so write-time and replay-time conflict
+(`store.py:571-574`) says it was extracted so write-time and replay-time conflict
 semantics cannot drift. Widening it *is* the drift. The decision is also per-path, not
 per-call: a flag cannot express one commit holding a `.md` and a `.png`.
 
 Two comments become false the day this ships and must be corrected in the same commit:
-`put_asset`'s docstring (`store.py:1650-1655`) has to be scoped to the
+`put_asset`'s docstring (`store.py:1659-1663`) has to be scoped to the
 content-addressed half, and `_replay_one`'s `UnicodeDecodeError` arm
-(`store.py:1436-1444`) has to stop saying that reaching it means a hand-committed
+(`store.py:1434-1439`) has to stop saying that reaching it means a hand-committed
 binary. A concurrently-edited drawing is a routine way in, and the consequence is the
-whole commit parking to `refs/openproj/stranded-<sha>` (`store.py:1471`) after a 200
+whole commit parking to `refs/openproj/stranded-<sha>` (`store.py:1482`) after a 200
 already went out.
 
 ## The id
@@ -147,27 +147,27 @@ drawing_id = f"draw-{secrets.token_hex(3)}"
 ```
 
 Same alphabet, same width, same CSPRNG and the same never-from-the-client rule as the
-record mint at `web.py:3255`, and for the reason `POST /api/record` gives at
-`web.py:3253-3254`: an id supplied by a browser is a path supplied by a browser, once
+record mint at `web.py:3362`, and for the reason `POST /api/record` gives at
+`web.py:3360-3361`: an id supplied by a browser is a path supplied by a browser, once
 it becomes `drawings/<id>.png`. `draw` collides with no rung prefix in `KINDS`
-(`model.py:1233-1264`), so the `record_id.split("-")[0]` idiom at `web.py:1243`,
-`web.py:2013` and `model.py:1393` cannot mis-route a drawing into a record directory.
+(`model.py:1233-1264`), so the `record_id.split("-")[0]` idiom at `web.py:1253`,
+`web.py:2023` and `model.py:1394` cannot mis-route a drawing into a record directory.
 
 **With a uniqueness check, which the record mint does not have.** Nothing between
-`web.py:3255` and `web.py:3303` queries the index or the tree; records survive on an
+`web.py:3362` and `web.py:3400` queries the index or the tree; records survive on an
 incidental guard falling out of `_identity_problems` (`model.py:2858-2872`). A drawing
 never reaches `validate_all`, so it would inherit no guard at all — and `_attempt`
 short-circuits to an unconditional overwrite whenever `current == base_commit`
-(`store.py:1795-1798`), so no guard means silent data loss. A drawing can afford the
+(`store.py:1890-1893`), so no guard means silent data loss. A drawing can afford the
 check records cannot, because the path *is* the id and there is no `<id>--<slug>`
 ambiguity: the route mints, `put_drawing` refuses over an occupied path under the lock,
 the route re-mints, up to eight times, then 500s. Not theatre — `token_hex(3)` is
 16,777,216 values, and by the birthday bound a corpus of 1,000 drawings already carries
-roughly a 3% chance that some pair collides. `docs/data-model.md:31`'s "never collide"
+roughly a 3% chance that some pair collides. `docs/data-model.md:32`'s "never collide"
 is true of a simultaneous pair and not of a growing corpus.
 
 **No slug half, ever**, and the argument is not YAGNI. Records need `_path_for`
-(`web.py:1252-1283`) because humans rename record files in git and the slug drifts.
+(`web.py:1262-1294`) because humans rename record files in git and the slug drifts.
 That is survivable only because bodies reference records *by id*, through `_link`. A
 drawing embed references it *by path*. So a real rename would have to rewrite every
 body that names the drawing — a body-rewriting feature, which a path finder does not
@@ -186,13 +186,13 @@ Guarded by `DRAWING_PATTERN` on the stem and a literal `.png` suffix. Answers
 `image/png` with `ETag: "<blob oid>"`, `cache-control: no-cache`, and a 304 on a
 matching `If-None-Match`.
 
-**Not `immutable`.** `web.py:3219-3220` justifies that header with "the name IS the hash
+**Not `immutable`.** `web.py:3229-3230` justifies that header with "the name IS the hash
 of the contents, so this bytes-for-bytes cannot change under a cache", which is exactly
 what stops being true here. `no-cache` means revalidate every time, not do not store;
 the ETag turns the revalidation into a 304 whenever the drawing has not moved.
 
 This is also the trap most likely to ship silently. Widening `ASSET_PATTERN`
-(`web.py:620`) instead of adding a sibling drags `immutable, max-age=31536000` onto a
+(`web.py:621`) instead of adding a sibling drags `immutable, max-age=31536000` onto a
 mutable file, and every reader's browser holds an edited drawing for a year.
 `tests/test_web.py:2953` asserts only that `"immutable" in cache-control`, so it keeps
 passing while the behaviour becomes wrong. The shortcut is one grep away; this
@@ -212,15 +212,15 @@ PUT  /api/drawing/{id}       raw image/png body, If-Match: "<etag>".  Same shape
 
 Both check the eight-byte PNG signature and the byte ceiling, and both end in exactly
 one `await _write_or_refuse(store.put_drawing, ...)` with the method as the **bare first
-positional argument** — `tests/test_web.py:4930-4938` collects `id(call.args[0])`, so a
+positional argument** — `tests/test_web.py:5036-5043` collects `id(call.args[0])`, so a
 lambda wrapper or a keyword argument escapes the guard in silence.
 
-`tests/test_web.py:4906`'s `WRITERS` set gains `"put_drawing"`. Without that line the
+`tests/test_web.py:5017`'s `WRITERS` set gains `"put_drawing"`. Without that line the
 AST guard silently stops covering the new routes: the test keeps passing, and a forked
 plan answers a drawing save with a traceback — the exact outage
 `test_no_write_route_escapes_the_refusal` was written for.
 
-`web.py:19-21`'s module docstring enumerates the closed writable surface. It gains
+`web.py:19-22`'s module docstring enumerates the closed writable surface. It gains
 `drawings/<drawing id>.png` by `DRAWING_PATTERN`, because it is the file's stated
 invariant and reviewers check against it.
 
@@ -232,7 +232,7 @@ The loser is refused, in one sentence, and their strokes are gone:
 > a drawing has no merge. Reopen it.
 
 There is no third drawing that is both people's intent. This is the argument
-`_merge_body`'s own docstring makes at `store.py:404-408` about CRDTs, and pretending
+`_merge_body`'s own docstring makes at `store.py:412-416` about CRDTs, and pretending
 otherwise for a PNG would be worse than saying it plainly. Saving the loser's work as a
 *new* drawing was considered and deferred: it mints a second id and splices a second
 embed into the body, which puts back exactly the body-write race the stable path was
@@ -240,8 +240,8 @@ chosen to remove.
 
 ## The read side, and the one risky edit
 
-Today `_ASSET_SRC` (`render/markdown.py:120-122`) matches only
-`assets/[0-9a-f]{16}.<ext>`, so a drawing path falls through `markdown.py:284-287` and
+Today `_ASSET_SRC` (`render/markdown.py:127-131`) matches only
+`assets/[0-9a-f]{16}.<ext>`, so a drawing path falls through `markdown.py:294-296` and
 renders as `<a href="…">sync flow (external image)</a>` — a text link, on the detail
 page, in the preview, in the deck and in the export alike.
 
@@ -256,24 +256,24 @@ _EMBED_SRC = re.compile(
 
 Today group(1) excludes the directory and every consumer re-adds `assets/` by hand.
 With two directories that is impossible, so the prefix moves into the group,
-`Links.asset` (`render/shell.py:49`, `:95`) becomes `Links.repo` (`""` static, `"/"`
+`Links.asset` (`render/shell.py:54`, `:100`) becomes `Links.repo` (`""` static, `"/"`
 served), and the three byte-identical
-`lambda name: store.read_asset(commit, f"assets/{name}")` at `web.py:2177`, `:2264` and
-`:2346` collapse to `lambda path: store.read_asset(commit, path)`.
+`lambda name: store.read_asset(commit, f"assets/{name}")` at `web.py:2187`, `:2274` and
+`:2356` collapse to `lambda path: store.read_asset(commit, path)`.
 
 The drawings arm is pinned to `\.png` rather than sharing `_ASSET_MEDIA`'s alternation,
 so `_ASSET_MEDIA` stays the single source for the *asset* format list, which is what its
 comment at `markdown.py:110-114` asks for. Keys stay consistent by construction, because
 `_image`'s lookup and `_inlined_assets`' map are both built from group(1), and the
-suffix-driven media lookup at `markdown.py:428` still works on a full path.
+suffix-driven media lookup at `markdown.py:439` still works on a full path.
 
 **This is the riskiest edit in the plan.** Four call sites move together or the deck
 silently stops inlining pictures and starts emailing broken images;
 `tests/test_deck.py:543` catches it only if the fixture path moves in the same commit.
 
-`render/export.py:40-42` copies only `assets/`, so it becomes a loop over
+`render/export.py:41-47` copies only `assets/`, so it becomes a loop over
 `("assets", "drawings")`. Without it every exported page shows a broken drawing, for
-exactly the reason its docstring at `export.py:26-28` already gives about assets.
+exactly the reason its docstring at `export.py:26-29` already gives about assets.
 
 ## What does not change
 
@@ -288,9 +288,9 @@ construction.
 added to prevent (`cli.py:163-167`). The consequence is that **the demo corpus ships no
 drawings**, or `openproj demo` renders a body naming a file that is not there.
 
-`docs/data-model.md:79-83` — the paragraph headed "A plan directory is flat" enumerates
-eight directories. `drawings/` is a ninth and is also flat; the doc reads as forbidding
-it until it is named.
+`docs/data-model.md:79-84` — the paragraph headed "A plan directory is flat" enumerates
+eight directories, and `drawings/` is named beside them as a ninth, also flat, for a
+reason of its own.
 
 ## The editor side
 
@@ -335,7 +335,7 @@ The menu is `_EMBED_SRC.finditer(surface.text())`, drawings arm only, deduped ke
 first occurrence, in match order — which over the raw markdown *is* embed order. Label is
 the bare id. Recomputed in JS when the menu opens: no server round trip, no stored state,
 nothing to keep in sync. It is the same scan `_inlined_assets` already does at
-`markdown.py:422`.
+`markdown.py:433`.
 
 `attachDrawing` sits beside `attachUploads` and is wired at both its call sites,
 `detail.py:1493` and `slides.py:795`. Note the hole it inherits: `slides.py:517` builds
@@ -371,7 +371,7 @@ asks. The bundle was built, mounted under `default-src 'none'`, and measured:
    side," above).
 4. **How big is a real drawing?** Measured: a 3-element drawing exports to ~15.8 kB and
    a 30-element one with ten text labels to ~116.5 kB — **5.6% of `MAX_ASSET_BYTES`, 18x
-   headroom**. `MAX_ASSET_BYTES` is 2 MB (`web.py:611`), and it is not the constraint
+   headroom**. `MAX_ASSET_BYTES` is 2 MB (`web.py:612`), and it is not the constraint
    the spec feared for vector scenes. The scene itself rides in one `tEXt` chunk keyed
    `application/vnd.excalidraw+json` — 1,344 B for the 3-element scene, verified by
    parsing the PNG outside the browser — and the round trip was verified end to end: 3
@@ -452,7 +452,7 @@ The coverage this ships with: `put_drawing`'s refusals and its same-bytes conver
 at the store level; the two routes and their `_write_or_refuse` wrapping, at the web
 level; `_EMBED_SRC` against both arms and the negative cases (`drawings/notadrawing.png`,
 `drawings/draw-a1b2c3.svg`, and three more) in
-`test_a_drawing_is_drawn_and_a_lookalike_is_not` (`tests/test_render.py:3750`); the
+`test_a_drawing_is_drawn_and_a_lookalike_is_not` (`tests/test_render.py:3767`); the
 export copying both directories; the deck inlining a drawing; the menu's scan as a pure
 function over body text; and now, over a real origin, the round trip itself.
 
@@ -467,7 +467,7 @@ function over body text; and now, over a real origin, the round trip itself.
   blob. `store.py:186-187`: on Cloud Run the filesystem is memory, so a 200 there is data
   loss with a receipt.
 - `Store.last_edited` puts every path at head into the settle-set (`store.py:943`), and
-  `_PARSED`'s prune threshold (`web.py:1291`) counts total blobs. Drawings arrive in bulk
+  `_PARSED`'s prune threshold (`web.py:822`) counts total blobs. Drawings arrive in bulk
   and inflate both for no benefit.
 
 ## Things that are true and unpleasant
