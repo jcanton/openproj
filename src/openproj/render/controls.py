@@ -2340,10 +2340,13 @@ function attachUploads(surface, status) {
 }
 
 // The drawings this body embeds, in the order it embeds them, each with the
-// span of source that names it. A span and not a search: two embeds of one id
-// are two rows, and `indexOf` would edit the first one whichever was pressed —
-// the mistake `attachUploads`'s own `indexOf`, above, does not make because it
-// only ever has one placeholder to find.
+// span of source that names it. A span, taken from the match itself, and not
+// a search for the id performed afterward: two embeds of one id are ONE row —
+// deduped keeping the first occurrence — but the row's span still has to be
+// THAT occurrence's, not whichever one a later `indexOf(id)` happened to
+// find, because this file's ids, unlike a placeholder token, can legitimately
+// repeat. That is the mistake `attachUploads`'s own `indexOf`, above, does
+// not make, because it only ever has one placeholder to find.
 const DRAWING_SRC =
   /!\[([^\]]*)\]\((drawings\/(draw-[0-9a-f]{6})\.png)\)/g;
 
@@ -2370,7 +2373,17 @@ async function excalidraw(status) {
   // seconds, and a button that stalls with nothing on screen reads as broken
   // rather than as working.
   status.textContent = 'loading the drawing editor…';
-  const source = await (await fetch('/static/excalidraw.js')).text();
+  // `fetch` rejects outright on a dropped connection or an aborted request,
+  // and neither of those is caught here — the caller wraps this call and
+  // tears the popup down with a sentence, the same treatment the other three
+  // fetches in `openDrawing` give a failure. A non-2xx response, though, does
+  // NOT reject: `.text()` on a 404 or 500 resolves with whatever body the
+  // server sent, which this function would otherwise inject as a script — so
+  // `response.ok` is checked here, explicitly, rather than left to surface as
+  // whatever `eval`ing an error page happens to do.
+  const response = await fetch('/static/excalidraw.js');
+  if (!response.ok) throw new Error(`the bundle answered ${response.status}`);
+  const source = await response.text();
   // An inline script, and not `<script src>`: the policy's `script-src
   // 'unsafe-inline'` allows a script whose BODY is written in rather than
   // fetched, and grants no `'self'` that a `src` pointing at the same file
@@ -2577,7 +2590,22 @@ async function openDrawing(surface, status, entry) {
   document.addEventListener('keydown', onKey);
   close.onclick = closeAttempt;
 
-  const lib = await excalidraw(status);
+  // A control that visibly does nothing is worse than no control: this file's
+  // own rule, applied here for the one fetch in `openDrawing` that used to
+  // have no `try`/`catch` at all. Left bare, a dropped connection or a 5xx
+  // on 5.5 MB left the popup reading "loading the drawing editor…" for ever,
+  // `Save` still disabled, and an unhandled rejection wherever `lib` was next
+  // used — the same failure the other three fetches below already tear down
+  // for.
+  let lib;
+  try {
+    lib = await excalidraw(status);
+  } catch (error) {
+    status.textContent = `the drawing editor could not be loaded — ${error.message}`;
+    announce(status.textContent);
+    teardown();
+    return;
+  }
   if (closed) return; // Close was pressed while the bundle was still loading.
 
   let initial = {elements: [], appState: {}, files: {}};
