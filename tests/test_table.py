@@ -2634,9 +2634,20 @@ def test_the_narrow_layout_drops_the_columns_that_are_lookups(page: str):
         # rather than its reason.
         if not prelude.startswith("@media") or "width" not in prelude:
             continue
-        assert not re.search(r"\.shed-|data-col|--sticky|\btable\b|\bt[hd]\b", body), (
-            f"the breakpoint that drifted is back, inside `{prelude}`: {body.strip()[:160]}"
-        )
+        for rule in body.split("}"):
+            # `.unfitted` is the one table selector a width query may carry, and
+            # it is allowed because of what the class MEANS: these are the four
+            # tables with no measured fit — the records list, the roles table and
+            # the cycle's two — which on a phone size to their content and scroll
+            # rather than wrapping. `#rows` is the fitted one and is excluded by
+            # the class, not by this test; the drift this guards against is a
+            # typed width deciding what the FIT decides, and a rule that cannot
+            # apply to the fitted table cannot drift from it.
+            if ".unfitted" in rule:
+                continue
+            assert not re.search(r"\.shed-|data-col|--sticky|\btable\b|\bt[hd]\b", rule), (
+                f"the breakpoint that drifted is back, inside `{prelude}`: {rule.strip()[:160]}"
+            )
     rule = re.search(r"\n(\.shed-.*?) \{ display: none; \}", styles, re.S).group(1)
     for column in _shed(page):
         assert f'.shed-{column} [data-col="{column}"]' in rule, column

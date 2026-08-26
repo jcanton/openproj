@@ -1205,7 +1205,7 @@ def test_the_people_page_is_one_table_with_one_header(rendered: Path):
     """
     body = read(rendered, "people.html")
     people = re.findall(r'<tbody class="person"', body)
-    table = re.search(r"<table id=\"roles\">.*?</table>", body, re.S).group(0)
+    table = re.search(r"<table id=\"roles\"[^>]*>.*?</table>", body, re.S).group(0)
 
     assert len(people) > 5, "the corpus names enough people for this to matter"
     assert body.count("<table") == 1, "one table, not one per person"
