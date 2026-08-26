@@ -5333,3 +5333,85 @@ def test_the_wash_does_not_take_away_the_ground_it_is_drawn_over(
     assert "rgba(0, 0, 0, 0)" not in before[:2], (
         f"the frozen pair is not opaque: {before[:2]}"
     )
+
+
+def test_the_betting_table_says_what_a_bet_is_being_made_against(
+    server_pages: dict[str, str], seed_index: Index
+):
+    """jcanton, 2026-08-26: "it's missing priority, that's very important field".
+
+    A bet is a decision about what matters most against a fixed appetite, and the
+    one field that says what matters was on the table, the graph, the timeline and
+    the record page — everywhere except the room where the decision is made.
+
+    Between status and appetite, which is the order the question is asked in: what
+    state is this in, how much does it matter, how much is it worth.
+    """
+    page = server_pages["cycle"]
+    # This table's own head and no other. The cycle page draws three tables, and
+    # a `<th>` regex over the whole page reads the roster's columns first — which
+    # is how the first draft of this test failed against a page that was right.
+    head = re.search(r'<table id="bets".*?</thead>', page, re.S)
+    assert head, "the betting table has no header row"
+    columns = [name.strip() for name in
+               re.findall(r'class="sorter">([^<]*)</button>', head.group(0))]
+    assert "priority" in columns, columns
+    assert columns.index("status") < columns.index("priority") < columns.index("appetite"), (
+        f"priority is not between what a record IS and what it is worth: {columns}"
+    )
+    # Every candidate carries one, drawn from the same ladder as everywhere else.
+    for value in PRIORITIES:
+        assert f'value="{value}"' in page, f"the picker cannot choose {value}"
+
+
+def test_the_betting_tables_closed_sets_are_chosen_and_never_typed(
+    server_pages: dict[str, str]
+):
+    """Status and priority are ladders with six and five rungs. Free text over a
+    closed set is how `in progres` gets written into the corpus, and the corpus is
+    a protected branch — `_reject_bad_status` would refuse it at the door now, but
+    a control that can express something the model will refuse is a control that
+    wastes somebody's afternoon at a meeting.
+
+    So they are `<select>`s, and the assertion is that they carry the ladder and
+    the marks. The glyph is half of what a status says — it is the channel that
+    survives colour blindness — and a picker that drops it is a picker whose open
+    state says less than the cell it replaced.
+    """
+    page = server_pages["cycle"]
+    for field, ladder, glyphs in (
+        ("status", STATUSES, STATUS_GLYPH), ("priority", PRIORITIES, PRIORITY_GLYPH)
+    ):
+        picker = re.search(
+            rf'<select class="pick" data-field="{field}".*?</select>', page, re.S
+        )
+        assert picker, f"{field} is not a picker"
+        chosen = picker.group(0)
+        for rung in ladder:
+            assert f'value="{rung}"' in chosen, f"{field} cannot choose {rung}"
+            assert glyphs[rung] in chosen, f"{field}'s {rung} lost its mark"
+        assert "<input" not in chosen, f"{field} can still be typed into"
+
+
+def test_a_carried_row_may_be_repriced_but_not_re_bet(server_pages: dict[str, str]):
+    """A row carried in from an earlier cycle has its checkbox disabled: stamping
+    a second cycle onto it would move the deadline its overrun is measured against
+    and forgive the slip.
+
+    That is a rule about the BET and about nothing else. Its priority and its
+    status are facts about the work, and a meeting that decides a carried pitch
+    now matters less than it did has to be able to say so.
+    """
+    page = server_pages["cycle"]
+    carried = re.findall(r'<tr data-id="[^"]*" class="carried">.*?</tr>', page, re.S)
+    if not carried:
+        pytest.skip("the frozen corpus has no carried bet in this cycle")
+    for row in carried:
+        assert "disabled" in re.search(r'<input type="checkbox".*?>', row, re.S).group(0), (
+            "a carried row can be bet into this cycle again"
+        )
+        for field in ("status", "priority"):
+            picker = re.search(rf'<select class="pick" data-field="{field}"[^>]*>', row)
+            assert picker and "disabled" not in picker.group(0), (
+                f"a carried row cannot have its {field} changed"
+            )
