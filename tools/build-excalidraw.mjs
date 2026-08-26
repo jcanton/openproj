@@ -160,6 +160,51 @@ async function bundle() {
     return uri
   }
 
+  // **The API key upstream ships, blanked here.**
+  //
+  // `@excalidraw/excalidraw` bakes its own build-time `VITE_APP_*` constants
+  // into the published package, and one of them is the Firebase config for
+  // `excalidraw-room-persistence` — their public collaboration backend. It is
+  // Excalidraw's key, not ours, and it is in every copy of this package on
+  // GitHub; jcanton's repository got a `google_api_key` secret-scanning alert
+  // for it hours after `static/excalidraw.js` was first committed, listing five
+  // other public repositories leaking the same string.
+  //
+  // In this build it is dead text: the output contains exactly one occurrence
+  // of the word `firebase` — this config — and no Firebase SDK at all, and the
+  // policy every page ships under is `connect-src 'self'`, which refuses every
+  // host in the block regardless. So blanking the value costs nothing and takes
+  // a live third-party credential out of a public repository.
+  //
+  // The VALUE only, leaving `{"apiKey":"", ...}` valid JSON: the rest of that
+  // object — `authDomain`, `projectId`, `appId`, `messagingSenderId` — is
+  // public identifiers rather than a secret, and rewriting the whole literal
+  // would be a bigger change to upstream's bytes for no gain.
+  //
+  // Written as a SHAPE and not as the one known string, on the same argument
+  // `VETTED_FAMILIES` is an allowlist: a substitution that only knows the key
+  // it was told about is one a version bump silently defeats. `AIza` plus 35
+  // characters of Google's key alphabet is the documented shape, and it is what
+  // GitHub's own scanner matches. `mustBeClean` re-checks the finished bundle,
+  // so a key arriving through a path this `onLoad` does not cover fails the
+  // build rather than shipping.
+  const GOOGLE_KEY = /AIza[0-9A-Za-z_-]{35}/g
+
+  function scrubbed(source) {
+    return source.replace(GOOGLE_KEY, '')
+  }
+
+  function mustBeClean(file) {
+    const found = fs.readFileSync(file, 'utf8').match(GOOGLE_KEY)
+    if (!found) return
+    throw new Error(
+      `${file} still carries ${found.length} Google API key(s) after the scrub — ` +
+        `first is ${found[0].slice(0, 8)}… . A key reached the bundle by a path the ` +
+        'onLoad rewrite does not cover (a chunk outside dist/prod, the CSS, or a ' +
+        'dependency). Find it and widen the scrub; do not commit the bundle.',
+    )
+  }
+
   const plugin = {
     name: 'trim',
     setup(b) {
@@ -202,14 +247,17 @@ async function bundle() {
       // package's own chunks, not as `import`s or a loader-recognised
       // extension — `--loader:.woff2=dataurl` inlines nothing on its own.
       // This rewrites those literals the same way, in every first-party file
-      // esbuild loads out of `dist/prod`.
+      // esbuild loads out of `dist/prod`, and blanks the API key in the same
+      // pass — see `scrubbed` for why there is a key here to blank.
       b.onLoad({ filter: /@excalidraw[\\/]excalidraw[\\/]dist[\\/]prod[\\/].*\.js$/ }, async (a) => ({
-        contents: (await fs.promises.readFile(a.path, 'utf8')).replace(
-          /"(\.\/fonts\/[^"]+\.woff2)"/g,
-          (m, rel) => {
-            const u = dataUri(rel.slice(2))
-            return u === null ? m : JSON.stringify(u)
-          },
+        contents: scrubbed(
+          (await fs.promises.readFile(a.path, 'utf8')).replace(
+            /"(\.\/fonts\/[^"]+\.woff2)"/g,
+            (m, rel) => {
+              const u = dataUri(rel.slice(2))
+              return u === null ? m : JSON.stringify(u)
+            },
+          ),
         ),
         loader: 'js',
       }))
@@ -230,4 +278,5 @@ async function bundle() {
     legalComments: 'none',
     logLevel: 'info',
   })
+  mustBeClean('excalidraw.trim.js')
 }

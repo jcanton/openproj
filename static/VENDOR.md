@@ -378,13 +378,41 @@ also why this file is **not inlined**. It is fetched on demand
 libraries are, and that is the whole reason it does not appear in
 `tests/test_render.py`'s inlining assertions: there is nothing to inline.
 
-Measured, not the spike's earlier guess: **5,508,971 B raw, 1,963,903 B gzip**, against
+Measured, not the spike's earlier guess: **5,508,932 B raw, 1,963,909 B gzip**, against
 `@excalidraw/excalidraw` **0.18.1** and React **18.3.1** — not React 19, which the peer
 range permits but which was never on the scale. This is smaller than the figure the
 spike first reported (5,603,202 B raw / 2,036,296 B gzip), and the difference is not
 slack in the build, it is one font family removed after this vendoring looked at its
 actual licence — see below. `tools/build-excalidraw.mjs` reproduces this exact byte count;
 `node tools/build-excalidraw.mjs` prints the sha256 to compare against `SHA256SUMS`.
+
+(It was 5,508,971 B for the first two days of this file's life. The 39 bytes are an API
+key — see "The key upstream ships," below.)
+
+### The key upstream ships, and why it is not in these bytes
+
+`@excalidraw/excalidraw` bakes its own build-time `VITE_APP_*` constants into the
+published package, and one of them is the Firebase config for
+`excalidraw-room-persistence` — Excalidraw's public collaboration backend. It is their
+key, in every copy of this package on GitHub. This repository got a `google_api_key`
+secret-scanning alert for it hours after `static/excalidraw.js` was first committed,
+listing five other public repositories leaking the same string.
+
+In this build it was dead text before it was removed: the output contains exactly one
+occurrence of the word `firebase` — that config — and no Firebase SDK at all, and every
+page ships under `connect-src 'self'`, which refuses every host in the block regardless.
+So `tools/build-excalidraw.mjs` blanks the value on the way through, leaving
+`{"apiKey":"", …}` — valid JSON, and the rest of that object is public identifiers
+(`authDomain`, `projectId`, `appId`, `messagingSenderId`) rather than a secret.
+
+The substitution is written as a SHAPE — `AIza` plus 35 characters of Google's key
+alphabet, which is what GitHub's own scanner matches — and not as the one known string,
+on the same argument `VETTED_FAMILIES` is an allowlist: a rewrite that only knows the key
+it was told about is one a version bump silently defeats. The finished bundle is
+re-checked before it is copied back, so a key arriving by a path the rewrite does not
+cover fails the build rather than shipping. `tests/test_render.py`'s
+`test_no_vendored_file_carries_an_api_key` is the same assertion made of the bytes in
+git, for anyone who never runs the build.
 
 `GET /static/{name}` in `web.py` is what actually serves the file: an explicit allowlist
 of vendored names, never a path taken off the request, `cache-control: public,

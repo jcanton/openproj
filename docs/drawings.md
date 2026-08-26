@@ -322,7 +322,7 @@ The spike's own build — mermaid and all 55 locales already stubbed out, `en` t
 that ships — measured **5,603,202 B raw, 2,025,230 B gzip** against `@excalidraw/excalidraw`
 **0.18.1** and React **18.3.1** (not React 19: the peer range permits it, but 19 is not the
 version that was on the scale, so this does not claim it is). The bundle that actually
-shipped came in smaller: **5,508,971 B raw, 1,963,903 B gzip**. The difference is not slack
+shipped came in smaller: **5,508,932 B raw, 1,963,909 B gzip**. The difference is not slack
 in the build; it is one font family removed once this vendoring looked at its actual
 licence, and a second dropped for size — see "The font licences," below. jcanton approved
 vendoring it on 2026-08-26 with the consequence spelled out rather than glossed over:

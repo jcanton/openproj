@@ -2039,6 +2039,50 @@ def test_every_vendored_file_is_the_one_that_was_checksummed():
         assert digest == sums[name].strip(), name
 
 
+def test_no_vendored_file_carries_an_api_key():
+    """GitHub opened a `google_api_key` secret-scanning alert against this
+    repository hours after `static/excalidraw.js` was first committed. The key
+    was not ours and nothing of ours leaked: `@excalidraw/excalidraw` bakes its
+    own build-time `VITE_APP_*` constants into the published package, one of
+    which is the Firebase config for `excalidraw-room-persistence` — their
+    public collaboration backend, in every copy of that package on GitHub. The
+    alert listed five other public repositories leaking the same string.
+
+    It was dead text here even before it was removed — the bundle holds one
+    occurrence of the word `firebase` and no Firebase SDK, and every page ships
+    under `connect-src 'self'`, which refuses every host in that block — but a
+    public repository should not carry a live third-party credential it cannot
+    rotate, and an alert per re-vendor is one somebody eventually closes on
+    reflex. `tools/build-excalidraw.mjs` blanks the value on the way through and
+    re-checks its own output.
+
+    This is the same assertion made of the bytes actually in git, so it holds
+    for everyone who never runs that build — which is everyone, most days. Asked
+    of every vendored file rather than of `excalidraw.js`, and by SHAPE rather
+    than by the one known string, for the reason `VENDOR.md`'s own font
+    allowlist gives: a check that only knows what it was told about is one the
+    next version bump silently defeats. `AIza` plus 35 characters of Google's
+    key alphabet is what GitHub's scanner matches.
+    """
+    import re
+
+    from openproj.render import _static_dir
+
+    google_key = re.compile(rb"AIza[0-9A-Za-z_-]{35}")
+    static = _static_dir()
+    for path in sorted(static.iterdir()):
+        if not path.is_file() or path.suffix not in {".js", ".mjs", ".css"}:
+            continue
+        found = google_key.findall(path.read_bytes())
+        assert not found, (
+            f"{path.name} carries {len(found)} Google API key(s) — first begins "
+            f"{found[0][:8].decode()}… . If this arrived with a re-vendor, widen the "
+            "scrub in tools/build-excalidraw.mjs and rebuild; do not commit the bundle "
+            "and do not close the scanning alert as revoked, because the key is not "
+            "ours to revoke."
+        )
+
+
 def test_the_vendoring_note_covers_every_file_it_is_about():
     """VENDOR.md was titled "Vendored JavaScript" and never mentioned the font that
     had been sitting beside the scripts, so the one binary in the repository was
