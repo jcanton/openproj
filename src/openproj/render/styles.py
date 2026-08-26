@@ -923,6 +923,37 @@ article.record .editbar { margin-bottom: .4rem; }
 .drawmenu button:hover, .drawmenu button:focus-visible {
   background: var(--accent); color: var(--on-accent); outline: none;
 }
+/* The popup `openDrawing` mounts Excalidraw into. `position: fixed; inset: 0`
+   over the whole page rather than parked beside the button the way
+   `.drawmenu` is: a menu is a few words under where you pressed, and an
+   editor somebody is going to spend minutes drawing in is not something to
+   leave half-covered by whatever the page happened to be scrolled to. */
+.drawpopup {
+  position: fixed; inset: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .45);
+}
+.drawbox {
+  display: flex; flex-direction: column;
+  width: min(96vw, 1100px); height: min(92vh, 800px);
+  background: var(--surface); border: 1px solid var(--line-strong);
+  border-radius: 4px; box-shadow: 0 12px 40px rgba(0, 0, 0, .3);
+  overflow: hidden;
+}
+.drawhead {
+  display: flex; align-items: center; justify-content: flex-end; gap: .5rem;
+  padding: .5rem .75rem; border-bottom: 1px solid var(--line);
+  /* Never scrolls out of reach: the canvas below can grow taller than the
+     window on its own terms, and Save has to stay pressable regardless. */
+  flex: none;
+}
+/* `min-height: 0` and not the flex item's default `auto`: a flex child sized
+   by its content refuses to shrink below that content's height, and
+   Excalidraw's own canvas reports a real intrinsic size — the same reason
+   `textarea.body-field` needs the same rule in the split view, above. Without
+   it the stage pushes `.drawbox` taller than the `min(92vh, 800px)` it was
+   given rather than filling it. */
+.drawstage { flex: 1; min-height: 0; position: relative; }
 article.record .commitbar { margin-top: 0; }
 /* The bar's BOX is on the page before the session that fills it — jcanton,
    2026-08-24: "page elements should not move or appear/disappear when

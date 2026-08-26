@@ -2357,19 +2357,262 @@ function drawingsIn(text) {
   return found;
 }
 
-// The drawings button and the menu it opens. No Excalidraw editor is mounted
-// here — that is the next commit — so this is the CONTROL and the MENU only,
-// and it owns both: the button is already in the markup (`.editbar`'s own, not
-// a seventeenth `FORMATS` entry, because a menu is page chrome and not a
+// Fetched on the first press of the drawing button and cached for the rest of
+// the tab's life — never carried on the page the way Ace is, because 594 KB is
+// a keymap and 5.5 MB is a whole second application that most readers who open
+// a record will never press the button for. A second press costs nothing: the
+// bundle cannot change while this tab has been open.
+let EXCALIDRAW = null;
+
+async function excalidraw(status) {
+  if (EXCALIDRAW) return EXCALIDRAW;
+  // Said here and not left silent: 5.5 MB over even a fast connection is
+  // seconds, and a button that stalls with nothing on screen reads as broken
+  // rather than as working.
+  status.textContent = 'loading the drawing editor…';
+  const source = await (await fetch('/static/excalidraw.js')).text();
+  // An inline script, and not `<script src>`: the policy's `script-src
+  // 'unsafe-inline'` allows a script whose BODY is written in rather than
+  // fetched, and grants no `'self'` that a `src` pointing at the same file
+  // could be refused or allowed by — a `src` attribute here is refused
+  // outright. The fetch that read the bundle's text a line up is
+  // `connect-src 'self'`, which the policy does grant, so fetch-and-inject is
+  // the one door that opens.
+  const tag = document.createElement('script');
+  tag.textContent = source;
+  // The marker `tests/test_editor.py`'s widened script probe looks for: the
+  // one inline script this page ever injects at runtime, named so a future
+  // one the probe was not written for reads as new rather than as this one.
+  tag.dataset.injectedBundle = 'excalidraw';
+  document.head.appendChild(tag);
+  EXCALIDRAW = window.ExcalidrawLib;
+  return EXCALIDRAW;
+}
+
+// Mirrors `MAX_ASSET_BYTES` at web.py:612, and cannot import it: `web.py`
+// imports `render`, so the reverse import would be a cycle. A second literal
+// held together by a test rather than a shared source, the same trade
+// `NO_VALUE` above makes against `index.NO_VALUE` in Python. Checked before
+// the POST, so a drawing over the ceiling is answered with a sentence and the
+// strokes still in the popup, rather than by a 413 that arrives after the
+// bytes — and the work — are already on their way to the server.
+const MAX_DRAWING_BYTES = 2 * 1024 * 1024;
+
+// The popup's chrome: a header carrying Save and Close, and the stage
+// Excalidraw mounts into. Built once per open rather than templated on the
+// page, because it exists for a few minutes of one person's session and
+// every other page that never touches a drawing should not carry its markup.
+function drawPopup(label) {
+  const overlay = document.createElement('div');
+  overlay.className = 'drawpopup';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', label);
+  const box = document.createElement('div');
+  box.className = 'drawbox';
+  const head = document.createElement('div');
+  head.className = 'drawhead';
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.id = 'draw-save';
+  save.textContent = 'Save';
+  // Disabled until Excalidraw actually mounts: `save.onclick` reaches into
+  // `api`, which is `null` for as long as the bundle is still loading, and a
+  // press in that window would throw rather than do nothing.
+  save.disabled = true;
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.id = 'draw-close';
+  close.textContent = 'Close';
+  head.append(save, close);
+  const stage = document.createElement('div');
+  stage.className = 'drawstage';
+  box.append(head, stage);
+  overlay.append(box);
+  return {overlay, stage, save, close};
+}
+
+// One popup at a time. Nothing stops a second `openproj:draw` firing while the
+// first is still on screen — the menu is still reachable behind it — and two
+// Excalidraw roots stacked on one page is not a state worth reaching just to
+// find out what it does.
+let DRAWING_OPEN = false;
+
+// Mounts the popup for `entry` — a row from `drawingsIn`, or `null` for
+// "+ drawing" — and owns its whole lifecycle: load, fetch, mount, save, close.
+async function openDrawing(surface, status, entry) {
+  if (DRAWING_OPEN) return;
+  DRAWING_OPEN = true;
+  const button = document.getElementById('drawing');
+  const {overlay, stage, save, close} = drawPopup(
+    entry ? `Editing ${entry.id}` : 'A new drawing'
+  );
+  document.body.appendChild(overlay);
+
+  let root = null, api = null, etag = null, closed = false;
+
+  function teardown() {
+    if (closed) return;
+    closed = true;
+    DRAWING_OPEN = false;
+    if (root) root.unmount();
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+    button.focus();
+  }
+  function onKey(event) {
+    if (event.key === 'Escape') teardown();
+  }
+  document.addEventListener('keydown', onKey);
+  close.onclick = teardown;
+
+  const lib = await excalidraw(status);
+  if (closed) return; // Close was pressed while the bundle was still loading.
+
+  let initial = {elements: [], appState: {}, files: {}};
+  if (entry) {
+    status.textContent = `opening ${entry.id}…`;
+    let response;
+    try {
+      response = await fetch(`/${entry.path}`);
+    } catch (error) {
+      status.textContent = `${entry.path} could not be opened — ${error.message}`;
+      announce(status.textContent);
+      teardown();
+      return;
+    }
+    if (closed) return;
+    if (!response.ok) {
+      status.textContent = `${entry.path} could not be opened`;
+      announce(status.textContent);
+      teardown();
+      return;
+    }
+    // Load-bearing twice for the price of once, exactly as `docs/drawings.md`
+    // ("Serving") says: the same string is both the cache token this fetch
+    // just revalidated against and the compare-and-swap token the next PUT
+    // sends back as `If-Match`.
+    etag = response.headers.get('etag');
+    const blob = await response.blob();
+    let loaded;
+    try {
+      loaded = await lib.loadSceneOrLibraryFromBlob(blob, null, null);
+    } catch (error) {
+      status.textContent = `${entry.path} does not read back as a drawing — ${error.message}`;
+      announce(status.textContent);
+      teardown();
+      return;
+    }
+    if (loaded.type !== lib.MIME_TYPES.excalidraw) {
+      status.textContent = `${entry.path} is a library file, not a drawing`;
+      announce(status.textContent);
+      teardown();
+      return;
+    }
+    initial = loaded.data;
+  }
+  if (closed) return;
+
+  root = lib.createRoot(stage);
+  root.render(lib.React.createElement(lib.Excalidraw, {
+    initialData: initial,
+    excalidrawAPI: a => { api = a; },
+    // Hidden, not merely left to fail. pica and image-blob-reduce build a
+    // `data:text/javascript;base64` Worker to probe `createImageBitmap` and a
+    // `blob:` Worker to resize, and the policy is `default-src 'none'` with no
+    // `worker-src` and no `blob:` anywhere in it — both constructions are
+    // refused, so inserting a raster image into a drawing WILL fail.
+    // jcanton accepted the gap on 2026-08-26: a control that is not offered,
+    // rather than one that silently does nothing. Do not restore this without
+    // a `worker-src`/`blob:` grant to go with it.
+    UIOptions: {tools: {image: false}},
+  }));
+  save.disabled = false;
+  status.textContent = entry ? `editing ${entry.id}` : 'drawing a new picture';
+
+  save.onclick = async () => {
+    const elements = api.getSceneElements();
+    const files = api.getFiles();
+    const blob = await lib.exportToBlob({
+      elements, files, mimeType: 'image/png',
+      appState: {...api.getAppState(), exportEmbedScene: true},
+    });
+    // Checked here, client-side, before the POST: `MAX_ASSET_BYTES` is
+    // checked again on the server, but by then the answer is a 413 and the
+    // strokes are gone. A vector scene is nowhere near this in practice — the
+    // spike measured 5.6% of the ceiling for a 30-element drawing with ten
+    // text labels — so this is a guard against the unusual case, not the
+    // ordinary one.
+    if (blob.size > MAX_DRAWING_BYTES) {
+      status.textContent = `that drawing is ${Math.ceil(blob.size / 1024)} KB; the limit `
+        + `is ${MAX_DRAWING_BYTES / 1024} KB — simplify it, or ask for the ceiling to be raised`;
+      announce(status.textContent);
+      return;
+    }
+    status.textContent = 'saving…';
+    // An upload is a commit like any other, so the shell's banner is told
+    // before it starts and told its sha afterwards — both save paths commit,
+    // a re-save of an existing drawing as much as a new one, and without this
+    // a save announced itself to every tab including this one, landing "The
+    // plan changed." over the very popup that made the change.
+    dispatchEvent(new Event('openproj:writing'));
+    let committed = null;
+    try {
+      const response = entry
+        ? await fetch(`/api/drawing/${entry.id}`, {
+            method: 'PUT',
+            headers: {'content-type': 'image/png', 'if-match': etag},
+            body: blob,
+          })
+        : await fetch('/api/drawing', {
+            method: 'POST', headers: {'content-type': 'image/png'}, body: blob,
+          });
+      const answer = await answerOf(response);
+      if (response.status === 409) {
+        // The loser is refused in one sentence, verbatim, and their strokes
+        // are gone from the file — but not from the screen. The popup stays
+        // open with the drawing still in it: a conflict dialog that also
+        // throws away the work it refused would be the worse of the two
+        // losses, and there is nothing else here that could show it again.
+        status.textContent = answer.detail || 'somebody else changed this drawing';
+        announce(status.textContent);
+        return;
+      }
+      if (!response.ok) {
+        status.textContent = answer.detail || 'that drawing was refused';
+        announce(status.textContent);
+        return;
+      }
+      committed = answer.commit;
+      if (!entry) {
+        // No splice on a re-save, ever: the path is stable, so the second and
+        // every later save rewrites the same file and the body is not touched
+        // at all — see "Where the bytes live" in `docs/drawings.md`. Only a
+        // brand-new drawing needs a line written for it to be found by, and
+        // it goes in at the caret through `surface.splice`, the same
+        // undo-safe boundary `attachUploads` writes an upload's path through.
+        const {from, to} = surface.caret();
+        surface.splice(from, to, `![](${answer.path})`);
+      } else {
+        etag = `"${answer.etag}"`;
+      }
+      status.textContent = `${answer.path} saved`;
+      announce(status.textContent);
+      teardown();
+    } catch (error) {
+      status.textContent = `that drawing was not saved — ${error.message}`;
+      announce(status.textContent);
+    } finally {
+      dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
+    }
+  };
+}
+
+// The drawings button and the menu it opens, and now the popup a press
+// mounts. The button is already in the markup (`.editbar`'s own, not a
+// seventeenth `FORMATS` entry, because a menu is page chrome and not a
 // formatting mark), and nothing outside this function builds the popover,
 // fills it or reads what was pressed in it.
-//
-// Pressing a row does not open anything YET. `openproj:draw` on `surface.el`
-// is the seam a future `attachExcalidraw` mounts on, mirroring exactly how the
-// image button hands its press to `attachUploads` over `openproj:pick-image` —
-// the button here dispatches, and until that listener exists, this function is
-// its own placeholder listener, saying so in the status strip rather than
-// leaving a press that visibly does nothing.
 function attachDrawing(surface, status) {
   const button = document.getElementById('drawing');
   // Withheld from a reader the server would refuse a write from, on both pages
@@ -2448,13 +2691,11 @@ function attachDrawing(surface, status) {
     button.focus();
   });
 
-  // No mount answers this yet. Said in the status strip rather than left
-  // silent, because a control that visibly does nothing is worse than no
-  // control — and replaced outright the day a real listener exists to say
-  // something truer, the same way this line will read once Excalidraw is the
-  // one hearing `openproj:draw`.
-  surface.el.addEventListener('openproj:draw', () => {
-    status.textContent = 'the drawing editor arrives in the next commit';
+  // `openDrawing` owns everything from here: the fetch-on-press loader, the
+  // popup, both save paths. `entry` is the row that was pressed, or `null`
+  // for "+ drawing" — the same detail `choose` dispatched above.
+  surface.el.addEventListener('openproj:draw', event => {
+    openDrawing(surface, status, event.detail);
   });
 }
 

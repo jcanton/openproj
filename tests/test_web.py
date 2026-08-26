@@ -498,6 +498,17 @@ def test_every_write_a_page_makes_is_announced_before_and_after_it(
         )
         if "/api/preview" not in url
     ]
+    # The one path here where "how many fetch call sites does the source hold"
+    # and "how many writes can happen per press" genuinely differ: `openDrawing`
+    # chooses `PUT /api/drawing/<id>` or `POST /api/drawing` with a ternary at
+    # Save time, never both, and wraps whichever fires in exactly one
+    # `openproj:writing`/`openproj:wrote` pair. Every other write path here is
+    # one call site because it is one write; this is two call sites for the one
+    # save button, so the pair is collapsed into the single write it is before
+    # asking whether the count below balances.
+    if "'/api/drawing'" in fetches and "`/api/drawing/${entry.id}`" in fetches:
+        fetches = [url for url in fetches if url not in ("'/api/drawing'", "`/api/drawing/${entry.id}`")]
+        fetches.append("'/api/drawing' or `/api/drawing/${entry.id}`, never both")
     assert fetches, route
     # And a write that is not a fetch at all. The detail page's Save goes over
     # the co-editing socket when a room is live, and the room commits on its own

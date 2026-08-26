@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 
+import httpx
 import pygit2
 import pytest
-from browser import chrome, measured_in
+from browser import _devtools, _evaluated, chrome, in_a_live_page, measured_in
 from fastapi.testclient import TestClient
 from pages import elements
 from test_store import commit_directly
@@ -30,17 +32,19 @@ from test_web import (
     DONE,
     OTHER,
     PATH,
+    PNG,
     SECRET,
     SEED,
     TASK,
     file_at,
     git_head,
     head,
+    live_server,
     save,
 )
 
 from openproj.auth import sign_session
-from openproj.web import SESSION_COOKIE, create_app
+from openproj.web import MAX_ASSET_BYTES, SESSION_COOKIE, create_app
 
 # Computed by the scheduler, never typed. If one of these ever gains an input,
 # somebody can put a start date in a file and the next reschedule will silently
@@ -893,11 +897,13 @@ def test_a_write_from_the_cycle_page_is_not_reported_back_as_somebody_else_s(
     the request that made it."""
     page = client.get("/cycle/37").text
 
-    assert page.count("dispatchEvent(new Event('openproj:writing'));") == 3, (
-        "the cycle record, each record in the batch, and the asset upload the "
-        "shared editor helpers carry onto this page"
+    assert page.count("dispatchEvent(new Event('openproj:writing'));") == 4, (
+        "the cycle record, each record in the batch, and the asset upload and the "
+        "drawing save the shared editor helpers carry onto this page — the source "
+        "for both of the latter two ships here whether or not this page ever wires "
+        "`attachDrawing` to a surface"
     )
-    assert page.count("dispatchEvent(new CustomEvent('openproj:wrote'") == 3
+    assert page.count("dispatchEvent(new CustomEvent('openproj:wrote'") == 4
     assert "window.SHOWING = ['cycle-' + NUMBER]" in page, (
         "so a write that lands here reads as landing here"
     )
@@ -1660,16 +1666,19 @@ def test_the_drawing_menu_lists_what_the_body_embeds_in_the_order_it_embeds_them
 def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
     client: TestClient, tmp_path: Path
 ):
-    """The control and the menu, with no editor mounted behind either yet — see
+    """The control and the menu, and now the real listener behind a press —
     `attachDrawing`'s own comment. A press dispatches `openproj:draw` on
-    `surface.el` carrying the entry (or `null` for "+ drawing"), which is the
-    whole of what this task ships; the status strip says so rather than
-    leaving a press that visibly does nothing.
+    `surface.el` carrying the entry (or `null` for "+ drawing"), which
+    `openDrawing` hears and answers by opening the popup; `measured_in` cannot
+    drive that mount to completion (see `docs/drawings.md`, "Five helpers, not
+    one"), so what is asserted here is the SYNCHRONOUS half: the popup appears
+    and the status strip says the bundle is loading, both true the instant the
+    press returns and neither dependent on the fetch this page's `file://`
+    origin cannot make.
 
-    Also closes a coverage gap left behind by this task: Escape closing the
-    menu and returning focus to the button, and a second press of `#drawing`
-    closing it again, were both verified by hand in headless Chrome and
-    neither was asserted.
+    Also closes Task 7's coverage gap: Escape closing the menu and returning
+    focus to the button, and a second press of `#drawing` closing it again,
+    were both verified by hand in headless Chrome and neither was asserted.
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "drawmenu.html", 1200,
@@ -1683,7 +1692,7 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
         const outsideMarks = document.querySelectorAll('#marks button').length;
 
         // Escape closes the menu and hands the keyboard back to the button
-        // that opened it — this task's own comment on the listener, unasserted
+        // that opened it — Task 7's own comment on this listener, unasserted
         // until now.
         button.click();
         const menu = document.querySelector('.drawmenu');
@@ -1692,7 +1701,7 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
         const focusedAfterEscape = document.activeElement === button;
 
         // A second press of the button while its own menu is open closes it —
-        // also unasserted until now.
+        // also Task 7's, also unasserted until now.
         button.click();
         const openBeforeSecondPress = !menu.hidden;
         button.click();
@@ -1722,6 +1731,11 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
         const afterPress = {
           hidden: menu2.hidden, expanded: button.getAttribute('aria-expanded'),
           heard, status: document.getElementById('upload').textContent,
+          // The real listener now answers a press by opening the popup —
+          // `openDrawing` appends it before it ever awaits the bundle, so
+          // this is true before the fetch this `file://` page cannot make
+          // has even been attempted.
+          popupOpened: !!document.querySelector('.drawpopup'),
         };
 
         button.click();
@@ -1756,8 +1770,9 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
             "id": "draw-123abc", "path": "drawings/draw-123abc.png", "alt": "mine",
             "from": 7, "to": 40,
         },
-        "status": "the drawing editor arrives in the next commit",
-    }, "pressing a row closed the menu and named exactly what was pressed"
+        "status": "loading the drawing editor…",
+        "popupOpened": True,
+    }, "pressing a row closed the menu, named exactly what was pressed, and opened the popup"
     assert got["heardNew"] is None, '"+ drawing" is a new drawing, and null says so'
 
 
@@ -5256,7 +5271,20 @@ window.__errors = [];
 addEventListener('error', event => window.__errors.push(String(event.message)));
 const append = Element.prototype.appendChild;
 Element.prototype.appendChild = function (node) {
-  if (node && node.tagName === 'SCRIPT' && node.src) window.__injected.push(node.src.slice(-24));
+  if (node && node.tagName === 'SCRIPT') {
+    // A `src` names the twenty-four characters that end it. An inline script
+    // — one whose body was set with `.textContent`, the way `attachDrawing`'s
+    // fetch-and-inject loader builds one — has no `src` at all, so the
+    // original version of this hook never saw it: it passed the LETTER of
+    // "no script is injected at runtime" while missing the one this page now
+    // deliberately does inject. `dataset.injectedBundle` is that loader's own
+    // marker on the one script it is allowed to inject, read back here so an
+    // unmarked inline script — the one this hook could not previously have
+    // told apart from it — still shows up as itself.
+    window.__injected.push(
+      node.src ? node.src.slice(-24) : `inline:${node.dataset.injectedBundle || '(unmarked)'}`
+    );
+  }
   return append.call(this, node);
 };
 """
