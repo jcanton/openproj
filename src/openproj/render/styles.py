@@ -1125,7 +1125,7 @@ textarea.body-field { min-height: var(--writing, 60vh); resize: vertical; }
 .rekinding .reach { margin: 0; font-size: 13px; color: var(--muted); }
 .rekinding .why { margin: 0; font-size: 12px; color: var(--danger); }
 .rekinding .why[hidden] { display: none; }
-.rekinding select { font: inherit; font-size: 13px; }
+.rekinding select.becomes { font: inherit; font-size: 13px; }
 /* The control that opens it, beside the chip it is about. Quiet, because it sits
    under the heading on every record page and is pressed on almost none of them —
    the chip is the fact and this is the way to change it. */

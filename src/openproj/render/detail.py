@@ -1069,7 +1069,7 @@ _DETAIL = """
           to `KINDS` is offered here without a second edit — and the server
           refuses the ones this particular record cannot become, which is a
           question about its parent and its children and not about the ladder. -#}
-      <select class="rekind-to">{% for k in kinds %}{% if k != e.kind %}<option
+      <select class="becomes">{% for k in kinds %}{% if k != e.kind %}<option
         value="{{ k }}">{{ k|human }}</option>{% endif %}{% endfor %}</select></label>?</p>
     <p class="reach">The id carries the kind, so this makes a NEW record and
       retires <code>{{ e.id }}</code>. Everything filed under it or waiting on it
@@ -1885,7 +1885,7 @@ for (const article of document.querySelectorAll('article.record')) {
   const why = ask.querySelector('.why');
   const acts = ask.querySelector('.acts');
   const going = ask.querySelector('button.really');
-  const picker = ask.querySelector('select.rekind-to');
+  const picker = ask.querySelector('select.becomes');
   // What the server said would be lost, once it has said it. Cleared whenever
   // the question changes, so a confirmation collected for one kind can never be
   // spent on another.
@@ -1933,7 +1933,13 @@ for (const article of document.querySelectorAll('article.record')) {
         // the server had worked out the answer.
         losing = answer.drops;
         why.hidden = false;
-        why.textContent = answer.detail;
+        // `refusal` and not `answer.detail`, which is the shape of the bug
+        // `test_no_write_path_reads_a_key_a_conflict_does_not_carry` exists for:
+        // a 409 from the STORE answers with a report and no `detail`, and this
+        // 409 is not that one — but a call site that knows the difference is a
+        // call site that will be wrong the day it stops being true. The shell's
+        // formatter is the one place allowed to know.
+        why.textContent = refusal(answer, response.status);
         going.textContent = 'Change it anyway';
         going.disabled = false;
         return;

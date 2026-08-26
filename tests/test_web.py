@@ -6014,3 +6014,57 @@ def test_a_kind_change_needs_a_writer_and_a_kind_that_exists(
     # Already that kind is a refusal rather than a no-op commit: a plan whose log
     # says a pitch became a pitch is a log nobody can read.
     assert rekind(client, PITCH, "pitch").status_code == 422
+
+
+def test_the_kind_control_actually_changes_the_kind_in_a_real_browser(
+    live_server: str, tmp_path: Path,
+):
+    """The panel, the picker and the press, driven end to end.
+
+    Written because a stale selector shipped past every other test here. The
+    route's own tests were green — it works — and the render test was green: the
+    button and the panel are in the markup. What was broken sat between them: one
+    `querySelector` in the wiring loop still named the class the markup had
+    before it was renamed, so it threw HALFWAY through, after `open.onclick` had
+    been attached and before `going.onclick` was. The panel opened, the picker
+    worked, and pressing Change it did nothing at all — no error, no console
+    line, no navigation.
+
+    That is the shape this test exists for: a control that is drawn, is
+    reachable, and is connected to nothing. Only pressing it finds that.
+    """
+    made = httpx.post(
+        f"{live_server}/api/record",
+        json={
+            "base_commit": httpx.get(f"{live_server}/healthz").json()["head"],
+            "fields": {
+                "kind": "pitch", "title": "Chaff optics", "parent": PROJECT,
+                "status": "shaping", "owner": "ann", "person_weeks": 2,
+            },
+            "body": None,
+        },
+        cookies={SESSION_COOKIE: sign_session(ANN, SECRET)},
+        timeout=30,
+    )
+    assert made.status_code == 201, made.text
+    leaf = made.json()["id"]
+
+    answer, said = _walked(
+        f"{live_server}/detail/{leaf}", tmp_path / "kindprofile",
+        [
+            ("document.querySelector('button.rekind').click()", 1),
+            ("""(() => {
+                 const picker = document.querySelector('select.becomes');
+                 picker.value = 'task';
+                 picker.dispatchEvent(new Event('change'));
+                 return picker.value;
+               })()""", 1),
+            ("document.querySelector('.rekinding button.really').click()", 5),
+            # The new id is the server's, so the claim is the KIND and the fact
+            # that the address moved at all — not a string this test could have
+            # written down in advance.
+            ("""location.pathname.startsWith('/detail/task-')
+                  + ' ' + document.querySelector('.eyebrow .chip').textContent.trim()""", 0),
+        ],
+    )
+    assert answer == "true Task", (answer, said)

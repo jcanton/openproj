@@ -6066,6 +6066,12 @@ def test_the_record_page_offers_every_kind_but_the_one_it_is(
     fields the page even offers, so a control for it belongs next to the name and
     not among the values it governs.
 
+    The class is `becomes` and not `rekind-to`, which is not taste: the header
+    census reads "how many times does this page say what kind this record is" as
+    "how many elements carry a class containing `kind-`", and `rekind-to`
+    answered yes. A control that CHANGES the kind is not the page saying it, and
+    a class name that trips a census is a class name to change.
+
     The list is filtered from the ladder rather than written beside it, so a rung
     added to `KINDS` is offered without a second edit. Which of them this
     particular record can actually become is the server's question — it depends
@@ -6074,7 +6080,7 @@ def test_the_record_page_offers_every_kind_but_the_one_it_is(
     """
     page = server_pages["record"]
     assert '<button type="button" class="rekind">Change kind</button>' in page
-    picker = re.search(r'<select class="rekind-to">(.*?)</select>', page, re.S)
+    picker = re.search(r'<select class="becomes">(.*?)</select>', page, re.S)
     assert picker, "the record page has no kind picker"
 
     offered = re.findall(r'value="(\w+)"', picker.group(1))
