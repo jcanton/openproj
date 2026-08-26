@@ -1441,6 +1441,40 @@ _GRAPH_STYLE = """
 #nothing[hidden] { display: none; }
 #nothing .headline { margin: 0 0 .25rem; font-size: 15px; }
 #nothing .hint { margin: 0 0 .75rem; }
+/* **A corner is not a width.** `.keys` is pinned by its right edge and sized by
+   its content, and its content is a grid of `auto repeat(6, max-content)` — a
+   row of six status keys and their name, which measures about 620px whatever the
+   canvas underneath it is. At a 390px viewport that box ran from -262 to 358:
+   two thirds of the legend hung off the LEFT edge of the page, clipped by the
+   document and unreachable, so the reader saw four keys out of eleven and no
+   sign that there were more. Nothing overflowed to the right and no scrollbar
+   appeared, which is why this survived — the page looked intact.
+
+   The fix is to give it both edges and let it wrap. With `left` set beside the
+   `right` it already had, the box is as wide as the canvas rather than as wide
+   as its longest row, and the two lists inside go back to being what the shell
+   makes of a legend that is on its own: `display: flex; flex-wrap: wrap`. That
+   is `.legend`'s own rule, undone here only by `.legends .legend { display:
+   contents }` handing the keys to the grid — so this is the grid being switched
+   off, not a second layout being invented.
+
+   The cascade, stated rather than guessed: `.keys .legends` is (0,2,0) against
+   the shell's `.legends` (0,1,0), and `.keys .legends .legend` is (0,3,0)
+   against `.legends .legend` (0,2,0). Both win on specificity, so neither
+   depends on this sheet being inlined after the shell's — which it is.
+
+   `align-items: stretch` because `flex-end` was right for rows the box was
+   sized to and wrong for rows that now fill it.
+
+   It stays an overlay. A legend that pushes the canvas down costs the plan the
+   height it is drawn in, and `#cy` is `height: var(--room)` — the room is
+   already the thing a phone has least of. Five wrapped rows over the top of the
+   graph is the cheaper trade, and it is still pannable underneath. */
+@media (max-width: 40rem) {
+  .keys { left: .75rem; align-items: stretch; }
+  .keys .legends { display: block; }
+  .keys .legends .legend { display: flex; }
+}
 """
 
 

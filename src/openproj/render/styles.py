@@ -913,6 +913,31 @@ dl { display: grid; grid-template-columns: 11rem minmax(0, 1fr); gap: .45rem 1re
 dt { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
      padding-top: .35rem; }
 dd { margin: 0; }
+/* **11rem of a 390px page is a caption wider than the fact it captions.** The
+   two-column grid leaves 158px for the value, and the cycle page's date boxes do
+   not fit in it: measured at a 390px viewport they ran from 212 to 404, 14px
+   past the edge of the page, and took the document's `scrollWidth` with them —
+   a whole page scrolling sideways so that two `<input type="date">` could keep
+   their intrinsic width.
+
+   Both halves are the fix, and neither is enough alone. One column puts the
+   caption above the value, which is what a phone has room for; `max-width: 100%`
+   is what stops a date box exceeding the track it is now given, because a date
+   input's intrinsic width is a UA number that a `minmax(0, 1fr)` cell does not
+   bound on its own.
+
+   This is the shape `.panes > .facts dl` already takes at a narrow container
+   (`grid-template-columns: minmax(0, 1fr)`, `dt` padded to carry the gap) —
+   asked here of the window, for the `dl`s that are not in `.panes`. `gap: 0`
+   with `padding-top` on the `dt` and not a row gap, for the same reason it is
+   written that way there: a gap applies between the caption and its own value as
+   well as between one pair and the next, and the pair reads as one thing. */
+@media (max-width: 40rem) {
+  dl { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  dt { padding-top: .7rem; }
+  dt:first-child { padding-top: 0; }
+  dd input, dd select, dd textarea { max-width: 100%; box-sizing: border-box; }
+}
 dt.derived, dd.derived { font-style: italic; }
 /* Still italic, because it is still computed and typing over it would change
    nothing. Coloured, because it is the one computed line that is a problem. */

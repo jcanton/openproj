@@ -5146,3 +5146,237 @@ def test_a_record_that_is_not_there_is_an_empty_page_and_not_a_KeyError(seed_ind
 
     assert "task-ffffff" not in page
     assert "<article" not in page
+
+
+@pytest.fixture
+def phone_pages(seed_index: Index) -> dict[str, str]:
+    """Every surface a plan is READ on, served rather than exported.
+
+    Served, because the server's pages are the ones somebody opens on a phone —
+    a static export reaches a phone as a file somebody mailed, and it is the
+    narrower case of the two. The cycle page and the record page exist only here
+    at all.
+
+    The editing surfaces are deliberately absent, and that is a decision rather
+    than an omission: the create form, the Ace editor and the betting table's
+    inline boxes are a laptop's, and nothing below claims otherwise. What is
+    claimed is that a phone can READ the plan without the page fighting it.
+    """
+    from openproj.render import (
+        render_cycle,
+        render_detail,
+        render_graph,
+        render_people,
+        render_records,
+        render_table,
+        render_timeline,
+    )
+
+    return {
+        "records": render_records(seed_index, STATIC),
+        "table": render_table(seed_index, STATIC, base_commit="deadbee", may_write=True),
+        "graph": render_graph(seed_index, STATIC, base_commit="deadbee"),
+        "timeline": render_timeline(seed_index, STATIC),
+        "people": render_people(seed_index, STATIC),
+        "cycle": render_cycle(seed_index, 37, ROUTES, base_commit="deadbee"),
+        "record": render_detail(
+            seed_index, ROUTES, only=next(iter(seed_index.plan)), base_commit="deadbee"),
+    }
+
+
+# What a 390px viewport gets, per page. One script, because one Chrome answering
+# seven pages is 3 seconds and seven Chromes are 27 — see `measured_on_a_phone`.
+#
+# `over` is measured against the DOCUMENT and not against the viewport, and the
+# difference is the whole reliability of it: a bar inside the timeline's scroller
+# and a column inside the table's are both far past the right edge of the screen
+# and both entirely correct, because the box they are in scrolls. What is wrong
+# is the PAGE scrolling, which is `scrollWidth` — so that is what is asked, and
+# `over` is only there to name the culprit when it does.
+_ON_A_PHONE = """
+const name = el => el.tagName.toLowerCase()
+  + (el.id ? '#' + el.id : '')
+  + (typeof el.className === 'string' && el.className.trim()
+     ? '.' + el.className.trim().split(/\\s+/).slice(0, 2).join('.') : '');
+const root = document.documentElement;
+const vw = root.clientWidth;
+const over = [];
+for (const el of document.querySelectorAll('body *')) {
+  const box = el.getBoundingClientRect();
+  if (box.width > 0 && box.height > 0 && (box.right > vw + 1 || box.left < -1)
+      && !el.closest('[data-sideways], .sideways, .table-scroll, .scroll')) {
+    over.push(name(el) + ' ' + Math.round(box.left) + '..' + Math.round(box.right));
+  }
+}
+const small = [];
+for (const el of document.querySelectorAll('input, select, textarea')) {
+  const size = parseFloat(getComputedStyle(el).fontSize);
+  if (el.getClientRects().length && size < 16) small.push(name(el) + ' at ' + size + 'px');
+}
+const timeline = document.querySelector('.tl');
+const wide = el => Math.round(el.getBoundingClientRect().width);
+const search = document.getElementById('q');
+const column = document.querySelector('main');
+const keys = document.querySelector('.keys');
+const off = keys ? [...keys.querySelectorAll('li')].filter(li => {
+  const box = li.getBoundingClientRect();
+  return box.width > 0 && (box.left < -1 || box.right > vw + 1);
+}).map(li => li.textContent.trim() + ' ' + Math.round(li.getBoundingClientRect().left)) : [];
+return {
+  viewport: vw,
+  scrollWidth: root.scrollWidth,
+  over: [...new Set(over)].slice(0, 8),
+  small: [...new Set(small)],
+  labels: timeline ? wide(timeline.querySelector('.labels')) : null,
+  chart: timeline ? wide(timeline.querySelector('.scroll')) : null,
+  keysOffPage: off,
+  search: search ? wide(search) : null,
+  column: column ? Math.round(column.clientWidth) : null,
+};
+"""
+
+
+@pytest.fixture
+def on_a_phone(phone_pages: dict[str, str], tmp_path: Path) -> dict[str, dict]:
+    """One Chrome, seven pages, one report each, at a real 390px viewport."""
+    from browser import chrome, measured_on_a_phone
+
+    return measured_on_a_phone(chrome(), phone_pages, tmp_path / "phone", _ON_A_PHONE)
+
+
+def test_a_phone_lays_every_read_surface_out_at_the_width_it_says_it_has(
+    on_a_phone: dict[str, dict]
+):
+    """The harness's own premise, asserted before anything is asked of it.
+
+    `Emulation.setDeviceMetricsOverride` hands a page the width only if the page
+    asks for it: without `<meta name="viewport" content="width=device-width">`
+    Chrome lays a mobile override out at 980px, the legacy desktop width. So a
+    page that loses that tag does not fail the tests below — it PASSES them, at a
+    width no phone has, and the suite goes green over a page nobody can read.
+
+    One line, and it is the reason every number under it means anything.
+    """
+    for page, got in on_a_phone.items():
+        assert got["viewport"] == 390, (
+            f"{page} laid out at {got['viewport']}px on a 390px phone: it has lost "
+            f"its viewport meta tag, and every width measured here is fiction"
+        )
+
+
+def test_no_read_surface_scrolls_sideways_on_a_phone(on_a_phone: dict[str, dict]):
+    """A page that is wider than the screen is a page where reading one column
+    moves every other thing on it.
+
+    The cycle page did exactly that: the roster is seven columns and the betting
+    table eight, both written down as "eight columns fit a screen; the page
+    scrolls" — measured against a screen. At 390px the roster ran to 617 and the
+    betting table to 865, so `scrollWidth` was 865 against a 390px viewport and
+    the headings, the prose, the Save bar and the notes box all slid sideways
+    together to let a `load` column be read. The two date boxes in the setup grid
+    added 14px of their own past the right edge.
+
+    **Asked of every read surface and not only of the one that broke.** The two
+    that legitimately scroll — the table's columns and the timeline's chart —
+    scroll INSIDE a box, which is why this asks the document and not the
+    elements: `over` exists to name a culprit, `scrollWidth` is the claim.
+    """
+    for page, got in on_a_phone.items():
+        assert got["scrollWidth"] <= got["viewport"], (
+            f"{page} is {got['scrollWidth']}px wide on a {got['viewport']}px phone, so the "
+            f"whole page scrolls sideways. Past the edge: {got['over'] or 'nothing named'}"
+        )
+
+
+def test_nothing_a_phone_can_focus_is_small_enough_to_zoom_the_page(
+    on_a_phone: dict[str, dict]
+):
+    """Focus a control whose text is under 16px on iOS and Safari scales the whole
+    page up to read it — and does not scale back when the control blurs.
+
+    The reader is left on a page too wide for the screen, scrolling sideways
+    through a layout that fitted a moment ago, with nothing on screen saying what
+    happened or how to undo it. It is the one mobile defect that does not look
+    like a layout bug, because the layout was right until it was touched.
+
+    Every read surface had at least one: the search box at 13px, the scheme
+    picker at 12px, the timeline's two date boxes and its zoom at 13px, the cycle
+    page's rate and bet boxes at 13-14px.
+
+    The stylesheet cannot answer this. The floor is `!important` in the shell and
+    every one of these controls has a page rule of its own at higher specificity,
+    so what is asked is the RESOLVED size, on the page, at the width where the
+    rule applies.
+    """
+    for page, got in on_a_phone.items():
+        assert not got["small"], (
+            f"{page} draws a control under 16px, so focusing it zooms the page "
+            f"on iOS and never zooms back: {got['small']}"
+        )
+
+
+def test_the_search_box_is_the_whole_row_on_a_phone(on_a_phone: dict[str, dict]):
+    """`#q` is `min-width: 16rem`, and a minimum in `rem` is a promise about a
+    number of characters that the 16px floor above quietly broke: 256px of 13px
+    text became 256px of 16px text, so "Search titles, tags, PRs, people" came
+    back clipped at "peopl" on every page that has a search box.
+
+    The claim is the row and not a width. On a 350px column there is nothing else
+    beside this box and no reason for it to be anything other than the row it is
+    on — which is also true at every phone size, and true whatever the placeholder
+    is changed to say next.
+    """
+    for page, got in on_a_phone.items():
+        if got["search"] is None:
+            continue
+        assert got["search"] >= got["column"] - 1, (
+            f"{page} draws a {got['search']}px search box in a {got['column']}px column, "
+            f"so its placeholder is clipped with room going spare beside it"
+        )
+
+
+def test_the_timeline_gives_a_phone_more_chart_than_labels(on_a_phone: dict[str, dict]):
+    """`.labels` was `flex: 0 0 250px` — a constant, against a viewport that is
+    390px and a `.tl` that is 350. The label column took 261 of it and the Gantt
+    it labels got 87: not a chart that needs scrolling, a chart with no room to
+    draw one bar in.
+
+    The claim is the SPLIT and not the pixel. A number here would be the same
+    mistake in a test that the constant was in the stylesheet — what has to hold
+    is that the picture gets more of the box than the captions do, at whatever
+    width a phone turns out to have.
+
+    Both halves of the fix are needed and only this can tell: with `flex-basis`
+    set and `min-width: 0` missing, the basis resolves to `40%`, the query
+    applies, and the column is still 261.4px — a flex item's automatic minimum
+    size is its min-content size, and these rows are `white-space: nowrap`, so
+    the minimum wins outright. A test that read the stylesheet would have found
+    a 40% that was doing nothing.
+    """
+    got = on_a_phone["timeline"]
+    assert got["chart"] > got["labels"], (
+        f"the timeline gives {got['labels']}px to labels and {got['chart']}px to the "
+        f"chart on a {got['viewport']}px phone, so the picture is the smaller half"
+    )
+
+
+def test_the_graphs_legend_is_on_the_page_a_phone_can_see(on_a_phone: dict[str, dict]):
+    """`.keys` is pinned by its right edge and sized by its content, and its
+    content is a grid of `auto repeat(6, max-content)` — about 620px whatever is
+    underneath it. At 390px the box ran from -262 to 358: two thirds of the
+    legend hung off the LEFT edge of the page, clipped and unreachable, so the
+    reader saw four keys out of eleven.
+
+    Nothing overflowed to the right and the document did not scroll, which is why
+    it survived and why the test above cannot see it — a box off the left edge
+    adds nothing to `scrollWidth`. It is asked key by key instead.
+
+    The keys are what is asked about rather than the box: a legend is a list of
+    names, and one that is drawn where a reader cannot see it says nothing at all
+    while looking exactly like a legend from the corner of the eye.
+    """
+    got = on_a_phone["graph"]
+    assert not got["keysOffPage"], (
+        f"{len(got['keysOffPage'])} of the graph's legend keys are off the page on a "
+        f"{got['viewport']}px phone, at: {got['keysOffPage']}"
+    )

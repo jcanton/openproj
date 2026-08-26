@@ -347,3 +347,114 @@ def in_a_live_page(
                 break
             time.sleep(0.25)
         return value, said
+
+
+def measured_on_a_phone(
+    browser: str,
+    pages: dict[str, str],
+    where: Path,
+    script: str,
+    width: int = 390,
+    height: int = 844,
+    patience: float = 8.0,
+) -> dict[str, object]:
+    """The same question `measured_in` asks, at a width Chrome will not open a
+    window for. Every page, one report each.
+
+    **`--window-size` has a floor and it is 500px.** Measured on this machine
+    with a page that reports its own `innerWidth`: 320, 390, 430 and 500 all lay
+    out at 500, and only 600 lays out at 600. So a phone claim asked through
+    `measured_in` is a claim about a 500px window wearing a phone's name — which
+    is worse than no test, because 500px is *above* the one narrow breakpoint
+    these pages have (40rem, 640px), so every rule under test is switched off,
+    and it is wide enough to hide the overflow those rules exist to prevent.
+
+    `Emulation.setDeviceMetricsOverride` is the viewport rather than the window
+    around it, so it has no floor. It works only because these pages carry
+    `<meta name="viewport" content="width=device-width">`: without one, Chrome
+    lays a `mobile` override out at 980px, the legacy desktop width. That is not
+    a caveat, it is the first assertion — a page that lost its viewport tag
+    reports 980 here and every width question fails at once.
+
+    The metrics are set and then the page is RELOADED, and the same reload is
+    what each later page gets by being navigated to. Everything on these pages
+    that decides a layout — the table's column fit, the shell's `--room` — runs
+    once at load and reads the width it finds. Setting the override over a page
+    that has already loaded re-resolves the CSS and leaves those answers measured
+    against the window Chrome opened, which is the 500px one. The load order is
+    the whole point of the helper.
+
+    **One browser, every page, because the gate pays for launches and not for
+    questions.** The seven read surfaces measured one Chrome each are 27s of
+    browser, on a CI leg with about 5s of slack in it; through one Chrome they
+    are under 3. The override survives `Page.navigate` — it belongs to the
+    target, not to the document — so each page after the first costs a
+    navigation and a wait, and nothing else.
+
+    **Waited for rather than slept through.** `measured_in` can afford a fixed
+    delay because `--virtual-time-budget` makes it cost wall-clock only while
+    there is something left to run; a live DevTools session has no virtual clock,
+    so a fixed delay is paid in full on every page whether or not it was needed.
+    So the wait is `document.fonts.ready` and a complete `readyState`, which is
+    the same condition the fixed delay was standing in for: the shell's `--room`
+    and the table's column fit both run again when the inlined typeface lands,
+    and an answer taken before that is an answer about the fallback's metrics.
+    `patience` bounds it, and a page that never gets there fails saying so rather
+    than reporting numbers from a half-drawn layout.
+
+    Measured both ways over the seven read surfaces: the reports are identical
+    to the byte, and 2.4s a page of sleeping becomes about 0.35s a page of
+    waiting. The sleep was the whole cost — the pages are ready long before it.
+    """
+    import shutil as _shutil
+
+    where.mkdir(parents=True, exist_ok=True)
+    files = {}
+    for name, page in pages.items():
+        files[name] = where / f"{name}.html"
+        files[name].write_text(page)
+
+    # A FRESH profile, and the reason is a failure mode rather than hygiene:
+    # `_devtools` finds the port by reading `DevToolsActivePort` out of the
+    # profile, and a file left behind by a previous Chrome names a port nothing
+    # is listening on any more. The connection is refused before the page has
+    # been asked anything, which reads as "the browser would not start" rather
+    # than as "this directory has been used before".
+    profile = where / "profile"
+    _shutil.rmtree(profile, ignore_errors=True)
+
+    first, *rest = files
+    found: dict[str, object] = {}
+    with _devtools(browser, files[first].as_uri(), profile) as (call, _said):
+        call("Emulation.setDeviceMetricsOverride",
+             {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": True})
+        call("Page.enable")
+        call("Page.reload", {"ignoreCache": True})
+        found[first] = _drawn(call, first, script, patience)
+        for name in rest:
+            call("Page.navigate", {"url": files[name].as_uri()})
+            found[name] = _drawn(call, name, script, patience)
+    return found
+
+
+def _drawn(call, name: str, script: str, patience: float) -> object:
+    """Wait for the page to have finished deciding its layout, then ask.
+
+    `patient=True` on the wait and not on the question: while a navigation is in
+    flight the expression runs in a context that is being torn down and throws,
+    which is an ordinary turn of this loop. A throw from `script` afterwards is
+    the answer and is reported as itself.
+    """
+    import time
+
+    ready = ("document.readyState === 'complete' && "
+             "document.fonts.status === 'loaded' && 'ready'")
+    deadline = time.monotonic() + patience
+    while time.monotonic() < deadline:
+        if _evaluated(call, ready, patient=True):
+            # The re-measure the typeface triggers is a listener, so it has not
+            # necessarily run at the moment the font reports itself loaded.
+            time.sleep(0.25)
+            return _evaluated(call, f"(async () => {{ {script} }})()")
+        time.sleep(0.05)
+    raise AssertionError(f"{name}: never finished loading in {patience}s")

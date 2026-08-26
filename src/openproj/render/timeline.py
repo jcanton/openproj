@@ -722,6 +722,21 @@ _TIMELINE_STYLE = """
 @media (max-width: 620px) {
   .tl-controls { display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .75rem; }
 }
+/* **A caption can end up on the row above the box it names here, and that is
+   left alone deliberately.** Measured as it shipped, at 430, 480 and 560: `zoom`
+   is the last thing on one line and the select it names is the first thing on
+   the next. It looks like a defect and it was nearly fixed as one.
+
+   Two things stopped that. The row reads as a SENTENCE — "from [date] to [date]
+   zoom [fit to window]" — and a sentence is allowed to wrap; the caption is not
+   orphaned so much as carried over. And the fix is expensive in the one currency
+   this page has least of. `flex: 1 1 auto` does not work: flex-wrap is decided
+   from the basis, before any growing, so the caption still fits on the line it
+   was going to fit on and only the box before it gets wider — measured. What
+   does work is `flex-basis: 100%` on the controls, which puts every box on a
+   line of its own and takes the row from three lines to seven, above a chart
+   that has 220px of window left. That is the trade, written down so the next
+   person meets the measurement rather than the idea. */
 /* `.button` and `.button.primary` are the shell's. They were written here, in a
    rule scoped to this filter bar, and the table's create action wore the class
    with nothing behind it. */
@@ -787,6 +802,44 @@ _TIMELINE_STYLE = """
   padding: 0 .5rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .scroll { overflow-x: auto; flex: 1 1 auto; min-width: 0; }
+/* **A share of the box, not 250 pixels of it.** `.labels` is `flex: 0 0 250px`
+   above and `.scroll` is whatever is left, which is a fine bargain on a laptop
+   and an absurd one on a phone: measured at a 390px viewport, the label column
+   took 261px and the chart it labels got 87. A Gantt drawn 87px wide is not a
+   chart that needs scrolling sideways, it is a chart with no room to show a
+   single bar in.
+
+   **Below the rule it overrides, and that is the whole of a defect this already
+   had.** Written into the `@media (max-width: 620px)` block further up — the one
+   the controls wrap in — it is `.labels` against `.labels`, (0,1,0) both ways,
+   and the base rule is 40 lines LATER in the same sheet. It took the tie on
+   order and the column stayed 261px wide with the query applying and doing
+   nothing. A media query buys no specificity; only its position does.
+
+   Only the basis is overridden. `flex-shrink` stays 0, which is what keeps this
+   exact: the labels take 40% of `.tl`, `.scroll`'s `min-width: 0` lets it have
+   the rest, and the split is stated once with no second rule that has to agree
+   with it. 40% of a 390px viewport is 139px of labels against 209px of chart —
+   still the narrower half, because a bar you cannot see is worse than a title
+   you have to guess the end of, and the row already ellipsises.
+
+   A percentage and not a smaller constant, so the two halves stay in proportion
+   across every width below the query rather than meeting correctly at one.
+
+   **`min-width: 0` IS load-bearing here**, which is the opposite of what it was
+   where `.marks` wraps and the note there says so explicitly — so this is worth
+   being exact about rather than copying either way. A flex item's automatic
+   minimum size is its MIN-CONTENT size, and `.labels`'s children are
+   `white-space: nowrap`: `overflow: hidden` and `text-overflow: ellipsis` clip
+   what is drawn and change nothing about what the box asks for, so min-content
+   is the full width of the longest title. Measured with the basis set and this
+   line missing: `flex-basis` resolved to `40%` and the column was still
+   261.4px — the minimum winning outright, the query applying, and the chart
+   still 86.6px. `.marks` is the case where the container wraps and its
+   min-content is one 40px button; this is the case where it does not. */
+@media (max-width: 620px) {
+  .labels { flex-basis: 40%; min-width: 0; }
+}
 svg { display: block; }
 .month-rule { stroke: var(--line); }
 .month-label { font-size: 9px; fill: var(--muted); }
