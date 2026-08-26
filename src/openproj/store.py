@@ -1765,7 +1765,32 @@ class Store:
                     ),
                     str(stored),
                 )
+            if base_blob is not None and stored is None:
+                # Split out from the comparison below rather than folded into
+                # it: `str(None)` is the four-character string `"None"`, so
+                # before this was its own branch, a PUT sent `If-Match:
+                # "None"` — a guessable literal, not a real blob id — against
+                # a path with nothing at it compared EQUAL to the missing
+                # `stored` and fell through to the CREATE path below, past the
+                # mint's `O_EXCL` guard, and silently re-created a drawing
+                # that had been deleted from the repo by hand. And "Reopen
+                # it," the sentence the branch below gives, is the one thing
+                # that cannot work once the file is actually gone — there is
+                # nothing left at this path to reopen.
+                return (
+                    WriteResult(
+                        commit=None,
+                        outcome="conflict",
+                        conflict=f"{path} — this drawing has been deleted from the plan "
+                        f"since you opened it. There is nothing left to save over; draw "
+                        f"a new one if you still want it.",
+                    ),
+                    "",
+                )
             if base_blob is not None and str(stored) != base_blob:
+                # `stored is None` was refused above, so `stored` here is always
+                # a real blob id — `str(stored) != base_blob` is comparing two
+                # genuine hashes, never the sentinel.
                 return (
                     WriteResult(
                         commit=None,
@@ -1773,7 +1798,7 @@ class Store:
                         conflict=f"{path} — somebody changed this drawing while you had it "
                         f"open, and a drawing has no merge. Reopen it.",
                     ),
-                    "" if stored is None else str(stored),
+                    str(stored),
                 )
             blob = self._repo.create_blob(data)
             if blob == stored:

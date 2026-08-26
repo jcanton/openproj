@@ -1460,6 +1460,56 @@ def test_creating_a_drawing_over_one_that_exists_is_refused(store: Store):
     assert store.read_asset(store.head(), "drawings/draw-a1b2c3.png") == png
 
 
+def test_a_stringified_none_etag_does_not_pass_for_a_drawing_that_is_not_there(store: Store):
+    """`str(None)` is the four-character string `"None"`, a guessable literal
+    rather than a real blob id. A PUT that sends `If-Match: "None"` against a
+    drawing that was never created has to be refused by the CREATE guard, not
+    slip through it because `str(stored)` and `base_blob` both happen to read
+    `"None"` when nothing is stored — the exact string a client that lost
+    track of whether it had ever saved would send.
+    """
+    written, _ = store.put_drawing(
+        "drawings/draw-a1b2c3.png", b"\x89PNG\r\n\x1a\n", "None", "jcanton", "draw"
+    )
+    assert written.outcome == "conflict"
+    assert store.read_asset(store.head(), "drawings/draw-a1b2c3.png") is None
+
+
+def test_a_put_against_a_hand_deleted_drawing_is_refused_honestly(store: Store, repo_path: Path):
+    """"Reopen it" is the ordinary conflict's whole answer, and it is the one
+    thing that cannot work once the file is actually gone — deleted from the
+    repo by hand, at a terminal, the way `git rm` would. That case gets its
+    own sentence rather than inheriting the "somebody changed this" one, which
+    promises a reopen this path cannot deliver.
+
+    The deletion goes in as a hand-built commit, through a second `pygit2`
+    handle on the same repository, rather than through `store.remove`:
+    `remove` runs through `write_all`'s merge ladder, which reads the file
+    back through `read()`'s UTF-8 decode to check it is really gone — the
+    exact crash `docs/drawings.md`'s "A PNG must never touch the merge
+    ladder" warns a drawing must never reach, on the read side as much as the
+    write side.
+    """
+    png = b"\x89PNG\r\n\x1a\n"
+    _, first = store.put_drawing("drawings/draw-a1b2c3.png", png, None, "a", "draw")
+
+    repo = pygit2.Repository(str(repo_path))
+    parent = repo.head.target
+    builder = repo.TreeBuilder(repo[parent].tree)
+    builder.remove("drawings")
+    who = pygit2.Signature("a human", "a@example.invalid")
+    repo.create_commit(
+        "refs/heads/main", who, who, "rm drawings/draw-a1b2c3.png", builder.write(), [parent]
+    )
+
+    written, _ = store.put_drawing(
+        "drawings/draw-a1b2c3.png", png + b"mine", first, "a", "draw"
+    )
+    assert written.outcome == "conflict"
+    assert "deleted from the plan" in written.conflict
+    assert "Reopen it" not in written.conflict
+
+
 def test_a_drawing_saved_against_a_stale_blob_is_refused_and_says_so(store: Store):
     """There is no third drawing that is both people's intent, so the refusal
     is the whole of the answer — the same argument `_merge_body`'s docstring
