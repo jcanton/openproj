@@ -168,18 +168,48 @@ a number for nothing. And naming the contributing records was refused for the sa
 reason — the table is a tree by default, so the tasks that make up the sum are the
 rows directly underneath.
 
+**The comparison is calendar against calendar.** jcanton, 2026-08-27, with a
+worked example: a pitch bet at 8 person-weeks with two assignees has bought
+itself four calendar weeks, and that is the box. If its tasks as actually staffed
+need four and a half, it is over — even though 4 + 1 person-weeks of tasks sits
+comfortably inside an 8 person-week bet. The person-weeks comparison answers "is
+there more work here than we said", which is not the question anybody is asking
+in front of a plan; the calendar one answers "will this fit", which is.
+
+Both numbers already exist and neither is new arithmetic:
+
+- **The box** is `_duration_weeks(pitch)` — the pitch's own `person_weeks` over
+  the summed availability of its own assignees. Two people at full rate turn 8
+  into 4.0; two people at 60% turn it into 6.7, which is the right answer and
+  the one the scheduler already gives every leaf.
+- **The contents** is the pitch's rolled-up span, `max(child.end) −
+  min(child.start)`, measured in weeks.
+
+**Using the span rather than summing the children is what makes shared assignees
+come out right**, and it is why the sum was rejected. Two tasks of four weeks and
+half a week are 4.5 weeks of calendar if one person holds both and 4.0 if they run
+side by side on different people — and the scheduler already knows which, because
+`_place` books workers and a contended person serialises their own work. Summing
+would report 4.5 in both cases and be wrong in one of them; nothing new has to be
+taught about parallelism because the placer already models it.
+
+Unsized children get no span at all (§2), so they drop out of the rollup exactly
+as they drop out of `_rollup_problems`' sized-only sum today — the same
+conservative behaviour, reached by a different route, which is why the fourth
+state below is still needed.
+
 | State | Tint | Glyph |
 | --- | --- | --- |
-| sum < appetite, every child sized | good | `▾` |
-| sum = appetite, every child sized | `.inherited` | `=` |
-| sum > appetite | warn | `▴` |
+| contents < box, every child sized | good | `▾` |
+| contents = box, every child sized | `.inherited` | `=` |
+| contents > box | warn | `▴` |
 | any child unsized | muted, not good | `?` |
 
-**The fourth state is not optional.** With the default gone, a six-week pitch
-holding three one-week tasks and four unsized ones sums to 3 and would paint
-green — green for a bet nobody has estimated, which is the exact inversion of what
-the existing warning text says about that same data ("the N without a size can
-only add to that"). Good has to mean *known* to be under.
+**The fourth state is not optional.** With the default gone, a pitch holding three
+sized tasks and four unsized ones rolls up a span covering only the three, and
+would paint green — green for a bet nobody has estimated, which is the exact
+inversion of what the existing warning text says about that same data ("the N
+without a size can only add to that"). Good has to mean *known* to be under.
 
 `.inherited` rather than purple, on jcanton's agreement: the class already means
 "this value came from the work underneath", which is what this is, and purple is
@@ -193,13 +223,21 @@ value you cannot see. The bet stays editable from the record's own page.
 too, where their appetites remain editable — which is where the sum is actually
 changed.
 
-**One arithmetic, not two.** `_tasks_add_up_to` claims in its docstring to be
-"the same number `_rollup_problems` compares against the appetite … so the
-sentence on the page and the sentence in `check` cannot disagree". It is not:
-it reads `index.progress[id].total`, which charges the default per unsized child,
-while `_rollup_problems` sums only sized ones. Today the reading view's number is
-silently inflated above the one `check` warns on. §2 fixes it, and a test pins the
-two against each other so it cannot drift back.
+**One arithmetic, not two.** `_rollup_problems` moves to the calendar comparison
+with the cell, and its sentence with it — "its tasks need 4.5 weeks with the
+people on them, more than the 4.0 the bet buys at 2 — cut scope, re-bet it, or
+put more people on it", which names the third remedy the old sentence could not
+see. It keeps the shape it already has: a warning and never a blocker, because
+every remedy is a decision for a person.
+
+`_tasks_add_up_to` claims in its docstring to be "the same number
+`_rollup_problems` compares against the appetite … so the sentence on the page
+and the sentence in `check` cannot disagree". It is not: it reads
+`index.progress[id].total`, which charges the default per unsized child, while
+`_rollup_problems` sums only sized ones. Today the reading view's number is
+silently inflated above the one `check` warns on. Both move to the span, and a
+test pins the cell, the reading view and `check` against each other so they
+cannot drift apart again.
 
 ## 4. `end_date`: store the actual, never the estimate
 
