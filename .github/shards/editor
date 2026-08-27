@@ -1,12 +1,12 @@
 # editor — 106.4s exact, anchored on tests/test_editor.py (101.6s).
 #
-# Seconds are per FILE and EXACT, from docs/probes/ci-durations-4core.txt — every
+# Seconds are per FILE and EXACT, from design/probes/ci-durations-4core.txt — every
 # phase of every test on the 4-core public runner, run 32754826551. The older
-# tables in docs/probes/ were taken on the 2-core box a PRIVATE repository gets,
+# tables in design/probes/ were taken on the 2-core box a PRIVATE repository gets,
 # AND at `--durations-min=0.05`, and both halves of that were wrong for this cut:
 # the leg order inverted when the cores doubled, and the 50ms floor hid 37s of
 # the suite on exactly the leg that had 1103 tests. Modelling that hidden cost
-# was tried and the fit did not hold — see docs/probes/ci-speed.md § 0b. The
+# was tried and the fit did not hold — see design/probes/ci-speed.md § 0b. The
 # threshold is zero here, so there is nothing left to model.
 #
 # The cut is what a longest-first pass makes of those numbers, and it lands at
