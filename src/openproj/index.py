@@ -699,7 +699,11 @@ def build_index(
         blocks=blocks,
         spans=spans,
         explanations=explanations,
-        problems=validate_all(parsed, config),
+        # With the spans, which is what turns `_rollup_problems` on: whether a
+        # pitch's tasks fit is a comparison between two numbers the scheduler
+        # computed, and `model.py` cannot reach the scheduler to compute them.
+        # `schedule` ran above, so this costs nothing beyond passing the dict.
+        problems=validate_all(parsed, config, spans),
         unreadable=list(unreadable),
         facets={field: _ordered(field, values) for field, values in facets.items()}
         | {"predicate": sorted(COMPUTED_PREDICATES)},

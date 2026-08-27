@@ -429,8 +429,21 @@ def _check(repo: Path) -> int:
             f"blocker: {one.path}: this file is not a record, so nothing in it is in the plan: "
             f"{one.why}"
         )
+    # Imported here rather than at the top, where `_parser` binds `schedule` as a
+    # local for its own subparser and a module-level import of the same name
+    # would read as that one. `_render` reaches for `render_static` the same way.
+    from .schedule import schedule
+
+    # Scheduled first, and against today, because one rule is a comparison
+    # between two numbers only the scheduler knows: whether a pitch's tasks fit
+    # inside the calendar weeks its bet bought. Without this `check` would be
+    # silent about exactly the thing the web view warns on, and "the diagnostic
+    # tool says the plan is clean" is the failure this repository has already had
+    # once, on a plan that answered 500 on every page.
+    spans, _ = schedule(records, config, date.today())
     problems = sorted(
-        validate_all(records, config), key=lambda p: (p.severity, p.record_id, p.field or "")
+        validate_all(records, config, spans),
+        key=lambda p: (p.severity, p.record_id, p.field or ""),
     )
     for problem in problems:
         print(f"{problem.severity}: {problem.record_id}: {problem.field}: {problem.message}")

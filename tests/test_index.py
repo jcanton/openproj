@@ -222,10 +222,19 @@ def test_spans_and_explanations_come_from_the_scheduler():
 
 
 def test_problems_come_from_validate_all():
+    """With the SPANS, which is not a detail of the call. `validate_all` applies
+    the rollup rule only when it is handed a schedule — whether a pitch's tasks
+    fit is a comparison between two numbers the scheduler computes, and
+    `model.py` cannot reach the scheduler to compute them — so an index that
+    passed only the records would carry a strictly smaller problem set than
+    `openproj check` reports about the same plan, and the page and the CLI would
+    disagree about a bet with nothing to say why.
+    """
     records = a_family()
     index = build_index(records, CONFIG, TODAY)
+    spans, _ = schedule(records, CONFIG, TODAY)
 
-    assert index.problems == validate_all(records, CONFIG)
+    assert index.problems == validate_all(records, CONFIG, spans)
     assert index.problems, "the pitch has no owner, so the family cannot validate clean"
 
 
@@ -876,7 +885,7 @@ def test_the_seed_index_carries_the_scheduler_and_validator_output(seed_root: Pa
 
     assert index.spans == spans
     assert index.explanations == explanations
-    assert index.problems == validate_all(records, config)
+    assert index.problems == validate_all(records, config, spans)
 
 
 def test_searching_the_seed_corpus_finds_the_task_by_its_title(seed_index: Index):

@@ -11,10 +11,10 @@ import io
 import math
 import re
 import secrets
-from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import networkx as nx
 from frontmatter.default_handlers import YAMLHandler
@@ -23,6 +23,14 @@ from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedSeq
 from ruamel.yaml.error import MarkedYAMLError
 from ruamel.yaml.scalarstring import LiteralScalarString
+
+if TYPE_CHECKING:  # pragma: no cover - imported for the annotation and nothing else
+    # `schedule` imports this module, so the arrow only ever points one way at
+    # runtime. `validate_all` still has to name the type it is handed, because
+    # what `_rollup_problems` reads off a span — `budget_weeks` against
+    # `elapsed_weeks` — is a contract with the scheduler and not a loose mapping
+    # of floats that any caller could invent.
+    from .schedule import Span
 
 CONFIG_FILES = ("defaults.yaml", "cycles.yaml", "holidays.yaml", "people.yaml")
 _CYCLE_DIR = "cycles"
@@ -1798,6 +1806,24 @@ def size_weeks(record: Record) -> float | None:
     return None if stated is None else float(stated)
 
 
+def workers_on(record: Record) -> list[str]:
+    """Everyone on the hook for this record, each counted once.
+
+    An owner who is also an assignee — which is most of them — was counted twice,
+    so they were booked twice and, now that the workers divide the size, would
+    have halved it on their own.
+
+    Here rather than in `schedule.py`, where it was written, because two things
+    now ask it. The scheduler divides a size by these people's availabilities to
+    get a duration; `_rollup_problems` names how many of them there are in the
+    sentence it yields, since "the 4.0 the bet buys at 2" is unreadable without
+    the 2. Both readings have to come off the same list or the sentence explains
+    a number computed from a different set of names than the one it counts.
+    """
+    named = ([record.owner] if record.owner else []) + list(record.assignees)
+    return list(dict.fromkeys(named))
+
+
 # --------------------------------------------------------------------------- #
 # Reading the shaping document
 #
@@ -2817,71 +2843,85 @@ def _bet_problems(
 
 
 def _rollup_problems(
-    record: Record, children: dict[str, list[Record]]
+    record: Record, children: dict[str, list[Record]], spans: Mapping[str, Span] | None
 ) -> Iterator[tuple[str, str | None, str, int]]:
-    """Children that add up to more than the bet they sit inside.
+    """A pitch whose tasks, as actually staffed, do not fit in the box it was bet at.
 
-    The appetite is the box, and its tasks are what somebody proposes to put in
+    The appetite is the box and its tasks are what somebody proposes to put in
     it. Nothing compared the two, so a six-week bet holding seven and a half
     weeks of tasks read as a six-week bet everywhere on the site — and the span,
     which is the rollup of the children, quietly ran past it anyway.
 
-    A warning, never a blocker: the answer is to cut scope or to re-bet, and both
-    are decisions for a person. Only stated sizes are compared, on both sides of
-    the comparison. That sentence was true of the parent and false of the
-    children for a while: the guard below returns for an unsized bet, but every
-    unsized child was summed at the old `config.default_task_effort` — so a
-    warning that tells somebody to cut scope quoted a total partly made of a
-    number nobody typed, and the sentence presented it as what "its tasks add up
-    to". The default is gone, so this function no longer has to sort typed
-    numbers out of invented ones: `size_weeks` answers None and the filter below
-    is the whole of it.
+    **Calendar against calendar, and it is the span that answers.** This summed
+    the children's person-weeks and held the total against the parent's stated
+    appetite, which answers "is there more work here than we said" — a question
+    nobody is asking in front of a plan. Four person-weeks and one sit
+    comfortably inside an eight person-week bet and still do not fit, if the bet
+    bought four calendar weeks with two people and the tasks need four and a
+    half on the one person holding both. So the box is `Span.budget_weeks` —
+    this record's own appetite over the availability of its own people — and the
+    contents is `Span.elapsed_weeks`, the length of the rolled-up span.
+
+    **The span is what makes shared assignees come out right**, and it is why the
+    sum went. Two tasks of four weeks and half a week are four and a half weeks
+    of calendar if one person holds both and four if they run side by side on
+    different people; a sum reports four and a half in both cases and is wrong in
+    one of them. Nothing new had to be taught about parallelism, because `_place`
+    books workers and a contended person already serialises their own work.
+
+    That also retires a paragraph this docstring used to carry. Only stated sizes
+    were compared, and that sentence was true of the parent and false of the
+    children: every unsized child was summed at the old `config.default_task_effort`,
+    so a warning telling somebody to cut scope quoted a total partly made of a
+    number nobody typed. Both halves of that are gone — the default no longer
+    exists, and an unsized record gets no span at all, so it drops out of the
+    rollup by not being in it rather than by being filtered out of a sum. The
+    conservatism survives the move: a pitch holding four unsized tasks and one
+    sized one rolls up a span covering the sized one alone, which can only be
+    shorter than the truth.
+
+    **A warning, never a blocker**, because every remedy is a decision for a
+    person — and the sentence names the third one the old wording could not see.
+    Staffing shortens a bar, so putting another person on the pitch is as real an
+    answer as cutting scope or re-betting, and the old arithmetic could not say
+    so because people were not in it.
+
+    **Silent without spans.** `validate_all` takes them optionally: the callers
+    that validate one candidate record on its way to being written have no
+    schedule and are reporting on that record, not on the plan around it. This
+    rule is the plan's, and it is asked by `Index.load` and by `openproj check`,
+    which schedule first.
     """
     kids = children.get(record.id, [])
-    stated = size_weeks(record)
-    if not kids or stated is None:
+    span = spans.get(record.id) if spans is not None else None
+    if not kids or span is None:
         return
-    # The sized ones only. A sized child overrunning the appetite is a statement
-    # somebody actually made — those numbers were typed, and the unsized
-    # siblings can only add to the total, never bring it back under — so firing
-    # on the sized sum alone is both honest and conservative. Counting an unsized
-    # child at some assumed weight is the opposite: it invents an overrun (four
-    # unsized tasks under a one-week pitch would read as two weeks nobody
-    # proposed), and the golden corpus already carries the shape — pitch-3c9a41's
-    # four tasks are all unsized, so its old total of 2.0 was invented wholesale
-    # and only stayed quiet because the bet happened to be bigger.
-    #
-    # A container CAN reach `kids` today: the map above keys on `parent` alone,
-    # with no kind check, so a hand-committed `parent: pitch-x` on a project
-    # file lands it here — `Rung.under` makes that filing a reported containment
-    # problem, not an impossibility, because it governs validation and never the
-    # map. What keeps a mis-filed container out of the sum is this filter
-    # itself: only a pitch and a task carry `person_weeks`, so `size_weeks` on a
-    # container answers None and it is left out as unsized rather than priced at
-    # a number nobody typed.
-    sizes = [size for size in (size_weeks(kid) for kid in kids) if size is not None]
-    total = sum(sizes)
-    if total <= stated:
+    # Silent where the parent has no appetite of its own — `budget_weeks` is None
+    # for a container and for a pitch nobody has bet on yet, and a bet that was
+    # never made cannot be exceeded. Silent too where the rollup has no length:
+    # that is an unscheduled span, whose two dates stand for "no answer".
+    if span.budget_weeks is None or span.elapsed_weeks is None:
         return
-    if len(sizes) == len(kids):
-        message = (
-            f"its {len(kids)} tasks add up to {total:g} weeks, more than the "
-            f"{stated:g} it was bet at — cut scope, or re-bet it"
-        )
-    else:
-        # The message counts what was counted. "Its 8 tasks add up to 4 weeks"
-        # over five sized ones and three that nobody had sized is the defect this
-        # function had; saying the sized count, and that the rest can only push
-        # the total higher, is the same warning built out of typed numbers alone.
-        left = len(kids) - len(sizes)
-        many = len(sizes) != 1
-        message = (
-            f"its {len(sizes)} sized task{'s' if many else ''} alone "
-            f"{'add' if many else 'adds'} up to {total:g} weeks, more than the "
-            f"{stated:g} it was bet at, and the {left} without a size can only "
-            "add to that — cut scope, or re-bet it"
-        )
-    yield ("warning", _SIZE_FIELD.get(record.kind), message, 4)
+    if span.elapsed_weeks <= span.budget_weeks:
+        return
+    # `workers_on` and not `assignees`, because that is the list the scheduler
+    # divided the appetite by to get the budget in the first place. Counting a
+    # different set of names here would explain the number with the wrong one.
+    # Nobody on it is one notional person, which is what `_duration_weeks`
+    # assumed when it computed the budget being quoted.
+    people = len(workers_on(record)) or 1
+    # One decimal on both, and not the `:g` the rest of this module uses on sizes
+    # somebody typed. These two are computed reals — an eight-week bet over two
+    # people at 60% is 6.666666666666667 — and `:g` would put five decimal places
+    # of arithmetic noise into a sentence a person is meant to act on.
+    yield (
+        "warning",
+        _SIZE_FIELD.get(record.kind),
+        f"its tasks need {span.elapsed_weeks:.1f} weeks with the people on them, more than "
+        f"the {span.budget_weeks:.1f} the bet buys at {people} — "
+        "cut scope, re-bet it, or put more people on it",
+        4,
+    )
 
 
 def _carries(record: Record, field: str) -> bool:
@@ -2951,6 +2991,7 @@ def _problems_for(
     children: dict[str, list[Record]],
     parent_cycles: set[str],
     dep_cycles: set[str],
+    spans: Mapping[str, Span] | None,
 ) -> Iterator[tuple[str, str | None, str, int]]:
     """Yield (severity_before_grandfathering, field, message, rule_version)."""
     if not record.title.strip():
@@ -3025,7 +3066,7 @@ def _problems_for(
     if record.id not in parent_cycles:
         yield from _containment_problems(record, by_id)
         yield from _bet_problems(record, by_id)
-        yield from _rollup_problems(record, children)
+        yield from _rollup_problems(record, children, spans)
 
     if record.cycle is not None and record.cycle not in config.cycles:
         # `_overrun` looks the window up with `.get`, so a number nobody has dated
@@ -3219,12 +3260,25 @@ def _parked(record: Record) -> bool:
     return bool(statuses) and record.status == statuses[-1]
 
 
-def validate_all(records: list[Record], config: Config) -> list[Problem]:
+def validate_all(
+    records: list[Record], config: Config, spans: Mapping[str, Span] | None = None
+) -> list[Problem]:
     """Check every record against every rule it is old enough to be held to.
 
     Parked records — those at their own ladder's terminal status, see
     `_parked` — are exempt from all of them: parked work is not broken work,
     and a validator that nags about it teaches people to ignore the validator.
+
+    `spans` is the scheduler's output, and the one rule that reads it —
+    `_rollup_problems`, on whether a pitch's tasks fit in the calendar weeks its
+    bet bought — is simply not applied without it. Optional rather than
+    required, because the two kinds of caller want different answers. `Index.load`
+    and `openproj check` are judging a whole plan and schedule it first, so they
+    pass them. Every write path validates one candidate record against the
+    records around it, before it is a file, to answer "may this be saved" — and
+    a rollup is a fact about the plan the record is joining rather than about the
+    record, so scheduling the whole corpus on each keystroke would buy an answer
+    that is not to the question being asked.
     """
     by_id = {record.id: record for record in records}
     parent_cycles = _cyclic_members({e.id: [e.parent] if e.parent else [] for e in records})
@@ -3239,7 +3293,7 @@ def validate_all(records: list[Record], config: Config) -> list[Problem]:
         if _parked(record):
             continue
         for severity, field, message, rule_version in _problems_for(
-            record, config, by_id, children, parent_cycles, dep_cycles
+            record, config, by_id, children, parent_cycles, dep_cycles, spans
         ):
             grandfathered = rule_version > record.created_schema_version
             problems.append(

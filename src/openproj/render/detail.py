@@ -2696,11 +2696,24 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
             # no appetite yet is not over it, and `_rollup_problems` says nothing
             # about that case either — a page that shouts where the validator is
             # silent teaches people that one of the two is lying.
+            #
+            # Which is why the comparison is against `Span.budget_weeks` and not
+            # against the number printed to the left of it. The bet is stated in
+            # PERSON-weeks and the tasks are measured in calendar ones, so `total
+            # > float(stated)` compared two different units and coloured on the
+            # wrong one; the budget is that same bet divided by the people on it,
+            # which is the box `_rollup_problems` holds the tasks against. The
+            # stated figure is still what is drawn, because this row is the
+            # appetite field in read mode and the field's own value is what a
+            # person edits — the colour, not a third number, is what says whether
+            # it fits.
             total = _tasks_add_up_to(index, record)
             stated = field["text"]
-            over = bool(stated) and total > float(stated)
+            span = index.spans.get(record.id)
+            budget = span.budget_weeks if span is not None else None
+            over = budget is not None and total > budget
             display = Markup('{} · <span class="{}">{} in tasks</span>').format(
-                stated or "—", "overrun" if over else "quiet", f"{total:g}"
+                stated or "—", "overrun" if over else "quiet", f"{total:.1f}"
             )
         elif field["type"] == "date":
             # Drawn day-first like every other date on the page; the control
@@ -2880,14 +2893,34 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
 
 
 def _tasks_add_up_to(index: Index, record: Record) -> float | None:
-    """What the tasks under this one propose to spend, or None if it has none.
+    """How long the tasks under this one actually take, or None if it has none.
 
-    The same number `_rollup_problems` compares against the appetite, read from
-    the same place, so the sentence on the page and the sentence in `check`
-    cannot disagree about the arithmetic.
+    The same number `_rollup_problems` compares against the bet, read off the
+    same span, so the sentence on the page and the sentence in `check` cannot
+    disagree about the arithmetic.
+
+    **That claim was made here before it was true.** This read
+    `index.progress[id].total`, which sums what was bet on each child and charged
+    the old default for every unsized one, while `_rollup_problems` summed only
+    the sized ones — so the reading view's number was silently the larger of the
+    two, and the page could show a total the validator was not warning about.
+    Both have moved to `Span.elapsed_weeks`, which is the length of the rolled-up
+    span in weeks of work, and it answers the calendar question rather than the
+    person-week one: two four-week tasks on two people are four weeks here and
+    eight on one person, which is the difference somebody looking at a pitch
+    wants to see.
+
+    `progress` is still the gate, because it is what knows this record HAS tasks
+    that count in weeks — a leaf has an `elapsed_weeks` of its own, and printing
+    "3.0 in tasks" beside a task's own appetite would be the record agreeing with
+    itself. None as well where the plan holds no span for it: an unsized pitch
+    whose tasks are all unsized is scheduled nowhere, and there is nothing to say.
     """
     counted = index.progress.get(record.id)
-    return counted.total if counted is not None and counted.unit == "weeks" else None
+    if counted is None or counted.unit != "weeks":
+        return None
+    span = index.spans.get(record.id)
+    return span.elapsed_weeks if span is not None else None
 
 
 def _progress_view(index: Index, record: Record) -> dict | None:

@@ -117,9 +117,12 @@ its parent's progress and charges nobody's capacity, and every page that adds we
 records it could not count — a number the tool invented is a number that arrives everywhere looking
 like one somebody estimated. Shaping and thinking work is unsized by definition and stays that way;
 `ready` and `in_progress` both demand a size. A pitch with tasks takes its dates and its capacity
-from them, which makes its own appetite the **bet**: what the room agreed to spend, kept as written. Where the tasks add up to more,
-the page says so and `openproj check` warns; nothing refuses the save, and neither a pitch nor a
-cycle over its capacity is ever a CI failure.
+from them, which makes its own appetite the **bet**: what the room agreed to spend, kept as written.
+The comparison against it is calendar against calendar — the bet over the people on it is a number
+of weeks, and the tasks' own rolled-up span is another — so a bet that holds the work as effort can
+still fail to hold it as time, when one person has to do two things in turn. Where the tasks do not
+fit, the page says so and `openproj check` warns; nothing refuses the save, and neither a pitch nor
+a cycle over its capacity is ever a CI failure.
 
 Only `depends_on` is stored, on the dependent. Any kind may block any kind, and an edge written on a
 pitch is inherited by everything inside it. The one forbidden direction is your own containment

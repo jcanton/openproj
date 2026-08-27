@@ -44,6 +44,7 @@ from .model import (
     days_after,
     size_weeks,
     within_the_calendar,
+    workers_on,
 )
 
 _WORKING_DAYS_PER_WEEK = 5
@@ -62,6 +63,29 @@ class Span(BaseModel):
     historical: bool = False
     unscheduled: bool = False
     overruns_cycle_weeks: float | None = None
+    # The box, in calendar weeks: this record's OWN appetite over the summed
+    # availability of the people on it. Two names on an eight-week bet have
+    # bought themselves four weeks, and four weeks is what the bet buys.
+    #
+    # Carried here rather than computed where it is read, because the one place
+    # that has to compare it against `elapsed_weeks` is `_rollup_problems` in
+    # `model.py`, and `model.py` cannot import this module — `schedule` imports
+    # `model`. A number the scheduler already computes, travelling on the span
+    # beside the dates it produced, is the only shape that keeps the comparison
+    # from being written a second time somewhere it can be reached.
+    #
+    # None where the record states no appetite of its own. That is every
+    # container, and every pitch nobody has bet on yet — which is why
+    # `_rollup_problems` stays silent about both.
+    budget_weeks: float | None = None
+    # And the contents, in the same units: how long this span actually is, which
+    # for a pitch is the rollup of its children and therefore already knows
+    # whether two tasks ran side by side or queued behind one shared person.
+    #
+    # None on an unscheduled span, where `start` and `end` are a placeholder for
+    # "no answer" rather than dates anybody forecast — a fifth of a week is not a
+    # length, it is today twice.
+    elapsed_weeks: float | None = None
 
 
 class Explanation(BaseModel):
@@ -109,6 +133,44 @@ def _working_days(weeks: float) -> int:
     and every page 500'd on a value already committed.
     """
     return max(1, math.ceil(within_the_calendar(round(weeks * _WORKING_DAYS_PER_WEEK, 6))))
+
+
+def _elapsed_weeks(start: date, end: date, config: Config) -> float:
+    """How many weeks of work a span from `start` to `end` inclusive holds.
+
+    The inverse of `_working_days`, and it has to be that rather than a calendar
+    subtraction over seven, because the number it produces is compared against
+    `_duration_weeks` — `Span.budget_weeks` against `Span.elapsed_weeks`, in
+    `_rollup_problems`. `working_days_after` turns four weeks into twenty working
+    days and lands on the Friday of the fourth week, which is twenty-six calendar
+    days: over seven that is 3.7, so a pitch whose single task exactly filled its
+    bet would have read seven per cent under it, the `=` state in the design's
+    own table would have been unreachable, and a bet overrun by a tenth would
+    have painted as comfortably inside. Weekends and holidays are not work, and
+    the box was never measured in them.
+
+    Counted by arithmetic and not by walking, unlike everything else here that
+    steps day by day. A rollup span is bounded by its children and a child's
+    `start_date` is whatever somebody typed, so `9999-12-31` is one hand-edit
+    from two and a half million iterations per span — the same shape as the
+    OverflowError `_runs_past_the_calendar` exists to ask about before the walk
+    rather than after it.
+
+    Holidays land on the same footing they have in `_is_working_day`: subtracted
+    only when they fall on a weekday, since a holiday on a Sunday was never a
+    working day to lose.
+    """
+    if end < start:
+        return 0.0
+    days = (end - start).days + 1
+    weeks, remainder = divmod(days, 7)
+    # Whole weeks are five working days each whatever weekday they begin on; only
+    # the tail has to be looked at a day at a time, and it is at most six days.
+    working = weeks * _WORKING_DAYS_PER_WEEK + sum(
+        1 for step in range(remainder) if days_after(start, weeks * 7 + step).weekday() < 5
+    )
+    working -= sum(1 for day in config.holidays if start <= day <= end and day.weekday() < 5)
+    return max(0, working) / _WORKING_DAYS_PER_WEEK
 
 
 def _runs_past_the_calendar(start: date, weeks: float, config: Config) -> bool:
@@ -174,7 +236,7 @@ def _duration_weeks(record: Record, config: Config, by_id: dict[str, Record]) ->
     size = size_weeks(record)
     if size is None:
         return None
-    rates = [_availability_of(who, record, config, by_id) for who in _workers(record)]
+    rates = [_availability_of(who, record, config, by_id) for who in workers_on(record)]
     return size / (sum(rates) or config.nominal_availability or 1.0)
 
 
@@ -198,17 +260,6 @@ def _availability_of(who: str, record: Record, config: Config, by_id: dict[str, 
     plan = config.plans.get(number) if number is not None else None
     stated = plan.availability.get(who) if plan else None
     return stated if stated else config.nominal_availability or 1.0
-
-
-def _workers(record: Record) -> list[str]:
-    """Everyone on the hook, each counted once.
-
-    An owner who is also an assignee — which is most of them — was counted twice,
-    so they were booked twice and, now that the workers divide the size, would
-    have halved it on their own.
-    """
-    named = ([record.owner] if record.owner else []) + list(record.assignees)
-    return list(dict.fromkeys(named))
 
 
 def _overrun(record: Record, end: date, config: Config, by_id: dict[str, Record]) -> float | None:
@@ -396,24 +447,51 @@ def schedule(
     # on anyone's future capacity.
     for record in live.values():
         if record.status == "done" and record.start_date is not None:
-            spans[record.id] = Span(start=record.start_date, end=record.start_date, historical=True)
+            spans[record.id] = Span(
+                start=record.start_date,
+                end=record.start_date,
+                historical=True,
+                budget_weeks=_duration_weeks(record, config, live),
+                elapsed_weeks=_elapsed_weeks(record.start_date, record.start_date, config),
+            )
 
     active = {i: e for i, e in live.items() if e.status != "done"}
     stalled = _unschedulable(active)
     order, contradictory = _ordering({i: e for i, e in active.items() if i not in stalled}, config)
     floor = _first_working_day(today, config)
     for record_id in stalled | contradictory:
-        spans[record_id] = Span(start=floor, end=floor, unscheduled=True)
+        # The budget travels even here. It is a fact about the bet — what these
+        # people at these rates buy — and it is true of a record the scheduler
+        # could not place as much as of one it could. `elapsed_weeks` is left
+        # None on purpose: these two dates are `floor` twice, standing for "no
+        # answer", and reading a fifth of a week out of them would hand
+        # `_rollup_problems` a length nothing forecast.
+        spans[record_id] = Span(
+            start=floor,
+            end=floor,
+            unscheduled=True,
+            budget_weeks=_duration_weeks(active[record_id], config, live),
+        )
 
     booked: dict[str, list[tuple[date, date]]] = defaultdict(list)
     for record_id in order:
         record = active[record_id]
         kids = [spans[k] for k in children.get(record_id, ()) if k in spans]
         if kids:
+            began, ended = min(k.start for k in kids), max(k.end for k in kids)
             spans[record_id] = Span(
-                start=min(k.start for k in kids),
-                end=max(k.end for k in kids),
-                overruns_cycle_weeks=_overrun(record, max(k.end for k in kids), config, live),
+                start=began,
+                end=ended,
+                overruns_cycle_weeks=_overrun(record, ended, config, live),
+                # The one place this record's OWN size is read on the rollup
+                # branch, which used to return before `_duration_weeks` was ever
+                # reached — a parent's dates come from its children and never
+                # from its appetite, so nothing here had a use for it. The
+                # comparison in `_rollup_problems` does: the bet is the box and
+                # these dates are what somebody proposes to put in it, and
+                # neither number means anything without the other beside it.
+                budget_weeks=_duration_weeks(record, config, live),
+                elapsed_weeks=_elapsed_weeks(began, ended, config),
             )
             continue
 
@@ -448,7 +526,7 @@ def schedule(
         if duration is None:
             continue
 
-        workers = _workers(record)
+        workers = workers_on(record)
         placed = _place(record, duration, workers, booked, spans, floor, config, live)
         if placed is None:
             # Unscheduled, exactly as a dependency cycle is: the scheduler has no
@@ -466,6 +544,7 @@ def schedule(
                 end=floor,
                 unscheduled=True,
                 unowned=not workers,
+                budget_weeks=duration,
             )
             explanations[record_id] = Explanation(
                 record_id=record_id,
@@ -477,6 +556,16 @@ def schedule(
             update={
                 "unowned": not workers,
                 "overruns_cycle_weeks": _overrun(record, span.end, config, live),
+                # A leaf's budget IS the duration it was placed at — there are no
+                # children to roll up — so the two agree here by construction,
+                # and `elapsed_weeks` differs from it only by the working day
+                # `_working_days` rounds up to. Carried anyway rather than left
+                # None on leaves: a field present on some spans and absent on
+                # others makes every reader ask which kind of span it has, and
+                # the answer would be "the ones with children", which is the one
+                # thing a reader of a single span cannot see.
+                "budget_weeks": duration,
+                "elapsed_weeks": _elapsed_weeks(span.start, span.end, config),
             }
         )
         if explanation is not None:

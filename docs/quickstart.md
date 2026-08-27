@@ -43,8 +43,12 @@ two people, twelve for one person who is half on something else. The cycle's ros
 fraction each person has.
 
 A pitch that has tasks takes its dates and its load from them, so the pitch's own appetite stays
-**the bet**, as the room agreed it. When the tasks add up to more, the page says so and `openproj check` warns — but nothing refuses the save, because cutting scope or re-betting is a decision for a
-person.
+**the bet**, as the room agreed it. What the bet buys is a number of *calendar* weeks — eight
+person-weeks with two people on it is four weeks — and that is the box the tasks have to fit in.
+When the tasks as they are actually staffed need longer, the page says so and `openproj check`
+warns. Who is on them is what decides it: a four-week task and a half-week task are four and a half
+weeks if one person holds both and four if they run side by side. Nothing refuses the save, because
+cutting scope, re-betting, and putting another person on it are all decisions for a person.
 
 ## Nobody types a date
 

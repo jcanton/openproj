@@ -29,6 +29,7 @@ from openproj.model import (
     required_at,
     validate_all,
 )
+from openproj.schedule import schedule
 
 TASK_ID = "task-aaa111"
 OTHER_TASK_ID = "task-ddd444"
@@ -137,6 +138,29 @@ def project(**overrides: object) -> Project:
 
 def check(*records: Record, config: Config | None = None) -> list[Problem]:
     return validate_all(list(records), config or Config())
+
+
+# A Monday, so a span's arithmetic is readable in the tests that assert on it:
+# five working days is one calendar week from here with no weekend swallowed at
+# the front. Fixed rather than `date.today()` because the rollup rule's message
+# quotes the length of a scheduled span, and a rule whose words depend on which
+# weekday the suite runs on is a rule nobody can pin.
+PLAN_TODAY = date(2026, 8, 17)
+
+
+def rolled_up(*records: Record, config: Config | None = None) -> list[Problem]:
+    """`validate_all` as a whole PLAN sees it: scheduled first, spans passed in.
+
+    `check` above is the other caller shape and the commoner one — a candidate
+    record on its way to being written, judged with no schedule — and without
+    spans `_rollup_problems` is simply not applied. Every test of that rule goes
+    through here instead, because the two numbers it compares are the
+    scheduler's: what the bet buys in calendar weeks, and how long the rolled-up
+    span of the tasks actually is.
+    """
+    settings = config or Config()
+    spans, _ = schedule(list(records), settings, PLAN_TODAY)
+    return validate_all(list(records), settings, spans)
 
 
 def only(problems: list[Problem], record_id: str, field: str | None = None) -> Problem:
@@ -488,18 +512,91 @@ def test_a_project_is_not_bet_because_it_holds_bets():
     assert cycle_of(records[0], {"proj-000001": records[0]}) is None
 
 
-def test_tasks_that_add_up_to_more_than_the_bet_say_so():
+OVER_THE_BOX = (
+    "its tasks need {} weeks with the people on them, more than the {} the bet buys at {} — "
+    "cut scope, re-bet it, or put more people on it"
+)
+
+
+def test_tasks_that_do_not_fit_in_the_weeks_the_bet_bought_say_so():
     """The appetite is the box and the tasks are what somebody proposes to put in
     it. Nothing compared the two, so a six-week bet holding seven and a half
-    weeks of tasks read as a six-week bet on every page."""
+    weeks of tasks read as a six-week bet on every page.
+
+    The design's own worked example, because it is the case the person-week sum
+    could not see: eight person-weeks with two people on them buy four calendar
+    weeks, and four and a half person-weeks of tasks sit comfortably inside eight
+    — but not inside four, once both tasks are on the same person and have to
+    queue. The old arithmetic said this pitch was fine. 4.6 rather than the
+    design's 4.5 because `_working_days` buys a whole third day for half a week,
+    which is the scheduler's rounding and not a second opinion about the size.
+    """
     records = [
-        Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=6.0),
-        Task(id="task-000001", kind="task", title="A", parent="pitch-000001", person_weeks=4.0),
-        Task(id="task-000002", kind="task", title="B", parent="pitch-000001", person_weeks=3.5),
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Q",
+            person_weeks=8.0,
+            assignees=["jackdawrie", "merganserly"],
+        ),
+        Task(
+            id="task-000001",
+            kind="task",
+            title="A",
+            parent="pitch-000001",
+            person_weeks=4.0,
+            assignees=["jackdawrie"],
+        ),
+        Task(
+            id="task-000002",
+            kind="task",
+            title="B",
+            parent="pitch-000001",
+            person_weeks=0.5,
+            assignees=["jackdawrie"],
+        ),
     ]
-    problem = only(validate_all(records, Config()), "pitch-000001", field="person_weeks")
-    assert problem.severity == "warning", "cutting scope or re-betting is a decision"
-    assert "7.5 weeks, more than the 6" in problem.message
+    problem = only(rolled_up(*records), "pitch-000001", field="person_weeks")
+    assert problem.severity == "warning", "every remedy is a decision for a person"
+    assert problem.message == OVER_THE_BOX.format("4.6", "4.0", 2)
+
+
+def test_the_same_tasks_on_different_people_fit_and_say_nothing():
+    """The span is why the sum went. Four weeks and half a week are four and a
+    half of calendar if one person holds both and four if they run side by side,
+    and the scheduler already knows which — `_place` books workers, so a
+    contended person serialises their own work and an uncontended pair does not.
+    A sum reports four and a half in both cases and is wrong in one of them.
+
+    Same three records as the test above with one name changed, which is the
+    whole demonstration.
+    """
+    records = [
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Q",
+            person_weeks=8.0,
+            assignees=["jackdawrie", "merganserly"],
+        ),
+        Task(
+            id="task-000001",
+            kind="task",
+            title="A",
+            parent="pitch-000001",
+            person_weeks=4.0,
+            assignees=["jackdawrie"],
+        ),
+        Task(
+            id="task-000002",
+            kind="task",
+            title="B",
+            parent="pitch-000001",
+            person_weeks=0.5,
+            assignees=["merganserly"],
+        ),
+    ]
+    assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
 
 
 def test_tasks_that_fit_inside_the_bet_say_nothing():
@@ -509,7 +606,19 @@ def test_tasks_that_fit_inside_the_bet_say_nothing():
         Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=6.0),
         Task(id="task-000001", kind="task", title="A", parent="pitch-000001", person_weeks=4.0),
     ]
-    assert [p for p in validate_all(records, Config()) if p.field == "person_weeks"] == []
+    assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
+
+
+def test_a_pitch_nobody_has_bet_on_is_not_accused_of_exceeding_a_bet():
+    """No appetite is no box, and a box nobody drew cannot be overflowed. The
+    span still has a length — its tasks are scheduled — so the guard is
+    `budget_weeks`, which is None for a pitch with no `person_weeks` of its own
+    and for every container, and not the presence of dates."""
+    records = [
+        Pitch(id="pitch-000001", kind="pitch", title="Q"),
+        Task(id="task-000001", kind="task", title="A", parent="pitch-000001", person_weeks=9.0),
+    ]
+    assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
 
 
 def test_a_shelved_task_is_not_counted_against_its_pitchs_appetite():
@@ -525,7 +634,7 @@ def test_a_shelved_task_is_not_counted_against_its_pitchs_appetite():
             status="shelved",
         ),
     ]
-    assert [p for p in validate_all(records, Config()) if p.field == "person_weeks"] == []
+    assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
 
 
 def test_a_task_nobody_sized_is_not_counted_at_a_number_nobody_typed():
@@ -534,6 +643,10 @@ def test_a_task_nobody_sized_is_not_counted_at_a_number_nobody_typed():
     an instruction built entirely out of a config default. The docstring said
     "only stated sizes are compared" the whole time; this holds it to that on
     the children, where it was false.
+
+    It survives the move to spans by a different route, and that is the point of
+    keeping it: an unsized record is scheduled nowhere at all, so it contributes
+    no dates to roll up, and there is no filter left for anybody to forget.
     """
     records = [
         Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=1.0),
@@ -542,27 +655,51 @@ def test_a_task_nobody_sized_is_not_counted_at_a_number_nobody_typed():
             for n in range(1, 5)
         ],
     ]
-    assert [p for p in validate_all(records, Config()) if p.field == "person_weeks"] == []
+    assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
 
 
-def test_sized_tasks_overrunning_alone_warn_and_the_message_counts_only_them():
-    """When only some children are sized, the sized ones overrunning the bet is
-    still a statement somebody made — the unsized ones can only push the total
-    higher — so the warning fires, counts the sized ones alone, and says out
-    loud that the rest are uncounted rather than quietly pricing them at the
-    default.
+def test_unsized_tasks_drop_out_of_the_rollup_and_the_sized_ones_still_warn():
+    """When only some children are sized, the sized ones alone overrunning the
+    box is still a statement somebody made, so the warning fires on what has
+    dates — and the unsized ones can only make it worse, never better, so firing
+    on the short answer is the conservative one.
+
+    The message no longer counts anything, which is the visible change here. It
+    used to say "its 2 sized tasks alone add up to 5 weeks … and the 1 without a
+    size can only add to that", because a sum has to confess what it left out of
+    itself. A span does not: it is the length of the work that is actually
+    placed, and what is missing from it is missing from the plan rather than from
+    the arithmetic. Naming the gap is the table cell's job — the fourth state,
+    muted rather than good — and it is not this sentence's.
     """
     records = [
-        Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=4.0),
-        Task(id="task-000001", kind="task", title="A", parent="pitch-000001", person_weeks=3.0),
-        Task(id="task-000002", kind="task", title="B", parent="pitch-000001", person_weeks=2.0),
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Q",
+            person_weeks=4.0,
+            assignees=["jackdawrie"],
+        ),
+        Task(
+            id="task-000001",
+            kind="task",
+            title="A",
+            parent="pitch-000001",
+            person_weeks=3.0,
+            assignees=["jackdawrie"],
+        ),
+        Task(
+            id="task-000002",
+            kind="task",
+            title="B",
+            parent="pitch-000001",
+            person_weeks=2.0,
+            assignees=["jackdawrie"],
+        ),
         Task(id="task-000003", kind="task", title="C", parent="pitch-000001"),
     ]
-    said = [p for p in validate_all(records, Config()) if p.field == "person_weeks"]
-    assert [p.message for p in said] == [
-        "its 2 sized tasks alone add up to 5 weeks, more than the 4 it was bet at, "
-        "and the 1 without a size can only add to that — cut scope, or re-bet it"
-    ]
+    said = [p for p in rolled_up(*records) if p.field == "person_weeks"]
+    assert [p.message for p in said] == [OVER_THE_BOX.format("5.0", "4.0", 1)]
 
 
 # --- the seed corpus --------------------------------------------------------
@@ -595,10 +732,18 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
     """
     records, config, _ = load_repo(seed_root)
     assert len(records) == 30
+    # Scheduled, because one rule reads spans — see `rolled_up`. At `PLAN_TODAY`
+    # rather than the real one so the snapshot is a snapshot, though the three
+    # rollup entries below come out identical for every "today" from 2025 to
+    # 2030: their children are `done` and `in_progress` records carrying start
+    # dates of their own, so nothing about them floats with the floor. That is
+    # what lets the CLI half of this pin schedule against the real today and
+    # still agree with this set.
+    spans, _ = schedule(records, config, PLAN_TODAY)
     inherits = (
         "the bet is on the pitch, so this task takes its cycle from {}; the number here is ignored"
     )
-    assert summaries(validate_all(records, config)) == {
+    assert summaries(validate_all(records, config, spans)) == {
         # Nine records at ready or in_progress with nobody assigned, which is the
         # argument for that rule made against real files: an owner answers for a
         # bet and assignees are who is doing it, and the scheduler prices a record
@@ -640,13 +785,34 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         ("warning", "task-5c1d84", "cycle", inherits.format("pitch-5e7b1c"), 4),
         ("warning", "task-5f062b", "cycle", inherits.format("pitch-5e7b1c"), 4),
         # v4: the migration hung this one straight off the project
-        # v4: 8.1 weeks of tasks inside a four-week bet
+        # v4: three pitches whose tasks, as actually staffed, do not fit in the
+        # calendar weeks their bets bought. `pitch-5e7b1c` was the only one of
+        # these before, on the person-week sum — "its 5 tasks add up to 8.1
+        # weeks, more than the 4 it was bet at" — and the other two are the
+        # move to the calendar finding what that sum could not: work that fits
+        # inside a bet as effort and does not fit as time, because the people
+        # holding it hold it one piece at a time. Each is a real shape in the
+        # corpus rather than a file written wrong on purpose, which is the
+        # argument for the rule.
         (
             "warning",
             "pitch-5e7b1c",
             "person_weeks",
-            "its 5 tasks add up to 8.1 weeks, more than the 4 it was bet at — "
-            "cut scope, or re-bet it",
+            OVER_THE_BOX.format("5.2", "2.0", 2),
+            4,
+        ),
+        (
+            "warning",
+            "pitch-6f2d18",
+            "person_weeks",
+            OVER_THE_BOX.format("3.0", "2.7", 2),
+            4,
+        ),
+        (
+            "warning",
+            "pitch-7b3e94",
+            "person_weeks",
+            OVER_THE_BOX.format("6.0", "3.0", 2),
             4,
         ),
         # `prod-7c2b81` carries `person_weeks`, `depends_on` and `owner` in its
@@ -691,8 +857,14 @@ def test_check_over_the_seed_corpus_prints_exactly_the_validated_problems(seed_r
     appearing or vanishing is a validation change that got past the refactor.
     """
     records, config, unreadable = load_repo(seed_root)
+    # The real today, and not `PLAN_TODAY`, because `_check` schedules against
+    # `date.today()` and this test's whole claim is that the command relays what
+    # the validator says — computed the way the command computes it, or the pin
+    # is against a second implementation of the command rather than against it.
+    spans, _ = schedule(records, config, date.today())
     problems = sorted(
-        validate_all(records, config), key=lambda p: (p.severity, p.record_id, p.field or "")
+        validate_all(records, config, spans),
+        key=lambda p: (p.severity, p.record_id, p.field or ""),
     )
     blockers = [p for p in problems if p.severity == "blocker"]
 

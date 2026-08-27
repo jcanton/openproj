@@ -5039,10 +5039,17 @@ def test_a_pitch_draws_its_tasks_as_the_progress_it_has_made(rendered: Path, see
 
 def test_a_pitch_says_what_its_tasks_add_up_to_beside_what_it_was_bet_at(rendered: Path):
     """An appetite read on its own says nothing about whether the work still fits.
-    The corpus's pitch-5e7b1c was bet at four weeks and holds 8.1 of tasks."""
+
+    The corpus's pitch-5e7b1c was bet at four weeks with two people on it, so the
+    box it bought is two calendar weeks, and its tasks as they are actually
+    staffed run 5.2 — the number here used to be 8.1, which was the same tasks
+    summed as person-weeks and held against the undivided bet. Same pitch, same
+    verdict, different question: this one is "will this fit", and the other was
+    "is there more work here than we said".
+    """
     page = read(rendered, "detail.html")
-    assert "8.1 in tasks" in page
-    assert 'class="overrun">8.1 in tasks' in page, "over the bet, and said so"
+    assert "5.2 in tasks" in page
+    assert 'class="overrun">5.2 in tasks' in page, "over the box the bet bought, and said so"
 
 
 def test_a_pitch_that_keeps_a_checklist_as_well_as_tasks_is_told_which_one_counts():
@@ -5102,8 +5109,87 @@ def test_a_pitch_with_no_appetite_yet_is_not_accused_of_exceeding_it():
         if r["label"].startswith("Appetite")
     )
 
-    assert "3 in tasks" in row["display"]
+    assert "3.0 in tasks" in row["display"]
     assert 'class="quiet"' in row["display"], "no bet to be over"
+
+
+def test_the_number_the_page_prints_in_tasks_is_the_number_check_warns_on():
+    """One fact, one implementation, pinned from both ends on the same records.
+
+    This repository has been bitten three times by one fact written twice — the
+    search blob, the `(none)` sentinel, and `appetite_weeks` reading as three
+    different numbers across three pages — and this is the fourth: the reading
+    view read `index.progress[id].total`, which charged the old default for every
+    unsized child, while `_rollup_problems` summed only the sized ones. The page
+    therefore printed a larger number than the one `check` was warning about, and
+    could print one where `check` said nothing at all, under a docstring that
+    claimed the two "cannot disagree". Both now read `Span.elapsed_weeks`, and a
+    test that only pinned one of them would have passed all the way through that.
+
+    Both directions, because the expensive half of the old defect was the silent
+    one: a page shouting in warning colour where the validator says nothing
+    teaches a reader that one of the two is lying, and they will pick the wrong
+    one.
+    """
+    from openproj.model import Config, Pitch, Task, validate_all
+    from openproj.render import STATIC, _fact_rows
+    from openproj.render.detail import _tasks_add_up_to
+
+    def family(second_task_held_by: str) -> list:
+        return [
+            Pitch(
+                id="pitch-000001",
+                kind="pitch",
+                title="Q",
+                person_weeks=8.0,
+                assignees=["jackdawrie", "merganserly"],
+            ),
+            Task(
+                id="task-000001",
+                kind="task",
+                title="A",
+                parent="pitch-000001",
+                person_weeks=4.0,
+                assignees=["jackdawrie"],
+            ),
+            Task(
+                id="task-000002",
+                kind="task",
+                title="B",
+                parent="pitch-000001",
+                person_weeks=0.5,
+                assignees=[second_task_held_by],
+            ),
+        ]
+
+    # The same three records twice, and the only difference is whose name is on
+    # the half-week task: one person holding both has to do them in turn, two
+    # people do them at once. That is the whole reason the comparison is against
+    # a span rather than a sum, so it is what the agreement is pinned over.
+    for held_by, fits in (("merganserly", True), ("jackdawrie", False)):
+        records = family(held_by)
+        index = build_index(records, Config(), date(2026, 8, 17))
+        said = [
+            p
+            for p in validate_all(records, Config(), index.spans)
+            if p.record_id == "pitch-000001" and p.field == "person_weeks"
+        ]
+        row = next(
+            r
+            for r in _fact_rows(index, index.plan["pitch-000001"], STATIC)
+            if r["label"].startswith("Appetite")
+        )
+        printed = _tasks_add_up_to(index, index.plan["pitch-000001"])
+
+        assert f"{printed:.1f} in tasks" in row["display"], "the page prints what it computed"
+        assert bool(said) is not fits, f"held by {held_by}"
+        assert ('class="overrun"' in row["display"]) is not fits, (
+            "the colour on the page and the warning in `check` are one verdict"
+        )
+        if said:
+            assert f"its tasks need {printed:.1f} weeks" in said[0].message, (
+                "the same number, to the digit a person reads"
+            )
 
 
 def test_the_progress_column_appears_only_once_a_plan_has_a_checklist(seed_index: Index):
