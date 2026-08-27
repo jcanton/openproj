@@ -1,12 +1,21 @@
-"""`openproj check`, `openproj render`, `openproj schedule`, `openproj demo`.
+"""`openproj` — check, new, render, serve, schedule and demo, against a plan repository.
 
 The CLI can do everything the web view can. That is deliberate: if the service is
-down, being upgraded, or never comes back, the plan is still readable and still
-checkable with one command against a clone.
+down, being upgraded, or never comes back, the plan is still readable, still
+checkable, and still WRITABLE with one command against a clone.
+
+This line is the parser's own description — `_parser` reads it — so a command
+that is not on it is a command missing from `openproj --help`. `new` was, for
+exactly as long as it took to run the published package once and read the output.
 
 `check` is the load-bearing one. It exits non-zero on blockers and zero on
 warnings, because a warning that fails the build is a rule that gets reverted
 rather than adopted.
+
+`new` is the other half of that: the rules `check` reports on afterwards, run at
+the moment a record is written, so a record that would fail the gate never
+becomes a file. It is the write path for anything without a browser — a script,
+a CI job, an agent working in the codebase a plan is about.
 
 `demo` is the one somebody runs first. `serve` wants a bare clone of a plan
 repository, which is the right seam for a deployment and the wrong first
