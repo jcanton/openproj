@@ -424,21 +424,37 @@ ruff: line length 100, target py312, `E,F,I,UP,B`.
 suite on every pull request, with real Chrome and real node, on hardware that is not somebody's
 working machine.
 
-**It is six jobs, not one, and the shape is load-bearing.** `lint` is ruff alone and answers in ten
+**It is ten jobs, not one, and the shape is load-bearing.** `lint` is ruff alone and answers in ten
 seconds, deliberately not depended on by anything: a lint error and a test failure are different
-news and you should get both in one run rather than the first one twice. Then five `suite` shards
-run the tests in parallel on five machines, cut by `.github/shards/<name>` — one test path per
-line, hand-written, because the cut is decided by Chrome and by two module fixtures rather than by
-file size and no heuristic finds that. Then `check` fans them in, and **`check` is the name branch
-protection requires, so it must not move**: a `strategy.matrix` on a job named `check` reports six
-differently-named checks, none of them called `check`, and the merge button goes green while every
-shard is red.
+news and you should get both in one run rather than the first one twice. Then eight `suite` groups
+run the tests in parallel on eight machines. Then `check` fans them in, and **`check` is the name
+branch protection requires, so it must not move**: a `strategy.matrix` on a job named `check`
+reports one differently-named check per leg, none of them called `check`, and the merge button goes
+green while every leg is red.
 
-Two things follow for anybody adding tests. A new test FILE has to be named in exactly one shard
-file — `test_every_test_file_is_in_exactly_one_ci_shard` in `tests/test_harness.py` holds that, and
-it is the reason a file cannot quietly fall out of the gate. And the shard lists drift out of
-balance every time a file grows; rebalancing them is a five-minute job with `--durations` and
-`design/probes/ci-speed.md` says how.
+**The groups are cut by measured duration, not by hand.** `pytest-split` reads `.test_durations` —
+one recorded time per test — and divides the collected list into eight contiguous runs of roughly
+equal cost. Nothing names a file anywhere. This replaced five hand-written lists in
+`.github/shards/` on 2026-08-27, and the reason was arithmetic: `tests/test_editor.py` had grown to
+**26.0% of the suite** against the 20.0% a perfect fifth would be, so one file needed more than a
+whole leg and no arrangement of file lists could be balanced at all. Eight groups come out
+113-124s against the 254s that one file costs, and the worst leg is 2s off the ideal.
+
+Three things follow for anybody adding tests. **A new test needs no registration** — it is collected,
+so it is in exactly one group whether or not it has ever been measured, and the old way of falling
+out of the gate entirely is gone with the lists. An unmeasured test is given the average, so what a
+stale table costs is balance and never coverage. **Re-measure when it drifts**, with one serial run:
+
+```bash
+uv run pytest --store-durations
+```
+
+`test_the_durations_table_still_knows_what_the_suite_is_made_of` in `tests/test_harness.py` is the
+alarm — it fails when a whole test file has never been measured, or when the table knows less than
+80% of the suite. And **the contiguous algorithm is the choice, not the default landing on us**:
+the greedy one balances marginally better and scatters a file's tests across groups, which
+`tests/test_coedit.py` cannot have — real sockets, a real uvicorn on a real port, literal
+`sleep(0.5)` budgets, which need to stay serial and in order in one process.
 
 This is not a licence to push carelessly. It is a decision about where eight minutes of CPU and
 several gigabytes of RAM should be spent — jcanton, 2026-08-20, on a machine that has already been

@@ -243,6 +243,51 @@ against `?editor=plain` — which survived the editor toggle being removed in v0
 Free for a public repository. Section 5's billed column is a curiosity now, and the argument against
 a sixth shard rests on balance rather than cost.
 
+## 0c. The file-level cut is retired (2026-08-27)
+
+§ 0b ended by naming the only lever left: *"the gate cannot go below about 102s of pytest while
+`tests/test_editor.py` is one file"*, and the answer it proposed was splitting that file at
+`?editor=ace` against `?editor=plain`. That answer was right about the problem and too small about
+the fix. Splitting one file by hand postpones the same arithmetic to whichever file grows next.
+
+**What made it urgent.** Re-measured on 2026-08-27, over 2056 tests and 975.8s on a laptop
+(`.test_durations`; a different machine from the runner, so read the shares and not the seconds):
+
+| file                   | share of the suite | when the lists were cut |
+| ---------------------- | ------------------ | ----------------------- |
+| `tests/test_editor.py` | 26.0%              | 19.1%                   |
+| `tests/test_render.py` | 18.9%              | 14.4%                   |
+| `tests/test_coedit.py` | 10.1%              | —                       |
+| `tests/test_table.py`  | 8.5%               | —                       |
+
+A perfect fifth is 20.0%. One file had passed it, so the five-way cut was not merely unbalanced —
+it had become **unbalanceable**, and no rearrangement of file lists could have fixed it.
+
+**The fix is to stop cutting by file.** `pytest-split` divides the collected list by recorded
+duration, so the unit is a test and the floor is the slowest single test — 32.4s
+(`test_the_rooms_own_commit_does_not_reload_the_page_under_the_person_in_it`) rather than 253.9s.
+Simulated over the real table, worst leg:
+
+| N     | ideal    | `duration_based_chunks` | `least_duration` |
+| ----- | -------- | ----------------------- | ---------------- |
+| 5     | 195s     | 210s                    | 195s             |
+| 6     | 163s     | 165s                    | 163s             |
+| **8** | **122s** | **124s**                | 122s             |
+| 10    | 98s      | 110s                    | 98s              |
+| 12    | 81s      | 93s                     | 81s              |
+
+**Eight, contiguous.** Eight is where the return stops covering a machine's ~12s of setup. Contiguous
+because the greedy algorithm's extra 2s is not worth scattering a file's tests across eight
+machines: `tests/test_coedit.py` needs to stay serial and in order in one process, and a module
+fixture split eight ways is built eight times. Verified rather than assumed — the eight groups
+partition all 2056 tests with no overlap, at 113-124s.
+
+**§ 0b's other findings all still stand.** `-n auto` is still refused for the reason measured there
+(`-n 2` on the editor leg was 27% slower; the cost is process startup and two Chromes contending on
+four cores). The noise is still the same size as any imbalance, so a single run still cannot
+separate two cuts. What changed is not the measurement — it is that the scheme being measured could
+no longer express the answer.
+
 ## 1. What CI costs today, per step, measured
 
 From the jobs API for run 32631287159, one job named `check` on `ubuntu-latest`:

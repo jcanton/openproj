@@ -98,49 +98,90 @@ jobs:
       # which reads the same files and answers on a laptop as well as here. An
       # invariant written twice gets guarded once.
 
-  # The suite, cut five ways across five machines.
+  # The suite, cut eight ways across eight machines — and cut by DURATION at the
+  # level of a test, not by hand at the level of a file.
   #
-  # The cut is in `.github/shards/<name>`, one path per line, and it is made from
-  # `design/probes/ci-durations-4core.txt` — this hardware's table, not either of
-  # the 2-core ones, because the legs did not merely shrink when the cores
-  # doubled, they changed order. And at `--durations-min=0`, because the 0.05
-  # threshold the older tables used hid 37s of the suite, almost none of it
-  # evenly: 16s of that was on the leg with 1103 tests. 532.3s of exact rows over
-  # 42 files. Per leg the cut is 106.4-106.5s, a spread of 0.1s, against
-  # 93.0-119.8s for the lists it replaces.
+  # **The hand-written lists in `.github/shards/` are gone, and the reason is a
+  # measurement rather than a preference.** They were cut on 2026-08-24 to
+  # 106.4-106.5s a leg, a spread of 0.1s, and the comment on them said plainly
+  # what bounded the gate: `tests/test_editor.py`, one file, then 19.1% of the
+  # suite's attributed cost against the 20.0% a perfect fifth would be. It sat
+  # exactly on the floor. Re-measured on 2026-08-27 over 2056 tests it is
+  # **26.0%** — 150 tests where the cut assumed 105 — so one file now needs more
+  # than a whole leg's share, and NO arrangement of file lists is balanced any
+  # more. The lists had not gone stale in the sense of being slightly wrong; the
+  # scheme they belong to had stopped being able to express the answer.
   #
-  # **That is a 13s improvement in expectation and it is invisible in any single
-  # run.** Two runs of identical lists put one leg 23s apart. Quote a median over
-  # several runs or quote nothing, and do not spend an afternoon re-cutting: what
-  # bounds this gate is `tests/test_editor.py` at 101.6s, which is one file.
+  # Percentages and not seconds, deliberately. The table under this
+  # (`.test_durations`) was recorded on a laptop and this runner is a different
+  # machine; what transfers between them is each test's SHARE of the suite, which
+  # is what a split is decided by. Absolute seconds below are that laptop's, and
+  # are marked.
   #
-  # FIVE, and five is still the ceiling on four cores — re-derived rather than
-  # inherited. The break-even for a shard is `T/(K·(K−1)) > setup`; at T≈501s of
-  # attributed cost and ~12s of setup that allows six, and balance stops it
-  # first, exactly as it did before. `tests/test_editor.py` is 94.4s on its own —
-  # 105 tests, 53 of the suite's real-Chrome call sites, every one laying out a
-  # page carrying 594 KB of inlined Ace — and no file-level scheme goes below
-  # that floor. A perfect five-way is 100.3s of attributed cost; a perfect
-  # six-way would be 83.6s and cannot be reached, because the sixth machine lands
-  # on this one file at 94.4s. Six machines to save six seconds, and a seventh
-  # billing rounding to pay for it. Going below 94.4s means splitting that one
-  # file, and its natural seam is still `?editor=ace` against `?editor=plain`.
+  # `pytest-split` takes the recorded durations and cuts the collected list into
+  # N chunks of roughly equal time. Simulated over the real numbers, the worst
+  # leg comes out:
   #
-  # `coedit` is a shard for the opposite reason to `editor`: it is the only leg
-  # with real sockets, a real uvicorn on a real port, and literal `sleep(0.5)`
-  # budgets. It must not be reordered or internally parallelised, and its own
-  # machine is how that stays true for free. That is also the one constraint the
-  # re-cut was not allowed to optimise away, and it is why a `-n 2` inside each
-  # shard could never be a blanket answer even if it paid on the other four.
+  #     N     ideal   contiguous   greedy
+  #     5      195s        210s      195s
+  #     6      163s        165s      163s
+  #     8      122s        124s      122s      <- chosen
+  #    10       98s        110s       98s
+  #    12       81s         93s       81s
+  #
+  # against the 254s that one file costs today. **Eight, and the worst leg is
+  # 124s against a 122s ideal** — a 2s spread, and about half the current gate.
+  # Ten and twelve keep paying, but by less than a machine's ~12s of setup each
+  # time, and every extra runner is billed on every push.
+  #
+  # **`duration_based_chunks`, which is the default, and not `least_duration`.**
+  # The greedy one bin-packs and hits the ideal exactly at every N — it is 2s
+  # better here — but it scatters the collection: a file's tests land in whatever
+  # groups balance best. The contiguous one cuts the list into N runs in
+  # COLLECTION ORDER, so a file is split only where a boundary happens to fall
+  # inside it and its tests otherwise stay together, in order, in one process.
+  # That is what `tests/test_coedit.py` needs — real sockets, a real uvicorn on a
+  # real port, literal `sleep(0.5)` budgets — and what stops a module fixture
+  # being rebuilt on five machines instead of one. Two seconds is not worth
+  # either.
+  #
+  # **What this scheme cannot do wrong, which the old one could.** A new test
+  # file in no shard was a file CI silently stopped running, with every job
+  # green; that is why `test_every_test_file_is_in_exactly_one_ci_shard` existed.
+  # Splitting works off the collected list, so a new test is always in exactly
+  # one group whether or not anybody has measured it — an unmeasured test is
+  # given the average and costs balance, never coverage. The census test is
+  # replaced by a drift alarm instead: see `tests/test_harness.py`.
+  #
+  # **`-n auto` is still refused**, and that has not changed with the cores: this
+  # box is 4-core, `-n 2` on the editor leg measured 27% SLOWER because the cost
+  # is process startup and two Chromes contending, and the reasoning is in
+  # `design/probes/ci-speed.md`. Machines, not processes.
+  #
+  # **Refreshing the table is a deliberate act and not a side effect of CI**, and
+  # that is a constraint rather than a choice. `pytest-split` reads and writes
+  # one `--durations-path`, so a leg that stored its own slice would have to
+  # write back into the shared table; `--clean-durations` would then strip the
+  # seven groups it did not run, and without it eight legs race on one file. So
+  # the legs only read. Re-measure with one serial run, the same way this table
+  # was made:
+  #
+  #     uv run pytest --store-durations
+  #
+  # It is worth doing when `--durations=25` on a leg starts naming a test the
+  # table does not know about, or when the drift alarm in `tests/test_harness.py`
+  # fires. Balance is the only thing a stale table costs: an unmeasured test is
+  # given the average and still runs, in exactly one group.
   suite:
     strategy:
       # One red shard must not cancel the other four. The whole point of a
       # three-minute gate is getting every piece of bad news from one push.
       fail-fast: false
       matrix:
-        # Longest first: legs start roughly in this order, and `editor` is the
-        # critical path, so it should never be the one waiting for a runner.
-        shard: [editor, views, graph, coedit, rest]
+        # Eight groups. `pytest-split` numbers them from 1, and the number is the
+        # whole of what a leg knows about itself — there is no name to keep in
+        # step with a file any more.
+        group: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: ubuntu-latest
     steps:
       # Full checkout, never sparse — the obvious optimisation here is wrong. 27
@@ -222,10 +263,25 @@ jobs:
       # rows per leg is enough to see which file grew and re-cut the lists,
       # without anybody having to re-run a measurement workflow to find out. It
       # is display-only: pytest times every phase whether or not it prints them.
+      #
+      # `--splits` and `--group` are `pytest-split`'s; `--durations-path` names
+      # the table the cut is made from, READ ONLY here for the reason above.
+      # `--splitting-algorithm` is left at its default `duration_based_chunks`,
+      # which is the contiguous one and is the choice, not the accident.
+      #
+      # No file list and no emptiness check. Both existed because a shard file
+      # that was missing, or all commentary, made bare `pytest` fall back to
+      # `testpaths` and run the WHOLE suite on every leg — slow rather than
+      # wrong, and therefore invisible. There is nothing to be empty now: the
+      # group is a number, and a wrong one is an error from the plugin.
+      #
+      # `--durations=25` stays for the same reason it always did: it is display
+      # only, and it is how somebody reading a log sees which test grew. What it
+      # no longer has to feed is a hand re-cut.
       - run: |
-          files=$(sed 's/#.*//' .github/shards/${{ matrix.shard }})
-          [ -n "$files" ] || { echo "shard ${{ matrix.shard }} names no test files"; exit 1; }
-          uv run pytest -q --durations=25 $files
+          uv run pytest -q --durations=25 \
+            --splits 8 --group ${{ matrix.group }} \
+            --durations-path .test_durations
 
   # The one required status check, and the reason it is a separate job.
   #

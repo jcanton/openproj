@@ -1,6 +1,6 @@
+import ast
+import json
 from pathlib import Path
-
-import pytest
 
 import openproj
 
@@ -61,48 +61,86 @@ def test_every_test_repository_names_the_branch_the_store_reads():
     assert not offenders, f"init_repository without initial_head='main': {offenders}"
 
 
-def test_every_test_file_is_in_exactly_one_ci_shard():
-    """CI runs this suite as parallel jobs, each `pytest` over the file list in
-    `.github/shards/<name>` — and a hand-written list fails open. A test file in
-    no shard is a test CI silently stops running the day it is written, with
-    every job green; a file in two shards burns a runner proving the same thing
-    twice. Nobody sees either without a census, which is what this is — the
-    shape of `test_every_html_get_route_is_in_the_census`, pointed at CI.
+# How much of the suite the durations table has to know before the split stops
+# being a split. Not 1.0: a test written today is not in a table measured
+# yesterday, and it must not turn the merge gate red for that — `pytest-split`
+# gives an unmeasured test the average and still runs it, in exactly one group,
+# so what a stale table costs is BALANCE and never coverage. 0.8 is the point at
+# which "a few new tests" has become "nobody has re-measured in months".
+_DURATIONS_FLOOR = 0.8
 
-    Held against the tree (`tests/test_*.py` off disk) rather than against a
-    second hand-written list, so it cannot itself go stale. It skips while
-    `.github/shards/` does not exist: before the sharded workflow lands, one
-    job runs the whole suite and there is nothing to hold — and if the
-    directory is ever deleted while the workflow still reads it, the jobs fail
-    loudly on the missing lists, so the skip cannot hide that either. What the
-    skip could never catch is this file itself falling out of every shard; the
-    cut is "everything else" by construction, so the census rides with it.
+
+def _test_functions(path: Path) -> set[str]:
+    """Every `def test_…` in one file, by name.
+
+    `ast` and not a regex, for `test_the_facade_…`'s reason: a name inside a
+    string or a comment is not a test, and this is the kind of census that is
+    worse than nothing when it is quietly wrong.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        and node.name.startswith("test_")
+    }
+
+
+def test_the_durations_table_still_knows_what_the_suite_is_made_of():
+    """CI cuts the suite into eight groups by recorded duration, and this is the
+    alarm on the recording going stale.
+
+    **It is deliberately not the census that stood here.** That one held
+    `tests/test_*.py` against the hand-written lists in `.github/shards/`,
+    because a file in no shard was a file CI silently stopped running with every
+    job green — a gate that fails OPEN, which is the one failure a gate must
+    never have. Splitting works off the collected list instead, so that cannot
+    happen any more: every test is in exactly one group whether or not anybody
+    has measured it. The lists are gone and so is the way they failed.
+
+    What replaces it is the failure the new scheme actually has, which is quieter
+    and only costs time. A table that has stopped describing the suite still
+    produces eight groups; they are just eight badly unbalanced ones, and the
+    gate slows down with nothing anywhere saying why. So this asks two things of
+    `.test_durations`: that every test FILE is in it at all — a whole new file
+    unmeasured is the biggest single distortion available — and that it knows
+    enough of the individual tests to be worth reading.
+
+    Regenerate with one serial run, which is how the file was made:
+
+        uv run pytest --store-durations
     """
     root = Path(__file__).parent.parent
-    shards = root / ".github" / "shards"
-    if not shards.is_dir():
-        pytest.skip("no .github/shards yet: CI is one job and runs the whole suite")
+    table = root / ".test_durations"
+    assert table.is_file(), (
+        ".test_durations is missing, so every test is given the same weight and "
+        "the eight CI groups are cut by count rather than by time. Regenerate it "
+        "with `uv run pytest --store-durations`."
+    )
+    recorded = json.loads(table.read_text(encoding="utf-8"))
+    assert recorded, ".test_durations is empty"
 
-    seen: dict[str, list[str]] = {}
-    for shard in sorted(path for path in shards.iterdir() if path.is_file()):
-        for line in shard.read_text(encoding="utf-8").splitlines():
-            for token in line.split():
-                if token.startswith("#"):
-                    break  # the rest of the line is commentary, not a path
-                named = root / token
-                assert named.is_file(), (
-                    f"{shard.name} names {token}, which does not exist; entries are "
-                    f"paths from the repository root, e.g. tests/test_web.py"
-                )
-                assert (
-                    named.parent == root / "tests"
-                    and named.name.startswith("test_")
-                    and named.name.endswith(".py")
-                ), f"{shard.name} names {token}, which is not a tests/test_*.py file"
-                seen.setdefault(named.name, []).append(shard.name)
+    # `tests/test_web.py::test_one[param]` -> ("tests/test_web.py", "test_one").
+    known: dict[str, set[str]] = {}
+    for node_id in recorded:
+        path, _, rest = node_id.partition("::")
+        known.setdefault(path, set()).add(rest.partition("[")[0])
 
-    every = {path.name for path in (root / "tests").glob("test_*.py")}
-    missing = sorted(every - seen.keys())
-    assert not missing, f"in no shard, so no CI job ever runs them: {missing}"
-    doubled = {name: where for name, where in seen.items() if len(where) > 1}
-    assert not doubled, f"in more than one shard, so CI runs them twice: {doubled}"
+    files = sorted(path for path in (root / "tests").glob("test_*.py"))
+    unmeasured = [path.name for path in files if f"tests/{path.name}" not in known]
+    assert not unmeasured, (
+        f"never measured, so every test in them is cut in at the average and the "
+        f"groups are unbalanced by however long they really take: {unmeasured}. "
+        f"Regenerate with `uv run pytest --store-durations`."
+    )
+
+    written = {f"tests/{path.name}::{name}" for path in files for name in _test_functions(path)}
+    seen = {f"{path}::{name}" for path, names in known.items() for name in names}
+    covered = len(written & seen) / len(written)
+    assert covered >= _DURATIONS_FLOOR, (
+        f".test_durations knows {covered:.0%} of the suite's test functions, under "
+        f"the {_DURATIONS_FLOOR:.0%} floor. The split still runs every test — an "
+        f"unmeasured one is given the average — but the groups are no longer "
+        f"balanced by anything real. Regenerate with `uv run pytest "
+        f"--store-durations`."
+    )
