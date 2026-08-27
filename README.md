@@ -110,15 +110,15 @@ flags and the reasoning.
 
 ## Where to read next
 
-| | |
-|---|---|
-| `docs/quickstart.md` | day one — what a pitch, a task and a cycle are, and how to write one |
-| `docs/data-model.md` | one record type and six kinds, what the index derives, and what promotes into what |
-| `docs/architecture.md` | the pages, the two repositories, the layout of the code |
-| `docs/shape-up.md` | how this maps to what the team kept in HackMD, and where it departs from the book |
-| `AGENTS.md` | the invariants, how to write code here, and how to find the bug that is already here |
-| `design/` | design records — why a subsystem is the way it is, and what was measured. Not user documentation |
-| `deploy/RUNBOOK.md` | the deployment — credentials, the Cloud Run flags, and what is left to do |
+|                        |                                                                                                  |
+| ---------------------- | ------------------------------------------------------------------------------------------------ |
+| `docs/quickstart.md`   | day one — what a pitch, a task and a cycle are, and how to write one                             |
+| `docs/data-model.md`   | one record type and six kinds, what the index derives, and what promotes into what               |
+| `docs/architecture.md` | the pages, the two repositories, the layout of the code                                          |
+| `docs/shape-up.md`     | how this maps to what the team kept in HackMD, and where it departs from the book                |
+| `AGENTS.md`            | the invariants, how to write code here, and how to find the bug that is already here             |
+| `design/`              | design records — why a subsystem is the way it is, and what was measured. Not user documentation |
+| `deploy/RUNBOOK.md`    | the deployment — credentials, the Cloud Run flags, and what is left to do                        |
 
 The first four of those, and this file, are also the app's **Help** page — the same bytes, read
 off the same files, so there is one copy of every sentence and nothing to keep in step. The last two

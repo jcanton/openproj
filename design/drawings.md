@@ -540,8 +540,7 @@ asks. The bundle was built, mounted under `default-src 'none'`, and measured:
    for how a test may assert against this — see "Five helpers, not one," below.
 5. **Does the unconditional `esm.sh` font fallback stay quiet?** Yes, and the guess
    about it was wrong twice over. There IS an effective disable:
-   `ExcalidrawFontFace.createUrls()` short-circuits with `if (t.startsWith("data"))
-return [t]`, so rewriting the font literals to `data:` URIs means the esm.sh
+   `ExcalidrawFontFace.createUrls()` short-circuits with `if (t.startsWith("data")) return [t]`, so rewriting the font literals to `data:` URIs means the esm.sh
    fallback is never even consulted — verified with DNS blackholed, zero external
    requests. And `font-src data:` does not refuse a `data:` `@font-face` the way it was
    assumed to: those URIs load fine under the existing policy,

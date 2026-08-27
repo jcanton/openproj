@@ -10,14 +10,14 @@ None of it reaches the running service. `docs/` is copied into the container bec
 reads those files off the disk; this directory is excluded in `.gcloudignore` and is not copied by
 the `Dockerfile`.
 
-| file | what it records |
-|---|---|
-| `EDITOR.md` | the library audit behind the markdown editor, and the dated decisions that followed it |
-| `drawings.md` | the drawing subsystem: the spike, the five helpers, and why a PNG never touches the merge |
-| `deferred-push.md` | why a commit lands locally before it goes out, and what the page says while it has not |
-| `hackmd-observed.md` | what the team's HackMD actually contained, measured before this tool existed |
-| `QUEUE.md` | the work queue: what is next, and what was accepted as a gap |
-| `probes/` | measurements — CI timings, load runs, the concurrency audit |
+| file                 | what it records                                                                           |
+| -------------------- | ----------------------------------------------------------------------------------------- |
+| `EDITOR.md`          | the library audit behind the markdown editor, and the dated decisions that followed it    |
+| `drawings.md`        | the drawing subsystem: the spike, the five helpers, and why a PNG never touches the merge |
+| `deferred-push.md`   | why a commit lands locally before it goes out, and what the page says while it has not    |
+| `hackmd-observed.md` | what the team's HackMD actually contained, measured before this tool existed              |
+| `QUEUE.md`           | the work queue: what is next, and what was accepted as a gap                              |
+| `probes/`            | measurements — CI timings, load runs, the concurrency audit                               |
 
 `AGENTS.md` is the entry point for changing this code, and holds the rules that are still binding.
 This directory is the reasoning underneath them.

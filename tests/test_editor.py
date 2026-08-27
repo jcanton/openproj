@@ -8750,4 +8750,3 @@ def test_escape_backs_out_of_the_question_and_discard_throws_the_drawing_away(
             "a discarded drawing still left an embed in the body — nothing was ever posted "
             "for one to reference"
         )
-

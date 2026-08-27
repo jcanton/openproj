@@ -6,20 +6,20 @@ expensive half.
 
 ## What has been built since
 
-| Item | Where |
-|---|---|
-| 1. One searchable text, and a query language over it | #16 |
-| 2. Multi-select in the dropdowns | #17 |
-| 3. One hover card, three views | #18 |
-| 5. A reader is not offered a socket | #19 |
-| 6. Drag-to-reparent in the graph | #20, and taken out again — see below |
-| 4. `v0.3.0`, tagged and released | #21, `v0.3.0` |
+| Item                                                 | Where                                |
+| ---------------------------------------------------- | ------------------------------------ |
+| 1. One searchable text, and a query language over it | #16                                  |
+| 2. Multi-select in the dropdowns                     | #17                                  |
+| 3. One hover card, three views                       | #18                                  |
+| 5. A reader is not offered a socket                  | #19                                  |
+| 6. Drag-to-reparent in the graph                     | #20, and taken out again — see below |
+| 4. `v0.3.0`, tagged and released                     | #21, `v0.3.0`                        |
 
 `v0.3.0` is deployed: revision `openproj-00006-bdv`, and the console lines that
 opened item 5 are gone from the served page. The sections below are what is left,
 and each says why it is still here.
 
-* **The table's cells are read-only to a reader.** Owed here from 2026-08-24 —
+- **The table's cells are read-only to a reader.** Owed here from 2026-08-24 —
   found while gating the create buttons and left alone in that commit on
   purpose — and built on the `reader-table` branch the same day. `render_table`
   set `editable = base_commit is not None`, "there is a server behind this
@@ -41,7 +41,7 @@ and each says why it is still here.
   no grid claim, no gate panel, no combobox, no adder row, and it still sorts,
   filters and links.
 
-* **Drawings, in a popup over the editor.** Designed 2026-08-26 and built on the
+- **Drawings, in a popup over the editor.** Designed 2026-08-26 and built on the
   `drawings` branch the same cycle, written up in full at `design/drawings.md` —
   read that rather than a summary here, because the rejected shapes carry the
   reasoning and one of them corrupts files. Excalidraw, vendored as our own
@@ -57,7 +57,7 @@ and each says why it is still here.
 
 ## What was tried and dropped
 
-* **A `<select>` converted into a button-and-menu, four more times.** The table's
+- **A `<select>` converted into a button-and-menu, four more times.** The table's
   filter dropdowns are buttons because a native `<select>` cannot draw the caret
   and the ground this page wants. The timeline's zoom and the issues and notes
   state filters were offered the same conversion and did not get it — jcanton,
@@ -65,7 +65,7 @@ and each says why it is still here.
   browser's caret. One rule against four popups with their own keyboard handling
   and their own tests, for a control with one choice in it.
 
-* **Boxing the id strings in the table.** Offered by jcanton himself as the
+- **Boxing the id strings in the table.** Offered by jcanton himself as the
   alternative when the kind chips came out of the id cell, and not taken: a box
   around all seventeen ids is the same noise wearing a different hat. The id is
   already monospace, and that is what marks it as a token to be cited; the kind
@@ -73,7 +73,7 @@ and each says why it is still here.
   Kind stays filterable in the KIND facet, which is where "show me only tasks" is
   actually asked.
 
-* **Drag-to-reparent on the graph** (#20). Built, and removed the same day after
+- **Drag-to-reparent on the graph** (#20). Built, and removed the same day after
   jcanton used it: a pitch could not be dropped into a project at all, and taking
   one out looked like nothing happening — the project's outline follows the pitch
   being dragged, so the boundary travels with it and the drop only appears to
@@ -81,13 +81,14 @@ and each says why it is still here.
   test was right and the drawing was not, and a gesture whose result you cannot
   see until it commits is not one to keep. Reparenting stays where it works: the
   table, by dragging a row onto another.
-* **Single-click to edit a cell.** Dropped, not deferred — jcanton, 2026-08-19.
+
+- **Single-click to edit a cell.** Dropped, not deferred — jcanton, 2026-08-19.
   A single click focuses the cell for the arrow grid, and cells are drag sources
   and drop targets. Enter and F2 open an editor.
 
 ## What is still owed
 
-* **Found: the room's own commit was reloading the page.** Kept because the
+- **Found: the room's own commit was reloading the page.** Kept because the
   hunt is the expensive half. jcanton reported the drawing popup vanishing on
   2026-08-26; the first cause found was the popup's own Escape, fixed the same
   day, and he then said he had seen it "even after drawing a couple of lines and
@@ -118,7 +119,7 @@ and each says why it is still here.
   `location.reload()` by design. Self-inflicted rather than spontaneous, and
   nobody has hit it.
 
-* **Inserting a raster image into a drawing is blocked, on purpose, by the same
+- **Inserting a raster image into a drawing is blocked, on purpose, by the same
   policy that blocks everything else it forbids.** pica and image-blob-reduce,
   which Excalidraw's own image tool uses to resize a pasted photo, each
   construct a Worker to do it — one from a `data:text/javascript;base64` URI to
@@ -129,7 +130,7 @@ and each says why it is still here.
   jcanton accepted the gap on 2026-08-26; see `design/drawings.md`, "The spike,
   which came first."
 
-* **A record's page and a slide's page disagree about what a signed-out reader
+- **A record's page and a slide's page disagree about what a signed-out reader
   is given.** `render_detail` gates `editable` on `base_commit is not None`
   alone, so a reader of a record still gets a textarea, a toolbar and
   `attachEditing` wired to it — no Ace (that gate also checks `may_write`), no
@@ -139,7 +140,7 @@ and each says why it is still here.
   the drawings work, and nobody has decided which of the two the other should
   match.
 
-* **A save should not wait for GitHub.** Designed 2026-08-24, written up in full at
+- **A save should not wait for GitHub.** Designed 2026-08-24, written up in full at
   `design/deferred-push.md` — read that rather than a summary here, because the
   reasoning is the expensive half and the rejected shapes matter as much as the
   chosen one.
@@ -157,7 +158,7 @@ and each says why it is still here.
   and two of them are bugs that exist today: `deploy/boot.py` never receives
   SIGTERM in production, and `_merge_body` merges two same-text edits wrongly.
 
-* **A container's progress rollup charges its container children half a week.**
+- **A container's progress rollup charges its container children half a week.**
   Found on 2026-08-23, the day the fixture corpus grew products, and unreachable
   before that: `Rung.under` lets nothing but a product nest a container, so a
   container could not be somebody's CHILD until one existed.
@@ -189,16 +190,14 @@ and each says why it is still here.
   `Rung.sized` is the ladder property that tells the two cases apart, so whichever
   is chosen should be read off it rather than tested for by kind.
 
-
-* **A chip that overflows into the next column.** jcanton, 2026-08-20, with a
+- **A chip that overflows into the next column.** jcanton, 2026-08-20, with a
   screenshot of a narrowed window: the status chip runs straight through the
   Owner column — `» IN PROGRESSjcanton` — instead of wrapping or being cut.
 
   Half-diagnosed already, so start here rather than from the screenshot. `.chip`
   is `white-space: nowrap` (render.py, near the status tints), which is right:
   "IN PROGRESS" broken across two lines is not a chip. What is missing is that
-  the cell has nowhere to put the overflow. `CLAMPED` is `tags, prs, assignees,
-  reviewers` and `SQUEEZABLE` is `title, owner`; `status` is in neither, so the
+  the cell has nowhere to put the overflow. `CLAMPED` is `tags, prs, assignees, reviewers` and `SQUEEZABLE` is `title, owner`; `status` is in neither, so the
   fit hands it a width and nothing clips what does not fit. Priority is in
   neither either and gets away with it only because it is plain text, which wraps
   — which is why the same screenshot shows `Medi um` on two lines. Both are the
@@ -217,20 +216,21 @@ and each says why it is still here.
 
   The two rejected, with why, so nobody re-opens them:
 
-  * *Clip with an ellipsis* — cheapest, and leaves `IN PROG…`. Legible, but it
+  - *Clip with an ellipsis* — cheapest, and leaves `IN PROG…`. Legible, but it
     teaches nothing and looks like a defect rather than a decision.
-  * *Make `status` squeezable* so the fit takes the room from `title` instead —
+  - *Make `status` squeezable* so the fit takes the room from `title` instead —
     wrong way round. The title is the column somebody is actually reading.
 
   Both columns at once. Priority is drawn with the bars now, and `Medi um`
   wrapped under them is the same bug wearing different clothes — it went
   unreported only because a wrap looks less broken than an overflow.
 
-* **Co-editing under Cloud Run's five-minute timeout.** Proven locally and never
+- **Co-editing under Cloud Run's five-minute timeout.** Proven locally and never
   against the deployment, where `--timeout 300` closes every socket at five
   minutes and reconnection stops being exceptional. The deploy is done; the test
   needs two signed-in members, and signing in is not something an agent does.
-* **Group-level ordering the layout does not guarantee.** ELK's recursive engine
+
+- **Group-level ordering the layout does not guarantee.** ELK's recursive engine
   lays each box out over its own children and then lays the boxes out — and the
   root pass cannot reliably see a dependency between the CHILDREN of two boxes.
   Measured on a three-box synthetic where each box also holds an internal chain:
@@ -253,14 +253,16 @@ and each says why it is still here.
   `test_the_arrows_read_the_way_the_layout_was_asked_for` is the canary: if it
   fails on a corpus nobody touched, this is the entry to read.
 
-* **Re-betting as a record of its own.** Deferred 2026-08-16, and the symptom is
+- **Re-betting as a record of its own.** Deferred 2026-08-16, and the symptom is
   already visible: a standing item like `[GT4Py] Development work` is bet again
   every cycle, and because `cycle:` records where the bet was first made and is
   never re-stamped, it reads as a permanent overrun. The fix is not to re-stamp
   `cycle:` — that is the one thing `docs/data-model.md` forbids — it is a second
   record of the later bet.
-* **The review deck**, awaiting jcanton's feedback after a proper read.
-* **The editor.** Handed to a session of its own on 2026-08-19; the decisions,
+
+- **The review deck**, awaiting jcanton's feedback after a proper read.
+
+- **The editor.** Handed to a session of its own on 2026-08-19; the decisions,
   the library shortlist and the list of what must not be lost are in
   `design/EDITOR.md`.
 
@@ -347,8 +349,7 @@ instead of a sha. 1.0.0 after adoption, per jcanton.
 Found from jcanton's console on the deployed service, 2026-08-19. Signed out, a
 detail page tries `wss://…/api/coedit/<id>` five times and gets
 `NS_ERROR_WEBSOCKET_CONNECTION_REFUSED` each time — the server correctly refusing
-a socket to somebody who may not write. It is self-limiting (`if (!arrived &&
-attempts >= 4) return stop('')`) and the comment there already names "a reader
+a socket to somebody who may not write. It is self-limiting (`if (!arrived && attempts >= 4) return stop('')`) and the comment there already names "a reader
 who may not write" as one of the three causes, so nothing loops.
 
 But reads are public here, so *most* page loads are readers, and every one of
@@ -361,8 +362,7 @@ detail page, so the shell has to publish it rather than the editor asking twice.
 
 **And `/api/me` is the wrong question to gate on** — found 2026-08-19 while
 verifying #14 against `openproj demo`. `/api/me` answers `viewer(request)`, which
-reads the session cookie and nothing else. Under `--auth dev` — every `openproj
-demo`, and `serve --auth dev` — there is no session, so `/api/me` answers
+reads the session cookie and nothing else. Under `--auth dev` — every `openproj demo`, and `serve --auth dev` — there is no session, so `/api/me` answers
 `{"org": …}` with no login and the corner draws "Sign in", while `writer()`
 invents `User(login=dev_login, member=True)` and the write goes through
 (`web.py`). That is why the demo says "Sign in" in the corner and creates rows

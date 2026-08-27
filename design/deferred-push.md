@@ -31,15 +31,15 @@ today, the answer goes back at once, and a single background pusher lands
 
 ## What does not change, and this is the important half
 
-* The compare-and-swap and `_commit` stay inside `_writing`, byte for byte. Two people
+- The compare-and-swap and `_commit` stay inside `_writing`, byte for byte. Two people
   saving the same record still resolve through the same per-path three-way merge and
   still get the same 409 in the same words.
-* No commit is ever reported as having reached the remote before it has.
+- No commit is ever reported as having reached the remote before it has.
   `WriteResult.pushed` keeps meaning exactly what it means today.
-* History stays linear. Every commit the remote receives has one parent, keeps the
+- History stays linear. Every commit the remote receives has one parent, keeps the
   original author signature — the person, with the bot as committer — and keeps its
   message. `git log --format='%an'` stays a per-person audit trail.
-* `/api/health` still reads two local refs, takes no lock and touches no network.
+- `/api/health` still reads two local refs, takes no lock and touches no network.
 
 ## Why not batch on a timer
 
@@ -74,8 +74,7 @@ somebody pushing to the plan by hand, which the README makes a first-class workf
 Three shapes were designed independently and each was attacked by an adversary told to
 find the interleaving that loses somebody's work.
 
-**Reconcile-by-merge** — one bot-authored merge commit per hand-push, parents `[local,
-remote]`, tree built per path. Rejected. It dissolves `write_all`'s atomicity: that
+**Reconcile-by-merge** — one bot-authored merge commit per hand-push, parents `[local, remote]`, tree built per path. Rejected. It dissolves `write_all`'s atomicity: that
 function's own comment says *"A conflict on ANY path writes nothing at all — a partial
 commit is exactly the half-done state above, arriving through the other door"*, and a
 per-path merge over a flattened tip tree has no commit boundaries to honour. A promotion
@@ -172,8 +171,7 @@ non-fast-forward, the identical commits accepted on a side ref, and the work rea
 the remote afterwards.
 
 A pull request is opened from that branch. The App's installation was granted
-`pull_requests: write` on 2026-08-24 for this, and remains `repository_selection:
-selected` — it can create a ref and a PR on the plan and nothing else, so the rule that
+`pull_requests: write` on 2026-08-24 for this, and remains `repository_selection: selected` — it can create a ref and a PR on the plan and nothing else, so the rule that
 the push credential is structurally incapable of touching source still holds. The branch
 is the durability and the PR is the visibility: **a 403 or an outage on the PR is logged
 and never fatal**, because the branch has already landed by then.
@@ -194,12 +192,12 @@ this door either.
 
 Three states, escalating, chosen by jcanton:
 
-* **Normally** — a quiet per-row mark on `/table` meaning "saved here, not on GitHub
+- **Normally** — a quiet per-row mark on `/table` meaning "saved here, not on GitHub
   yet", clearing when the commit is confirmed landed. The table and the shell banner are
   the whole surface; the graph, timeline, cycles and record page rely on the banner.
-* **When the pile grows or the pusher is failing** — a loud banner in the shell naming
+- **When the pile grows or the pusher is failing** — a loud banner in the shell naming
   the problem and how many commits are stranded.
-* **Past a threshold** — writes are refused with the 503 the wedged path already uses,
+- **Past a threshold** — writes are refused with the 503 the wedged path already uses,
   so nobody adds to a pile that cannot land. The threshold is **fifty unpushed commits or
   ten minutes since the last successful push**, whichever comes first. Both numbers are
   arbitrary and are written down so they can be argued with rather than discovered in an
@@ -217,13 +215,13 @@ converged; it turns into a problem when its sha is named as parked.
 
 Three consequences to build for rather than discover:
 
-* **The SSE stream has no replay.** A tab that reconnects — and Cloud Run recycles every
+- **The SSE stream has no replay.** A tab that reconnects — and Cloud Run recycles every
   stream at 300s — misses the frame and its mark never clears. Clearing needs
   "everything up to X has landed" semantics and a poll fallback, not a per-commit event.
-* **`render/editor.py` says "saved here, not yet pushed" whenever `pushed === false`.**
+- **`render/editor.py` says "saved here, not yet pushed" whenever `pushed === false`.**
   Under this design that fires on every save and becomes wallpaper. It needs a third
   state: in flight, landed, stranded — not a boolean.
-* **`POST /api/record`'s 201 body carries no `pushed` key at all** today, so the create
+- **`POST /api/record`'s 201 body carries no `pushed` key at all** today, so the create
   path has nothing to hang a mark on until it does.
 
 ## Health
@@ -253,8 +251,7 @@ pending room text, has never run there either. That is a live way to lose somebo
 writing, independent of this design, and every flush-on-shutdown here depends on fixing
 it.
 
-**`_merge_body`'s equal-replacement hole.** The guard requires `replacement !=
-other_replacement` before the one-span assembly, so two differently-shaped edits with
+**`_merge_body`'s equal-replacement hole.** The guard requires `replacement != other_replacement` before the one-span assembly, so two differently-shaped edits with
 identical replacement text merge silently wrong. Every design here leans on `_merge`, and
 the replay leans on it without a person watching. It is a hard gate, not an open
 question.
@@ -275,20 +272,20 @@ Each earns its own plan. Only the third is big.
 The claims are about threads, a real remote and a real browser, so the tests are asked in
 those media, which is what this repository already does.
 
-* Rejection and recovery against a **real second repository**, not a mock: a hand-push
+- Rejection and recovery against a **real second repository**, not a mock: a hand-push
   landing between the commit and the push, and the local backlog replayed onto it with
   authors, messages and order intact. `file://` and HTTPS answer a refused push in
   different words, which is why the store asks git rather than reading the message; the
   tests keep doing the same.
-* The interleavings the adversary found, each as a named test: a straggler conflicting
+- The interleavings the adversary found, each as a named test: a straggler conflicting
   during the swap; a conflict in the middle of a batch; the process dying between the
   fetch and the push, and between the push and the swap; a force-push met by the guard.
-* **Concurrency asked of real threads.** Several writers saving at once while the pusher
+- **Concurrency asked of real threads.** Several writers saving at once while the pusher
   runs, asserting every answered sha ends up landed, re-minted-and-landed, or parked on a
   branch that exists — and never merely gone.
-* The per-row mark driven in Chrome with trusted input, the way the table's other press
+- The per-row mark driven in Chrome with trusted input, the way the table's other press
   claims are asked.
-* Every fix mutation-tested: delete it, watch the test fail, put it back.
+- Every fix mutation-tested: delete it, watch the test fail, put it back.
 
 ## What this does not solve
 

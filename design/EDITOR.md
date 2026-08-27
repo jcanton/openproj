@@ -31,9 +31,9 @@ A body editor as close to HackMD's as we can get, in this order of importance:
 
 And two constraints on top of the seven:
 
-* **The co-editing has to keep working.** Two people, one document, one commit — see
+- **The co-editing has to keep working.** Two people, one document, one commit — see
   `coedit.py` and the room in `web.py`.
-* **Keep both editors and let a person choose.** The textarea that is there now stays as
+- **Keep both editors and let a person choose.** The textarea that is there now stays as
   an option. This is a preference like the theme and the measure, and `remembered` in the
   shell is where those live.
 
@@ -43,8 +43,7 @@ should cost them.
 ## The audit
 
 Everything below was fetched, checksummed and run. Byte counts are `stat` on the fetched
-artifact; page counts are `render_detail(index, ROUTES, only=…, base_commit=…,
-may_write=True)` encoded to UTF-8; gzip is `gzip -9`.
+artifact; page counts are `render_detail(index, ROUTES, only=…, base_commit=…, may_write=True)` encoded to UTF-8; gzip is `gzip -9`.
 
 **The number every candidate is weighed against.** A writer's editable detail page is
 318,526 B raw / 132,288 B gz on the `tests/fixtures/corpus` pitch, and 324,285 B /
@@ -96,11 +95,11 @@ number in this audit nobody has measured.
 
 ### Ace 1.44.0 (`ace-builds`, `src-min-noconflict`) — admissible, measured, and not bought
 
-| file | bytes | sha256 (head) | gz -9 |
-|---|---|---|---|
-| `ace.js` | 475,029 | `072d13e5…` | 126,124 |
-| `mode-markdown.js` | 75,276 | `7492ad87…` | 22,165 |
-| `keybinding-vim.js` | 119,277 | `464f901e…` | 36,518 |
+| file                | bytes   | sha256 (head) | gz -9   |
+| ------------------- | ------- | ------------- | ------- |
+| `ace.js`            | 475,029 | `072d13e5…`   | 126,124 |
+| `mode-markdown.js`  | 75,276  | `7492ad87…`   | 22,165  |
+| `keybinding-vim.js` | 119,277 | `464f901e…`   | 36,518  |
 
 BSD-3-Clause — this repository's own licence. Classic scripts, self-registering through
 `ace.define`, zero `import`, zero `export`, zero bare `require(`; they parse and run in a
@@ -135,7 +134,7 @@ builds a blocked `blob:` Worker that fails in silence.
 
 Three costs the "verbatim, no rewrite" framing does not carry:
 
-* `mode-markdown.js` **fails `test_no_page_asks_the_network_for_a_font`**. Five parties
+- `mode-markdown.js` **fails `test_no_page_asks_the_network_for_a_font`**. Five parties
   ran that test's own regex over the bytes. `ace.js` has 24 `url(`, all `data:`.
   `keybinding-vim.js` has 0. `mode-markdown.js` has two that are neither `data:` nor `#`:
   offset 9046, `regex:"(?:url(:?-prefix)?|domain|regexp)\\("`, captured `:?-prefix`; and
@@ -145,7 +144,7 @@ Three costs the "verbatim, no rewrite" framing does not carry:
   template — but the assertion is a bare pattern scan over the whole page body including
   `<script>` contents, and `static/VENDOR.md`'s own written acceptance check says the same
   thing in prose.
-* **Ace's default keymap fetches four modules over the network.** `ace.js`'s command table
+- **Ace's default keymap fetches four modules over the network.** `ace.js`'s command table
   calls `config.loadModule` for `ace/ext/searchbox` (find, Ctrl-F/Cmd-F, and replace),
   `ace/ext/settings_menu`, `ace/ext/error_marker` and `ace/ext/prompt` — none of which is
   in the three files — falling through to `net.loadScript`, which is
@@ -157,7 +156,7 @@ Three costs the "verbatim, no rewrite" framing does not carry:
   see a runtime injection. `ext-searchbox.js` is 14,164 B and clean; the alternative is
   `removeCommand` on five default commands, which is application code and therefore not
   "verbatim behaviour".
-* **The licence notice does not travel.** All three minified files contain 0 occurrences
+- **The licence notice does not travel.** All three minified files contain 0 occurrences
   of `Copyright`, `BSD` or `Ajax.org`; `src-noconflict/ace.js` opens with the full block.
   The real LICENSE is 1,490 B, sha256 `850f545c…`. BSD-3 clause 2 asks for the notice in
   binary redistribution, and this repository already reads "every rendered page is a copy"
@@ -231,8 +230,7 @@ current when the decision was written: 692,718 B. The recorded "690 KB — a thi
 vim keymap" is exact and nobody rounded in their own favour. With the Yjs binding and the
 vim prerequisites the honest total is 755,159 B; without vim, 498,145 B.
 
-Two things changed since the record, and both point the same way. `github.com/codemirror/
-CodeMirror` is `archived: true`, description "In-browser code editor (version 5, legacy)",
+Two things changed since the record, and both point the same way. `github.com/codemirror/ CodeMirror` is `archived: true`, description "In-browser code editor (version 5, legacy)",
 last two commits 2026-04-15 "Remove github links" and 2026-04-16 "Add forwarding link",
 README now opening "This repository has moved to https://code.haverbeke.berlin/codemirror/
 codemirror5". And `y-codemirror` 3.0.1 was last published 2021-11-15; its author's last
@@ -271,8 +269,7 @@ even in markdown mode and there is no text buffer to hang a gutter on. Latest re
 
 One browserify UMD, 327,475 B + 12,923 B of CSS, MIT, CodeMirror 5 and marked bundled in;
 toolbar, side-by-side, fullscreen, `lineNumbers`, `tabSize`, `indentUnit` all present, and
-its `previewRender` is genuinely async-capable (`var t = e.options.previewRender(...); null
-!= t && (i.innerHTML = t)`), so `/api/preview` would work — the only candidate whose
+its `previewRender` is genuinely async-capable (`var t = e.options.previewRender(...); null != t && (i.innerHTML = t)`), so `/api/preview` would work — the only candidate whose
 preview can be the server's.
 
 It dies on three facts. The bundle contains the literal string `cdn.` six times, which
@@ -303,9 +300,7 @@ asks 4, 5 and 6 are meaningless in it.
 
 ### The gates every candidate had to pass, and what they cost
 
-The CSP is `default-src 'none'; img-src 'self' data:; font-src data:; style-src
-'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none';
-form-action 'self'` (`render.py:917`). Measured in Chrome against that exact string:
+The CSP is `default-src 'none'; img-src 'self' data:; font-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'` (`render.py:917`). Measured in Chrome against that exact string:
 `eval`, `new Function` and WebAssembly compilation all throw; **every** form of Worker —
 `blob:`, `data:` and same-origin — is blocked, and blocked silently, as an `error` event
 with an empty message rather than an exception; and every style-injection form works, so a
@@ -313,13 +308,10 @@ library's runtime stylesheet is not the problem.
 
 Four mechanical gates in the suite. `assert "cdn." not in body` is a bare substring over
 the whole page. `test_no_page_asks_the_network_for_a_font` rejects any `url(` token that
-is not `data:` or `#`, scanning `<script>` bodies too. `test_every_library_is_inlined_
-exactly_once_and_no_marker_survives` (`tests/test_render.py:134`) asserts `len(inlined) ==
-4` over `static/*.js` and that each file's first 200 characters appear exactly once in
+is not `data:` or `#`, scanning `<script>` bodies too. `test_every_library_is_inlined_ exactly_once_and_no_marker_survives` (`tests/test_render.py:134`) asserts `len(inlined) == 4` over `static/*.js` and that each file's first 200 characters appear exactly once in
 `graph.html`. And the documented `shasum -a 256 *.js *.mjs *.woff2 > SHA256SUMS`
 truncates: a companion file with a new extension silently loses its checksum. One
-repeated hazard is **not** a hazard here — `test_every_vendored_file_is_the_one_that_was_
-checksummed` explicitly exempts `*LICENSE.txt` by design, "a licence is read, not
+repeated hazard is **not** a hazard here — `test_every_vendored_file_is_the_one_that_was_ checksummed` explicitly exempts `*LICENSE.txt` by design, "a licence is read, not
 executed".
 
 ## What the recorded CodeMirror refusal said, and what this audit does with it
@@ -388,16 +380,16 @@ on the page. Put one adapter boundary between the co-editing code and the surfac
 a second surface stays possible without being promised. Then stop and ask, with the price
 written down, before anything is vendored for ask 6.
 
-| ask | delivered by |
-|---|---|
-| 1. three views | a tri-state class on `article.record`, three mutually exclusive buttons in the existing `bodybar` (`render.py:8261`) on Ctrl+Alt+E/B/V — Ctrl+Option on Mac, never Cmd, because the page already claims Cmd+S and Cmd+B/I/E/2/8/. — plus `?edit`/`?both`/`?view` off the existing hash router. The preview stays the `/api/preview` round trip, debounced ~300 ms with an `AbortController`, an unchanged-text skip and a preserved `#body-preview.scrollTop`. |
-| 2. toolbar | four `FORMATS` entries: check list `- [ ] ` and strikethrough `~~` drop into the existing prefix/wrap shapes; a table template and a horizontal rule need a fourth `insert:` branch in `applyMark`, ~4 lines. Not link and not image, on the corpus counts the toolbar was sized from. Both new marks need the server one-worders in the same commit, or the buttons emit syntax the committed renderer does not honour. |
-| 3. full page | `article.record` becomes a viewport-filling grid with two independently scrolling panes, and `#grip`/`--measure` gets an explicit rule so the drag handle does not park at the left edge. |
-| 4. line numbers | one span per logical line in the mirror that already exists for the seat bands, numbers positioned from `offsetTop`, rAF-coalesced, redrawn on `document.fonts.ready` and resize, with a line-count ceiling above which the gutter turns itself off out loud. `drawSeats` is then repointed at the same mirror, which deletes its per-caret `measure()` loop. |
-| 5. tabs to spaces | a Tab/Shift-Tab branch in the `keydown` handler at `render.py:7476`, through `replaceRange` → `execCommand('insertText')` so native undo survives, with list and blockquote nesting reusing `LIST_ITEM`, and an Escape-armed one-shot Tab pass-through announced rather than silently implemented. Tab width is a **typing** setting, never a "convert this document" command. |
-| 6. vim | **not delivered.** It is the only ask that needs a library. Priced at 594,306 B raw / ~165 KB gz (Ace core + vim, markdown mode dropped), plus a second hand-written Yjs binding, and deferred behind the first open question below. |
-| 7. autosave | read as **draft** autosave: a settable throttle with a ceiling on the per-input write at `render.py:8581`, a visible "draft saved 12s ago" beside `#unsaved`, and surfacing that the room already commits at `QUIET_SECONDS = 20`. Not a POST on a timer — that turns one shaping session into fifty commits and destroys one-Save-one-commit. |
-| both editors | `openproj:editor:1`, one JSON object through `remembered.map` holding `{mode, indent, autosave}`, versioned in the key with the old key explicitly forgotten. Today that preference is plain box vs full surface — two modes of one textarea. Whether that satisfies the request is the first open question. |
+| ask               | delivered by                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. three views    | a tri-state class on `article.record`, three mutually exclusive buttons in the existing `bodybar` (`render.py:8261`) on Ctrl+Alt+E/B/V — Ctrl+Option on Mac, never Cmd, because the page already claims Cmd+S and Cmd+B/I/E/2/8/. — plus `?edit`/`?both`/`?view` off the existing hash router. The preview stays the `/api/preview` round trip, debounced ~300 ms with an `AbortController`, an unchanged-text skip and a preserved `#body-preview.scrollTop`. |
+| 2. toolbar        | four `FORMATS` entries: check list `- [ ] ` and strikethrough `~~` drop into the existing prefix/wrap shapes; a table template and a horizontal rule need a fourth `insert:` branch in `applyMark`, ~4 lines. Not link and not image, on the corpus counts the toolbar was sized from. Both new marks need the server one-worders in the same commit, or the buttons emit syntax the committed renderer does not honour.                                       |
+| 3. full page      | `article.record` becomes a viewport-filling grid with two independently scrolling panes, and `#grip`/`--measure` gets an explicit rule so the drag handle does not park at the left edge.                                                                                                                                                                                                                                                                      |
+| 4. line numbers   | one span per logical line in the mirror that already exists for the seat bands, numbers positioned from `offsetTop`, rAF-coalesced, redrawn on `document.fonts.ready` and resize, with a line-count ceiling above which the gutter turns itself off out loud. `drawSeats` is then repointed at the same mirror, which deletes its per-caret `measure()` loop.                                                                                                  |
+| 5. tabs to spaces | a Tab/Shift-Tab branch in the `keydown` handler at `render.py:7476`, through `replaceRange` → `execCommand('insertText')` so native undo survives, with list and blockquote nesting reusing `LIST_ITEM`, and an Escape-armed one-shot Tab pass-through announced rather than silently implemented. Tab width is a **typing** setting, never a "convert this document" command.                                                                                 |
+| 6. vim            | **not delivered.** It is the only ask that needs a library. Priced at 594,306 B raw / ~165 KB gz (Ace core + vim, markdown mode dropped), plus a second hand-written Yjs binding, and deferred behind the first open question below.                                                                                                                                                                                                                           |
+| 7. autosave       | read as **draft** autosave: a settable throttle with a ceiling on the per-input write at `render.py:8581`, a visible "draft saved 12s ago" beside `#unsaved`, and surfacing that the room already commits at `QUIET_SECONDS = 20`. Not a POST on a timer — that turns one shaping session into fifty commits and destroys one-Save-one-commit.                                                                                                                 |
+| both editors      | `openproj:editor:1`, one JSON object through `remembered.map` holding `{mode, indent, autosave}`, versioned in the key with the old key explicitly forgotten. Today that preference is plain box vs full surface — two modes of one textarea. Whether that satisfies the request is the first open question.                                                                                                                                                   |
 
 And one thing nobody asked for, which is free and fixes a live defect: **`Y.UndoManager`
 with `trackedOrigins {'typed'}`**. `UndoManager` is already in the export clause of
@@ -426,15 +418,15 @@ exactly why the current design needs no re-entrancy guard and does not have one.
 no origin field, and `editor.curOp.command.name` is `(anon)` for a user keystroke and for
 `session.replace` alike.
 
-* `session.setValue()` is remove-all-then-insert-all: two change events with an **empty
+- `session.setValue()` is remove-all-then-insert-all: two change events with an **empty
   document between them**. Measured: `setValue` of a document onto itself yields
   `deleted=1532, inserted=1532`. `typed()`'s prefix/suffix walk cannot recover a splice
   from `""` versus a whole document.
-* `session.replace(Range, text)` — the API the evidence recommended as "strictly better,
+- `session.replace(Range, text)` — the API the evidence recommended as "strictly better,
   splices in place" — is **also** remove-then-insert, two change events, and a handler
   reading `getValue()` between them observes a document state that never existed on either
   side and splices it into the `Y.Text` as a local edit.
-* The credit invariant is destroyed, measured against this repository's own `Room`: one
+- The credit invariant is destroyed, measured against this repository's own `Room`: one
   remote 4-character keystroke reflected via `setValue` made a **passive** tab push the
   whole document up the socket — 1,532 characters on a 1,532-character body, 97,892 on a
   97,890-character body — and `Room._count` credits inserts to the socket they arrived on.
@@ -442,11 +434,11 @@ no origin field, and `editor.curOp.command.name` is `(anon)` for a user keystrok
   reflected last", or falls to alphabetical order. Wire amplification measured at
   6,711–6,819x: a 35-byte update becomes 235–246 KB, three frames fill
   `MAX_OUTBOX_BYTES`, and the eviction path fires as a forced `reload`.
-* The obvious `applying` guard suppresses the credit bug, and then `setValue` calls
+- The obvious `applying` guard suppresses the credit bug, and then `setValue` calls
   `selection.moveTo(0,0)` and `getUndoManager().reset()`: caret `{row:2,col:5}` →
   `{0,0}` and `canUndo` true → false on **every** remote keystroke. That is `reflect()`'s
   own stated purpose defeated and d6997e3's data loss reopened.
-* And the one-shot shape is wrong the other way too. Multi-cursor plus one keystroke
+- And the one-shot shape is wrong the other way too. Multi-cursor plus one keystroke
   deleted 14,789 characters and reinserted 13,345 on a 14,810-character document; vim
   `:%s/cycle/bet/g` and `editor.replaceAll` did the same. Binding per change instead gives
   722 events at ≤5 characters each, but `typed()` materialises two full code-point arrays
@@ -468,19 +460,19 @@ now a `<pre>`. The sibling-div arrangement keeps it in the form but stale: typin
 characters through Ace left `BODY.value === ""` and fired **zero** `input` events, measured
 with a capture-phase listener on `document`. Each consequence is pinned:
 
-* `render.py:8581`'s per-input draft write never runs again — and `coedit.py`'s own module
+- `render.py:8581`'s per-input draft write never runs again — and `coedit.py`'s own module
   note calls that draft "the floor under a lost room", the thing under the twenty-second
   quiet window.
-* `welcomed()`'s `mine = BODY.value !== ORIGINAL_BODY` is then always false, which is
+- `welcomed()`'s `mine = BODY.value !== ORIGINAL_BODY` is then always false, which is
   verbatim the bug the `bound` gate was written to fix, arriving by a new cause the gate
   does nothing about.
-* `save()`'s `const body = BODY.value === ORIGINAL_BODY ? null : BODY.value` sends
+- `save()`'s `const body = BODY.value === ORIGINAL_BODY ? null : BODY.value` sends
   `body: null`, so the recovery path for `file://`, a dropped upgrade, the Cloud Run 300 s
   teardown and the `reload` frame silently sends nothing — and that frame's message
   promises "Nothing in this tab is lost: Save writes the whole document, the way it did
   before rooms existed."
-* `dirty()` reads the same value and says "Nothing changed yet" over unsaved work.
-* The four tests in `tests/test_seats.py` and the page-mode `drive.js` tests select
+- `dirty()` reads the same value and says "Nothing changed yet" over unsaved work.
+- The four tests in `tests/test_seats.py` and the page-mode `drive.js` tests select
   `textarea[name=body]` and dispatch `new Event('input')`. They stay **green** against a
   surface nothing reads.
 
@@ -527,8 +519,7 @@ safety. And decisively, the proposed gate is a case this repository already wrot
 proving nothing: `tests/test_coedit.py:1379-1444`'s own comments name "an emoji typed in
 from the picker, which lands whole between two characters that are not halves of anything"
 as a **control** that passed with the defect in place. A skeptic ran the proposed gate end
-to end against `static/yjs.bundle.mjs` on a room seeded with `"Ann says\rand then\nlast
-line\n"`: the emoji arrived, the indices agreed, the test passed, and `copies_converged`
+to end against `static/yjs.bundle.mjs` on a room seeded with `"Ann says\rand then\nlast line\n"`: the emoji arrived, the indices agreed, the test passed, and `copies_converged`
 was false.
 
 **Collaborative undo is worse than the decision knew.** Local `insert('LOCAL ')`, then a
@@ -540,8 +531,7 @@ document with a stray leading space, because Ace's stack holds absolute ranges t
 edit invalidated. d6997e3's "ctrl-Z lost your ten minutes" becomes "ctrl-Z deleted your
 colleague's paragraph and committed it".
 
-**"Behind a preference" contains no bytes for anybody.** `editable = base_commit is not
-None` (`render.py:13163`) and the served route passes `base_commit` for everyone; only
+**"Behind a preference" contains no bytes for anybody.** `editable = base_commit is not None` (`render.py:13163`) and the served route passes `base_commit` for everyone; only
 `yjs` and `coedit` carry the extra `may_write` gate (`render.py:13185-13186`). Measured: a
 signed-out reader's detail page is 209,872 B and already contains `<textarea name="body">`,
 `id="marks"` and two `attachEditing(` calls. An Ace block where the current editor lives
@@ -600,56 +590,56 @@ falling back to it.
 In the terms the current code uses. Every one of these is either load-bearing or the
 scar of a shipped defect.
 
-* **A room, not a socket.** `COEDIT.live()` / `COEDIT.save(fields)` are the entire public
+- **A room, not a socket.** `COEDIT.live()` / `COEDIT.save(fields)` are the entire public
   surface (`render.py:9084`, called from `render.py:8521`). Every refusal path returns
   `asleep = {live: () => false, save: () => {}}` (`render.py:8654`), so a page with no Yjs
   and no WebSocket takes the pre-room path with no branching anywhere else.
-* **One Save is one commit**, authored by whoever typed the most, everyone else as
+- **One Save is one commit**, authored by whoever typed the most, everyone else as
   `Co-authored-by:` (`coedit.py:280` `Room.credits`, `:168` `_count`, `web.py:2286`
   `_commit_room`). Characters are credited to the socket they arrived on, never to a client
   id off the payload. It depends on the browser sending fine-grained per-keystroke deltas.
-* **`typed()` / `units()` / `reflect()`** (`render.py:8719`, `:8706`, `:8756`). Three index
+- **`typed()` / `units()` / `reflect()`** (`render.py:8719`, `:8706`, `:8756`). Three index
   spaces exist — code points, UTF-16 code units, UTF-8 bytes — and mixing them raises
   nothing; `units()` is the one conversion at the one boundary, `coedit.byte_offset`
   (`coedit.py:78`) is its server twin, and `test_the_browser_splices_on_a_whole_character`
   holds every index handed to the document to coming from `units(`.
-* **`welcomed()`'s three-way decision and the `bound` gate** (`render.py:8922`, `:8786`).
+- **`welcomed()`'s three-way decision and the `bound` gate** (`render.py:8922`, `:8786`).
   `mine = BODY.value !== ORIGINAL_BODY`, `theirs = text.toString() !== ORIGINAL_BODY`; both
   → refuse to guess. The welcome's `applyUpdate` fires `text.observe` **synchronously**, so
   the document does not own the editing surface until the one decision that can lose work
   has been made. No binding may attach on construction.
-* **The seat bands** (`render.py:8850` `drawSeats`, `:8831` `measure`, `:8817` `hueOf`,
+- **The seat bands** (`render.py:8850` `drawSeats`, `:8831` `measure`, `:8817` `hueOf`,
   `:8880` `sit`; CSS `:9211-9220`; `tests/test_seats.py`). A sibling layer over
   `.bodywrap`, positioned through the ghost mirror, one hue per login derived from the
   name, redrawn on input, scroll, keyup/click, resize and `openproj:editing`.
-* **The draft and its `base_commit`** (`render.py:8379` key, `:8581` write, `:8584-8606`
+- **The draft and its `base_commit`** (`render.py:8379` key, `:8581` write, `:8584-8606`
   restore). `openproj:draft:2:${id}` holds `{base, text}`; a restore moves `BASE.value`
   **back** to the draft's base and says the ground moved. A bare-text draft paired with
   today's base is how somebody's paragraph was reverted with no 409 and no report. Cancel
   drops the draft and deliberately does not move the base forward (`render.py:8477`).
-* **`ORIGINAL_BODY`** is `let` (`render.py:8404`) and the room reassigns it on a `saved`
+- **`ORIGINAL_BODY`** is `let` (`render.py:8404`) and the room reassigns it on a `saved`
   frame (`render.py:9017`), because a room can commit this body without this tab pressing
   anything. `dirty()` (`render.py:8421`) counts what a save would send.
-* **The conflict box** (`render.py:8284`, 409 branch `:8543`). Every refusal is written
+- **The conflict box** (`render.py:8284`, 409 branch `:8543`). Every refusal is written
   with `textContent` into an `aria-live` region under the box and never into the editing
   surface: text pasted into the editing surface is text somebody saves back.
-* **`replaceRange` and the undo stack** (`render.py:7364`). `execCommand('insertText')` is
+- **`replaceRange` and the undo stack** (`render.py:7364`). `execCommand('insertText')` is
   deprecated and is still the only API that edits a textarea as though a person had typed.
   Every new write path inherits this rule — a toolbar, an autosave, a tabs-to-spaces pass,
   a vim command.
-* **Image paste and drop** (`render.py:7513`, server `web.py:1999`): placeholder first,
+- **Image paste and drop** (`render.py:7513`, server `web.py:1999`): placeholder first,
   then POST raw bytes to `/api/asset`, then find the token and replace it through
   `replaceRange`. Bracketed by `openproj:writing` / `openproj:wrote`, which the shell
   counts in pairs — two writings against one wrote silences the banner for the life of the
   page.
-* **The preview is the server's markdown** through `/api/preview` (`render.py:8482`,
+- **The preview is the server's markdown** through `/api/preview` (`render.py:8482`,
   `web.py:1602`). A second markdown implementation in JavaScript would eventually disagree
   with the one whose output gets committed. It also governs PR-reference linking, asset src
   rewriting and HTML suppression, none of which a JS renderer reproduces. It is also **read-only
   by decision rather than by omission**: ticking a checkbox in the rendered pane would write to the
   source from a copy of it, which fights compare-and-swap. `- [ ]` lists render as real checkboxes,
   so a reader can see them and cannot press them.
-* **Degradation is the ordinary case** (`render.py:8636-8654`): `file://`, a proxy that
+- **Degradation is the ordinary case** (`render.py:8636-8654`): `file://`, a proxy that
   drops the upgrade, Cloud Run tearing every socket down at 300 s, and a reader the server
   would refuse. Every path ends at a value, a `base_commit`, Save and a 409. Nothing here
   is allowed to be a prerequisite for editing.
@@ -709,6 +699,7 @@ repository today. Both are done; the undo one is S4 and its record is in the pla
    shipped seat bands. Ace still brings its own gutter, so this is no longer a question that
    blocks anything — but it means ask 4 is delivered twice, and the textarea's copy lands
    first.
+
 ## What was built, 2026-08-20
 
 Ace 1.44.0 is vendored, behind `?editor=ace`, with the markdown mode dropped, and vim is in
@@ -792,12 +783,12 @@ page, rather than 594 KB arriving twice for everybody else.
 revisit condition that file records — "when somebody is actually slowed down by a textarea" —
 is still unmet by anybody. Measured on `tests/fixtures/corpus`, raw / gz -9:
 
-| page | before | after |
-|---|---|---|
-| reader, no parameter | 352,779 / 145,908 | 366,151 / 150,333 |
-| reader, either parameter | 352,779 / 145,908 | 366,151 / 150,333 |
-| writer, no parameter | 478,742 / 186,557 | **1,110,377 / 362,045** |
-| writer, `?editor=plain` | 478,742 / 186,557 | 492,311 / 191,035 |
+| page                     | before            | after                   |
+| ------------------------ | ----------------- | ----------------------- |
+| reader, no parameter     | 352,779 / 145,908 | 366,151 / 150,333       |
+| reader, either parameter | 352,779 / 145,908 | 366,151 / 150,333       |
+| writer, no parameter     | 478,742 / 186,557 | **1,110,377 / 362,045** |
+| writer, `?editor=plain`  | 478,742 / 186,557 | 492,311 / 191,035       |
 
 A reader still pays zero for the library and zero for the parameter, and that is the half the
 inversion could most easily have destroyed — the default arm is now the one that ships it, so
@@ -853,8 +844,7 @@ editor switch each declare only what is theirs.
 **The corner is 3px, and that is jcanton's number.** He looked at the toolbar, which had been
 drawing its own 3px against the app's 2px, and preferred it — so the global radius moved and
 `button.mark`'s private copy was deleted rather than kept. Moving one number found the four
-rules that had quietly kept a copy of it (`#clear-filters`, `td.clamp .more`, `.confirm
-button`, `#start`), each of which would otherwise have been the only control left on the old
+rules that had quietly kept a copy of it (`#clear-filters`, `td.clamp .more`, `.confirm button`, `#start`), each of which would otherwise have been the only control left on the old
 corner. That is the whole argument for a default, demonstrated by moving it once.
 
 The guard is `test_every_control_on_every_page_is_drawn_the_same` in `tests/test_cascade.py`,
@@ -1023,8 +1013,7 @@ this page. there is also an empty vertical space between the editor switching vi
 whether full page survives at all: *"keep the draggable widths so people can resize the width if
 they want."*
 
-So full page is gone whole. A session — `edit` or `both` — is the ordinary page: `position:
-relative`, the article at `--measure`, centred, the nav alive, nothing `inert` and nothing moved.
+So full page is gone whole. A session — `edit` or `both` — is the ordinary page: `position: relative`, the article at `--measure`, centred, the nav alive, nothing `inert` and nothing moved.
 What went with the surface, and why each deletion is safe:
 
 - **The `inert` sweep and the corner move.** Both were corrections for an opaque fixed article

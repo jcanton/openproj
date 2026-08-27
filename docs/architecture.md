@@ -94,8 +94,7 @@ and only a genuine overlap is refused.
 
 **No npm, no build step, no CDN**, and `tests/test_render.py` asserts no rendered page reaches the
 network. Two vendored libraries are fetched rather than carried, both megabytes: the drawing editor
-on the first press of the drawing button, and mermaid on a page that has a fence for it. `GET
-/static/<name>` answers for an allowlist of exactly those two; `static/VENDOR.md` has the
+on the first press of the drawing button, and mermaid on a page that has a fence for it. `GET /static/<name>` answers for an allowlist of exactly those two; `static/VENDOR.md` has the
 arithmetic. A diagram in a document is a diagram where there is a server and its source where there
 is not — `openproj render` writes files opened over `file://`, which have nothing to fetch from.
 

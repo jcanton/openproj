@@ -12,22 +12,22 @@ GitHub over HTTPS.
 
 Three things to know before reading a number here:
 
-* **Every measurement is from one laptop core.** An Apple M4-class core, and the server used
+- **Every measurement is from one laptop core.** An Apple M4-class core, and the server used
   0.91–1.03 of one core in every phase that saturated it — one uvicorn process, sync routes on
   anyio worker threads, one GIL. So these already *are* single-core numbers. The only correction
   from here to Cloud Run is how fast one core is, and that correction is the softest number in the
   document: **2–3×, estimated, never measured**. It is applied below to CPU work and deliberately
   not to network waits, which do not get slower on a throttled vCPU.
-* **No push in this audit went to real GitHub.** `--rtt-ms` charges a constant sleep. That models
+- **No push in this audit went to real GitHub.** `--rtt-ms` charges a constant sleep. That models
   latency and not TLS, packfile negotiation, token refresh, variance, or a rate limit. 600 ms is
   `store.py`'s own price for a GitHub round trip.
-* **The audited tree is one rename behind `main`.** This branch was cut at `5a09f6d`; `main` has
+- **The audited tree is one rename behind `main`.** This branch was cut at `5a09f6d`; `main` has
   since landed Entity→Record. The honest check that `src/` is untouched is
   `git diff $(git merge-base main HEAD)..HEAD -- src/`, which is empty. The delta from `main` is
   cosmetic (`entity_id`→`record_id`, docstring wording) and invalidates nothing here, but line
   numbers cited below are this tree's.
 
----
+______________________________________________________________________
 
 ## 0. Re-measured after the template cache landed (2026-08-23, later the same day)
 
@@ -40,15 +40,15 @@ much rather than to caveat them.
 `readload.py --readers 20 --seconds 25` re-run on the fixed tree, same corpus, same machine,
 p50 in the warm-1 phase:
 
-| route | as measured below | after the fix | |
-|---|---:|---:|---:|
-| `GET /` | 1142.7 ms | 350.9 ms | **3.3x** |
-| `GET /table` | 1196.1 ms | 386.6 ms | 3.1x |
-| `GET /graph` | 1204.9 ms | 387.7 ms | 3.1x |
-| `GET /issues` | 1112.4 ms | 334.6 ms | 3.3x |
-| `GET /timeline` | 1034.5 ms | 341.9 ms | 3.0x |
-| `PATCH` | 978.6 ms | 226.0 ms | 4.3x |
-| **`GET /detail/<id>`** | **4112.0 ms** | **3885.6 ms** | **1.06x** |
+| route                  | as measured below | after the fix |           |
+| ---------------------- | ----------------: | ------------: | --------: |
+| `GET /`                |         1142.7 ms |      350.9 ms |  **3.3x** |
+| `GET /table`           |         1196.1 ms |      386.6 ms |      3.1x |
+| `GET /graph`           |         1204.9 ms |      387.7 ms |      3.1x |
+| `GET /issues`          |         1112.4 ms |      334.6 ms |      3.3x |
+| `GET /timeline`        |         1034.5 ms |      341.9 ms |      3.0x |
+| `PATCH`                |          978.6 ms |      226.0 ms |      4.3x |
+| **`GET /detail/<id>`** |     **4112.0 ms** | **3885.6 ms** | **1.06x** |
 
 **Every route got about three times faster except the one this document is about.** That is the
 result, and it makes section 6's first item more urgent rather than less: `/detail` did not move
@@ -66,7 +66,7 @@ work — that share is now HIGHER, because everything it was competing with got 
 The write-path findings, the three data-loss mechanisms and every integrity result are unaffected:
 they are about the store, the merge and the socket, and none of them renders a page.
 
----
+______________________________________________________________________
 
 ## 1. The answer in five lines
 
@@ -95,7 +95,7 @@ server does, thrown away.
 (`render.py:19651-19653`) — one line, no concurrency semantics touched, and it is the difference
 between "twenty people is slow" and "twenty people is unusable on a plan twice this size".
 
----
+______________________________________________________________________
 
 ## 2. What works
 
@@ -134,8 +134,7 @@ half-merged frontmatter, and names the field and both values. Modify-versus-dele
 task filed under a pitch while the confirm panel was open blocks the delete instead of being
 removed unnamed.
 
-**`_absorb_remote` handles a colleague with a terminal, and handles it fast.** Four real `git
-push`es from a real clone into the record set a run was actively writing: **all four reconciled on
+**`_absorb_remote` handles a colleague with a terminal, and handles it fast.** Four real `git push`es from a real clone into the record set a run was actively writing: **all four reconciled on
 the first attempt**, visible in the instance's own ref after 0.11–3.33 s and on the page after
 1.04–4.40 s, all four markers in the final tree, nobody's concurrent write lost, and **no
 divergence at any of 600 samples**. The rewind-fetch-retry path re-runs the three-way merge against
@@ -184,7 +183,7 @@ and 13 health checks in the read run: every one answered 200 except a single dro
 timeouts. That is the correct thing for a Python web app to do under 20× overload and it is not
 what most of them do.
 
----
+______________________________________________________________________
 
 ## 3. Speed
 
@@ -192,32 +191,32 @@ what most of them do.
 
 561-record corpus, one laptop core, index memo hot.
 
-| action | cost | note |
-|---|---|---|
-| `GET /api/health` | **0.7 ms** | one `store.head()`; the only genuinely cheap route |
-| `GET /api/index.json` | 5.7 ms | |
-| `GET /issues` | 16.0 ms | the filtered view is the cheapest page in the app |
-| `GET /` | 27–31 ms | |
-| `GET /graph` | 29.7 ms | **2.69 MB of HTML** |
-| `GET /timeline` | 41.8 ms | |
-| `GET /table` | 40.9 ms | |
-| **`GET /detail/<id>`** | **236 ms** | 1.23 MB; **55 ms fixed + 0.32 ms × records in the plan** |
-| `PATCH /api/entity/<id>`, free push | 14.9 ms | 7 `head()`, 5 whole-tree walks, ~6 blob reads |
-| `PATCH /api/entity/<id>`, 600 ms push | 636.5 ms | the difference is one round trip, inside the mutex |
-| one keystroke → another person's screen | 2.5 ms p50 | loopback; add the network |
-| first index build in a fresh process | **581 ms** | |
-| every index build after that | **29 ms** | including after a commit — see below |
+| action                                  | cost       | note                                                     |
+| --------------------------------------- | ---------- | -------------------------------------------------------- |
+| `GET /api/health`                       | **0.7 ms** | one `store.head()`; the only genuinely cheap route       |
+| `GET /api/index.json`                   | 5.7 ms     |                                                          |
+| `GET /issues`                           | 16.0 ms    | the filtered view is the cheapest page in the app        |
+| `GET /`                                 | 27–31 ms   |                                                          |
+| `GET /graph`                            | 29.7 ms    | **2.69 MB of HTML**                                      |
+| `GET /timeline`                         | 41.8 ms    |                                                          |
+| `GET /table`                            | 40.9 ms    |                                                          |
+| **`GET /detail/<id>`**                  | **236 ms** | 1.23 MB; **55 ms fixed + 0.32 ms × records in the plan** |
+| `PATCH /api/entity/<id>`, free push     | 14.9 ms    | 7 `head()`, 5 whole-tree walks, ~6 blob reads            |
+| `PATCH /api/entity/<id>`, 600 ms push   | 636.5 ms   | the difference is one round trip, inside the mutex       |
+| one keystroke → another person's screen | 2.5 ms p50 | loopback; add the network                                |
+| first index build in a fresh process    | **581 ms** |                                                          |
+| every index build after that            | **29 ms**  | including after a commit — see below                     |
 
 Two of those rows correct claims made earlier in this audit and are worth stating flatly, because
 both are the kind of number that gets quoted forward:
 
-* **The 600 ms index build is a cost per *process*, not per commit.** `web._read_records`'s
+- **The 600 ms index build is a cost per *process*, not per commit.** `web._read_records`'s
   `_PARSED` cache is keyed on `(blob id, path)` and deliberately not on commit, so a rebuild after
   a write re-parses one file and reuses 560. Measured in one process: 581 ms, then 29.5, 29.4,
   29.2, and 30.7 / 38.7 / 30.6 after writes. Every "≈600 ms" in the scenario reports is the first
   build in a fresh server, which is the only build you see if you start a server and send one
   request. **A write costs the readers ~30 ms of index, not ~600.**
-* **`/detail`'s 236 ms is not the inlined Ace bundle.** `?editor=plain` (612 KB, half the page) is
+- **`/detail`'s 236 ms is not the inlined Ace bundle.** `?editor=plain` (612 KB, half the page) is
   238.1 ms and a read-only render with no editor at all (441 KB) is 238.8 ms. Removing Ace saves
   *zero* CPU. `/graph` is 2.69 MB in 29.7 ms; bytes are nearly free here. The 236 ms is
   `markdown_it`, 561 times, for one row that survives the next line.
@@ -227,18 +226,18 @@ both are the kind of number that gets quoted forward:
 The sweep is not uniform — different scenarios put people in different places, deliberately — so
 this table says what was actually run rather than pretending to a clean 1/5/10/20 ladder.
 
-| load | `GET /detail` p50 | `GET /` p50 | `PATCH` p50 | `/api/health` p50 | throughput |
-|---|---|---|---|---|---|
-| 1 client, warm | 251 ms | 31 ms | 15 ms | 0.7 ms | — |
-| 2 readers | — | 103 ms | — | — | — |
-| 12 writers, 1 record, rtt 0 | 1935–2113 ms | — | 284–304 ms | 199 ms | 2.69 saves/s |
-| 12 writers, 1 record, rtt 600 | ~400 ms | — | **6200 ms** | — | 1.31 saves/s |
-| 15 co-editors, 1 room | — | — | — | — | 2.5 ms propagation p50 |
-| 20 writers, 20 records, rtt 0 | 1635 ms | — | 696 ms | 739 ms | 2.14 saves/s |
-| 20 writers, 20 records, rtt 600 | 496 ms | — | **7247 ms** (p99 12819) | 18 ms | 1.29 saves/s |
-| 20 readers, warm | 3453 ms | 1262 ms | — | — | 6.89 pages/s |
-| 19 readers + 1 writer / 5 s | 4087 ms | 821 ms | 979 ms | 1232 ms | 6.38 pages/s |
-| 20 mixed (8 read, 6 write, 6 type) | 2076 ms | 387 ms | 81 ms | 11 ms (p99 2068) | 5.93 pages/s, 0.91 cores |
+| load                               | `GET /detail` p50 | `GET /` p50 | `PATCH` p50             | `/api/health` p50 | throughput               |
+| ---------------------------------- | ----------------- | ----------- | ----------------------- | ----------------- | ------------------------ |
+| 1 client, warm                     | 251 ms            | 31 ms       | 15 ms                   | 0.7 ms            | —                        |
+| 2 readers                          | —                 | 103 ms      | —                       | —                 | —                        |
+| 12 writers, 1 record, rtt 0        | 1935–2113 ms      | —           | 284–304 ms              | 199 ms            | 2.69 saves/s             |
+| 12 writers, 1 record, rtt 600      | ~400 ms           | —           | **6200 ms**             | —                 | 1.31 saves/s             |
+| 15 co-editors, 1 room              | —                 | —           | —                       | —                 | 2.5 ms propagation p50   |
+| 20 writers, 20 records, rtt 0      | 1635 ms           | —           | 696 ms                  | 739 ms            | 2.14 saves/s             |
+| 20 writers, 20 records, rtt 600    | 496 ms            | —           | **7247 ms** (p99 12819) | 18 ms             | 1.29 saves/s             |
+| 20 readers, warm                   | 3453 ms           | 1262 ms     | —                       | —                 | 6.89 pages/s             |
+| 19 readers + 1 writer / 5 s        | 4087 ms           | 821 ms      | 979 ms                  | 1232 ms           | 6.38 pages/s             |
+| 20 mixed (8 read, 6 write, 6 type) | 2076 ms           | 387 ms      | 81 ms                   | 11 ms (p99 2068)  | 5.93 pages/s, 0.91 cores |
 
 **5 and 10 users were not swept, and interpolating them is arithmetic rather than guesswork.** Two
 independent runs confirmed the service behaves as an ordinary single-server queue: Little's law
@@ -252,9 +251,9 @@ service time is what the two ceilings below set.
 and `Remote.push` happens inside it. Measured with one `Store`, eight threads, eight files, no
 HTTP and no rendering — the mutex alone:
 
-| push rtt | 0 | 25 ms | 50 ms | 150 ms | 300 ms | 600 ms |
-|---|---|---|---|---|---|---|
-| saves/s | 49.6 | 13.8 | 9.3 | 4.34 | 2.55 | **1.44** |
+| push rtt | 0    | 25 ms | 50 ms | 150 ms | 300 ms | 600 ms   |
+| -------- | ---- | ----- | ----- | ------ | ------ | -------- |
+| saves/s  | 49.6 | 13.8  | 9.3   | 4.34   | 2.55   | **1.44** |
 
 Above ~150 ms this is a straight line: **`ceiling(rtt) ≈ 1000 / (20 + rtt_ms)` saves per second
 for the entire service.** The 20 ms is the local git work and will be larger on a slower core, so
@@ -276,15 +275,15 @@ approached.
 
 Applying 2–3× to CPU work only, and leaving network waits alone:
 
-| | measured, 1 laptop core | estimated, 1 Cloud Run vCPU |
-|---|---|---|
-| `GET /detail`, warm, uncontended | 236 ms | 0.5–0.7 s |
-| first index build (cold start) | 581 ms | 1.2–1.8 s |
-| read throughput ceiling | 6.9 pages/s | 2.3–3.5 pages/s |
-| `GET /detail` p50 at 20 concurrent readers | 3.5 s | 7–10 s |
-| cold-cache herd, 20 simultaneous first requests | 10.4 s | 21–31 s |
-| save at 600 ms push, uncontended | 0.64 s | 0.7–0.75 s (mostly network) |
-| write ceiling at 600 ms push | 1.44 saves/s | ~1.4 saves/s (unchanged) |
+|                                                 | measured, 1 laptop core | estimated, 1 Cloud Run vCPU |
+| ----------------------------------------------- | ----------------------- | --------------------------- |
+| `GET /detail`, warm, uncontended                | 236 ms                  | 0.5–0.7 s                   |
+| first index build (cold start)                  | 581 ms                  | 1.2–1.8 s                   |
+| read throughput ceiling                         | 6.9 pages/s             | 2.3–3.5 pages/s             |
+| `GET /detail` p50 at 20 concurrent readers      | 3.5 s                   | 7–10 s                      |
+| cold-cache herd, 20 simultaneous first requests | 10.4 s                  | 21–31 s                     |
+| save at 600 ms push, uncontended                | 0.64 s                  | 0.7–0.75 s (mostly network) |
+| write ceiling at 600 ms push                    | 1.44 saves/s            | ~1.4 saves/s (unchanged)    |
 
 **The honest reading of that table is not "too slow". It is "fine at human speed, bad in bursts".**
 Twenty people each loading a page every 30 s is 0.67 requests/s, which this instance serves in
@@ -314,7 +313,7 @@ propagation p99 went 5.9 ms → 158.8 ms. At eight rooms saving every 3 s, `GET 
 route that costs 0.7 ms — reached **p95 5738 ms, max 15300 ms**. Its partial mitigation is another
 defect: a busy room never goes quiet, so it never commits, so it never freezes the loop either.
 
----
+______________________________________________________________________
 
 ## 4. Data loss risk
 
@@ -322,8 +321,7 @@ The definition used throughout: **a write was accepted, reported as success, and
 afterwards.** By that definition, and this is the most valuable sentence in the document:
 
 **Across roughly 1,800 accepted writes in six load scenarios, nothing that was accepted went
-missing.** Every marker present, `form_writes.lost 0` in every verification block, `local ==
-origin` with 0 unpushed commits at the end of every run, `git fsck` clean on plan and origin, 561
+missing.** Every marker present, `form_writes.lost 0` in every verification block, `local == origin` with 0 unpushed commits at the end of every run, `git fsck` clean on plan and origin, 561
 records still parsing with the same 41 blockers the generated corpus arrived with.
 
 Three mechanisms can nevertheless lose text. All three were found by probes built to find them, and
@@ -335,8 +333,7 @@ wrong, and the third announces itself and then loses the text anyway.
 The application is behaving correctly and the environment is what failed. `Store._finish` sets
 `WriteResult.pushed` correctly, and it is right to commit anyway — refusing would mean the tracker
 stops working whenever GitHub does. But `pushed` reaches **exactly one caller in the whole
-application**: the co-editing socket's `saved` frame. `web.py:1801`'s `_result` builds `{outcome, commit, conflict,
-head}` and drops it, so every HTTP write route is blind to it, and every `pushed` field in every
+application**: the co-editing socket's `saved` frame. `web.py:1801`'s `_result` builds `{outcome, commit, conflict, head}` and drops it, so every HTTP write route is blind to it, and every `pushed` field in every
 run's JSON reads `unknown` for `PATCH`.
 
 Measured: with the remote made unwritable for 8 s, **10 saves were answered 200 with a commit sha
@@ -415,12 +412,12 @@ plan).
 Then a four-cell probe built to find the real trigger, using an ordinary `PATCH` as the outside
 write — no remote, no fetch, no `_absorb_remote`:
 
-| room types at | outsider saves at | room's sentences reaching git | room's base after |
-|---|---|---|---|
-| **end** | **end** | **0 of 15** | still the room's *first* save |
-| end | middle | 15 of 15 | advanced |
-| middle | end | 15 of 15 | advanced |
-| middle | middle | 15 of 15 | advanced |
+| room types at | outsider saves at | room's sentences reaching git | room's base after             |
+| ------------- | ----------------- | ----------------------------- | ----------------------------- |
+| **end**       | **end**           | **0 of 15**                   | still the room's *first* save |
+| end           | middle            | 15 of 15                      | advanced                      |
+| middle        | end               | 15 of 15                      | advanced                      |
+| middle        | middle            | 15 of 15                      | advanced                      |
 
 Three things that changes. **The trigger is not "a colleague with a terminal"** — it is any write to
 that file that lands while a room holds text and touches the same line index, which includes a
@@ -440,7 +437,7 @@ not say "copy this out of the editor before you close the tab", which is the one
 
 ### Two more room-level exposures, measured in the reading phase and not since
 
-* **A busy room never commits.** `Room.apply` restarts `_quiet_since` on *every* update from
+- **A busy room never commits.** `Room.apply` restarts `_quiet_since` on *every* update from
   *anybody*, and `_watch` commits at `quiet_for() >= 20`. Four people typing put an update into the
   room every ~50 ms; fifteen, every ~15 ms. Measured: **zero commits in 90 s of continuous typing**,
   the first commit landing 19.9 s after the last keystroke, with **8,243 characters standing in one
@@ -451,8 +448,7 @@ not say "copy this out of the editor before you close the tab", which is the one
   flushes it, while Cloud Run's per-connection 300 s deadline is staggered, so a four-person room
   may never be empty and may never commit at all. `--timeout 300` is currently an accidental
   checkpoint that nobody designed.
-* **A room past `MAX_BODY_BYTES` can never commit again.** The snapshot raises `ValueError('this
-  document is too large to commit')`; `WRITE_FAILURES` turns it into a refusal that writes nothing
+- **A room past `MAX_BODY_BYTES` can never commit again.** The snapshot raises `ValueError('this document is too large to commit')`; `WRITE_FAILURES` turns it into a refusal that writes nothing
   and moves no base; nothing trims a room and no frame stops anybody typing, because the transport
   ceiling is deliberately 4× the policy ceiling. Measured: **277,800 bytes in the room against
   1,051 in git**, every Save and every quiet window answering the same refusal, and the
@@ -463,17 +459,17 @@ not say "copy this out of the editor before you close the tab", which is the one
 
 Kept separate on purpose, because these are the cases most likely to be mistaken for loss:
 
-* **105 of 142 same-field saves refused (73.9%)** when twelve people move the same `person_weeks`
+- **105 of 142 same-field saves refused (73.9%)** when twelve people move the same `person_weeks`
   in a minute. Lossless, correct, and the final value was one somebody sent — verified off the
   commit graph, not off wall-clock order. It is a stress figure, not a forecast.
-* **396 of 556 saves refused (71%)** when writers keep the base their page was drawn at — a tab left
+- **396 of 556 saves refused (71%)** when writers keep the base their page was drawn at — a tab left
   open. Nothing lost, no marker, the edit simply not written. The refusal rate is a property of the
   harness's aggression, not a forecast.
-* **`_lost_the_race`**: three external pushes inside one save, nothing committed, a 409 and the
+- **`_lost_the_race`**: three external pushes inside one save, nothing committed, a 409 and the
   sentence *"the plan moved three times while this was being saved. Nothing was written. Reload and
   try again."* Honest, distinguishable from both success and a merge conflict, and it costs ~7 s of
   lock time to reach at 600 ms.
-* **Delete-versus-edit**, in both directions, including the cascade shape.
+- **Delete-versus-edit**, in both directions, including the cascade shape.
 
 ### One case that is neither
 
@@ -491,7 +487,7 @@ It does not need a redeploy to recover: `deploy/boot.py` re-clones at container 
 `--min-instances 0` replaces the instance on its own. So it **self-heals by discarding the unpushed
 commits**, which is a worse sentence than "it needs a restart".
 
----
+______________________________________________________________________
 
 ## 5. Plan-repo conflicts
 
@@ -546,7 +542,7 @@ warns about did not occur, because both instances produced the same seed sha. Bu
 writers against one remote is also the fastest route to Loss 1 followed by `StoreDiverged`, and
 nobody has looked at `container/instance_count` to see whether it has already happened.
 
----
+______________________________________________________________________
 
 ## 6. What to change, ranked
 
@@ -764,45 +760,45 @@ permanent `StoreDiverged` by committing without the lock; whoever touches it sho
 
 These are cheap, and two of them decide recommendations above.
 
-* **Time 50 pushes to `github.com` from a container in `europe-west1`, and take p50/p95/p99.** The
+- **Time 50 pushes to `github.com` from a container in `europe-west1`, and take p50/p95/p99.** The
   entire write ceiling is `1000 / (20 + that)`. Everything in section 3's write column is 600 ms
   substituted from a comment. If the p99 is 3 s rather than 1 s, the burst ceiling is a third of
   what is quoted.
-* **Read `container/instance_count` over the last months.** It answers whether the two-instance
+- **Read `container/instance_count` over the last months.** It answers whether the two-instance
   hazard in section 5 is theoretical or has already happened, and it costs one console query.
-* **Print `os.cpu_count()` in the container.** It sets `asyncio.to_thread`'s default executor width
+- **Print `os.cpu_count()` in the container.** It sets `asyncio.to_thread`'s default executor width
   to `min(32, n+4)`, which is the second queue every HTTP write sits in. If it reports 1, that width
   is 5.
-* **Run `readload.py` against the deployed revision**, or in a container pinned to `--cpus=1`. It
+- **Run `readload.py` against the deployed revision**, or in a container pinned to `--cpus=1`. It
   replaces the 2–3× estimate — the softest number in this document, and a multiplier on everything
   in section 3 — with a measurement.
-* **Consider raising `--timeout`**, up to Cloud Run's 60-minute ceiling, *after* item 7 and not
+- **Consider raising `--timeout`**, up to Cloud Run's 60-minute ceiling, *after* item 7 and not
   before. It would cut reconnection from every five minutes to hourly, and the connection budget can
   afford it (200 slots, 2 per editor, 20 editors is 40). But `--timeout 300` is currently the only
   thing reliably flushing a busy room, so removing it without item 7 makes section 4's exposure
   larger, not smaller.
-* **`--min-instances 1` — rejected for now.** It would remove the cold start, the herd and the
+- **`--min-instances 1` — rejected for now.** It would remove the cold start, the herd and the
   "instance torn down holding an unpushed commit" window in one flag. The RUNBOOK already prices it:
   one instance for a month is 14× the free tier. Item 3 buys most of the same thing for nothing;
   revisit this only if cold starts remain a complaint after it.
-* **Compression — rejected for now, and this is not the usual answer.** There is no `GZipMiddleware`
+- **Compression — rejected for now, and this is not the usual answer.** There is no `GZipMiddleware`
   anywhere and the pages are large (`/graph` 2.69 MB, `/detail` 1.23 MB). But the audit's central
   finding is that **CPU is the binding constraint and bytes are nearly free**: 2.69 MB rendered in
   29.7 ms. Gzipping would spend the one resource the instance has none of. Measure whether Google's
   frontend already compresses on the client's behalf before writing any code.
-* **Item 1 changes the memory question too.** 320–330 MB RSS at 20 readers against `--memory 512Mi`
+- **Item 1 changes the memory question too.** 320–330 MB RSS at 20 readers against `--memory 512Mi`
   looks alarming and is probably overstated — macOS `ps rss`, 16 KB pages, 24 GB of headroom, no
   cgroup, nothing asking the allocator to give anything back, and no run came near OOM. Measure it
   under the actual limit before believing it, and measure it *after* item 1, which removes 560
   discarded HTML bodies per request.
 
----
+______________________________________________________________________
 
 ## 7. What was not tested
 
 The edges of this document, so nobody quotes it past them.
 
-* **Real GitHub.** Not one push in the whole audit went to a real remote. `--rtt-ms` charges a
+- **Real GitHub.** Not one push in the whole audit went to a real remote. `--rtt-ms` charges a
   constant sleep against a `file://` origin on the same SSD: no TLS, no packfile negotiation, no
   installation-token refresh, no variance, no secondary rate limits, and a remote that never refuses
   and never disappears. `store.py` records that the *first* version of the push-rejection
@@ -812,10 +808,10 @@ The edges of this document, so nobody quotes it past them.
   untested, and its "about 1.8 s" comment remains an estimate: with one instance and one serialised
   writer, nothing *inside* the service can move the remote, so zero of 481 saves in the contention
   runs ever reached it.
-* **A genuinely throttled single core.** Every CPU figure is from an M4-class laptop core. The 2–3×
+- **A genuinely throttled single core.** Every CPU figure is from an M4-class laptop core. The 2–3×
   factor is an estimate, applied identically in six reports because they all took it from the same
   place — their agreement is not corroboration.
-* **Real browsers.** No Chrome, anywhere. Every "what a person experiences" number stops at the
+- **Real browsers.** No Chrome, anywhere. Every "what a person experiences" number stops at the
   socket, so the parse of 594 KB of inlined Ace and the render of a 1.23 MB page are not in any of
   them — and item 1 removes server CPU without touching either. This also leaves the one open
   index-space defect unmeasured: `render.py:reflect()` scans a common prefix and suffix in UTF-16
@@ -825,34 +821,32 @@ The edges of this document, so nobody quotes it past them.
   — two sockets splicing either side of 👍 and either side of an em dash converged with the bytes
   exact — and the browser half needs `tests/js/drive.js` with `aceSurface`, plus a repeat in Chrome,
   because `setRangeText` with a lone surrogate is a browser fact and not a claim about this code.
-* **Signed-in multi-user flows.** Every run used `--auth dev` with simulated cookies. Nothing here
+- **Signed-in multi-user flows.** Every run used `--auth dev` with simulated cookies. Nothing here
   exercised the real OAuth path, session expiry mid-edit, or the 60-second writer re-verification
   against a session that has gone away. The commits are attributed correctly (zero `unsigned`
   authors), which is the property that matters for the plan; the sign-in *experience* under load is
   untested.
-* **Six of the seven write routes, under concurrency.** Every load probe issues exactly one verb:
+- **Six of the seven write routes, under concurrency.** Every load probe issues exactly one verb:
   `PATCH /api/entity/{id}`, plus the co-editing socket's own `store.write`. Never touched
   concurrently: `POST /api/promote` (the only multi-path compare-and-swap, where a conflict on *any*
   path writes nothing), `DELETE /api/entity/{id}` (three refusal paths, each with an incident in its
   docstring), `POST /api/asset` (which holds the writer lock for an upload plus a push, and whose
-  docstring records that it once caused a permanent `StoreDiverged`), `PUT /api/cycle/{n}`, `PUT
-  /api/icon`, `POST /api/entity`. **That is where the next probe should go**, not on more readers.
-* **Two instances, properly.** Run once in the reading phase on two servers against one `file://`
+  docstring records that it once caused a permanent `StoreDiverged`), `PUT /api/cycle/{n}`, `PUT /api/icon`, `POST /api/entity`. **That is where the next probe should go**, not on more readers.
+- **Two instances, properly.** Run once in the reading phase on two servers against one `file://`
   origin; never in the six scenarios, never against a real remote, and never with a room on each
   side under load. `tests/load/probe_twoinstances.py` is the instrument and it is written.
-* **`/api/events` under load.** An SSE stream per open tab, held for the life of the page. Twenty
+- **`/api/events` under load.** An SSE stream per open tab, held for the life of the page. Twenty
   people is 20 streams + 20 sockets + page requests against `--concurrency 200`, and the deploy
   script's own reasoning says the budget is connections. Only the earlier `mixed` scenario opened
   them at all.
-* **A broken file arriving under load.** `readable` / `Unreadable` is the invariant `AGENTS.md`
+- **A broken file arriving under load.** `readable` / `Unreadable` is the invariant `AGENTS.md`
   spends the most words on, and a person committing a file that will not parse while twenty people
   read is exactly the situation it was written for. No probe did it.
-* **A soak.** Every run was 25–120 s by instruction. So: no memory trend is claimed from three
+- **A soak.** Every run was 25–120 s by instruction. So: no memory trend is claimed from three
   60-second phases, `rooms.sweep()`'s 420-second linger was never observed expiring under load, and
   the history walk's growth with commit count (~0.5 ms per commit) was never exercised over a real
   history.
-* **The join path's stale-head window.** `coedit_socket` reads `head = store.head()` before `await
-  socket.accept()` and uses it after, in `room.settled(head, room.body())`. With `wsproto` — what
+- **The join path's stale-head window.** `coedit_socket` reads `head = store.head()` before `await socket.accept()` and uses it after, in `room.settled(head, room.body())`. With `wsproto` — what
   `pyproject.toml` depends on, and `websockets` is not installed — the accept performs no suspension
   at all, so the two lines are one uninterrupted stretch and the head cannot go stale. 2,000+ joins,
   including 66 fired microseconds ahead of a room save and 867 more with an artificial suspension
@@ -861,7 +855,7 @@ The edges of this document, so nobody quotes it past them.
   starts suspending and only join ordering stands between this code and a silent revert. Re-reading
   `store.head()` after the accept closes it for one line.
 
----
+______________________________________________________________________
 
 ## 8. How to re-run it
 

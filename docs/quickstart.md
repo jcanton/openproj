@@ -43,8 +43,7 @@ two people, twelve for one person who is half on something else. The cycle's ros
 fraction each person has.
 
 A pitch that has tasks takes its dates and its load from them, so the pitch's own appetite stays
-**the bet**, as the room agreed it. When the tasks add up to more, the page says so and `openproj
-check` warns — but nothing refuses the save, because cutting scope or re-betting is a decision for a
+**the bet**, as the room agreed it. When the tasks add up to more, the page says so and `openproj check` warns — but nothing refuses the save, because cutting scope or re-betting is a decision for a
 person.
 
 ## Nobody types a date
@@ -78,14 +77,14 @@ Write prose; nothing validates it. Two headings are read rather than judged:
 Six, in the order work moves through them. What each one additionally requires is checked when you
 save and by `openproj check`.
 
-| status | what it means | what it then requires |
-|---|---|---|
-| `thinking` | nobody has looked at this yet, and it is where a new record opens | nothing |
-| `shaping` | an idea nobody has bet on | nothing — it has no owner and no size by definition |
-| `ready` | shaped, and bettable | an owner, somebody assigned, a reviewer or `review_waived`, and a size |
-| `in_progress` | being built | `assigned_on`, and a reviewer who is not the owner |
-| `done` | finished | at least one PR |
-| `shelved` | parked | nothing — parked work is not broken work |
+| status        | what it means                                                     | what it then requires                                                  |
+| ------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `thinking`    | nobody has looked at this yet, and it is where a new record opens | nothing                                                                |
+| `shaping`     | an idea nobody has bet on                                         | nothing — it has no owner and no size by definition                    |
+| `ready`       | shaped, and bettable                                              | an owner, somebody assigned, a reviewer or `review_waived`, and a size |
+| `in_progress` | being built                                                       | `assigned_on`, and a reviewer who is not the owner                     |
+| `done`        | finished                                                          | at least one PR                                                        |
+| `shelved`     | parked                                                            | nothing — parked work is not broken work                               |
 
 An issue has four of them: no `shaping`, because a shaped issue is a pitch, and no `thinking`,
 because an issue is something somebody reported. A note has `thinking` and `dropped` and nothing
@@ -166,8 +165,7 @@ is never scheduled, and that is the kind of thing you cannot see by copying the 
 six things `new` does not ask you for are the six that somebody copying gets wrong: the id, the
 directory, the body template, the opening status, the date, and the schema version.
 
-`--set field=value` writes any other field, repeatably, with the value read as YAML — `--set
-person_weeks=1.5` is a number, `--set review_waived=true` is a boolean, and a field that holds a list
+`--set field=value` writes any other field, repeatably, with the value read as YAML — `--set person_weeks=1.5` is a number, `--set review_waived=true` is a boolean, and a field that holds a list
 takes one `--set` per entry. `--body-file` replaces the template and `-` reads the body from stdin.
 `--json` prints the id and the path, for a caller that is not a person. Without `--commit` it writes
 the file and prints the git commands; with it, the next command is `git push` and nothing else.

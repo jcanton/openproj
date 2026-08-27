@@ -14,14 +14,14 @@ There is one record type. `Record` (`model.py`) carries what every kind shares �
 six rungs are subclasses that add fields. They are not six different things: one model, one parser,
 one write path, one page.
 
-| kind | id | files | filed under | in the plan | fields it adds |
-|---|---|---|---|---|---|
-| `product` | `prod-_` | `products/` | — | yes | none |
-| `project` | `proj-…` | `projects/` | `product` | yes | none |
-| `pitch` | `pitch-…` | `pitches/` | `project` | yes | `person_weeks` |
-| `task` | `task-…` | `tasks/` | `pitch`, `project` | yes | `person_weeks` |
-| `issue` | `issue-…` | `issues/` | — | no | `reported_by`, `opened_on`, `pitched_into` |
-| `note` | `note-…` | `notes/` | — | no | `written_by`, `written_on`, `became` |
+| kind      | id        | files       | filed under        | in the plan | fields it adds                             |
+| --------- | --------- | ----------- | ------------------ | ----------- | ------------------------------------------ |
+| `product` | `prod-_`  | `products/` | —                  | yes         | none                                       |
+| `project` | `proj-…`  | `projects/` | `product`          | yes         | none                                       |
+| `pitch`   | `pitch-…` | `pitches/`  | `project`          | yes         | `person_weeks`                             |
+| `task`    | `task-…`  | `tasks/`    | `pitch`, `project` | yes         | `person_weeks`                             |
+| `issue`   | `issue-…` | `issues/`   | —                  | no          | `reported_by`, `opened_on`, `pitched_into` |
+| `note`    | `note-…`  | `notes/`    | —                  | no          | `written_by`, `written_on`, `became`       |
 
 That table is not prose about the code. It **is** `KINDS` in `model.py`, and everything else is
 derived from it: the directories the loader walks, the id pattern, the parent rules, the filter
@@ -33,14 +33,19 @@ Each kind is one thing and says so:
 - A **pitch** is the unit of the bet: what the betting table offers, and the only kind whose body the
   shaping hints read. Its `owner` is who shaped it and holds it — there is no `shaped_by` field;
   `assignees` build it, `reviewers` read the PR.
+
 - A **task** is a piece of a pitch, with its own size and its own people, taking its cycle from the
   pitch. A task with **no** parent is a chore nobody pitched: bettable in its own right.
+
 - A **project** groups pitches. No size, no capacity, never bet; its span is the rollup.
+
 - A **product** is a codebase and a container for projects. Work in one waits on work in another,
   which is why one plan holds all of them: separate plans cannot express a cross-product dependency.
   Container and nothing else — no status, no PRs, no appetite, never scheduled.
+
 - An **issue** is something existing that is broken, before anybody has decided to fix it. No
   `shaping` status, because a shaped issue is a pitch.
+
 - A **note** is the second inbox, and one sentence pays for having two:
 
   > an issue is "we found something existing that is broken", a note is "we are thinking of creating

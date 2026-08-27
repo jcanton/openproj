@@ -2,17 +2,17 @@
 
 ## How this maps to what the team already keeps
 
-| in HackMD | in openproj |
-|---|---|
-| A pitch note | a `pitch` record — frontmatter, and the shaping doc as the body |
-| `Shaped by: @a and @b` in the header | `owner` — who shaped it and holds it. One name where the header takes two: a deliberate trade, made to stop owner, shaped-by, assignees and reviewers being four lists of people on one record |
-| `Appetite (FTEs, weeks)` | `person_weeks` — the work one person would need; the people on it divide it |
-| The cycle sheet's `Available people` | `availability:` in `cycles/<n>.md`, a fraction of the build weeks |
-| The cycle sheet's task table | the betting table on `/cycle/<n>` |
-| The sheet's `## Goal`, and what was said while betting | the cycle record's body, editable on that page |
-| `Support` | `reviewers` — the role includes support, and it makes somebody accountable |
-| The Greenline table's `Depends on` | `depends_on`, with `blocks` derived from it |
-| The Greenline table's `Shape doc` link | there is no link: the shaping doc *is* the record |
+| in HackMD                                              | in openproj                                                                                                                                                                                    |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A pitch note                                           | a `pitch` record — frontmatter, and the shaping doc as the body                                                                                                                                |
+| `Shaped by: @a and @b` in the header                   | `owner` — who shaped it and holds it. One name where the header takes two: a deliberate trade, made to stop owner, shaped-by, assignees and reviewers being four lists of people on one record |
+| `Appetite (FTEs, weeks)`                               | `person_weeks` — the work one person would need; the people on it divide it                                                                                                                    |
+| The cycle sheet's `Available people`                   | `availability:` in `cycles/<n>.md`, a fraction of the build weeks                                                                                                                              |
+| The cycle sheet's task table                           | the betting table on `/cycle/<n>`                                                                                                                                                              |
+| The sheet's `## Goal`, and what was said while betting | the cycle record's body, editable on that page                                                                                                                                                 |
+| `Support`                                              | `reviewers` — the role includes support, and it makes somebody accountable                                                                                                                     |
+| The Greenline table's `Depends on`                     | `depends_on`, with `blocks` derived from it                                                                                                                                                    |
+| The Greenline table's `Shape doc` link                 | there is no link: the shaping doc *is* the record                                                                                                                                              |
 
 ## Where this departs from the book
 
