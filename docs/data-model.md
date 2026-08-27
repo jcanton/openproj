@@ -9,7 +9,7 @@ has the pages these structures are drawn on; this file is the structures.
 ## One type, six kinds
 
 There is one record type. `Record` (`model.py`) carries what every kind shares — `id`, `kind`,
-`title`, `parent`, `status`, `owner`, `assignees`, `reviewers`, `review_waived`, `assigned_on`,
+`title`, `parent`, `status`, `owner`, `assignees`, `reviewers`, `review_waived`, `start_date`,
 `priority`, `depends_on`, `cycle`, `tags`, `prs`, `body` — and `kind` says which rung it is on. The
 six rungs are subclasses that add fields. They are not six different things: one model, one parser,
 one write path, one page.

@@ -49,7 +49,7 @@ None of it happened.
 | The `whole_roast` project itself | **Invented.** No such milestone has been declared. |
 | Every `owner`, `assignees`, `reviewers` | **Invented.** The handles are invented too, and nobody agreed to any of this. |
 | Every `person_weeks` | **Invented.** Chosen to make the timeline interesting, not measured or estimated by anyone. |
-| Every `cycle` and `assigned_on` | **Invented.** The cycle *dates* in `config/cycles.yaml` are a plausible 2026 calendar, not anybody's. |
+| Every `cycle` and `start_date` | **Invented.** The cycle *dates* in `config/cycles.yaml` are a plausible 2026 calendar, not anybody's. |
 | Every `depends_on` edge | **Invented.** Deliberately sparse so the graph stays readable. |
 | Every entry in `prs` | **Invented.** These PR numbers are plausible-looking and should not be dereferenced. |
 | Every `id` | Fixed by hand so cross-references resolve. Not how ids are minted in practice. |

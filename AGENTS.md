@@ -2,9 +2,10 @@
 
 Git-backed appetite planning for the icon4py team. `README.md` has the shape of the thing: one
 markdown file per record, the shaping document *is* the record, every date derived from one typed
-`assigned_on` and one size, the tool and the plan kept in two repositories on purpose. Read it
-first. This file is the part it does not say — the invariants that fail loudly when you step on
-them, the rules that nine rounds of audit paid for, and how to find the bug that is already here.
+`start_date` and one size the tool never invents, the tool and the plan kept in two repositories on
+purpose. Read it first. This file is the part it does not say — the invariants that fail loudly when
+you step on them, the rules that nine rounds of audit paid for, and how to find the bug that is
+already here.
 
 **Keep this file specific.** A rule earns its place here by naming the failure it prevents, and
 there is a real one for nearly every rule below. Every generic sentence added makes the specific
@@ -63,7 +64,7 @@ load is worse than a record that is wrong, because it takes the other four hundr
 **A file that is not a record costs that file and nothing else.** Permissive parsing covers the
 values *inside* a record that loads; it said nothing about a file that will not load at all, and
 every plan file was parsed with nothing around the parse. Fifteen ways of writing one — no `---`, a
-flow sequence that never closes, `effort_weeks: three`, `assigned_on: next tuesday`, a frontmatter
+flow sequence that never closes, `effort_weeks: three`, `start_date: next tuesday`, a frontmatter
 written as a list, a cycle numbered `forty-one`, `holidays: [not-a-day]` — each answered 500 on ten
 of the eleven routes, for everybody, until somebody with a terminal fixed it, while `/healthz` went
 on answering. Every plan file now goes through `readable` (`model.py`), which returns what loaded and
@@ -155,7 +156,7 @@ against. `web.py` parses the patched text before writing and answers 422 naming 
 
 **An invariant written twice will be guarded once.** The date arithmetic existed in three places and
 one had the overflow guard: `Cycle.ends_on` and `_month_ticks` did not, so a build-weeks of 500000
-typed into a form, or an `assigned_on` of 9999-12-31, killed nine routes permanently. It is one
+typed into a form, or a `start_date` of 9999-12-31, killed nine routes permanently. It is one
 function now — `days_after` and `within_the_calendar` (`model.py`), which bound *before* rounding,
 because `round()` and `math.ceil()` both raise on infinity and `effort_weeks: .inf` is one
 hand-edit away. If a guard is the same three lines in more than one place, it is one helper. Two

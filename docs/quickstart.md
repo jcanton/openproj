@@ -52,10 +52,14 @@ cutting scope, re-betting, and putting another person on it are all decisions fo
 
 ## Nobody types a date
 
-There is exactly one date to type: `assigned_on`, the earliest day the work may start. Starts, ends,
-the critical path, when a person frees up, whether something runs past its cycle — all derived from
-the sizes, the dependencies and the roster. So when a date is wrong, do not go looking for the date:
-change a size, change what the thing depends on, or change an availability.
+There is exactly one date to type: `start_date`, the day the work began. On something that has not
+begun it is a day named in advance and has to still be ahead — a start date already in the past is
+refused before `in_progress` — while from `in_progress` on a past one is expected, because "I
+started this on Monday and it is now Wednesday" is the ordinary case and the only thing the field
+can mean once work is under way. Starts, ends, the critical path, when a person frees up, whether
+something runs past its cycle — all derived from the sizes, the dependencies and the roster. So when
+a date is wrong, do not go looking for the date: change a size, change what the thing depends on, or
+change an availability.
 
 Only `depends_on` is stored, and on the thing that is waiting; what a record blocks is derived by
 reversing it, so the two can never contradict each other. Any kind may depend on any kind — a task
