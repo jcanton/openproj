@@ -51,9 +51,10 @@ def main(where: Path) -> dict:
             )
 
     report: dict = {"remote": "file:// (see the module note)"}
-    with Server(one, remote=f"file://{origin}") as a, Server(
-        two, port=None, remote=f"file://{origin}"
-    ) as b:
+    with (
+        Server(one, remote=f"file://{origin}") as a,
+        Server(two, port=None, remote=f"file://{origin}") as b,
+    ):
         report["both_servers_up"] = True
         report["two_lock_files"] = [
             (clone / "openproj.lock").read_text().strip() for clone in (one, two)
@@ -83,9 +84,7 @@ def main(where: Path) -> dict:
         ann.save()
         time.sleep(3)
         report["ann_save"] = [f["t"] for f in ann.told if f["t"] in ("saved", "refused")][-1:]
-        report["ann_pushed"] = [
-            f.get("pushed") for f in ann.told if f["t"] == "saved"
-        ][-1:]
+        report["ann_pushed"] = [f.get("pushed") for f in ann.told if f["t"] == "saved"][-1:]
         report["origin_has_ann"] = "ANN-ON-INSTANCE-ONE" in stored_body(origin, PATH)
 
         # Bo saves. His instance's HEAD has not moved; his push must lose the race

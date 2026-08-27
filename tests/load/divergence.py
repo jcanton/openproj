@@ -66,7 +66,8 @@ def fresh(scratch: Path, name: str) -> tuple[Path, Path, str]:
     )
     subprocess.run(
         ["git", "clone", "--bare", "--quiet", str(local), str(remote)],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
     return local, remote, first
 
@@ -100,14 +101,18 @@ def scene_a(scratch: Path) -> None:
     store = Store(local, remote=f"file://{remote}")
     try:
         shutil.move(str(remote), str(gone))
-        written = store.write(PATH, record("task-000001", "saved while GitHub was down"),
-                              first, "ann", "ann: edit")
-        print(f"outcome={written.outcome!r}  commit={written.commit[:7]}  "
-              f"pushed={written.pushed}")
-        print("the PATCH route builds its answer from `_result` (web.py:1801), which "
-              "carries outcome, commit, conflict and head — and not `pushed`.")
-        print("so the browser is told: 200, outcome 'committed'. Identical to a save "
-              "that reached GitHub.")
+        written = store.write(
+            PATH, record("task-000001", "saved while GitHub was down"), first, "ann", "ann: edit"
+        )
+        print(f"outcome={written.outcome!r}  commit={written.commit[:7]}  pushed={written.pushed}")
+        print(
+            "the PATCH route builds its answer from `_result` (web.py:1801), which "
+            "carries outcome, commit, conflict and head — and not `pushed`."
+        )
+        print(
+            "so the browser is told: 200, outcome 'committed'. Identical to a save "
+            "that reached GitHub."
+        )
     finally:
         store.close()
         shutil.move(str(gone), str(remote))
@@ -120,10 +125,13 @@ def scene_b(scratch: Path) -> None:
     try:
         theirs = human_pushes(remote, scratch, "edited from a terminal")
         print(f"human pushed {theirs[:7]} to the remote; the app has not fetched")
-        written = store.write(PATH, record("task-000001", "saved from the app"),
-                              first, "ann", "ann: edit")
-        print(f"outcome={written.outcome!r}  commit={written.commit and written.commit[:7]}  "
-              f"pushed={written.pushed}")
+        written = store.write(
+            PATH, record("task-000001", "saved from the app"), first, "ann", "ann: edit"
+        )
+        print(
+            f"outcome={written.outcome!r}  commit={written.commit and written.commit[:7]}  "
+            f"pushed={written.pushed}"
+        )
         print("remote main   =", git(remote, "rev-parse", "main")[:7])
         print("local main    =", git(local, "rev-parse", "refs/heads/main")[:7])
         kept = "edited from a terminal" in (store.read(store.head(), OTHER) or "")
@@ -141,32 +149,45 @@ def scene_c(scratch: Path) -> None:
     store = Store(local, remote=f"file://{remote}")
     try:
         shutil.move(str(remote), str(gone))
-        stranded = store.write(PATH, record("task-000001", "while the remote was away"),
-                               first, "ann", "ann: edit")
-        print(f"app committed {stranded.commit[:7]} with pushed={stranded.pushed} "
-              "(200 to the browser)")
+        stranded = store.write(
+            PATH, record("task-000001", "while the remote was away"), first, "ann", "ann: edit"
+        )
+        print(
+            f"app committed {stranded.commit[:7]} with pushed={stranded.pushed} "
+            "(200 to the browser)"
+        )
         shutil.move(str(gone), str(remote))
         theirs = human_pushes(remote, scratch, "edited from a terminal")
         print(f"human pushed {theirs[:7]}; neither history contains the other")
         try:
-            written = store.write(PATH, record("task-000001", "the next save"),
-                                  stranded.commit, "bob", "bob: edit")
+            written = store.write(
+                PATH, record("task-000001", "the next save"), stranded.commit, "bob", "bob: edit"
+            )
             print(f"outcome={written.outcome!r} pushed={written.pushed}")
         except StoreDiverged as error:
             print(f"StoreDiverged: {error}")
-            print("`WRITE_FAILURES` (web.py:111) names StoreDiverged, but only "
-                  "`_commit_room` catches it. PATCH, POST, DELETE, PUT and "
-                  "POST /api/asset let it out of the handler: a 500 with a "
-                  "plain-text traceback.")
+            print(
+                "`WRITE_FAILURES` (web.py:111) names StoreDiverged, but only "
+                "`_commit_room` catches it. PATCH, POST, DELETE, PUT and "
+                "POST /api/asset let it out of the handler: a 500 with a "
+                "plain-text traceback."
+            )
         for attempt in range(2):
             try:
-                store.write(OTHER, record("task-000002", f"try {attempt}"),
-                            store.head(), "cara", "cara: a different file")
+                store.write(
+                    OTHER,
+                    record("task-000002", f"try {attempt}"),
+                    store.head(),
+                    "cara",
+                    "cara: a different file",
+                )
                 print(f"a write to a DIFFERENT file succeeded on try {attempt}")
             except StoreDiverged:
-                print(f"a write to a DIFFERENT file also raises StoreDiverged "
-                      f"(try {attempt}) — nothing reconciles, so this is the "
-                      "state of every write for the life of the process")
+                print(
+                    f"a write to a DIFFERENT file also raises StoreDiverged "
+                    f"(try {attempt}) — nothing reconciles, so this is the "
+                    "state of every write for the life of the process"
+                )
     finally:
         store.close()
 
@@ -192,15 +213,18 @@ def scene_d(scratch: Path) -> None:
 
     store = Outrun(local, remote=f"file://{remote}")
     try:
-        written = store.write(PATH, record("task-000001", "a save nobody can land"),
-                              first, "ann", "ann: edit")
+        written = store.write(
+            PATH, record("task-000001", "a save nobody can land"), first, "ann", "ann: edit"
+        )
         print(f"attempts made: {Outrun.pushes}")
         print(f"outcome={written.outcome!r} commit={written.commit} pushed={written.pushed}")
         print("conflict text the browser is given:")
         print("   " + (written.conflict or "").replace("\n", "\n   "))
-        print("`_result` (web.py:1801) turns outcome=='conflict' into HTTP 409, so this "
-              "is distinguishable from a save that landed — by the status and by the "
-              "sentence, which does not mention a merge.")
+        print(
+            "`_result` (web.py:1801) turns outcome=='conflict' into HTTP 409, so this "
+            "is distinguishable from a save that landed — by the status and by the "
+            "sentence, which does not mention a merge."
+        )
         still = store.read(store.head(), PATH)
         print(f"the save's text is in the tree: {'nobody can land' in still}")
     finally:

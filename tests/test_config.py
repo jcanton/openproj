@@ -82,10 +82,16 @@ def test_a_cycle_stores_its_two_meetings_and_derives_the_rest():
     holds a fortnight of building."""
     from openproj.model import Config, Cycle
 
-    resolved = Config().with_plans([
-        Cycle(cycle=37, starts_on=date(2026, 8, 17), reviews_on=date(2026, 9, 14)),
-        Cycle(cycle=38, starts_on=date(2026, 9, 28), reviews_on=date(2026, 10, 26)),
-    ]).plans
+    resolved = (
+        Config()
+        .with_plans(
+            [
+                Cycle(cycle=37, starts_on=date(2026, 8, 17), reviews_on=date(2026, 9, 14)),
+                Cycle(cycle=38, starts_on=date(2026, 9, 28), reviews_on=date(2026, 10, 26)),
+            ]
+        )
+        .plans
+    )
 
     # Build ends the working day BEFORE the review: you review what was finished
     # before you walked in.
@@ -100,9 +106,11 @@ def test_a_cycle_stores_its_two_meetings_and_derives_the_rest():
 def test_a_cycle_with_nothing_after_it_assumes_its_cool_down_and_says_so():
     from openproj.model import Config, Cycle
 
-    only = Config().with_plans(
-        [Cycle(cycle=37, starts_on=date(2026, 8, 17), reviews_on=date(2026, 9, 14))]
-    ).plans[37]
+    only = (
+        Config()
+        .with_plans([Cycle(cycle=37, starts_on=date(2026, 8, 17), reviews_on=date(2026, 9, 14))])
+        .plans[37]
+    )
 
     assert only.ends_on == date(2026, 9, 27), "a fortnight, for want of a next cycle"
     assert only.assumed_end
@@ -126,13 +134,22 @@ def test_the_build_is_measured_in_working_weeks_so_a_holiday_shortens_it():
     own number. A length in weeks could not know about the year-end closure."""
     from openproj.model import Config, Cycle
 
-    over_christmas = [Cycle(cycle=40, starts_on=date(2026, 12, 14),
-                            reviews_on=date(2027, 1, 11))]
+    over_christmas = [Cycle(cycle=40, starts_on=date(2026, 12, 14), reviews_on=date(2027, 1, 11))]
     plain = Config().with_plans(over_christmas).plans[40]
-    with_closure = Config(
-        holidays=[date(2026, 12, 24), date(2026, 12, 25), date(2026, 12, 28),
-                  date(2026, 12, 29), date(2026, 12, 30), date(2026, 12, 31)]
-    ).with_plans(over_christmas).plans[40]
+    with_closure = (
+        Config(
+            holidays=[
+                date(2026, 12, 24),
+                date(2026, 12, 25),
+                date(2026, 12, 28),
+                date(2026, 12, 29),
+                date(2026, 12, 30),
+                date(2026, 12, 31),
+            ]
+        )
+        .with_plans(over_christmas)
+        .plans[40]
+    )
 
     assert plain.build_weeks == 4.0
     assert with_closure.build_weeks == 2.8, "six working days of closure"
@@ -142,10 +159,20 @@ def test_capacity_is_availability_times_the_build_weeks():
     """Not the whole window: cool-down is not build time, so nobody is bet into it."""
     from openproj.model import Config, Cycle
 
-    cycle = Config().with_plans([
-        Cycle(cycle=37, starts_on=date(2026, 8, 17), reviews_on=date(2026, 9, 14),
-              availability={"ann": 0.5})
-    ]).plans[37]
+    cycle = (
+        Config()
+        .with_plans(
+            [
+                Cycle(
+                    cycle=37,
+                    starts_on=date(2026, 8, 17),
+                    reviews_on=date(2026, 9, 14),
+                    availability={"ann": 0.5},
+                )
+            ]
+        )
+        .plans[37]
+    )
 
     assert cycle.capacity("ann") == 2.0
     assert cycle.capacity("bo") == 4.0, "unlisted means nobody said otherwise"
@@ -206,9 +233,15 @@ def test_a_cycle_dated_at_the_end_of_the_calendar_resolves_rather_than_raising()
     """
     from openproj.model import Config, Cycle
 
-    resolved = Config().with_plans([
-        Cycle(cycle=38, starts_on=date(2026, 9, 1), reviews_on=date.max),
-    ]).plans[38]
+    resolved = (
+        Config()
+        .with_plans(
+            [
+                Cycle(cycle=38, starts_on=date(2026, 9, 1), reviews_on=date.max),
+            ]
+        )
+        .plans[38]
+    )
 
     assert resolved.ends_on == date.max
     assert resolved.builds_until < date.max
@@ -220,10 +253,16 @@ def test_a_review_before_its_own_betting_table_costs_that_cycle_and_no_others():
     negative length or a window that runs backwards."""
     from openproj.model import Config, Cycle
 
-    resolved = Config().with_plans([
-        Cycle(cycle=38, starts_on=date(2026, 9, 1), reviews_on=date(2026, 8, 1)),
-        Cycle(cycle=39, starts_on=date(2026, 10, 1), reviews_on=date(2026, 10, 29)),
-    ]).plans
+    resolved = (
+        Config()
+        .with_plans(
+            [
+                Cycle(cycle=38, starts_on=date(2026, 9, 1), reviews_on=date(2026, 8, 1)),
+                Cycle(cycle=39, starts_on=date(2026, 10, 1), reviews_on=date(2026, 10, 29)),
+            ]
+        )
+        .plans
+    )
 
     assert resolved[38].builds_until == date(2026, 9, 1)
     assert resolved[38].build_weeks == 0.2, "the betting table itself, and no more"
@@ -236,10 +275,16 @@ def test_the_cool_down_is_the_gap_to_the_next_betting_table_however_long_it_is()
     window. A length in weeks could not say so; two dates need no exception."""
     from openproj.model import Config, Cycle
 
-    resolved = Config().with_plans([
-        Cycle(cycle=35, starts_on=date(2026, 3, 30), reviews_on=date(2026, 4, 27)),
-        Cycle(cycle=36, starts_on=date(2026, 6, 22), reviews_on=date(2026, 7, 20)),
-    ]).plans
+    resolved = (
+        Config()
+        .with_plans(
+            [
+                Cycle(cycle=35, starts_on=date(2026, 3, 30), reviews_on=date(2026, 4, 27)),
+                Cycle(cycle=36, starts_on=date(2026, 6, 22), reviews_on=date(2026, 7, 20)),
+            ]
+        )
+        .plans
+    )
 
     assert resolved[35].ends_on == date(2026, 6, 21), "eight weeks of it, and no rule broken"
     assert resolved[35].build_weeks == 4.0, "the build is unchanged by the gap after it"
@@ -250,10 +295,12 @@ def test_a_cycle_window_runs_from_the_betting_table_to_the_next_one():
     measured against, so the resolved dates have to land in it."""
     from openproj.model import Config, Cycle
 
-    config = Config().with_plans([
-        Cycle(cycle=37, starts_on=date(2026, 8, 17), reviews_on=date(2026, 9, 14)),
-        Cycle(cycle=38, starts_on=date(2026, 9, 28), reviews_on=date(2026, 10, 26)),
-    ])
+    config = Config().with_plans(
+        [
+            Cycle(cycle=37, starts_on=date(2026, 8, 17), reviews_on=date(2026, 9, 14)),
+            Cycle(cycle=38, starts_on=date(2026, 9, 28), reviews_on=date(2026, 10, 26)),
+        ]
+    )
 
     assert config.cycles[37] == (date(2026, 8, 17), date(2026, 9, 27))
     assert config.cycles[38][0] == date(2026, 9, 28), "no day belongs to two cycles"

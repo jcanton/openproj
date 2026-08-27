@@ -80,7 +80,10 @@ def _parser() -> argparse.ArgumentParser:
     new.add_argument("repo", type=Path)
     new.add_argument("--title", required=True)
     new.add_argument(
-        "--tag", action="append", default=[], metavar="TAG",
+        "--tag",
+        action="append",
+        default=[],
+        metavar="TAG",
         help="repeatable; sugar for --set tags=[...]",
     )
     new.add_argument(
@@ -88,26 +91,35 @@ def _parser() -> argparse.ArgumentParser:
         help="default: the status this kind opens in, which is the one that requires nothing",
     )
     new.add_argument(
-        "--as", dest="author", metavar="LOGIN",
+        "--as",
+        dest="author",
+        metavar="LOGIN",
         help="who is filing this, for the kinds that record it (an issue's "
-             "reported_by, a note's written_by). Omitted by default: this "
-             "command knows a git identity and the plan is written in GitHub "
-             "logins, and guessing one from the other names the wrong person.",
+        "reported_by, a note's written_by). Omitted by default: this "
+        "command knows a git identity and the plan is written in GitHub "
+        "logins, and guessing one from the other names the wrong person.",
     )
     new.add_argument(
-        "--set", action="append", default=[], metavar="FIELD=VALUE", dest="assignments",
+        "--set",
+        action="append",
+        default=[],
+        metavar="FIELD=VALUE",
+        dest="assignments",
         help="repeatable. The value is read as YAML, so 1.5 is a number, "
-             "[a, b] is a list and true is a boolean; repeating a FIELD makes "
-             "its values a list.",
+        "[a, b] is a list and true is a boolean; repeating a FIELD makes "
+        "its values a list.",
     )
     new.add_argument(
-        "--body-file", type=Path, metavar="FILE",
+        "--body-file",
+        type=Path,
+        metavar="FILE",
         help="the shaping document to use instead of this kind's template; - is stdin",
     )
     new.add_argument(
-        "--commit", action="store_true",
+        "--commit",
+        action="store_true",
         help="commit the new file, authored by your git identity. The next "
-             "command is `git push` and nothing else.",
+        "command is `git push` and nothing else.",
     )
     new.add_argument("--json", action="store_true", help="print the id and path as JSON")
 
@@ -279,8 +291,10 @@ def _new(args) -> int:
 
     body = TEMPLATES.get(kind, "")
     if args.body_file is not None:
-        body = sys.stdin.read() if str(args.body_file) == "-" else args.body_file.read_text(
-            encoding="utf-8"
+        body = (
+            sys.stdin.read()
+            if str(args.body_file) == "-"
+            else args.body_file.read_text(encoding="utf-8")
         )
 
     # `taken` because this side can see the whole directory for the price of a
@@ -288,9 +302,7 @@ def _new(args) -> int:
     # what exists and a compare-and-swap underneath it either way.
     record_id = mint_id(kind, {path.stem for path in args.repo.glob(f"{DIRECTORY[kind]}/*.md")})
     opening = opening_fields(kind, fields, config, record_id=record_id, who=args.author)
-    content = patch_text(
-        "---\n---\n", in_model_order(kind, _widened_to_lists(kind, opening)), body
-    )
+    content = patch_text("---\n---\n", in_model_order(kind, _widened_to_lists(kind, opening)), body)
 
     try:
         candidate = parse_text(content, record_id)
@@ -321,8 +333,9 @@ def _new(args) -> int:
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(content, encoding="utf-8")
 
-    committed = _commit_one(args.repo, relative, f"{record_id}: {args.title}") if args.commit \
-        else None
+    committed = (
+        _commit_one(args.repo, relative, f"{record_id}: {args.title}") if args.commit else None
+    )
     if args.json:
         print(json.dumps({"id": record_id, "path": relative, "commit": committed}))
     elif committed:
@@ -412,8 +425,10 @@ def _check(repo: Path) -> int:
     """
     records, config, unreadable = load_repo(repo)
     for one in unreadable:
-        print(f"blocker: {one.path}: this file is not a record, so nothing in it is in the plan: "
-              f"{one.why}")
+        print(
+            f"blocker: {one.path}: this file is not a record, so nothing in it is in the plan: "
+            f"{one.why}"
+        )
     problems = sorted(
         validate_all(records, config), key=lambda p: (p.severity, p.record_id, p.field or "")
     )
@@ -754,9 +769,7 @@ def _schedule(repo: Path, as_json: bool, today: date | None) -> int:
                     "today": when.isoformat(),
                     "plan": sorted(index.plan),
                     "spans": {i: json.loads(s.model_dump_json()) for i, s in index.spans.items()},
-                    "explanations": {
-                        i: e.text for i, e in sorted(index.explanations.items())
-                    },
+                    "explanations": {i: e.text for i, e in sorted(index.explanations.items())},
                 },
                 indent=1,
             )

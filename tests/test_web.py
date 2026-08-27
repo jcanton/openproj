@@ -275,7 +275,12 @@ def save_many(client: httpx.Client, ids: list[str], fields: dict, *, base=None):
 
 
 def rekind(
-    client: httpx.Client, record_id: str, kind: str, *, base=None, drops=None,
+    client: httpx.Client,
+    record_id: str,
+    kind: str,
+    *,
+    base=None,
+    drops=None,
     confirming=False,
 ):
     """Change a record's kind, which makes a new record and retires the old one.
@@ -293,9 +298,7 @@ def rekind(
         body["drops"] = drops
     answer = client.post("/api/rekind", json=body)
     if confirming and answer.status_code == 409 and "drops" in answer.json():
-        return client.post(
-            "/api/rekind", json={**body, "drops": answer.json()["drops"]}
-        )
+        return client.post("/api/rekind", json={**body, "drops": answer.json()["drops"]})
     return answer
 
 
@@ -307,10 +310,16 @@ def a_lone_project(client: httpx.Client) -> str:
     a rung stops reading. This one is a codebase somebody wrote down as a project
     and then decided was a container.
     """
-    made = create(client, {
-        "kind": "project", "title": "Spare codebase", "status": "shaping",
-        "owner": "ann", "priority": "high",
-    })
+    made = create(
+        client,
+        {
+            "kind": "project",
+            "title": "Spare codebase",
+            "status": "shaping",
+            "owner": "ann",
+            "priority": "high",
+        },
+    )
     assert made.status_code == 201, made.text
     return made.json()["id"]
 
@@ -322,12 +331,19 @@ def a_leaf_pitch(client: httpx.Client) -> str:
     under a task — so it is the case the route refuses, not the case it exists
     for. This is jcanton's example: a pitch that turns out to be one task.
     """
-    made = create(client, {
-        "kind": "pitch", "title": "Chaff optics", "parent": PROJECT,
-        # `shaping` and not `ready`: a ready record needs somebody on it, and
-        # what is under test is the kind and not the status gate.
-        "status": "shaping", "owner": "ann", "person_weeks": 2,
-    })
+    made = create(
+        client,
+        {
+            "kind": "pitch",
+            "title": "Chaff optics",
+            "parent": PROJECT,
+            # `shaping` and not `ready`: a ready record needs somebody on it, and
+            # what is under test is the kind and not the status gate.
+            "status": "shaping",
+            "owner": "ann",
+            "person_weeks": 2,
+        },
+    )
     assert made.status_code == 201, made.text
     return made.json()["id"]
 
@@ -480,8 +496,18 @@ def test_a_record_that_does_not_exist_is_a_404_and_not_an_empty_page(client: Tes
 
 
 @pytest.mark.parametrize(
-    "route", ["/", f"/detail/{TASK}", "/detail", "/graph", "/timeline", "/people",
-              "/cycles", "/deck/37", "/new?kind=task"]
+    "route",
+    [
+        "/",
+        f"/detail/{TASK}",
+        "/detail",
+        "/graph",
+        "/timeline",
+        "/people",
+        "/cycles",
+        "/deck/37",
+        "/new?kind=task",
+    ],
 )
 def test_no_page_declares_one_name_twice(client: TestClient, route: str):
     """Several `<script>` blocks, one global scope between them.
@@ -503,9 +529,7 @@ def test_no_page_declares_one_name_twice(client: TestClient, route: str):
     # whose globals then count as ours and are reported as our collisions.
     from openproj.render import _static_dir, _yjs
 
-    vendored = {
-        path.read_text() for path in _static_dir().iterdir() if path.suffix == ".js"
-    }
+    vendored = {path.read_text() for path in _static_dir().iterdir() if path.suffix == ".js"}
     # Yjs too, and by the text the page actually carries rather than by the file:
     # it is the one vendored library that cannot be inlined verbatim, so its
     # block is upstream's bytes with two lines rewritten. Compared against
@@ -527,11 +551,10 @@ def test_no_page_declares_one_name_twice(client: TestClient, route: str):
     # The write-making pages. Not the landing: it offers no writes at all, and
     # `assert fetches` below exists precisely to keep a page with nothing to
     # announce from satisfying the count vacuously.
-    "route", ["/table", f"/detail/{TASK}", "/graph", "/cycles", "/cycle/1", "/new?kind=task"]
+    "route",
+    ["/table", f"/detail/{TASK}", "/graph", "/cycles", "/cycle/1", "/new?kind=task"],
 )
-def test_every_write_a_page_makes_is_announced_before_and_after_it(
-    client: TestClient, route: str
-):
+def test_every_write_a_page_makes_is_announced_before_and_after_it(client: TestClient, route: str):
     """Otherwise the server's own news comes back as somebody else's.
 
     Every commit is broadcast to every tab including the one that made it, and the
@@ -688,6 +711,7 @@ def test_the_health_check_is_reachable_at_a_path_that_is_ours(client: TestClient
 # `tests/test_remote.py` uses one. A suite that needs a network is a suite that
 # does not run.
 # --------------------------------------------------------------------------- #
+
 
 @pytest.fixture
 def with_a_remote(tmp_path: Path):
@@ -1298,9 +1322,7 @@ def test_a_field_name_cannot_write_its_own_commit_trailer(client: TestClient, re
     assert trailers_of(repo_path, cycle.json()["commit"]) == {}
 
 
-def test_a_commit_message_still_names_the_fields_a_save_moved(
-    client: TestClient, repo_path: Path
-):
+def test_a_commit_message_still_names_the_fields_a_save_moved(client: TestClient, repo_path: Path):
     """The allowlist has to leave the log readable, or it has bought safety with
     the thing the log is for. A name the schema declares is said; anything else
     is counted, because a save that wrote something this cannot name is still a
@@ -1499,9 +1521,7 @@ def test_saving_a_record_that_does_not_exist_is_a_404(client: TestClient, repo_p
 # --------------------------------------------------------------------------- #
 
 
-def test_a_partial_save_changes_only_the_lines_it_was_asked_to(
-    client: TestClient, repo_path: Path
-):
+def test_a_partial_save_changes_only_the_lines_it_was_asked_to(client: TestClient, repo_path: Path):
     """The round-trip promise, asserted line by line against what git stores.
 
     A save that reorders keys, drops a comment, restyles a list or reflows the
@@ -1606,9 +1626,7 @@ def test_a_creations_answer_says_the_commit_has_not_reached_the_remote(client: T
     assert promoted.json()["pushed"] is False
 
 
-def test_a_create_missing_its_status_gated_fields_is_refused(
-    client: TestClient, repo_path: Path
-):
+def test_a_create_missing_its_status_gated_fields_is_refused(client: TestClient, repo_path: Path):
     """Every blocker for the status being asked for, in one answer.
 
     Refusing on the first missing field would make creating one task a
@@ -1671,9 +1689,7 @@ def test_a_new_record_is_held_to_the_current_rules(client: TestClient, repo_path
     assert git_head(repo_path) == base
 
 
-def test_a_status_nobody_defined_is_refused_at_both_doors(
-    client: TestClient, repo_path: Path
-):
+def test_a_status_nobody_defined_is_refused_at_both_doors(client: TestClient, repo_path: Path):
     """POST refused it sideways, as a `problems` list out of `validate_all`;
     PATCH did not refuse it at all. `parse_text` deliberately takes any word so
     that a file which arrived in git with one still loads, and the PATCH route
@@ -1720,8 +1736,15 @@ def test_the_content_stays_public_when_nobody_is_signed_in(secure_client: TestCl
     # `/api/table.json` is the table page re-reading itself, so it is as public
     # as the page: a route that answered 401 would leave a signed-out reader with
     # a table that draws once and then never moves.
-    for route in ("/", "/detail", "/graph", "/timeline", "/api/index.json",
-                  "/api/table.json", "/healthz"):
+    for route in (
+        "/",
+        "/detail",
+        "/graph",
+        "/timeline",
+        "/api/index.json",
+        "/api/table.json",
+        "/healthz",
+    ):
         assert secure_client.get(route).status_code == 200, route
 
 
@@ -1733,9 +1756,7 @@ def test_an_anonymous_visitor_cannot_write(secure_client: TestClient, repo_path:
     assert git_head(repo_path) == base
 
 
-def test_a_signed_in_non_member_is_refused_at_the_write(
-    secure_client: TestClient, repo_path: Path
-):
+def test_a_signed_in_non_member_is_refused_at_the_write(secure_client: TestClient, repo_path: Path):
     """The one that matters. Mallory authenticated with GitHub perfectly well and
     holds a cookie this server signed itself — the only thing standing between her
     and the corpus is that the write endpoint asks about membership again, from
@@ -2082,9 +2103,7 @@ def serving(app):
     and the absence of buffering are properties of the server, not of the
     generator, and they are exactly what breaks SSE in practice.
     """
-    server = uvicorn.Server(
-        uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
-    )
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     deadline = time.monotonic() + 10
@@ -2110,7 +2129,8 @@ def live_server(repo_path: Path):
 
 
 def test_a_record_page_goes_back_to_the_view_a_real_browser_came_from(
-    live_server: str, tmp_path: Path,
+    live_server: str,
+    tmp_path: Path,
 ):
     """Two real page loads, which is the one thing a shim structurally cannot do.
 
@@ -2168,7 +2188,11 @@ def test_a_record_page_goes_back_to_the_view_a_real_browser_came_from(
     })()
     """
     answer, said = in_a_live_page(
-        chrome(), f"{live_server}/table", journey, tmp_path / "profile", seconds=40,
+        chrome(),
+        f"{live_server}/table",
+        journey,
+        tmp_path / "profile",
+        seconds=40,
     )
     assert answer == "/table | ← Table", (answer, said)
 
@@ -2265,8 +2289,9 @@ def test_a_quiet_days_landing_is_announced_in_its_own_kind_of_frame(tmp_path: Pa
         try:
             frames.append(seen.get(timeout=15))
         except queue.Empty:
-            pytest.fail("the quiet day's landing was never announced; only the "
-                        "plan-changed frame arrived")
+            pytest.fail(
+                "the quiet day's landing was never announced; only the plan-changed frame arrived"
+            )
         listener.join(timeout=15)
 
     by_kind = {("t" in frame): frame for frame in frames}
@@ -2308,9 +2333,7 @@ def test_the_banner_ignores_the_landed_frame_and_hands_it_to_the_page(client: Te
     assert answer["value"]["heard"] == landed
 
 
-def test_a_record_whose_filename_carries_a_slug_is_still_found(
-    client: TestClient, repo_path: Path
-):
+def test_a_record_whose_filename_carries_a_slug_is_still_found(client: TestClient, repo_path: Path):
     """Filenames are `<id>--<slug>.md` and the slug drifts as titles are edited, so
     the path has to be looked up rather than reconstructed. Guessing `<id>.md`
     passes against a corpus nobody has ever renamed and fails against every real
@@ -2396,8 +2419,12 @@ def test_the_server_reads_the_same_config_the_cli_does(repo_path: Path):
     store = Store(repo_path)
     served, unreadable = _config_at(store, store.head())
 
-    assert set(model.CONFIG_FILES) == {"defaults.yaml", "cycles.yaml",
-                                       "holidays.yaml", "people.yaml"}
+    assert set(model.CONFIG_FILES) == {
+        "defaults.yaml",
+        "cycles.yaml",
+        "holidays.yaml",
+        "people.yaml",
+    }
     assert served.known_people == ["ann", "bo", "cy"]
     assert unreadable == []
 
@@ -2411,9 +2438,16 @@ def test_a_cycle_is_created_and_then_updated_in_place(client: TestClient, repo_p
     base = git_head(repo_path)
     made = client.put(
         "/api/cycle/37",
-        json={"base_commit": base, "fields": {
-            "starts_on": "2026-08-17", "build_weeks": 4, "cooldown_weeks": 2,
-            "availability": {"ann": 0.5, "bo": 1.0}}, "body": "## Goal\n\nShip it.\n"},
+        json={
+            "base_commit": base,
+            "fields": {
+                "starts_on": "2026-08-17",
+                "build_weeks": 4,
+                "cooldown_weeks": 2,
+                "availability": {"ann": 0.5, "bo": 1.0},
+            },
+            "body": "## Goal\n\nShip it.\n",
+        },
     )
     assert made.status_code == 200
 
@@ -2424,8 +2458,11 @@ def test_a_cycle_is_created_and_then_updated_in_place(client: TestClient, repo_p
 
     smaller = client.put(
         "/api/cycle/37",
-        json={"base_commit": made.json()["commit"],
-              "fields": {"availability": {"ann": 0.5}}, "body": None},
+        json={
+            "base_commit": made.json()["commit"],
+            "fields": {"availability": {"ann": 0.5}},
+            "body": None,
+        },
     )
     assert smaller.status_code == 200
     assert "bo" not in file_at(repo_path, smaller.json()["commit"], "cycles/0037.md")
@@ -2439,9 +2476,11 @@ def test_a_cycle_the_server_could_not_read_back_is_never_committed(
     before = git_head(repo_path)
     refused = client.put(
         "/api/cycle/37",
-        json={"base_commit": before,
-              "fields": {"starts_on": "2026-08-17", "availability": {"ann": "half"}},
-              "body": None},
+        json={
+            "base_commit": before,
+            "fields": {"starts_on": "2026-08-17", "availability": {"ann": "half"}},
+            "body": None,
+        },
     )
 
     assert refused.status_code == 422
@@ -2542,9 +2581,7 @@ def test_a_record_the_server_could_not_read_back_is_never_committed(
         assert client.get(route).status_code == 200, route
 
 
-def test_a_field_the_record_can_hold_is_still_written(
-    client: TestClient, repo_path: Path
-):
+def test_a_field_the_record_can_hold_is_still_written(client: TestClient, repo_path: Path):
     """The other half: the check must refuse what cannot be read back and nothing
     else. A date, a list of tags and a title all still save."""
     saved = save(client, TASK, {"title": "A title", "assigned_on": "2026-09-01", "tags": ["gpu"]})
@@ -2562,8 +2599,11 @@ def test_a_date_the_record_can_hold_is_written_in_the_spelling_the_corpus_uses(
     how every cycle this API has ever written is stored."""
     made = client.put(
         "/api/cycle/63",
-        json={"base_commit": git_head(repo_path),
-              "fields": {"starts_on": "20260817", "build_weeks": 4}, "body": None},
+        json={
+            "base_commit": git_head(repo_path),
+            "fields": {"starts_on": "20260817", "build_weeks": 4},
+            "body": None,
+        },
     )
 
     assert made.status_code == 200, made.text
@@ -2576,9 +2616,11 @@ def test_a_cycle_record_reaches_the_pages_it_is_for(client: TestClient, repo_pat
     base = git_head(repo_path)
     client.put(
         "/api/cycle/41",
-        json={"base_commit": base,
-              "fields": {"starts_on": "2026-11-02", "build_weeks": 4, "cooldown_weeks": 2},
-              "body": None},
+        json={
+            "base_commit": base,
+            "fields": {"starts_on": "2026-11-02", "build_weeks": 4, "cooldown_weeks": 2},
+            "body": None,
+        },
     )
 
     # Asked through the running server rather than by opening a second Store:
@@ -2595,9 +2637,16 @@ def test_the_cycle_page_shows_load_against_capacity(client: TestClient, repo_pat
     save(client, TASK, {"cycle": 37, "assignees": ["ann"], "person_weeks": 3.0})
     client.put(
         "/api/cycle/37",
-        json={"base_commit": git_head(repo_path), "fields": {
-            "starts_on": "2026-08-17", "build_weeks": 4, "cooldown_weeks": 2,
-            "availability": {"ann": 0.25}}, "body": None},
+        json={
+            "base_commit": git_head(repo_path),
+            "fields": {
+                "starts_on": "2026-08-17",
+                "build_weeks": 4,
+                "cooldown_weeks": 2,
+                "availability": {"ann": 0.25},
+            },
+            "body": None,
+        },
     )
     page = client.get("/cycle/37").text
 
@@ -2615,17 +2664,23 @@ def test_a_carried_item_cannot_be_re_stamped_from_the_cycle_page(
     silently forgives the slip — at exactly the moment the slip is happening."""
     # On the pitch, because that is where a bet is made: the task under it is
     # part of that bet and takes the cycle from it.
-    save(client, PITCH, {"cycle": 36, "status": "in_progress",
-                         "assigned_on": "2026-07-01"})
+    save(client, PITCH, {"cycle": 36, "status": "in_progress", "assigned_on": "2026-07-01"})
     save(client, TASK, {"status": "in_progress", "assigned_on": "2026-07-01"})
     client.put(
         "/api/cycle/40",
-        json={"base_commit": git_head(repo_path),
-              "fields": {"starts_on": "2026-10-19", "build_weeks": 4}, "body": None},
+        json={
+            "base_commit": git_head(repo_path),
+            "fields": {"starts_on": "2026-10-19", "build_weeks": 4},
+            "body": None,
+        },
     )
     page = client.get("/cycle/40").text
-    rows = re.findall(r'<tr data-id="([^"]+)" class="([^"]*)">.*?<input type="checkbox"'
-                      r' class="bet"([^>]*)>', page, re.S)
+    rows = re.findall(
+        r'<tr data-id="([^"]+)" class="([^"]*)">.*?<input type="checkbox"'
+        r' class="bet"([^>]*)>',
+        page,
+        re.S,
+    )
     carried = [(i, attrs) for i, cls, attrs in rows if "carried" in cls]
 
     assert carried, "the fixture has in-progress work from an earlier cycle"
@@ -2673,10 +2728,11 @@ def test_only_the_named_are_in_a_cycle(client: TestClient, repo_path: Path):
     save(client, TASK, {"owner": "cy", "assignees": ["cy"], "person_weeks": 1.0})
     client.put(
         "/api/cycle/44",
-        json={"base_commit": git_head(repo_path),
-              "fields": {"starts_on": "2026-12-14", "build_weeks": 4,
-                         "availability": {"ann": 1.0}},
-              "body": None},
+        json={
+            "base_commit": git_head(repo_path),
+            "fields": {"starts_on": "2026-12-14", "build_weeks": 4, "availability": {"ann": 1.0}},
+            "body": None,
+        },
     )
     page = client.get("/cycle/44").text
     roster = re.findall(r'<tr data-login="([^"]+)"', page)
@@ -2686,15 +2742,16 @@ def test_only_the_named_are_in_a_cycle(client: TestClient, repo_path: Path):
     assert "cy" in strangers, "work counted here by somebody the cycle does not name"
 
 
-def test_the_bet_lists_what_to_pick_up_before_what_is_running(
-    client: TestClient, repo_path: Path
-):
+def test_the_bet_lists_what_to_pick_up_before_what_is_running(client: TestClient, repo_path: Path):
     """Ready first, in progress after, by id inside each. What is already running
     is context at a betting table; what is ready is the question."""
     client.put(
         "/api/cycle/45",
-        json={"base_commit": git_head(repo_path),
-              "fields": {"starts_on": "2027-01-11", "build_weeks": 4}, "body": None},
+        json={
+            "base_commit": git_head(repo_path),
+            "fields": {"starts_on": "2027-01-11", "build_weeks": 4},
+            "body": None,
+        },
     )
     page = client.get("/cycle/45").text
     rows = bet_rows(page)
@@ -2722,8 +2779,11 @@ def test_the_bet_table_names_a_status_in_the_colour_every_other_page_uses(
     ladder cannot get a colour in one place and not the other."""
     client.put(
         "/api/cycle/46",
-        json={"base_commit": git_head(repo_path),
-              "fields": {"starts_on": "2027-02-08", "build_weeks": 4}, "body": None},
+        json={
+            "base_commit": git_head(repo_path),
+            "fields": {"starts_on": "2027-02-08", "build_weeks": 4},
+            "body": None,
+        },
     )
     page = client.get("/cycle/46").text
     rows = bet_rows(page)
@@ -2745,9 +2805,11 @@ def test_every_cycle_the_plan_names_is_on_the_index(client: TestClient, repo_pat
     one worth finding, and it was the one the page left out."""
     client.put(
         "/api/cycle/47",
-        json={"base_commit": git_head(repo_path),
-              "fields": {"starts_on": "2027-03-08", "build_weeks": 4,
-                         "availability": {"ann": 1.0}}, "body": None},
+        json={
+            "base_commit": git_head(repo_path),
+            "fields": {"starts_on": "2027-03-08", "build_weeks": 4, "availability": {"ann": 1.0}},
+            "body": None,
+        },
     )
     save(client, PITCH, {"cycle": 48})
     save(client, TASK, {"owner": "bo", "assignees": ["bo"], "person_weeks": 2.0})
@@ -2758,7 +2820,7 @@ def test_every_cycle_the_plan_names_is_on_the_index(client: TestClient, repo_pat
     # 2.5: bo's two weeks plus the half-week sibling task under the same pitch.
     # A cycle with no record still says what it is holding, which is the whole
     # reason it is on this list.
-    assert re.search(r'>2\.5</b> weeks bet against\s+no roster', page), "48 holds work"
+    assert re.search(r">2\.5</b> weeks bet against\s+no roster", page), "48 holds work"
 
 
 def test_a_cycle_card_says_the_bet_against_the_capacity(client: TestClient, repo_path: Path):
@@ -2768,20 +2830,25 @@ def test_a_cycle_card_says_the_bet_against_the_capacity(client: TestClient, repo
     not name — a cycle must never look emptier than it is."""
     client.put(
         "/api/cycle/49",
-        json={"base_commit": git_head(repo_path),
-              "fields": {"starts_on": "2027-04-05", "build_weeks": 4,
-                         "availability": {"ann": 0.5}}, "body": None},
+        json={
+            "base_commit": git_head(repo_path),
+            "fields": {"starts_on": "2027-04-05", "build_weeks": 4, "availability": {"ann": 0.5}},
+            "body": None,
+        },
     )
     save(client, PITCH, {"cycle": 49})
     save(client, TASK, {"owner": "cy", "assignees": ["cy"], "person_weeks": 3.0})
-    card = re.search(r'<li class="card([^"]*)">\s*<h2><a href="/cycle/49".*?</li>',
-                     client.get("/cycles").text, re.S).group(0)
+    card = re.search(
+        r'<li class="card([^"]*)">\s*<h2><a href="/cycle/49".*?</li>',
+        client.get("/cycles").text,
+        re.S,
+    ).group(0)
 
     # 3.5, not 3.0: betting the pitch bets everything under it, so cy's three
     # weeks and bo's half-week sibling task both land in the cycle. That is what
     # "the pitch is the unit of the bet" means for a capacity sum.
-    assert "<b class=\"num\">3.5</b> of" in card, "cy is not on the roster and still counts"
-    assert "<b class=\"num\">2.0</b> weeks bet" in card, "ann at half of four weeks"
+    assert '<b class="num">3.5</b> of' in card, "cy is not on the roster and still counts"
+    assert '<b class="num">2.0</b> weeks bet' in card, "ann at half of four weeks"
     assert re.search(r'<span class="bar"><span style="width: 100%">', card)
     assert card.startswith('<li class="card over">'), "3.0 bet against 2.0 of capacity"
 
@@ -2794,8 +2861,9 @@ def test_the_create_form_is_not_another_cycle_in_the_list(client: TestClient):
     assert '<section id="create">' in page
     assert "<h2>Start a cycle</h2>" in page
     assert "#create { border-top: 1px solid var(--line);" in page
-    assert page.index('id="start"') > page.index('id="reviews"'), \
+    assert page.index('id="start"') > page.index('id="reviews"'), (
         "F15: the button follows the fields it commits"
+    )
 
 
 def test_the_proposal_ignores_a_cycle_that_only_a_record_mentions(
@@ -2812,18 +2880,25 @@ def test_the_proposal_ignores_a_cycle_that_only_a_record_mentions(
     """
     client.put(
         "/api/cycle/12",
-        json={"base_commit": git_head(repo_path),
-              "fields": {"starts_on": "2027-01-04", "build_weeks": 4,
-                         "cooldown_weeks": 2, "availability": {"ann": 1.0}},
-              "body": None},
+        json={
+            "base_commit": git_head(repo_path),
+            "fields": {
+                "starts_on": "2027-01-04",
+                "build_weeks": 4,
+                "cooldown_weeks": 2,
+                "availability": {"ann": 1.0},
+            },
+            "body": None,
+        },
     )
-    save(client, TASK, {"cycle": 40})      # bet into a cycle nobody has written down
+    save(client, TASK, {"cycle": 40})  # bet into a cycle nobody has written down
     page = client.get("/cycles").text
 
     assert '<input id="number" type="number" value="13"' in page, "after the last real one"
     # 2027-01-04 plus four build weeks and two of cool-down ends 2027-02-14.
-    assert '<input id="starts" type="date" value="2027-02-15"' in page, \
+    assert '<input id="starts" type="date" value="2027-02-15"' in page, (
         "the day the last recorded cycle ends, not today"
+    )
 
     assert '<a href="/cycle/40">Cycle 40</a>' in page, "the listing still names it"
 
@@ -2833,8 +2908,12 @@ def test_starting_a_cycle_asks_before_it_writes(client: TestClient):
     that reads it, off one click beside four inputs somebody was just typing in."""
     page = client.get("/cycles").text
     reveal = re.search(r"START\.onclick = \(\) => \{.*?\n\};", page, re.S).group(0)
-    commit = re.search(r"document\.getElementById\('yes'\)\.onclick = async \(\) => \{"
-                       r".*?\n\};", page, re.S).group(0)
+    commit = re.search(
+        r"document\.getElementById\('yes'\)\.onclick = async \(\) => \{"
+        r".*?\n\};",
+        page,
+        re.S,
+    ).group(0)
 
     assert "fetch(" not in reveal, "the first click asks, it does not write"
     assert "CONFIRM.hidden = false;" in reveal
@@ -2850,9 +2929,15 @@ def test_the_glyph_that_takes_somebody_out_of_a_cycle_says_so_and_asks(
     removing a person and their capacity with them."""
     client.put(
         "/api/cycle/51",
-        json={"base_commit": git_head(repo_path),
-              "fields": {"starts_on": "2027-07-05", "build_weeks": 4,
-                         "availability": {"ann": 1.0, "bo": 0.5}}, "body": None},
+        json={
+            "base_commit": git_head(repo_path),
+            "fields": {
+                "starts_on": "2027-07-05",
+                "build_weeks": 4,
+                "availability": {"ann": 1.0, "bo": 0.5},
+            },
+            "body": None,
+        },
     )
     page = client.get("/cycle/51").text
     rows = re.findall(r'<tr data-login="([^"]+)"', page)
@@ -2925,12 +3010,13 @@ def test_the_cycle_page_says_what_is_unsaved_and_that_a_save_landed(client: Test
     # guard for a store that throws is written there and nowhere else now.
     assert "forThisTab.set(RECEIPT" in click
     assert "forThisTab.get(RECEIPT)" in page
-    assert re.search(r"receipt = `\$\{quiet \? 'Autosaved' : 'Saved'\}", page), \
+    assert re.search(r"receipt = `\$\{quiet \? 'Autosaved' : 'Saved'\}", page), (
         "the two-minute autosave confirms in the same place as the button"
+    )
 
 
 def test_the_unsaved_count_and_the_receipt_count_the_same_thing(client: TestClient):
-    """"2 unsaved changes" and then "Saved 1 change" about the same two edits.
+    """ "2 unsaved changes" and then "Saved 1 change" about the same two edits.
 
     `mark()` counted fields and `flush()` counted commits, and two fields on one
     row is one commit. F5 is about a save you can believe, and that number is the
@@ -2950,8 +3036,7 @@ def test_the_unsaved_count_and_the_receipt_count_the_same_thing(client: TestClie
     # table, and an unsaved goal has to be counted like an unsaved roster or the
     # bar says "nothing to save" over an edit.
     assert (
-        "let edits = (ROSTER_DIRTY ? 1 : 0) + (NOTES_DIRTY ? 1 : 0) + (GOAL_DIRTY ? 1 : 0);"
-        in mark
+        "let edits = (ROSTER_DIRTY ? 1 : 0) + (NOTES_DIRTY ? 1 : 0) + (GOAL_DIRTY ? 1 : 0);" in mark
     )
     assert (
         "const edits = (ROSTER_DIRTY ? 1 : 0) + (NOTES_DIRTY ? 1 : 0) + (GOAL_DIRTY ? 1 : 0);"
@@ -3249,9 +3334,7 @@ def test_the_preview_renders_with_the_page_s_own_markdown(client: TestClient):
     """
     body = "# Bubble\n\n| field | weeks |\n|---|---|\n| appetite | 6 |\n"
 
-    previewed = client.post(
-        "/api/preview", json={"body": body, "title": "Bubble"}
-    ).json()["html"]
+    previewed = client.post("/api/preview", json={"body": body, "title": "Bubble"}).json()["html"]
 
     def h1s(html: str) -> list[str]:
         return [e.text for e in elements(html) if e.tag == "h1"]
@@ -3378,18 +3461,18 @@ def test_a_committed_parent_that_names_nothing_leaves_every_page_readable(
     assert saved.status_code == 200, saved.text
 
     # In git, not in the answer: the point is that the value really did land.
-    written = pygit2.Repository(str(repo_path)).revparse_single(
-        f"{saved.json()['commit']}:{PATH}"
-    ).data.decode()
+    written = (
+        pygit2.Repository(str(repo_path))
+        .revparse_single(f"{saved.json()['commit']}:{PATH}")
+        .data.decode()
+    )
     assert "parent: proj-ffffff" in written
 
     for route in ("/", f"/detail/{TASK}", "/api/index.json", "/graph", "/timeline", "/people"):
         assert client.get(route).status_code == 200, route
 
 
-def test_a_committed_size_larger_than_the_calendar_leaves_every_page_readable(
-    client: TestClient
-):
+def test_a_committed_size_larger_than_the_calendar_leaves_every_page_readable(client: TestClient):
     """The same shape, through the scheduler instead of the index.
 
     `person_weeks: 1000000` parses, commits, and then `working_days_after` walked
@@ -3427,8 +3510,10 @@ def test_a_cycle_longer_than_the_calendar_is_refused_and_writes_nothing(
 
     refused = client.put(
         "/api/cycle/38",
-        json={"base_commit": base,
-              "fields": {"starts_on": "2026-09-01", "reviews_on": "9999-12-31"}},
+        json={
+            "base_commit": base,
+            "fields": {"starts_on": "2026-09-01", "reviews_on": "9999-12-31"},
+        },
     )
 
     assert refused.status_code == 422
@@ -3456,9 +3541,7 @@ def test_a_cycle_record_longer_than_the_calendar_leaves_every_page_readable(
         assert client.get(route).status_code == 200, route
 
 
-def test_a_done_date_at_the_end_of_the_calendar_leaves_a_timeline_you_can_open(
-    client: TestClient
-):
+def test_a_done_date_at_the_end_of_the_calendar_leaves_a_timeline_you_can_open(client: TestClient):
     """`31/12/9999` into the detail page's "Assigned on": committed, and
     `/timeline` answered 500 for good.
 
@@ -3579,8 +3662,9 @@ def test_a_request_that_is_not_an_object_is_refused_rather_than_raised(
     assert git_head(repo_path) == was
 
 
-@pytest.mark.parametrize("method,route", (("PATCH", f"/api/record/{TASK}"),
-                                          ("PUT", "/api/cycle/3")))
+@pytest.mark.parametrize(
+    "method,route", (("PATCH", f"/api/record/{TASK}"), ("PUT", "/api/cycle/3"))
+)
 @pytest.mark.parametrize(
     "base", ("__MISSING__", "null", '""', "7", '"' + "z" * 40 + '"', '"' + "0" * 40 + '"')
 )
@@ -3607,16 +3691,18 @@ def test_a_save_without_a_real_base_commit_is_refused_at_both_doors(
     assert git_head(repo_path) == was
 
 
-@pytest.mark.parametrize("method,route", (("PATCH", f"/api/record/{TASK}"),
-                                          ("PUT", "/api/cycle/3"),
-                                          ("POST", "/api/record")))
+@pytest.mark.parametrize(
+    "method,route",
+    (("PATCH", f"/api/record/{TASK}"), ("PUT", "/api/cycle/3"), ("POST", "/api/record")),
+)
 def test_fields_that_are_not_a_map_are_refused_rather_than_raised(
     client: TestClient, repo_path: Path, method: str, route: str
 ):
     was = git_head(repo_path)
 
     response = client.request(
-        method, route,
+        method,
+        route,
         content=json.dumps({"base_commit": was, "fields": ["priority", "high"]}),
         headers=JSON_HEADERS,
     )
@@ -3625,9 +3711,10 @@ def test_fields_that_are_not_a_map_are_refused_rather_than_raised(
     assert git_head(repo_path) == was
 
 
-@pytest.mark.parametrize("method,route", (("PATCH", f"/api/record/{TASK}"),
-                                          ("PUT", "/api/cycle/3"),
-                                          ("POST", "/api/record")))
+@pytest.mark.parametrize(
+    "method,route",
+    (("PATCH", f"/api/record/{TASK}"), ("PUT", "/api/cycle/3"), ("POST", "/api/record")),
+)
 def test_a_body_that_is_not_text_is_refused_rather_than_raised(
     client: TestClient, repo_path: Path, method: str, route: str
 ):
@@ -3636,7 +3723,8 @@ def test_a_body_that_is_not_text_is_refused_rather_than_raised(
     was = git_head(repo_path)
 
     response = client.request(
-        method, route,
+        method,
+        route,
         content=json.dumps({"base_commit": was, "fields": {}, "body": 5}),
         headers=JSON_HEADERS,
     )
@@ -3793,9 +3881,7 @@ def test_a_second_person_picking_leaves_the_first_persons_record_alone(
     assert record_of(repo_path, "zoe") == "---\nicon: owl\n---\n"
 
 
-def test_nothing_in_the_request_can_name_somebody_else(
-    client: TestClient, repo_path: Path
-):
+def test_nothing_in_the_request_can_name_somebody_else(client: TestClient, repo_path: Path):
     """A body that could name a login would make this an impersonation the route
     then has to defend against; with no such field there is nothing to defend.
 
@@ -3876,9 +3962,7 @@ def test_a_session_login_no_file_can_be_named_for_writes_nothing(
     assert paths_at(repo_path) == was
 
 
-def test_picking_the_icon_you_already_have_is_not_a_commit(
-    client: TestClient, repo_path: Path
-):
+def test_picking_the_icon_you_already_have_is_not_a_commit(client: TestClient, repo_path: Path):
     """`git log` on a plan is meant to be a record of decisions. A commit that
     changes no byte anybody can see is not one, and a picker is a control people
     press twice."""
@@ -4110,16 +4194,19 @@ def test_a_commit_message_names_only_fields_this_server_knows(client: TestClient
 
     message = subprocess.run(
         ["git", "--git-dir", str(repo_path), "log", "-1", "--format=%B"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
     assert "Co-authored-by" not in message
     assert "Mallory" not in message
     assert "priority" in message and "1 more" in message
 
     counted = subprocess.run(
-        ["git", "--git-dir", str(repo_path), "log",
-         "--format=%(trailers:key=Co-authored-by)"],
-        capture_output=True, text=True, check=True,
+        ["git", "--git-dir", str(repo_path), "log", "--format=%(trailers:key=Co-authored-by)"],
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
     assert "Mallory" not in counted, "git's own trailer parser must not see one"
 
@@ -4150,9 +4237,7 @@ def test_a_delete_takes_the_file_out_of_the_plan_and_leaves_it_in_the_history(
     assert DONE in commit_at(repo_path, git_head(repo_path)).message
 
 
-def test_a_deleted_record_is_gone_from_every_page_that_drew_it(
-    client: TestClient
-):
+def test_a_deleted_record_is_gone_from_every_page_that_drew_it(client: TestClient):
     """A 200 from the API and a row still on the table is the failure worth
     testing for: the index is rebuilt per request from the tree, so this is
     really asking whether the delete reached the tree rather than some cache."""
@@ -4164,9 +4249,7 @@ def test_a_deleted_record_is_gone_from_every_page_that_drew_it(
     assert client.get(f"/detail/{DONE}").status_code == 404
 
 
-def test_deleting_a_record_deletes_everything_filed_under_it(
-    client: TestClient, repo_path: Path
-):
+def test_deleting_a_record_deletes_everything_filed_under_it(client: TestClient, repo_path: Path):
     """Cascade, not refusal — jcanton, 2026-08-20.
 
     Orphaning is not a tidiness problem: `parent: pitch-b20000` on a record whose
@@ -4253,9 +4336,7 @@ def test_the_confirmation_is_binding(client: TestClient, repo_path: Path):
     assert remove(client, PITCH, also=[TASK, OTHER, DONE]).status_code == 200
 
 
-def test_shelved_work_is_taken_with_it_rather_than_left_behind(
-    client: TestClient, repo_path: Path
-):
+def test_shelved_work_is_taken_with_it_rather_than_left_behind(client: TestClient, repo_path: Path):
     """Parked, not exempt. A shelved task under a deleted pitch is orphaned
     exactly as much as a ready one, and leaving it would put a blocker in the plan
     for the sake of a distinction nothing else about a delete makes."""
@@ -4269,9 +4350,7 @@ def test_a_delete_of_something_that_is_not_there_is_a_404(client: TestClient):
     assert remove(client, "task-ffffff").status_code == 404
 
 
-def test_an_anonymous_visitor_cannot_delete(
-    secure_client: TestClient, repo_path: Path
-):
+def test_an_anonymous_visitor_cannot_delete(secure_client: TestClient, repo_path: Path):
     """The gate is `writer`, the same one the other writes use. A destructive
     route with its own idea of who may write is the one that ends up wrong."""
     before = git_head(repo_path)
@@ -4354,9 +4433,7 @@ def test_a_delete_tells_the_open_pages_which_record_went(live_server: str):
 # --- a record cannot be its own ancestor, or wait for itself -----------------
 
 
-def test_a_save_cannot_file_a_record_under_its_own_child(
-    client: TestClient, repo_path: Path
-):
+def test_a_save_cannot_file_a_record_under_its_own_child(client: TestClient, repo_path: Path):
     """openproj reported loops and did not refuse them — jcanton, 2026-08-19:
     "doesn't openproj forbid cycles? if not we should".
 
@@ -4578,9 +4655,7 @@ def test_two_files_with_the_same_bytes_are_two_records(client: TestClient, repo_
     # given rather than adding to what is there, so a second call with one file
     # replaces the plan with that file.
     same = SEED[PATH]
-    commit_directly(
-        repo_path, {**SEED, f"tasks/{TASK}--copy.md": same}, "a second claimant"
-    )
+    commit_directly(repo_path, {**SEED, f"tasks/{TASK}--copy.md": same}, "a second claimant")
 
     problems = client.get("/api/index.json").json()["problems"]
     claims = [p for p in problems if p["field"] == "id" and p["severity"] == "blocker"]
@@ -4937,8 +5012,7 @@ def wedged_writes(client: TestClient, note: str) -> dict[str, object]:
         # is the singular route's shape and would not exercise what is different
         # about it — and what is different is exactly what a forked plan has to
         # refuse whole rather than half.
-        "PATCH /api/records": save_many(client, [OTHER, PITCH], {"priority": "high"},
-                                        base=base),
+        "PATCH /api/records": save_many(client, [OTHER, PITCH], {"priority": "high"}, base=base),
         # The kind door, driven at the same note `POST /api/promote` uses. It has
         # to be a change this route would otherwise ALLOW, or it refuses on its
         # own terms before the store is ever asked and this census would be
@@ -5144,8 +5218,7 @@ def test_no_write_route_escapes_the_refusal():
     room = next(
         node
         for node in ast.walk(tree)
-        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef)
-        and node.name == "_commit_room"
+        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef) and node.name == "_commit_room"
     )
     refused = {
         id(call.args[0])
@@ -5270,9 +5343,10 @@ def test_the_fiftieth_stranded_commit_closes_every_write_route(tmp_path: Path):
     deep is a pusher that is not landing, and every commit accepted onto it is
     one more thing the first idle recycle discards.
     """
-    with draining_nowhere(
-        tmp_path, [(None, f"stranded save {n}") for n in range(1, 50)]
-    ) as (client, plan):
+    with draining_nowhere(tmp_path, [(None, f"stranded save {n}") for n in range(1, 50)]) as (
+        client,
+        plan,
+    ):
         # One short of the ceiling, so the gate must still be open: this note
         # is both that proof and the fiftieth commit.
         note = create(client, {"kind": "note", "title": "the fiftieth commit"})
@@ -5425,7 +5499,10 @@ def test_the_banner_reads_the_numbers_health_reports(client: TestClient):
     from test_injection import run_js
 
     red = {
-        "ok": False, "unpushed": 50, "oldest_unpushed_age": 660.0, "parked": 1,
+        "ok": False,
+        "unpushed": 50,
+        "oldest_unpushed_age": 660.0,
+        "parked": 1,
         "detail": "50 commits saved here...",
     }
     answer = run_js(
@@ -5503,9 +5580,7 @@ def test_the_banner_does_not_call_a_parked_save_safe_before_its_branch_is_pushed
 
     assert not [e for e in answer["errors"] if e.startswith("expression:")], answer["errors"]
     got = answer["value"]
-    assert got["stranded"]["hidden"] is False, (
-        "a parked save is the loud case and the banner hid"
-    )
+    assert got["stranded"]["hidden"] is False, "a parked save is the loud case and the banner hid"
     said = got["stranded"]["said"]
     assert "only on this server" in said, said
     assert "openproj/stranded" in said, said
@@ -5532,15 +5607,24 @@ def test_the_banner_appears_with_nobody_calling_showpile_by_hand(client: TestCli
     from test_injection import run_js
 
     loud = {
-        "ok": True, "unpushed": 12, "oldest_unpushed_age": 241.0, "parked": 0,
+        "ok": True,
+        "unpushed": 12,
+        "oldest_unpushed_age": 241.0,
+        "parked": 0,
         "detail": None,
     }
     drained = {
-        "ok": True, "unpushed": 0, "oldest_unpushed_age": None, "parked": 0,
+        "ok": True,
+        "unpushed": 0,
+        "oldest_unpushed_age": None,
+        "parked": 0,
         "detail": None,
     }
     loud_again = {
-        "ok": True, "unpushed": 7, "oldest_unpushed_age": 130.0, "parked": 0,
+        "ok": True,
+        "unpushed": 7,
+        "oldest_unpushed_age": 130.0,
+        "parked": 0,
         "detail": None,
     }
     frame = {"t": "landed", "landed": "a" * 40, "remapped": {}, "parked": []}
@@ -5569,8 +5653,7 @@ def test_the_banner_appears_with_nobody_calling_showpile_by_hand(client: TestCli
     assert not [e for e in answer["errors"] if e.startswith("expression:")], answer["errors"]
     got = answer["value"]
     assert got["boot"]["hidden"] is False, (
-        "a loud pile at load and the banner never appeared: the load-time "
-        "readPile() is gone"
+        "a loud pile at load and the banner never appeared: the load-time readPile() is gone"
     )
     assert "12 saves" in got["boot"]["said"], got["boot"]["said"]
     # The re-ask: a landed frame is the news changing, and the banner asked
@@ -5643,7 +5726,9 @@ def test_the_open_pull_requests_come_from_the_plan_and_are_cached(tmp_path: Path
         tmp_path, "repositories: [C2SM/icon4py, GridTools/gt4py]\n"
     )
     app = create_app(
-        repo, auth="dev", secret=SECRET,
+        repo,
+        auth="dev",
+        secret=SECRET,
         github_transport=_github_answering(
             {
                 "C2SM/icon4py": [{"number": 1403, "title": "Halo exchange drops a rank"}],
@@ -5697,9 +5782,7 @@ def test_a_github_that_will_not_answer_costs_the_completion_and_nothing_else(
         return httpx.Response(503, text="unavailable")
 
     repo = _plan_that_names_repositories(tmp_path, "repositories: [C2SM/icon4py]\n")
-    app = create_app(
-        repo, auth="dev", secret=SECRET, github_transport=httpx.MockTransport(broken)
-    )
+    app = create_app(repo, auth="dev", secret=SECRET, github_transport=httpx.MockTransport(broken))
     with TestClient(app) as client:
         client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
         answer = client.get("/api/prs")
@@ -5738,7 +5821,9 @@ def test_a_plan_that_names_no_repository_asks_nothing(tmp_path: Path):
     asked: list[str] = []
     repo = _plan_that_names_repositories(tmp_path, "")
     app = create_app(
-        repo, auth="dev", secret=SECRET,
+        repo,
+        auth="dev",
+        secret=SECRET,
         github_transport=_github_answering({"C2SM/icon4py": []}, asked),
     )
     with TestClient(app) as client:
@@ -5770,9 +5855,7 @@ def test_a_repository_that_is_not_an_owner_and_a_repo_is_refused_and_named(
         )
 
 
-def test_a_column_written_across_a_selection_is_one_commit(
-    client: httpx.Client, repo_path: Path
-):
+def test_a_column_written_across_a_selection_is_one_commit(client: httpx.Client, repo_path: Path):
     """jcanton, 2026-08-26, on editing the same cell in several rows at once, and
     then on what that should leave behind: "one commit for the whole edit".
 
@@ -5796,8 +5879,7 @@ def test_a_column_written_across_a_selection_is_one_commit(
     assert len(commit.parents) == 1, "a bulk write is one commit, not a merge"
     assert str(commit.parents[0].id) == before, "and it is written on the commit it was sent"
     touched = {
-        delta.new_file.path
-        for delta in commit.tree.diff_to_tree(commit.parents[0].tree).deltas
+        delta.new_file.path for delta in commit.tree.diff_to_tree(commit.parents[0].tree).deltas
     }
     assert len(touched) == len(ids), f"one commit should hold {len(ids)} files, held {touched}"
     for record_id in ids:
@@ -5913,7 +5995,10 @@ def test_a_bulk_write_needs_a_writer_like_every_other_door(secure_client: httpx.
 
 
 def _walked(
-    url: str, profile: Path, steps: list[tuple[str, str]], report: tuple[int, ...] = (),
+    url: str,
+    profile: Path,
+    steps: list[tuple[str, str]],
+    report: tuple[int, ...] = (),
 ):
     """Drive a real browser through a sequence of pages, and report the last answer.
 
@@ -5951,7 +6036,8 @@ def _walked(
 
 
 def test_a_deleted_record_sends_a_real_browser_back_where_it_came_from(
-    live_server: str, tmp_path: Path,
+    live_server: str,
+    tmp_path: Path,
 ):
     """jcanton, 2026-08-26: "the back path after edit/delete sometimes simply
     goes back to the main page, would be nice if it sent always to the previous
@@ -5975,17 +6061,24 @@ def test_a_deleted_record_sends_a_real_browser_back_where_it_came_from(
     cascade confirmation instead, which is a different button and a bigger claim.
     """
     answer, said = _walked(
-        f"{live_server}/table", tmp_path / "profile",
+        f"{live_server}/table",
+        tmp_path / "profile",
         [
             # Standing on the table is what leaves the stamp this is about.
             ("location.pathname", 1),
             (f"location.href = {json.dumps(live_server + '/detail/' + OTHER)}", 3),
             # The bar is drawn by the page's own script; the confirmation by the
             # handler that takes the first press.
-            ("""[...document.querySelectorAll('button')]
-                 .find(b => b.textContent.trim() === 'Delete').click()""", 1),
-            ("""[...document.querySelectorAll('button')]
-                 .find(b => b.textContent.trim() === 'Delete it').click()""", 4),
+            (
+                """[...document.querySelectorAll('button')]
+                 .find(b => b.textContent.trim() === 'Delete').click()""",
+                1,
+            ),
+            (
+                """[...document.querySelectorAll('button')]
+                 .find(b => b.textContent.trim() === 'Delete it').click()""",
+                4,
+            ),
             ("location.pathname + location.search", 0),
         ],
     )
@@ -6025,8 +6118,7 @@ def test_changing_a_kind_makes_one_new_record_and_retires_the_old_one(
     assert len(commit.parents) == 1, "a kind change is one commit, not a merge"
     assert str(commit.parents[0].id) == before
     touched = {
-        delta.new_file.path
-        for delta in commit.tree.diff_to_tree(commit.parents[0].tree).deltas
+        delta.new_file.path for delta in commit.tree.diff_to_tree(commit.parents[0].tree).deltas
     }
     assert touched == {f"pitches/{leaf}.md", f"tasks/{new}.md"}, touched
 
@@ -6062,16 +6154,15 @@ def test_a_kind_change_repoints_everything_that_named_the_record(
 
     commit = commit_at(repo_path, git_head(repo_path))
     touched = {
-        delta.new_file.path
-        for delta in commit.tree.diff_to_tree(commit.parents[0].tree).deltas
+        delta.new_file.path for delta in commit.tree.diff_to_tree(commit.parents[0].tree).deltas
     }
     assert PATH in touched, f"the record that waited on it was not repointed: {touched}"
 
     plan = index_of(client)["plan"]
     assert plan[TASK]["depends_on"] == [new]
-    assert not [
-        problem for problem in index_of(client)["problems"] if leaf in str(problem)
-    ], "the plan still has a problem naming the retired id"
+    assert not [problem for problem in index_of(client)["problems"] if leaf in str(problem)], (
+        "the plan still has a problem naming the retired id"
+    )
 
 
 def test_a_kind_change_that_would_strand_a_record_is_refused_by_name(
@@ -6174,9 +6265,12 @@ def test_a_kind_change_needs_a_writer(secure_client: TestClient):
     failure is a `StoreLocked` at fixture setup rather than anything about the
     route. `live_server` says the same thing in its own docstring.
     """
-    assert secure_client.post(
-        "/api/rekind", json={"base_commit": "0" * 40, "id": PITCH, "kind": "task"}
-    ).status_code == 401
+    assert (
+        secure_client.post(
+            "/api/rekind", json={"base_commit": "0" * 40, "id": PITCH, "kind": "task"}
+        ).status_code
+        == 401
+    )
 
 
 def test_a_kind_change_takes_two_closed_vocabularies_and_nothing_else(
@@ -6194,7 +6288,8 @@ def test_a_kind_change_takes_two_closed_vocabularies_and_nothing_else(
 
 
 def test_the_kind_control_actually_changes_the_kind_in_a_real_browser(
-    live_server: str, tmp_path: Path,
+    live_server: str,
+    tmp_path: Path,
 ):
     """The chip, the picker and the press, driven end to end — and **measured**,
     because the first version of this test asked the DOM and shipped a control
@@ -6220,8 +6315,12 @@ def test_the_kind_control_actually_changes_the_kind_in_a_real_browser(
         json={
             "base_commit": httpx.get(f"{live_server}/healthz").json()["head"],
             "fields": {
-                "kind": "pitch", "title": "Chaff optics", "parent": PROJECT,
-                "status": "shaping", "owner": "ann", "person_weeks": 2,
+                "kind": "pitch",
+                "title": "Chaff optics",
+                "parent": PROJECT,
+                "status": "shaping",
+                "owner": "ann",
+                "person_weeks": 2,
             },
             "body": None,
         },
@@ -6250,7 +6349,8 @@ def test_the_kind_control_actually_changes_the_kind_in_a_real_browser(
     })()"""
 
     answer, said = _walked(
-        f"{live_server}/detail/{leaf}", tmp_path / "kindprofile",
+        f"{live_server}/detail/{leaf}",
+        tmp_path / "kindprofile",
         [
             # Reading is reading: the chip must not answer a press here.
             ("document.querySelector('button.kindchip').click()", 1),
@@ -6260,18 +6360,24 @@ def test_the_kind_control_actually_changes_the_kind_in_a_real_browser(
             ("document.getElementById('view-both').click()", 2),
             ("document.querySelector('button.kindchip').click()", 1),
             (seen, 0),
-            ("""(() => {
+            (
+                """(() => {
                  const picker = document.querySelector('select.becomes');
                  picker.value = 'task';
                  picker.dispatchEvent(new Event('change'));
                  return picker.value;
-               })()""", 1),
+               })()""",
+                1,
+            ),
             (seen, 0),
             ("document.querySelector('.rekinding button.really').click()", 5),
             # The new id is the server's, so the claim is the KIND and that the
             # address moved at all — not a string this test could know in advance.
-            ("""location.pathname.startsWith('/detail/task-')
-                  + ' ' + document.querySelector('.eyebrow .chip').textContent.trim()""", 0),
+            (
+                """location.pathname.startsWith('/detail/task-')
+                  + ' ' + document.querySelector('.eyebrow .chip').textContent.trim()""",
+                0,
+            ),
         ],
         report=(1, 4, 6),
     )

@@ -40,8 +40,8 @@ def body_cases():
     #    assembly loop then keeps whichever span the set happened to yield
     #    first and skips the other.
     base = "a\nb\nc\nd\ne\n"
-    mine = "a\nb\nc\nINSERTED\nd\ne\n"      # insert before line 4  -> span (3,3)
-    theirs = "a\nb\nc\nDDD\ne\n"            # replace line 4        -> span (3,4)
+    mine = "a\nb\nc\nINSERTED\nd\ne\n"  # insert before line 4  -> span (3,3)
+    theirs = "a\nb\nc\nDDD\ne\n"  # replace line 4        -> span (3,4)
     merged, c = _merge_body(base, mine, theirs)
     show("insert at the head of a replacement", base, mine, theirs, merged, c)
     print("INSERTED survived:", "INSERTED" in (merged or ""))

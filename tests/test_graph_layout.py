@@ -140,8 +140,9 @@ return {
 @pytest.fixture
 def drawn(index: Index, tmp_path: Path) -> dict:
     page = render_graph(index, ROUTES, base_commit=HEAD)
-    return measured_in(chrome(), page, tmp_path / "layout.html", 1900, _GEOMETRY,
-                       height=820, patience=3500)
+    return measured_in(
+        chrome(), page, tmp_path / "layout.html", 1900, _GEOMETRY, height=820, patience=3500
+    )
 
 
 def test_the_corpus_is_worth_measuring(drawn: dict):
@@ -235,8 +236,9 @@ def test_a_card_stays_where_it_was_dragged(index: Index, tmp_path: Path):
     `dragfree` and nowhere else, so the starting view is the layout alone.
     """
     page = render_graph(index, ROUTES, base_commit=HEAD)
-    got = measured_in(chrome(), page, tmp_path / "drag.html", 1900, _DRAGGED,
-                      height=820, patience=3500)
+    got = measured_in(
+        chrome(), page, tmp_path / "drag.html", 1900, _DRAGGED, height=820, patience=3500
+    )
 
     assert not got.get("error"), got
     assert got["moved"] > 500, "the card was moved back"
@@ -278,8 +280,9 @@ def test_the_grouping_holds_on_a_plan_larger_than_the_real_one(big: Index, tmp_p
     the correctness.
     """
     page = render_graph(big, ROUTES, base_commit=HEAD)
-    got = measured_in(chrome(), page, tmp_path / "big.html", 1900, _GEOMETRY,
-                      height=820, patience=6000)
+    got = measured_in(
+        chrome(), page, tmp_path / "big.html", 1900, _GEOMETRY, height=820, patience=6000
+    )
 
     assert got["boxes"] >= 12, f"the corpus is not the shape this test needs: {got}"
     assert got["overlapping"] == [], got["overlapping"][:6]
@@ -373,9 +376,7 @@ return {
 """
 
 
-def test_the_two_key_rows_are_one_length_and_sit_on_the_drawing(
-    index: Index, tmp_path: Path
-):
+def test_the_two_key_rows_are_one_length_and_sit_on_the_drawing(index: Index, tmp_path: Path):
     """One gap between keys, and both rows anchored on the same edge.
 
     jcanton asked for the rows to be the same length, and then — having seen what
@@ -390,8 +391,9 @@ def test_the_two_key_rows_are_one_length_and_sit_on_the_drawing(
     here is the gap, because that is the thing that was wrong.
     """
     page = render_graph(index, ROUTES, base_commit=HEAD)
-    got = measured_in(chrome(), page, tmp_path / "keys.html", 1900, _KEYS,
-                      height=820, patience=3500)
+    got = measured_in(
+        chrome(), page, tmp_path / "keys.html", 1900, _KEYS, height=820, patience=3500
+    )
 
     assert got["rows"] == 2, "priority and status are two rows"
     # The two rows line up key for key. jcanton, three times about this legend,
@@ -423,8 +425,7 @@ def test_the_two_key_rows_are_one_length_and_sit_on_the_drawing(
     keys = len(shorter) - 1
     off = [
         abs(a - b)
-        for a, b in zip(list(reversed(shorter))[:keys], list(reversed(longer))[:keys],
-                        strict=True)
+        for a, b in zip(list(reversed(shorter))[:keys], list(reversed(longer))[:keys], strict=True)
     ]
     assert max(off) <= 1, f"the two rows are staggered by {max(off)}px: {got['columns']}"
     assert len(longer) - len(shorter) <= 1, (
@@ -504,8 +505,9 @@ def test_a_card_wears_both_its_marks_in_front_of_its_name(index: Index, tmp_path
         return "priority" not in unread, "status" not in unread
 
     page = render_graph(index, ROUTES, base_commit=HEAD)
-    got = measured_in(chrome(), page, tmp_path / "marks.html", 1900, _KEYS,
-                      height=820, patience=3500)
+    got = measured_in(
+        chrome(), page, tmp_path / "marks.html", 1900, _KEYS, height=820, patience=3500
+    )
 
     assert got["marked"], "no card was measured"
     for card in got["marked"]:
@@ -661,16 +663,15 @@ def test_an_edge_that_crosses_a_card_is_drawn_under_it(big: Index, tmp_path: Pat
     # The generated plan and not the seed corpus: the demo is small enough that no
     # line passes inside a card it is unrelated to, so it cannot answer this.
     page = render_graph(big, ROUTES, base_commit=HEAD)
-    got = measured_in(chrome(), page, tmp_path / "under.html", 1900, _UNDERNEATH,
-                      height=820, patience=4000)
+    got = measured_in(
+        chrome(), page, tmp_path / "under.html", 1900, _UNDERNEATH, height=820, patience=4000
+    )
 
     assert got.get("spots", 0) > 0, (
         "no edge on this corpus passes inside a card it is unrelated to, so this "
         f"measures nothing: {got}"
     )
-    assert got["inked"] == [], (
-        f"an edge is painted over a card instead of under it: {got['inked']}"
-    )
+    assert got["inked"] == [], f"an edge is painted over a card instead of under it: {got['inked']}"
 
 
 def test_two_boxes_that_wait_on_each_other_are_ranked_by_the_majority(tmp_path: Path):
@@ -700,8 +701,7 @@ def test_two_boxes_that_wait_on_each_other_are_ranked_by_the_majority(tmp_path: 
     projects = sorted(e for e, one in index.plan.items() if one.kind == "project")
     under = {
         project: sorted(
-            e for e, one in index.plan.items()
-            if one.kind == "pitch" and one.parent == project
+            e for e, one in index.plan.items() if one.kind == "pitch" and one.parent == project
         )
         for project in projects
     }
@@ -728,13 +728,13 @@ def test_two_boxes_that_wait_on_each_other_are_ranked_by_the_majority(tmp_path: 
     records, config, _ = load_repo(root)
     index = build_index(records, config, date(2026, 8, 17))
     page = render_graph(index, ROUTES, base_commit=HEAD)
-    got = measured_in(chrome(), page, tmp_path / "mutual.html", 1900, _GEOMETRY,
-                      height=820, patience=3500)
+    got = measured_in(
+        chrome(), page, tmp_path / "mutual.html", 1900, _GEOMETRY, height=820, patience=3500
+    )
 
     # One arrow may read backwards — the minority — and no more. Broken
     # arbitrarily it was two of three; ranked by weight it is one of three.
     assert got["backward"] <= 1, (
-        f"{got['backward']} arrows read backwards where at most the minority "
-        "direction should"
+        f"{got['backward']} arrows read backwards where at most the minority direction should"
     )
     assert got["overlapping"] == [], got["overlapping"][:4]

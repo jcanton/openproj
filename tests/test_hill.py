@@ -330,7 +330,10 @@ def test_the_ball_is_painted_where_the_geometry_says(index: Index, tmp_path: Pat
     for status, record_id in first.items():
         page = render_detail(index, ROUTES, only=record_id)
         found = measured_in(
-            browser, page, tmp_path / f"{status}.html", 1100,
+            browser,
+            page,
+            tmp_path / f"{status}.html",
+            1100,
             """
             const hill = document.querySelector('.hill');
             const ball = hill.querySelector('.hill-ball');
@@ -352,12 +355,12 @@ def test_the_ball_is_painted_where_the_geometry_says(index: Index, tmp_path: Pat
         # `box-sizing: border-box`, so the laid-out width IS the outer diameter;
         # plus one for half of a 2px non-scaling stroke.
         lift = found["size"] / 2 + 1
-        assert found["cx"] == pytest.approx(
-            found["frame"]["x"] + x * scale + nx * lift, abs=1.5
-        ), f"{status} is across wrong"
-        assert found["cy"] == pytest.approx(
-            found["frame"]["y"] + y * scale + ny * lift, abs=1.5
-        ), f"{status} is up wrong"
+        assert found["cx"] == pytest.approx(found["frame"]["x"] + x * scale + nx * lift, abs=1.5), (
+            f"{status} is across wrong"
+        )
+        assert found["cy"] == pytest.approx(found["frame"]["y"] + y * scale + ny * lift, abs=1.5), (
+            f"{status} is up wrong"
+        )
 
 
 def test_pressing_a_stop_moves_the_ball_and_the_form(index: Index, tmp_path: Path) -> None:
@@ -372,7 +375,10 @@ def test_pressing_a_stop_moves_the_ball_and_the_form(index: Index, tmp_path: Pat
     record_id = next(i for i, e in sorted(index.plan.items()) if e.status != "ready")
     page = render_detail(index, ROUTES, only=record_id, base_commit=HEAD, may_write=True)
     found = measured_in(
-        browser, page, tmp_path / "detail.html", 1100,
+        browser,
+        page,
+        tmp_path / "detail.html",
+        1100,
         """
         flipEditing();
         // A timer and not `requestAnimationFrame`: this runs under Chrome's
@@ -395,7 +401,8 @@ def test_pressing_a_stop_moves_the_ball_and_the_form(index: Index, tmp_path: Pat
           checked: hill.querySelector('input:checked').value,
         };
         """,
-        height=1400, patience=2500,
+        height=1400,
+        patience=2500,
     )
     assert found["value"] == "ready"
     assert found["checked"] == "ready"
@@ -419,7 +426,10 @@ def test_dragging_the_ball_lands_on_a_stop(index: Index, tmp_path: Path) -> None
     record_id = next(i for i, e in sorted(index.plan.items()) if e.status != "done")
     page = render_detail(index, ROUTES, only=record_id, base_commit=HEAD, may_write=True)
     found = measured_in(
-        browser, page, tmp_path / "detail.html", 1100,
+        browser,
+        page,
+        tmp_path / "detail.html",
+        1100,
         """
         flipEditing();
         // A timer and not `requestAnimationFrame`: this runs under Chrome's
@@ -446,7 +456,8 @@ def test_dragging_the_ball_lands_on_a_stop(index: Index, tmp_path: Path) -> None
           unsaved: document.getElementById('unsaved').textContent,
         };
         """,
-        height=1400, patience=2500,
+        height=1400,
+        patience=2500,
     )
     assert found["value"] == "done"
     assert found["unsaved"] == "1 unsaved change"
@@ -466,7 +477,10 @@ def test_a_cancelled_drag_puts_the_ball_back(index: Index, tmp_path: Path) -> No
     record_id = next(i for i, e in sorted(index.plan.items()) if e.status != "done")
     page = render_detail(index, ROUTES, only=record_id, base_commit=HEAD, may_write=True)
     found = measured_in(
-        browser, page, tmp_path / "detail.html", 1100,
+        browser,
+        page,
+        tmp_path / "detail.html",
+        1100,
         """
         flipEditing();
         // A timer and not `requestAnimationFrame`: this runs under Chrome's
@@ -489,7 +503,8 @@ def test_a_cancelled_drag_puts_the_ball_back(index: Index, tmp_path: Path) -> No
         return {before, after: ball.style.left, value: value.value,
                 unsaved: document.getElementById('unsaved').textContent};
         """,
-        height=1400, patience=2500,
+        height=1400,
+        patience=2500,
     )
     assert found["after"] == found["before"], "the ball stayed where the drag died"
     assert found["unsaved"] == "Nothing changed yet"
@@ -507,7 +522,10 @@ def test_the_hill_takes_a_keyboard(index: Index, tmp_path: Path) -> None:
     record_id = sorted(index.plan)[0]
     page = render_detail(index, ROUTES, only=record_id, base_commit=HEAD, may_write=True)
     found = measured_in(
-        browser, page, tmp_path / "detail.html", 1100,
+        browser,
+        page,
+        tmp_path / "detail.html",
+        1100,
         """
         flipEditing();
         // A timer and not `requestAnimationFrame`: this runs under Chrome's
@@ -528,7 +546,8 @@ def test_the_hill_takes_a_keyboard(index: Index, tmp_path: Path) -> None:
         return {focused, names: new Set(stops.map(s => s.name)).size,
                 value: value.value, count: stops.length};
         """,
-        height=1400, patience=2500,
+        height=1400,
+        patience=2500,
     )
     assert found["focused"], "a stop cannot be focused, so the hill has no keyboard"
     assert found["names"] == 1, "the stops are not one group, so arrows will not move between them"
@@ -601,7 +620,10 @@ def test_the_ball_follows_the_field_when_something_else_sets_it(
     record_id = next(i for i, e in sorted(index.plan.items()) if e.status != "ready")
     page = render_detail(index, ROUTES, only=record_id, base_commit=HEAD, may_write=True)
     found = measured_in(
-        browser, page, tmp_path / "sync.html", 1100,
+        browser,
+        page,
+        tmp_path / "sync.html",
+        1100,
         """
         flipEditing();
         await new Promise(settled => setTimeout(settled, 50));
@@ -618,7 +640,8 @@ def test_the_ball_follows_the_field_when_something_else_sets_it(
         return {moved, after: ball.style.left, klass: ball.className,
                 checked: hill.querySelector('input:checked').value};
         """,
-        height=1400, patience=2500,
+        height=1400,
+        patience=2500,
     )
     assert found["checked"] == "shaping", "the stop the field names is not the one checked"
     assert found["klass"] == "hill-ball hill-shaping"
@@ -644,7 +667,10 @@ def test_resetting_an_edit_rolls_the_ball_back(index: Index, tmp_path: Path) -> 
     was = index.plan[record_id].status
     page = render_detail(index, ROUTES, only=record_id, base_commit=HEAD, may_write=True)
     found = measured_in(
-        browser, page, tmp_path / "cancel.html", 1100,
+        browser,
+        page,
+        tmp_path / "cancel.html",
+        1100,
         """
         flipEditing();
         await new Promise(settled => setTimeout(settled, 50));
@@ -662,7 +688,8 @@ def test_resetting_an_edit_rolls_the_ball_back(index: Index, tmp_path: Path) -> 
                 checked: hill.querySelector('input:checked').value,
                 unsaved: document.getElementById('unsaved').textContent};
         """,
-        height=1400, patience=3000,
+        height=1400,
+        patience=3000,
     )
     assert found["moved"] != found["before"], "the ball never moved, so nothing was reset"
     assert found["status"] == was, "the field was not put back"
@@ -737,8 +764,11 @@ def test_a_derived_state_locks_the_control_in_the_dom_not_in_paint() -> None:
     derived word — the same ball the read view shows, so pressing Edit moves
     nothing."""
     held = Handed(
-        id="task-000001", kind="task", title="Waits on something else",
-        status="ready", owner="ann",
+        id="task-000001",
+        kind="task",
+        title="Waits on something else",
+        status="ready",
+        owner="ann",
     )
     index = build_index([held], Config(), date(2026, 8, 17))
     row = next(r for r in _fact_rows(index, held, ROUTES) if r["label"] == "Status")
@@ -768,7 +798,11 @@ def test_the_locked_control_carries_its_explanation_for_a_screen_reader(
 
     monkeypatch.setitem(render._STATE_HINT, "task", "from what it waits on")
     held = Handed(
-        id="task-000001", kind="task", title="Handed on", status="ready", owner="ann",
+        id="task-000001",
+        kind="task",
+        title="Handed on",
+        status="ready",
+        owner="ann",
     )
     index = build_index([held], Config(), date(2026, 8, 17))
     page = render_detail(index, ROUTES, only="task-000001", base_commit=HEAD, may_write=True)
@@ -791,8 +825,14 @@ def test_a_text_control_can_carry_a_placeholder_and_refuse_the_pen() -> None:
     `reported_by` and `written_by` will say who the server stamps; `disabled`
     is the generic lock for any boxed control."""
     field = {
-        "name": "reported_by", "id": "x-reported_by", "type": "text", "value": None,
-        "gates": (), "list": "people", "text": "", "placeholder": "ann",
+        "name": "reported_by",
+        "id": "x-reported_by",
+        "type": "text",
+        "value": None,
+        "gates": (),
+        "list": "people",
+        "text": "",
+        "placeholder": "ann",
     }
     drawn = str(_control_html(field))
     assert 'placeholder="ann"' in drawn
@@ -815,7 +855,12 @@ def test_what_a_person_owns_on_an_issue_or_a_note_and_what_the_server_stamps() -
     assert SUGGESTS["pitched_into"] == "records"
     assert SUGGESTS["became"] == "records"
     for name in (
-        "reported_by", "written_by", "pitched_into", "became", "opened_on", "written_on",
+        "reported_by",
+        "written_by",
+        "pitched_into",
+        "became",
+        "opened_on",
+        "written_on",
     ):
         assert name in LABELS, f"{name} would reach a reader as an identifier"
 
@@ -844,12 +889,19 @@ def test_an_issue_whose_pitch_is_done_reads_done_with_a_locked_hill_and_the_hint
     why in the page's own copy, and stamp the signed-in login as the
     `reported_by` placeholder."""
     pitch = Pitch(
-        id="pitch-000001", kind="pitch", title="The fix", status="done",
-        owner="ann", person_weeks=1.0,
+        id="pitch-000001",
+        kind="pitch",
+        title="The fix",
+        status="done",
+        owner="ann",
+        person_weeks=1.0,
     )
     noticed = Issue(
-        id="issue-000001", kind="issue", title="Something broke",
-        status="ready", pitched_into=["pitch-000001"],
+        id="issue-000001",
+        kind="issue",
+        title="Something broke",
+        status="ready",
+        pitched_into=["pitch-000001"],
     )
     index = build_index([pitch, noticed], Config(), date(2026, 8, 17))
     rows = _fact_rows(index, noticed, ROUTES, signed_in="ann")

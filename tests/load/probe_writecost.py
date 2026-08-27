@@ -137,9 +137,7 @@ def main(where: Path) -> dict:
     pygit2.clone_repository(f"file://{origin}", str(clone), bare=True)
     git = pygit2.Repository(str(clone))
     if "refs/heads/main" not in git.references:
-        git.references.create(
-            "refs/heads/main", git.references["refs/remotes/origin/main"].target
-        )
+        git.references.create("refs/heads/main", git.references["refs/remotes/origin/main"].target)
     with Server(clone, remote=f"file://{origin}") as server:
         ann = Member(server.port, "ann", TASK, 300002, applies=True)
         report["file_remote"] = timed(server, ann)

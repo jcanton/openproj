@@ -128,8 +128,17 @@ _FACETS = """
 # is a field like any other here: its values are `index.facets["predicate"]`, so
 # the select it needs is the select every other field gets.
 _PLAN_FACETS = (
-    "kind", "priority", "status", "owner", "assignees", "reviewers",
-    "cycle", "product", "project", "tags", "predicate",
+    "kind",
+    "priority",
+    "status",
+    "owner",
+    "assignees",
+    "reviewers",
+    "cycle",
+    "product",
+    "project",
+    "tags",
+    "predicate",
 )
 
 # The filter model itself, shared by every view that offers the bar above. The
@@ -3645,7 +3654,8 @@ _CONTROL = """
 # One script for both forms that carry a status. Written once because the create
 # page and the detail page ask the same question of the same controls, and two
 # copies of a validation courtesy is one copy that quietly stops matching.
-_REQUIRED_JS = Markup("""
+_REQUIRED_JS = Markup(
+    """
 // The status a form with no status control is read as. Handed over from the
 // model rather than typed here: `Record.status`'s default is the one place a new
 // record's opening word is written, and this was a second copy of it — with
@@ -3657,7 +3667,9 @@ _REQUIRED_JS = Markup("""
 // the gates at the opening status are empty either way, so nothing visible turns
 // on the value. What turns on it is that a wrong word here is a word no
 // `data-required-at` list contains, which marks nothing and says nothing.
-const OPENS = """ + json.dumps(Record.model_fields["status"].default) + """;
+const OPENS = """
+    + json.dumps(Record.model_fields["status"].default)
+    + """;
 
 // The word printed beside a control, which is the word somebody is looking at.
 // The `<dt>` holds the label and then the mark, so its first node is the name.
@@ -3713,7 +3725,8 @@ function watchRequired(form) {
   form.addEventListener('change', () => markRequired(form));
   markRequired(form);
 }
-""")
+"""
+)
 
 
 def _control_html(
@@ -3747,8 +3760,7 @@ def _control_html(
             # block }` switches on, and a hidden input is the one control that must
             # not gain a box when the form opens. `CONTROLS` reads `[data-type]`,
             # which is the attribute that matters here.
-            '<input type="hidden" name="{}" id="{}" data-type="text"'
-            ' value="{}" data-word="{}"{}>{}'
+            '<input type="hidden" name="{}" id="{}" data-type="text" value="{}" data-word="{}"{}>{}'
         ).format(
             field["name"],
             field["id"],
@@ -3826,18 +3838,13 @@ def _suggestions(index: Index, linkable: bool = False, live: bool = False) -> di
     return {
         "prs": (
             [{"value": r, "label": "any pull request"} for r in sorted(repos)]
-            + [
-                {"value": r, "label": ""}
-                for r in sorted(refs, key=_pr_sort, reverse=True)
-            ]
+            + [{"value": r, "label": ""} for r in sorted(refs, key=_pr_sort, reverse=True)]
         ),
         "people": [{"value": p, "label": ""} for p in sorted(people)],
         # Named `records`, filled from the PLAN, deliberately: these complete
         # `parent` and `depends_on`, and offering an issue or a note there
         # would offer an edge the model refuses.
-        "records": [
-            {"value": i, "label": e.title} for i, e in sorted(index.plan.items())
-        ],
+        "records": [{"value": i, "label": e.title} for i, e in sorted(index.plan.items())],
         "tags": [{"value": t, "label": ""} for t in sorted(tags)],
         # Whether there is a server behind this page to ask what is open right
         # now. False on a rendered file, where `/api/prs` is a path to nothing —
@@ -3860,12 +3867,7 @@ def _suggestions(index: Index, linkable: bool = False, live: bool = False) -> di
         # One function still builds the whole blob, which is what "use that"
         # was asking for.
         **(
-            {
-                "linkable": [
-                    {"value": i, "label": e.title}
-                    for i, e in sorted(index.records.items())
-                ]
-            }
+            {"linkable": [{"value": i, "label": e.title} for i, e in sorted(index.records.items())]}
             if linkable
             else {}
         ),
@@ -3879,8 +3881,7 @@ def _suggestions(index: Index, linkable: bool = False, live: bool = False) -> di
                 # by a person choosing a cycle from a popup, and every other
                 # date they can see beside it is `dd.mm.YYYY`.
                 "label": (
-                    f"{_read_date(index.cycles[number][0])} → "
-                    f"{_read_date(index.cycles[number][1])}"
+                    f"{_read_date(index.cycles[number][0])} → {_read_date(index.cycles[number][1])}"
                     if number in index.cycles
                     else "no dates"
                 ),
@@ -3964,7 +3965,8 @@ def _plan_blockers(index: Index) -> tuple[int, int]:
     sentence.
     """
     blocking = [
-        problem for problem in index.problems
+        problem
+        for problem in index.problems
         if problem.severity == "blocker" and problem.record_id in index.plan
     ]
     return len(blocking), len({problem.record_id for problem in blocking})
@@ -4024,14 +4026,17 @@ def _facets_html(
     because neither counts problems and both draw a count of their own.
     """
     return _fragment(
-        _FACETS, facets=facets, fields=fields, search=search, aside=aside,
-        titles=titles or {}, summary=summary,
+        _FACETS,
+        facets=facets,
+        fields=fields,
+        search=search,
+        aside=aside,
+        titles=titles or {},
+        summary=summary,
     )
 
 
-def _combobox_html(
-    index: Index | None, linkable: bool = False, live: bool = False
-) -> Markup:
+def _combobox_html(index: Index | None, linkable: bool = False, live: bool = False) -> Markup:
     """The suggestion data and the widget that filters it, for any page with inputs.
 
     `linkable` is "this page has a document being written in it", which is the
@@ -4042,11 +4047,21 @@ def _combobox_html(
     data = (
         _suggestions(index, linkable, live)
         if index
-        else {"people": [], "records": [], "tags": [], "prs": [], "cycles": [],
-              "linkable": [], "live": False}
+        else {
+            "people": [],
+            "records": [],
+            "tags": [],
+            "prs": [],
+            "cycles": [],
+            "linkable": [],
+            "live": False,
+        }
     )
     return _fragment(
-        _COMBOBOX, suggest=data, max_body_bytes=MAX_BODY_BYTES,
-        history_art=HISTORY_MARKS, draw_art=DRAWING_ART,
+        _COMBOBOX,
+        suggest=data,
+        max_body_bytes=MAX_BODY_BYTES,
+        history_art=HISTORY_MARKS,
+        draw_art=DRAWING_ART,
         size_art=DRAWING_SIZE_MARKS,
     )

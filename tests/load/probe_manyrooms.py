@@ -60,12 +60,14 @@ class Pages(threading.Thread):
 
 def main(where: Path) -> dict:
     big = "--big" in sys.argv
-    repo, _ = plan_at(
-        where / "plan.git", pitches=(60 if big else 20), tasks_each=(8 if big else 4)
-    )
+    repo, _ = plan_at(where / "plan.git", pitches=(60 if big else 20), tasks_each=(8 if big else 4))
     report_corpus = 60 * 8 if big else 20 * 4
-    report: dict = {"rooms": ROOMS, "type_seconds": TYPE_SECONDS, "pages": PAGES,
-                    "tasks_in_corpus": report_corpus}
+    report: dict = {
+        "rooms": ROOMS,
+        "type_seconds": TYPE_SECONDS,
+        "pages": PAGES,
+        "tasks_in_corpus": report_corpus,
+    }
     with Server(repo) as server:
         pages = Pages(server.port) if PAGES else None
         if pages:
@@ -86,9 +88,7 @@ def main(where: Path) -> dict:
         for n in range(1, ROOMS + 1):
             others.append(Member(server.port, f"writer{n:02d}", f"task-{n:06x}", 810000 + n))
         report["join_seconds_for_all_rooms"] = round(time.monotonic() - began_join, 2)
-        report["join_ms_each"] = round(
-            (time.monotonic() - began_join) / max(1, ROOMS) * 1000, 1
-        )
+        report["join_ms_each"] = round((time.monotonic() - began_join) / max(1, ROOMS) * 1000, 1)
 
         sent: dict[str, float] = {}
         seq = 0
@@ -134,8 +134,7 @@ def main(where: Path) -> dict:
         report["propagation_ms_during_commit_burst"] = percentiles(during)
         report["commits"] = len(commits(repo)) - 1
         report["control_room_committed"] = any(
-            control_path.split("/")[-1].split("--")[0] in message
-            for _, message in commits(repo)
+            control_path.split("/")[-1].split("--")[0] in message for _, message in commits(repo)
         )
         report["evicted"] = [m.login for m in [measurer, pinger, *others] if m.gone]
         if pages:

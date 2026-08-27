@@ -72,10 +72,21 @@ _TABLE_HINT = Markup(
 # in each header comes from LABELS, so the column and the facet naming the same
 # field cannot be given two different words.
 _TABLE_COLUMNS = (
-    ("id", True), ("title", True), ("priority", True), ("status", True),
-    ("owner", True), ("assignees", True), ("reviewers", True), ("cycle", True),
-    ("size", True), ("start", True), ("end", True), ("blocked_by", True),
-    ("progress", True), ("prs", False), ("tags", False),
+    ("id", True),
+    ("title", True),
+    ("priority", True),
+    ("status", True),
+    ("owner", True),
+    ("assignees", True),
+    ("reviewers", True),
+    ("cycle", True),
+    ("size", True),
+    ("start", True),
+    ("end", True),
+    ("blocked_by", True),
+    ("progress", True),
+    ("prs", False),
+    ("tags", False),
 )
 
 
@@ -110,9 +121,7 @@ def _payload(index: Index) -> dict:
         # The PLAN's problems only, now that `validate_all` covers every record:
         # a problem on an issue has no row here to hang on, and an inbox id in a
         # plan page's payload is the leak the exclusion sweep exists to catch.
-        "problems": [
-            p.model_dump() for p in index.problems if p.record_id in index.plan
-        ],
+        "problems": [p.model_dump() for p in index.problems if p.record_id in index.plan],
         # One list of what a person may change, shared with the detail page. Two
         # lists drift the first time a field is added, and silently.
         "editable": {k: v for k, v in EDITABLE.items() if k not in _TABLE_DERIVED},
@@ -151,8 +160,7 @@ def _payload(index: Index) -> dict:
         # Derived, so it moved on its own when the ladder gained a foot — which
         # is what the three hand-written copies of this default did not.
         "defaults": {
-            name: _KIND_MODELS["task"].model_fields[name].default
-            for name in ("status", "priority")
+            name: _KIND_MODELS["task"].model_fields[name].default for name in ("status", "priority")
         },
         # Which kind may hold which, from the model's own map. It decides what a
         # drop does *before* the drop: a row that cannot take this one is drawn
@@ -3395,7 +3403,9 @@ frozenEdge();
 """
 
 
-_TABLE_STYLE = _SCROLL_STYLE + """
+_TABLE_STYLE = (
+    _SCROLL_STYLE
+    + """
 th[data-sort] { cursor: pointer; user-select: none; }
 /* (0,1,1) over the shared block's bare `th` at (0,0,1): the sorted column keeps
    its emphasis whichever order the two blocks are inlined in. */
@@ -4000,6 +4010,7 @@ tr.draft > td.draft-none {
 #draft-problems { margin: .25rem 0 0; padding-left: 1.1rem; color: var(--sev-blocker);
                   font-size: 12px; }
 """
+)
 
 
 def _new_row_fields() -> dict[str, dict[str, str]]:
@@ -4099,6 +4110,10 @@ def render_table(
         combobox=_combobox_html(index, live=base_commit is not None),
     )
     return _page(
-        "openproj — table", body, _TABLE_STYLE + _SUGGEST_STYLE, links, "table",
+        "openproj — table",
+        body,
+        _TABLE_STYLE + _SUGGEST_STYLE,
+        links,
+        "table",
         index.unreadable,
     )

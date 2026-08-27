@@ -139,9 +139,7 @@ def working_days_after(start: date, weeks: float, config: Config) -> date:
     return day
 
 
-def _duration_weeks(
-    record: Record, config: Config, by_id: dict[str, Record]
-) -> tuple[float, bool]:
+def _duration_weeks(record: Record, config: Config, by_id: dict[str, Record]) -> tuple[float, bool]:
     """Elapsed weeks, and whether the size was defaulted rather than stated.
 
     A size is PERSON-weeks — the work one person would need — so the people on it
@@ -162,9 +160,7 @@ def _duration_weeks(
     return size / (sum(rates) or config.nominal_availability or 1.0), defaulted
 
 
-def _availability_of(
-    who: str, record: Record, config: Config, by_id: dict[str, Record]
-) -> float:
+def _availability_of(who: str, record: Record, config: Config, by_id: dict[str, Record]) -> float:
     """One person's rate in the cycle this record was bet into.
 
     Read from the record's own cycle rather than passed in, so there is one
@@ -197,9 +193,7 @@ def _workers(record: Record) -> list[str]:
     return list(dict.fromkeys(named))
 
 
-def _overrun(
-    record: Record, end: date, config: Config, by_id: dict[str, Record]
-) -> float | None:
+def _overrun(record: Record, end: date, config: Config, by_id: dict[str, Record]) -> float | None:
     """Weeks past the end of the BUILD of the cycle this was bet into, or None.
 
     Cool-down is not build time — Shape Up's whole point is that work lands
@@ -284,9 +278,7 @@ def blockers_of(record: Record, by_id: dict[str, Record]) -> list[str]:
     return list(dict.fromkeys(waits))
 
 
-def _ordering(
-    active: dict[str, Record], config: Config
-) -> tuple[list[str], set[str]]:
+def _ordering(active: dict[str, Record], config: Config) -> tuple[list[str], set[str]]:
     """Visit order: blockers before dependents, children before parents.
 
     Containment is not a dependency, so a topological sort over `depends_on`
@@ -335,12 +327,12 @@ def _ordering(
         }
         graph.remove_nodes_from(contradictory & set(graph))
     order = nx.lexicographical_topological_sort(
-        graph, # An unknown priority sorts as medium rather than raising: validate_all
+        graph,  # An unknown priority sorts as medium rather than raising: validate_all
         # has already said so, and the timeline should still draw.
         key=lambda node: (
             PRIORITY_RANK.get(active[node].priority, PRIORITY_RANK["medium"]),
             node,
-        )
+        ),
     )
     return list(order), contradictory
 
@@ -373,11 +365,7 @@ def schedule(
     #
     # Read off `RUNG` rather than by naming the kind here, because "which kinds
     # are scheduled" is a property of a kind and belongs beside the others.
-    live = {
-        e.id: e
-        for e in records
-        if e.status != "shelved" and RUNG[e.kind].schedules
-    }
+    live = {e.id: e for e in records if e.status != "shelved" and RUNG[e.kind].schedules}
     children: dict[str, list[str]] = defaultdict(list)
     for record in live.values():
         if record.parent in live:
@@ -396,9 +384,7 @@ def schedule(
 
     active = {i: e for i, e in live.items() if e.status != "done"}
     stalled = _unschedulable(active)
-    order, contradictory = _ordering(
-        {i: e for i, e in active.items() if i not in stalled}, config
-    )
+    order, contradictory = _ordering({i: e for i, e in active.items() if i not in stalled}, config)
     floor = _first_working_day(today, config)
     for record_id in stalled | contradictory:
         spans[record_id] = Span(start=floor, end=floor, unscheduled=True)
@@ -439,7 +425,10 @@ def schedule(
             # Nothing is booked either: work with no dates on it holds nobody's
             # capacity.
             spans[record_id] = Span(
-                start=floor, end=floor, unscheduled=True, estimated=estimated,
+                start=floor,
+                end=floor,
+                unscheduled=True,
+                estimated=estimated,
                 unowned=not workers,
             )
             explanations[record_id] = Explanation(

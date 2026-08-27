@@ -96,8 +96,11 @@ TERMINAL = "terminal-human"
 
 def _git(*args: str, cwd: Path | None = None, check: bool = True):
     return subprocess.run(
-        ["git", *args], cwd=str(cwd) if cwd else None,
-        capture_output=True, text=True, check=check,
+        ["git", *args],
+        cwd=str(cwd) if cwd else None,
+        capture_output=True,
+        text=True,
+        check=check,
     )
 
 
@@ -215,13 +218,22 @@ class Terminal(threading.Thread):
             if done.returncode == 0:
                 return Push(
                     at_second=round(time.monotonic() - self.zero, 2),
-                    record=record, marker=marker, sha=sha, attempts=attempt + 1,
-                    pushed_ok=True, origin_head_after=harness.head_of(self.origin)[:10],
+                    record=record,
+                    marker=marker,
+                    sha=sha,
+                    attempts=attempt + 1,
+                    pushed_ok=True,
+                    origin_head_after=harness.head_of(self.origin)[:10],
                 )
             last = (done.stdout + done.stderr).strip()[:200]
         return Push(
             at_second=round(time.monotonic() - self.zero, 2),
-            record=record, marker=marker, sha=None, attempts=4, pushed_ok=False, note=last,
+            record=record,
+            marker=marker,
+            sha=None,
+            attempts=4,
+            pushed_ok=False,
+            note=last,
         )
 
     def _watch(self, record: Push, client: httpx.Client) -> None:
@@ -407,7 +419,8 @@ class DroppedTab(Composing):
         self.room_typed_at_save: dict[str, int] = {}
         self.watching: list[users.CoEditor] = []
         self.client = httpx.Client(
-            base_url=self.world.base, timeout=120.0,
+            base_url=self.world.base,
+            timeout=120.0,
             headers={"cookie": harness.cookie_for(self.login)},
         )
 
@@ -435,8 +448,12 @@ class DroppedTab(Composing):
             self.typed += 1
         else:
             self.result.trouble.append(f"{answer} at {self.typed} typed")
-        self.note(kind="WS keystroke", ms=(time.monotonic() - begun) * 1000,
-                  status=answer, record=self.record)
+        self.note(
+            kind="WS keystroke",
+            ms=(time.monotonic() - begun) * 1000,
+            status=answer,
+            record=self.record,
+        )
         time.sleep(self.rng.uniform(0.9, 1.1) / users.CHARS_PER_SECOND)
         if self.typed and self.typed % users.LINE_LENGTH == 0:
             time.sleep(self.rng.uniform(0.8, 1.6))
@@ -474,15 +491,26 @@ class DroppedTab(Composing):
                 outcome, commit = got.get("outcome"), got.get("commit")
         except Exception as error:  # noqa: BLE001
             status = type(error).__name__
-        self.note(kind="PATCH (dropped tab)", ms=(time.monotonic() - begun) * 1000,
-                  status=status, outcome=outcome, commit=commit, record=self.record)
+        self.note(
+            kind="PATCH (dropped tab)",
+            ms=(time.monotonic() - begun) * 1000,
+            status=status,
+            outcome=outcome,
+            commit=commit,
+            record=self.record,
+        )
         self.client.close()
         self.tab_save = TabSave(
-            who=self.who, record=self.record, kind="body",
+            who=self.who,
+            record=self.record,
+            kind="body",
             at_second=round(begun - self.zero, 2),
             base_commit=(self.base_at_drop or "")[:10],
             head_before=(head_before or "")[:10],
-            status=status, outcome=outcome, commit=commit, person_weeks=weeks,
+            status=status,
+            outcome=outcome,
+            commit=commit,
+            person_weeks=weeks,
             body_bytes=len((self.body_at_drop or "").encode("utf-8")),
             typed_by_room_at_save=dict(self.room_typed_at_save),
         )
@@ -512,7 +540,8 @@ class FieldTab(users.Person):
         self.at = at
         self.saves: list[TabSave] = []
         self.client = httpx.Client(
-            base_url=self.world.base, timeout=120.0,
+            base_url=self.world.base,
+            timeout=120.0,
             headers={"cookie": harness.cookie_for(self.login)},
         )
 
@@ -546,14 +575,28 @@ class FieldTab(users.Person):
                 outcome, commit = got.get("outcome"), got.get("commit")
         except Exception as error:  # noqa: BLE001
             status = type(error).__name__
-        self.note(kind="PATCH (fields only)", ms=(time.monotonic() - begun) * 1000,
-                  status=status, outcome=outcome, commit=commit, record=self.record)
-        self.saves.append(TabSave(
-            who=self.who, record=self.record, kind="fields-only",
-            at_second=round(begun - self.zero, 2),
-            base_commit=(head or "")[:10], head_before=(head or "")[:10],
-            status=status, outcome=outcome, commit=commit, person_weeks=weeks,
-        ))
+        self.note(
+            kind="PATCH (fields only)",
+            ms=(time.monotonic() - begun) * 1000,
+            status=status,
+            outcome=outcome,
+            commit=commit,
+            record=self.record,
+        )
+        self.saves.append(
+            TabSave(
+                who=self.who,
+                record=self.record,
+                kind="fields-only",
+                at_second=round(begun - self.zero, 2),
+                base_commit=(head or "")[:10],
+                head_before=(head or "")[:10],
+                status=status,
+                outcome=outcome,
+                commit=commit,
+                person_weeks=weeks,
+            )
+        )
 
 
 # -- injection 3: two people, one emoji --------------------------------------
@@ -615,10 +658,14 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--corpus", choices=("corpus", "plans"), default="corpus")
     p.add_argument("--size", choices=("small", "medium", "large"), default="medium")
     p.add_argument("--port", type=int, default=None)
-    p.add_argument("--seat", choices=("heading", "tail"), default="heading",
-                   help="where in the document the co-editors type: under a heading "
-                        "(what a person composing a pitch does) or at the end of the "
-                        "file, which is where every outside append also lands")
+    p.add_argument(
+        "--seat",
+        choices=("heading", "tail"),
+        default="heading",
+        help="where in the document the co-editors type: under a heading "
+        "(what a person composing a pitch does) or at the end of the "
+        "file, which is where every outside append also lands",
+    )
     p.add_argument("--no-terminal", action="store_true", help="drop injection 1")
     p.add_argument("--keep", action="store_true")
     p.add_argument("--rows", action="store_true")
@@ -636,7 +683,7 @@ def run_after(text: str, anchor: str) -> int:
     at = text.find(anchor)
     if at < 0:
         return 0
-    n, tail = 0, text[at + len(anchor):]
+    n, tail = 0, text[at + len(anchor) :]
     while n < len(tail) and tail[n] in users.ALPHABET:
         n += 1
     return n
@@ -657,8 +704,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one run, read
     window = args.seconds
 
     with harness.Harness(
-        seed=args.seed, rtt_ms=args.rtt_ms, corpus=args.corpus, size=args.size,
-        port=args.port, keep=args.keep, remote=True,
+        seed=args.seed,
+        rtt_ms=args.rtt_ms,
+        corpus=args.corpus,
+        size=args.size,
+        port=args.port,
+        keep=args.keep,
+        remote=True,
     ) as world:
         ids = world.record_ids("task-")
         if len(ids) < 12:
@@ -687,39 +739,93 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one run, read
         # Room A: three people, one of whom presses Save on a clock and one of
         # whom loses their socket and saves through the form afterwards.
         save_every = round(window / 4.0, 1)
-        a0 = person(Composing, "coeditor-a0", record=room_a, client_id=1000,
-                    seed=args.seed, save_every=save_every, save_at_end=True)
-        a1 = person(DroppedTab, "coeditor-a1", record=room_a, client_id=1001,
-                    seed=args.seed, save_every=0.0, save_at_end=False,
-                    # Straddling a room commit on purpose: room A saves every
-                    # `window/4`, so the save at the halfway mark lands between
-                    # this tab dying and this tab pressing Save. That is the
-                    # ordering that makes its body genuinely older than the file,
-                    # rather than merely older than the room.
-                    drop_at=round(window * 0.30, 1), save_at=round(window * 0.55, 1))
-        a2 = person(Composing, "coeditor-a2", record=room_a, client_id=1002,
-                    seed=args.seed, save_every=0.0, save_at_end=True)
+        a0 = person(
+            Composing,
+            "coeditor-a0",
+            record=room_a,
+            client_id=1000,
+            seed=args.seed,
+            save_every=save_every,
+            save_at_end=True,
+        )
+        a1 = person(
+            DroppedTab,
+            "coeditor-a1",
+            record=room_a,
+            client_id=1001,
+            seed=args.seed,
+            save_every=0.0,
+            save_at_end=False,
+            # Straddling a room commit on purpose: room A saves every
+            # `window/4`, so the save at the halfway mark lands between
+            # this tab dying and this tab pressing Save. That is the
+            # ordering that makes its body genuinely older than the file,
+            # rather than merely older than the room.
+            drop_at=round(window * 0.30, 1),
+            save_at=round(window * 0.55, 1),
+        )
+        a2 = person(
+            Composing,
+            "coeditor-a2",
+            record=room_a,
+            client_id=1002,
+            seed=args.seed,
+            save_every=0.0,
+            save_at_end=True,
+        )
         a1.watching = [a0, a2]
 
         # Room B: the emoji pair, and one person pressing Save on a clock.
-        b0 = person(EmojiLeft, "coeditor-b0", record=room_b, client_id=1003,
-                    seed=args.seed, save_every=save_every, save_at_end=True,
-                    partner_anchor=f"[CM{args.seed}.4]")
-        b1 = person(EmojiRight, "coeditor-b1", record=room_b, client_id=1004,
-                    seed=args.seed, save_every=0.0, save_at_end=True)
-        b2 = person(Composing, "coeditor-b2", record=room_b, client_id=1005,
-                    seed=args.seed, save_every=0.0, save_at_end=True)
+        b0 = person(
+            EmojiLeft,
+            "coeditor-b0",
+            record=room_b,
+            client_id=1003,
+            seed=args.seed,
+            save_every=save_every,
+            save_at_end=True,
+            partner_anchor=f"[CM{args.seed}.4]",
+        )
+        b1 = person(
+            EmojiRight,
+            "coeditor-b1",
+            record=room_b,
+            client_id=1004,
+            seed=args.seed,
+            save_every=0.0,
+            save_at_end=True,
+        )
+        b2 = person(
+            Composing,
+            "coeditor-b2",
+            record=room_b,
+            client_id=1005,
+            seed=args.seed,
+            save_every=0.0,
+            save_at_end=True,
+        )
         coeditors = [a0, a1, a2, b0, b1, b2]
         people += coeditors
 
         for i in range(args.writers):
-            one = person(users.FormWriter, f"writer-{i}", record=writer_ids[i],
-                         gap=args.gap, gap_max=args.gap_max, stale=False, style="append")
+            one = person(
+                users.FormWriter,
+                f"writer-{i}",
+                record=writer_ids[i],
+                gap=args.gap,
+                gap_max=args.gap_max,
+                stale=False,
+                style="append",
+            )
             formwriters.append(one)
             people.append(one)
 
-        fields_only = person(FieldTab, "fieldtab", record=room_b,
-                             at=[round(window * 0.33, 1), round(window * 0.71, 1)])
+        fields_only = person(
+            FieldTab,
+            "fieldtab",
+            record=room_b,
+            at=[round(window * 0.33, 1), round(window * 0.71, 1)],
+        )
         people.append(fields_only)
 
         for i in range(args.readers):
@@ -734,8 +840,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one run, read
         terminal = None
         if not args.no_terminal:
             terminal = Terminal(
-                origin=world.origin, plan=world.plan, clone=world.work / "terminal",
-                base_url=world.base, zero=zero,
+                origin=world.origin,
+                plan=world.plan,
+                clone=world.work / "terminal",
+                base_url=world.base,
+                zero=zero,
                 schedule=[
                     # A record nobody in this run touches: the pure question, is
                     # a colleague's commit visible at all.
@@ -771,7 +880,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one run, read
         ref_report = refs.stop()
         driver_cpu = round(
             resource.getrusage(resource.RUSAGE_SELF).ru_utime
-            + resource.getrusage(resource.RUSAGE_SELF).ru_stime, 2,
+            + resource.getrusage(resource.RUSAGE_SELF).ru_stime,
+            2,
         )
 
         # Typing has stopped everywhere before anybody presses Save, so a save
@@ -790,8 +900,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one run, read
         sent = [row for one in formwriters for row in one.sent]
         typed = [one.result for one in coeditors]
         verdict = verify.verify(
-            world.plan, world.origin, typed, sent,
-            logins={one.login for one in people}, before=before,
+            world.plan,
+            world.origin,
+            typed,
+            sent,
+            logins={one.login for one in people},
+            before=before,
         )
         commits = users.commit_log(world.plan)
         made = commits
@@ -830,10 +944,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one run, read
             # person's anchor begins exactly after it. A splice measured in the
             # wrong index space breaks one of the two and neither raises.
             "left_run_ends_at_the_emoji": (
-                b0.anchor + final_b[
-                    final_b.find(b0.anchor) + len(b0.anchor):
-                ][: run_after(final_b, b0.anchor)] + EMOJI
-            ) in final_b,
+                b0.anchor
+                + final_b[final_b.find(b0.anchor) + len(b0.anchor) :][
+                    : run_after(final_b, b0.anchor)
+                ]
+                + EMOJI
+            )
+            in final_b,
             "right_anchor_begins_after_the_emoji": (EMOJI + b1.anchor) in final_b,
             "left_document_at_end": None,
             "right_document_at_end": None,
@@ -851,19 +968,26 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one run, read
             ("room A", (a0, a1, a2), room_a, final_a),
             ("room B", (b0, b1, b2), room_b, final_b),
         ):
-            rooms_report.append({
-                "room": name,
-                "record": path_id,
-                "path": paths_now[path_id],
-                "members": [
-                    {"who": m.who, "login": m.login, "typed": m.typed,
-                     "in_the_plan": run_after(text, m.anchor),
-                     "saves": m.result.saves, "trouble": m.result.trouble}
-                    for m in members
-                ],
-                "typed_total": sum(m.typed for m in members),
-                "in_the_plan_total": sum(run_after(text, m.anchor) for m in members),
-            })
+            rooms_report.append(
+                {
+                    "room": name,
+                    "record": path_id,
+                    "path": paths_now[path_id],
+                    "members": [
+                        {
+                            "who": m.who,
+                            "login": m.login,
+                            "typed": m.typed,
+                            "in_the_plan": run_after(text, m.anchor),
+                            "saves": m.result.saves,
+                            "trouble": m.result.trouble,
+                        }
+                        for m in members
+                    ],
+                    "typed_total": sum(m.typed for m in members),
+                    "in_the_plan_total": sum(run_after(text, m.anchor) for m in members),
+                }
+            )
 
         form = verdict["checks"]["form_writes"]
         char_committed = sum(r["in_the_plan_total"] for r in rooms_report)
@@ -871,7 +995,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one run, read
         room_refusals = [
             {"who": m.who, "room": r["room"], **s}
             for r, ms in zip(rooms_report, ((a0, a1, a2), (b0, b1, b2)), strict=True)
-            for m in ms for s in m.result.saves if s.get("t") != "saved"
+            for m in ms
+            for s in m.result.saves
+            if s.get("t") != "saved"
         ]
         accounting = {
             "form_saves": {
@@ -881,8 +1007,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one run, read
                 "lost": form["lost"],
                 "ambiguous": form["ambiguous_present"] + form["ambiguous_absent"],
                 "adds_up": (
-                    form["committed"] + form["refused"] + form["lost"]
-                    + form["ambiguous_present"] + form["ambiguous_absent"] == len(sent)
+                    form["committed"]
+                    + form["refused"]
+                    + form["lost"]
+                    + form["ambiguous_present"]
+                    + form["ambiguous_absent"]
+                    == len(sent)
                 ),
             },
             "field_only_saves": [asdict(s) for s in fields_only.saves],
@@ -895,8 +1025,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one run, read
             },
             "terminal_pushes": [asdict(p) for p in terminal.pushes] if terminal else [],
             "terminal_markers_in_the_plan": {
-                p.marker: (p.marker in (harness.read_blob(
-                    world.plan, head, paths_now.get(p.record, "")) or ""))
+                p.marker: (
+                    p.marker
+                    in (harness.read_blob(world.plan, head, paths_now.get(p.record, "")) or "")
+                )
                 for p in (terminal.pushes if terminal else [])
                 if p.record in paths_now
             },
@@ -907,12 +1039,21 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one run, read
         "scenario": "adversarial",
         "seed": args.seed,
         "config": {
-            "seconds": window, "readers": args.readers, "form_writers": args.writers,
-            "field_only_tabs": 1, "coeditors": 6, "rooms": 2,
+            "seconds": window,
+            "readers": args.readers,
+            "form_writers": args.writers,
+            "field_only_tabs": 1,
+            "coeditors": 6,
+            "rooms": 2,
             "seat": args.seat,
-            "gap": args.gap, "gap_max": args.gap_max, "think": args.think,
-            "coedit_save_every": save_every, "terminal": not args.no_terminal,
-            "room_a": room_a, "room_b": room_b, "writer_records": writer_ids,
+            "gap": args.gap,
+            "gap_max": args.gap_max,
+            "think": args.think,
+            "coedit_save_every": save_every,
+            "terminal": not args.no_terminal,
+            "room_a": room_a,
+            "room_b": room_b,
+            "writer_records": writer_ids,
         },
         "world": described,
         "measured": report,
@@ -921,8 +1062,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one run, read
             "refs": ref_report,
         },
         "server": {"cpu_seconds": cpu, "rss_mb": rss, "driver_cpu_seconds": driver_cpu},
-        "commits": {"total": len(commits), "made_by_this_run": len(made),
-                    "by_author": _tally(c["author"] for c in made)},
+        "commits": {
+            "total": len(commits),
+            "made_by_this_run": len(made),
+            "by_author": _tally(c["author"] for c in made),
+        },
         "accounting": accounting,
         "rooms": rooms_report,
         "emoji": emoji_check,
@@ -967,20 +1111,25 @@ def _print(blob: dict, report: dict, verdict: dict, out: Path) -> None:
     print(f"  store outcomes: {report['write_outcomes'] or '{}'}")
     print(f"  pushed:         {report['pushed']}")
     print(f"  throughput:     {report['throughput']}")
-    print(f"  commits:        {blob['commits']['made_by_this_run']} by "
-          f"{blob['commits']['by_author']}")
-    print(f"  server:         {blob['server']['cpu_seconds']}s CPU, "
-          f"{blob['server']['rss_mb']} MB RSS "
-          f"(driver {blob['server']['driver_cpu_seconds']}s)")
+    print(
+        f"  commits:        {blob['commits']['made_by_this_run']} by {blob['commits']['by_author']}"
+    )
+    print(
+        f"  server:         {blob['server']['cpu_seconds']}s CPU, "
+        f"{blob['server']['rss_mb']} MB RSS "
+        f"(driver {blob['server']['driver_cpu_seconds']}s)"
+    )
     print(f"  refs:           {blob['queueing']['refs']}")
 
     a = blob["accounting"]
     print("\n-- injection 1: a human with a terminal --")
     for push in a["terminal_pushes"]:
-        print(f"  t+{push['at_second']:>6.1f}s  {push['marker']} -> {push['record']:<14} "
-              f"pushed={push['pushed_ok']} attempts={push['attempts']} "
-              f"instance saw it after {push['absorbed_after_s']}s "
-              f"(page {push['on_the_page_after_s']}s)")
+        print(
+            f"  t+{push['at_second']:>6.1f}s  {push['marker']} -> {push['record']:<14} "
+            f"pushed={push['pushed_ok']} attempts={push['attempts']} "
+            f"instance saw it after {push['absorbed_after_s']}s "
+            f"(page {push['on_the_page_after_s']}s)"
+        )
     print(f"  markers in the final plan: {a['terminal_markers_in_the_plan']}")
 
     print("\n-- injection 2: a save from outside the room --")
@@ -993,20 +1142,28 @@ def _print(blob: dict, report: dict, verdict: dict, out: Path) -> None:
 
     print("\n-- the rooms --")
     for room in blob["rooms"]:
-        print(f"  {room['room']} ({room['record']}): typed {room['typed_total']}, "
-              f"in the plan {room['in_the_plan_total']}")
+        print(
+            f"  {room['room']} ({room['record']}): typed {room['typed_total']}, "
+            f"in the plan {room['in_the_plan_total']}"
+        )
         for m in room["members"]:
-            print(f"    {m['who']:<14} {m['login']:<14} typed {m['typed']:>4}  "
-                  f"in the plan {m['in_the_plan']:>4}  saves {m['saves']}")
+            print(
+                f"    {m['who']:<14} {m['login']:<14} typed {m['typed']:>4}  "
+                f"in the plan {m['in_the_plan']:>4}  saves {m['saves']}"
+            )
 
     print("\n-- every write, accounted --")
     f = a["form_saves"]
-    print(f"  form saves:   {f['sent']} sent = {f['committed']} committed + "
-          f"{f['refused_409']} refused(409) + {f['lost']} LOST + {f['ambiguous']} ambiguous "
-          f"[adds up: {f['adds_up']}]")
+    print(
+        f"  form saves:   {f['sent']} sent = {f['committed']} committed + "
+        f"{f['refused_409']} refused(409) + {f['lost']} LOST + {f['ambiguous']} ambiguous "
+        f"[adds up: {f['adds_up']}]"
+    )
     ch = a["coedit_characters"]
-    print(f"  co-edit chars:{ch['typed']} typed, {ch['in_the_plan']} in the plan, "
-          f"{ch['not_in_the_plan']} not")
+    print(
+        f"  co-edit chars:{ch['typed']} typed, {ch['in_the_plan']} in the plan, "
+        f"{ch['not_in_the_plan']} not"
+    )
     for refusal in ch["room_saves_refused"]:
         print(f"    room save refused: {json.dumps(refusal, default=str)[:300]}")
 

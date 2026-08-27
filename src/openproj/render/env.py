@@ -148,7 +148,8 @@ _ENV.globals["glyph"] = lambda status: STATUS_GLYPH.get(str(status), "")
 # for both ladders, so a template asks for "the mark for this value" rather than
 # knowing which map to reach into.
 _ENV.globals["mark"] = lambda kind, value: (
-    f"{STATUS_GLYPH.get(str(value), '')} " if kind == "status"
+    f"{STATUS_GLYPH.get(str(value), '')} "
+    if kind == "status"
     else f"{PRIORITY_GLYPH.get(str(value), '')} "
 )
 _ENV.globals["pri"] = lambda value: PRIORITY_GLYPH.get(str(value), "")

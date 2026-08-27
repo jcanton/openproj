@@ -84,9 +84,7 @@ def test_the_page_carries_the_policy_the_server_sends(client: TestClient):
     page = client.get("/").text
     sent = client.get("/").headers["content-security-policy"]
 
-    in_page = re.search(
-        r'<meta http-equiv="Content-Security-Policy" content="([^"]+)"', page
-    )
+    in_page = re.search(r'<meta http-equiv="Content-Security-Policy" content="([^"]+)"', page)
     assert in_page, "the page says nothing on its own"
     assert in_page.group(1) == CSP
     assert sent == f"{CSP}; frame-ancestors 'none'"

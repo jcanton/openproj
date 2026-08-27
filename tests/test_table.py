@@ -436,9 +436,11 @@ def test_a_record_created_from_the_merged_page_round_trips(client: TestClient, k
 
     made = client.post(
         "/api/record",
-        json={"base_commit": base,
-              "fields": {"kind": kind, "title": f"Round trip {kind}"},
-              "body": "A record made from the merged page.\n"},
+        json={
+            "base_commit": base,
+            "fields": {"kind": kind, "title": f"Round trip {kind}"},
+            "body": "A record made from the merged page.\n",
+        },
     )
     assert made.status_code == 201, made.json()
     new_id = made.json()["id"]
@@ -472,9 +474,7 @@ def test_a_dropdown_on_either_form_offers_words_and_stores_identifiers(
         # the same pairing — `value` is what git holds and the screen-reader text
         # beside it is what a person reads. Asked here rather than dropped,
         # because the pairing is the point of the test and not the `<select>`.
-        stops = re.findall(
-            r'<input type="radio"[^>]*value="([^"]+)"[^>]*data-word="([^"]+)"', page
-        )
+        stops = re.findall(r'<input type="radio"[^>]*value="([^"]+)"[^>]*data-word="([^"]+)"', page)
         assert [value for value, _ in stops] == list(STATUSES), "status"
         for value, word in stops:
             assert word != value, f"status: {value} is offered as its own identifier"
@@ -490,8 +490,7 @@ def test_a_dropdown_on_either_form_offers_words_and_stores_identifiers(
                 # five-element meter it used to be.
                 mark, _, said = word.strip().partition(" ")
                 assert mark and mark not in said, (
-                    f"{name}: {value} is offered as {word!r} with no mark in "
-                    "front of it"
+                    f"{name}: {value} is offered as {word!r} with no mark in front of it"
                 )
                 assert said == LABELS.get(value, HUMAN[value]), (name, value)
                 assert value not in word, f"{value} is its own identifier, not a word"
@@ -585,8 +584,7 @@ def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient)
     # day a rung is added — and spelled out once beneath, so the derivation
     # cannot drift along with the code it derives from.
     assert owners["status"] == [
-        kind for kind in KIND_NAMES
-        if "status" not in unread_fields(kind) and RUNG[kind].planned
+        kind for kind in KIND_NAMES if "status" not in unread_fields(kind) and RUNG[kind].planned
     ]
     assert owners["status"] == ["project", "pitch", "task"]
     # And a field the top rung does not read is not offered on it: a product has
@@ -733,8 +731,14 @@ def test_a_served_table_for_a_reader_offers_no_editor_and_still_reads(
 
     # And still a table: rows, sorting, filtering, links.
     a_record = sorted(index.plan)[0]
-    got = measured_in(chrome(), page, tmp_path / "reader.html", 1400,
-                      _READS_ANYWAY % json.dumps(a_record), height=900)
+    got = measured_in(
+        chrome(),
+        page,
+        tmp_path / "reader.html",
+        1400,
+        _READS_ANYWAY % json.dumps(a_record),
+        height=900,
+    )
 
     assert got["rows"] == len(index.plan)
     assert got["adder"] is False, "the + row is offered to a person it can only refuse"
@@ -1075,7 +1079,10 @@ def test_the_search_box_is_not_the_tenth_filter(page: str):
     # inside a box that can be shut.
     assert re.search(
         r'</div>\s*<details class="facetbox" open>\s*<summary>.*?</summary>\s*'
-        r'<div class="facets">', page, re.S)
+        r'<div class="facets">',
+        page,
+        re.S,
+    )
 
 
 def test_the_table_sizes_itself_to_its_contents_and_the_window(page: str):
@@ -1171,9 +1178,21 @@ def test_the_fit_is_measured_again_once_the_real_typeface_has_landed(page: str):
 # `reviewers` went from 111 to 116 — the first of the four whose header, not its
 # widest cell, is what the column needs.
 MEASURED = {
-    "id": 110, "title": 304, "priority": 79, "status": 107, "owner": 100,
-    "assignees": 124, "reviewers": 116, "cycle": 63, "size": 81, "start": 101,
-    "end": 101, "blocked_by": 87, "progress": 96, "prs": 80, "tags": 128,
+    "id": 110,
+    "title": 304,
+    "priority": 79,
+    "status": 107,
+    "owner": 100,
+    "assignees": 124,
+    "reviewers": 116,
+    "cycle": 63,
+    "size": 81,
+    "start": 101,
+    "end": 101,
+    "blocked_by": 87,
+    "progress": 96,
+    "prs": 80,
+    "tags": 128,
 }
 # The window the owner reported the sideways scroll from: a 1460px scroll
 # container inside it.
@@ -1219,7 +1238,9 @@ def _arithmetic(page: str, expression: str, args: list) -> object:
     source += f"\nconsole.log(JSON.stringify({expression}));"
     done = subprocess.run(
         [node, "-e", source, json.dumps(args)],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return json.loads(done.stdout)
 
@@ -1237,7 +1258,8 @@ def _minimum(page: str, keys: list[str], room: int = 10_000) -> int:
     this used to answer with when there was only one.
     """
     return _arithmetic(
-        page, "minimumWidth(ARGS[0], ARGS[1], ARGS[2])",
+        page,
+        "minimumWidth(ARGS[0], ARGS[1], ARGS[2])",
         [[MEASURED[key] for key in keys], keys, room],
     )
 
@@ -1268,8 +1290,13 @@ def _lookups(page: str) -> list[str]:
     id leaves by a rule of its own about the frozen pair, at a width that has
     nothing to do with whether the table fits. `_shed` below is the whole set.
     """
-    return (re.search(r"const LOOKUPS = \[([^\]]*)\]", page).group(1)
-            .replace("'", "").replace(" ", "").split(","))
+    return (
+        re.search(r"const LOOKUPS = \[([^\]]*)\]", page)
+        .group(1)
+        .replace("'", "")
+        .replace(" ", "")
+        .split(",")
+    )
 
 
 def _shed(page: str) -> list[str]:
@@ -1296,11 +1323,21 @@ def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
     keys = [column for column, _ in _TABLE_COLUMNS]
     assert set(MEASURED) == set(keys), "a column with no measurement is a column not fitted"
     natural = [MEASURED[key] for key in keys]
-    squeezable = set(re.search(r"const SQUEEZABLE = new Set\(\[([^\]]*)\]\)", page).group(1)
-                     .replace("'", "").replace(" ", "").split(","))
+    squeezable = set(
+        re.search(r"const SQUEEZABLE = new Set\(\[([^\]]*)\]\)", page)
+        .group(1)
+        .replace("'", "")
+        .replace(" ", "")
+        .split(",")
+    )
     clamp_floor = int(re.search(r"const CLAMP_FLOOR = (\d+);", page).group(1))
-    clamped = set(re.search(r"const CLAMPED = new Set\(\[([^\]]*)\]\)", page).group(1)
-                  .replace("'", "").replace(" ", "").split(","))
+    clamped = set(
+        re.search(r"const CLAMPED = new Set\(\[([^\]]*)\]\)", page)
+        .group(1)
+        .replace("'", "")
+        .replace(" ", "")
+        .split(",")
+    )
 
     # No cushion. This is the whole of the reported defect.
     assert _fit(page, natural, keys, sum(natural)) == natural
@@ -1445,9 +1482,7 @@ return {badges: cells.length, asDrawn, onFloor, long: at()};
 """
 
 
-def test_the_badge_is_never_the_part_of_a_clamped_cell_that_gets_cut(
-    page: str, tmp_path: Path
-):
+def test_the_badge_is_never_the_part_of_a_clamped_cell_that_gets_cut(page: str, tmp_path: Path):
     """`+2` is the whole promise the clamp makes — it says how much of the value
     is hidden, and it is the button that shows it. It was the part being cut: a
     third of it gone wherever a clamped column fell under about 128px, and 368px
@@ -1648,9 +1683,7 @@ def test_the_column_control_opens_the_column_and_closes_it(demo_page: str, tmp_p
     )
 
 
-def test_an_expanded_column_is_a_way_of_reading_and_not_a_setting(
-    demo_page: str, tmp_path: Path
-):
+def test_an_expanded_column_is_a_way_of_reading_and_not_a_setting(demo_page: str, tmp_path: Path):
     """It costs height — seventeen rows of every list at full length — and that is
     fine because it was asked for and one click puts it back. What would not be
     fine is arriving that way tomorrow.
@@ -1674,8 +1707,7 @@ def test_an_expanded_column_is_a_way_of_reading_and_not_a_setting(
         "redraw already closed"
     )
     assert at["loaded"]["stored"] != "denied", (
-        "this run cannot see localStorage at all, so it cannot say nothing was "
-        "written to it"
+        "this run cannot see localStorage at all, so it cannot say nothing was written to it"
     )
     for step, seen in got["at"]:
         if step == "a width remembered":
@@ -1685,8 +1717,7 @@ def test_an_expanded_column_is_a_way_of_reading_and_not_a_setting(
     # somebody asked for it by dragging. It is here so that every assertion above
     # is known to be watching a storage that writes.
     assert at["a width remembered"]["stored"] != at["loaded"]["stored"], (
-        "a remembered width did not reach localStorage either, so nothing above "
-        "was observed"
+        "a remembered width did not reach localStorage either, so nothing above was observed"
     )
 
 
@@ -1748,9 +1779,7 @@ return {floor: CLAMP_FLOOR, asFitted, atFloor: at(CLAMP_FLOOR), below: at(CLAMP_
 """
 
 
-def test_the_header_fits_at_the_width_the_fit_may_squeeze_it_to(
-    demo_page: str, tmp_path: Path
-):
+def test_the_header_fits_at_the_width_the_fit_may_squeeze_it_to(demo_page: str, tmp_path: Path):
     """Measured in Chrome at the two widths these columns are drawn at: the one
     the fit chose with room to spare, and `CLAMP_FLOOR`, the narrowest it is
     allowed to squeeze them to. Every one of the four now holds a label, a sort
@@ -1778,8 +1807,10 @@ def test_the_header_fits_at_the_width_the_fit_may_squeeze_it_to(
     got = measured_in(chrome(), demo_page, tmp_path / "headroom.html", 1460, _HEADROOM)
 
     assert len(got["atFloor"]) == 4, "the four clamped columns are the four with a control"
-    for where, columns in (("as the fit drew it", got["asFitted"]),
-                           (f"at the {got['floor']}px floor", got["atFloor"])):
+    for where, columns in (
+        ("as the fit drew it", got["asFitted"]),
+        (f"at the {got['floor']}px floor", got["atFloor"]),
+    ):
         for column in columns:
             assert not column["wrapped"], (
                 f"{where}, the {column['column']} header wraps over two lines in "
@@ -1790,8 +1821,7 @@ def test_the_header_fits_at_the_width_the_fit_may_squeeze_it_to(
                 f"under the control in {column['width']}px"
             )
             assert column["overGrip"] <= 0, (
-                f"{where}, the {column['column']} control runs {column['overGrip']}px "
-                f"into the grip"
+                f"{where}, the {column['column']} control runs {column['overGrip']}px into the grip"
             )
             assert column["reserved"] >= column["needs"], (
                 f"{where}, the {column['column']} header sets aside "
@@ -1950,8 +1980,10 @@ def test_the_frozen_edge_is_a_pixel_a_browser_draws(page: str, tmp_path: Path):
     # each is the last declaration standing for its own cell. The header keeps its
     # bottom rule, which is a different line for a different reason.
     no_rows = '<style>.scrolled td[data-col="title"] { box-shadow: none; }</style>'
-    no_header = ('<style>.scrolled thead th[data-col="title"] '
-                 "{ box-shadow: inset 0 -1px 0 var(--line); }</style>")
+    no_header = (
+        '<style>.scrolled thead th[data-col="title"] '
+        "{ box-shadow: inset 0 -1px 0 var(--line); }</style>"
+    )
 
     def shot(name: str, extra: str) -> bytes:
         html = tmp_path / f"{name}.html"
@@ -1968,9 +2000,11 @@ def test_the_frozen_edge_is_a_pixel_a_browser_draws(page: str, tmp_path: Path):
     scrolled = shot("scrolled", scroll)
     assert scrolled != rest, "the table did not scroll, so there was no edge to draw either way"
 
-    dead = ("changes no pixel: the declaration is dead. An outset box-shadow on a cell "
-            "in a `border-collapse: collapse` table is not painted by Chrome — on these "
-            "cells it has to be `inset`")
+    dead = (
+        "changes no pixel: the declaration is dead. An outset box-shadow on a cell "
+        "in a `border-collapse: collapse` table is not painted by Chrome — on these "
+        "cells it has to be `inset`"
+    )
     assert scrolled != shot("scrolled_rows", scroll + no_rows), f"the edge down the rows {dead}"
     assert scrolled != shot("scrolled_head", scroll + no_header), f"the edge on the header {dead}"
 
@@ -1984,8 +2018,13 @@ def test_creating_is_the_detail_page_with_nothing_in_it(new_page: str, client: T
     """
     detail = client.get(f"/detail/{TASK}").text
 
-    for shape in ('<dl id="facts">', 'class="field title-field"', 'class="field bodybar"',
-                  'class="field body-field"', 'id="preview"'):
+    for shape in (
+        '<dl id="facts">',
+        'class="field title-field"',
+        'class="field bodybar"',
+        'class="field body-field"',
+        'id="preview"',
+    ):
         assert shape in new_page, shape
         assert shape in detail, shape
     assert "<label>" not in new_page, "the old flat list of labelled controls is gone"
@@ -2033,8 +2072,14 @@ def test_a_new_pitch_starts_from_the_teams_own_shaping_template(new_page: str):
     # The five ingredients and the deferred-scope list. `## Progress` is the one
     # heading of the HackMD original this leaves out: a pitch's progress is its
     # tasks, and `test_the_pitch_template_leaves_progress_to_its_tasks` says so.
-    for heading in ("## Problem", "## Appetite", "## Solution", "## Rabbit holes",
-                    "## No-gos", "## For later"):
+    for heading in (
+        "## Problem",
+        "## Appetite",
+        "## Solution",
+        "## Rabbit holes",
+        "## No-gos",
+        "## For later",
+    ):
         assert heading in pitch, heading
     assert "Shaped by:" not in pitch and "Developers:" not in pitch
     # The guidance rides in HTML comments, exactly as it does in HackMD, and the
@@ -2149,9 +2194,7 @@ return out;
 """
 
 
-def test_the_create_button_is_reachable_from_anywhere_in_the_form(
-    new_page: str, tmp_path: Path
-):
+def test_the_create_button_is_reachable_from_anywhere_in_the_form(new_page: str, tmp_path: Path):
     """The control that commits this form is on screen from every part of it — and
     since 2026-08-20 that part of the screen is the top, so that the create page
     and the detail page agree about where a Save lives. jcanton: "move the create
@@ -2180,8 +2223,15 @@ def test_the_create_button_is_reachable_from_anywhere_in_the_form(
     """
     # Short enough that the form really is several screens: a bar that never
     # leaves a window nothing scrolls in proves nothing at all.
-    got = measured_in(chrome(), new_page, tmp_path / "create.html", 1400,
-                      _WHERE_CREATE_IS, height=600, patience=2500)
+    got = measured_in(
+        chrome(),
+        new_page,
+        tmp_path / "create.html",
+        1400,
+        _WHERE_CREATE_IS,
+        height=600,
+        patience=2500,
+    )
 
     assert got["screens"] > 1.5, (
         f"the form fits in {got['screens']:.1f} windows, so there is no scroll to "
@@ -2248,8 +2298,9 @@ def test_assignees_is_a_column_and_a_filter_and_a_value(page: str, client: TestC
     a column with no payload key renders blank on every row until somebody edits
     it, and a dropdown missing from the client-side filter changes the URL and
     filters nothing."""
-    payload_json = json.loads(re.search(
-        r'<script id="payload"[^>]*>(.*?)</script>', page, re.S).group(1))
+    payload_json = json.loads(
+        re.search(r'<script id="payload"[^>]*>(.*?)</script>', page, re.S).group(1)
+    )
     row = next(iter(payload_json["rows"].values()))
     offered = re.findall(r'<div class="facet" data-field="([^"]+)"', page)
     filtered = re.search(r"const FILTERS = \[(.*?)\];", page, re.S).group(1)
@@ -2264,8 +2315,9 @@ def test_a_status_column_sorts_the_way_work_moves(page: str):
     """Sorted as text, `done` heads the column and `shaping` sits second from
     last — the reverse of the order work moves in, for four of the five."""
     assert re.search(r"const rank = DATA\.choices\[sort\];", page)
-    payload_json = json.loads(re.search(
-        r'<script id="payload"[^>]*>(.*?)</script>', page, re.S).group(1))
+    payload_json = json.loads(
+        re.search(r'<script id="payload"[^>]*>(.*?)</script>', page, re.S).group(1)
+    )
 
     assert payload_json["choices"]["status"] == list(STATUSES)
     assert payload_json["choices"]["priority"] == list(PRIORITIES)
@@ -2318,7 +2370,8 @@ def test_a_status_is_a_chip_and_the_id_cell_holds_only_the_id(page: str):
     assert "chip kind-" not in table_only, "no kind chip is built for any cell of this table"
     assert re.search(
         r"""if \(key === 'id'\)\s*\n\s*return \(EDITABLE && movable\(row\) \? GRIP : ''\)"""
-        r"""\s*\+ `<span class="eid">\$\{esc\(row\.id\)\}""", body
+        r"""\s*\+ `<span class="eid">\$\{esc\(row\.id\)\}""",
+        body,
     ), "and nothing is boxed in its place but the handle it is moved by"
     assert '<span class="facetname">Kind' in page, "and kind is still asked for in the facet bar"
 
@@ -2352,9 +2405,7 @@ def test_every_identifier_a_filter_offers_is_shown_as_a_word(page: str):
     # than the identifier — the claim is about `in_progress` never reaching a
     # reader, not about the tag it is drawn in.
     assert '<input type="checkbox" value="in_progress">In progress</label>' in page
-    assert (
-        '<input type="checkbox" value="missing_required_fields">Has a problem</label>' in page
-    )
+    assert '<input type="checkbox" value="missing_required_fields">Has a problem</label>' in page
     assert '<span class="facetname">Flags' in page
     assert '<span class="facetname">state' not in page
 
@@ -2364,13 +2415,13 @@ def test_every_identifier_a_filter_offers_is_shown_as_a_word(page: str):
     # in it is a rule nobody applies to the next line.
     assert re.search(
         r'<option value="\$\{esc\(o\)\}"[^>]*>`\s*\+\s*'
-        r'`\$\{esc\(markFor\(field, o\)\)\}\$\{esc\(human\(o\)\)\}</option>',
+        r"`\$\{esc\(markFor\(field, o\)\)\}\$\{esc\(human\(o\)\)\}</option>",
         script(page),
     )
 
 
 def test_the_blocking_count_is_a_link_that_pluralises_and_mutes_at_zero(page: str):
-    """"1 blocking problems" was not a link, never pluralised, and was drawn in
+    """ "1 blocking problems" was not a link, never pluralised, and was drawn in
     the danger colour at zero — a number that cannot be acted on, shouting.
 
     It links at the predicate that means exactly what it counts, so the rows you
@@ -2399,7 +2450,7 @@ def test_the_blocking_count_is_a_link_that_pluralises_and_mutes_at_zero(page: st
 
 
 def test_the_blocking_count_names_the_population_its_link_opens():
-    """"5 blocking problems" opening a table of 2 rows is the exact way a count
+    """ "5 blocking problems" opening a table of 2 rows is the exact way a count
     stops being trusted, and it is what this said.
 
     The number counts *problems*; `?predicate=has_blocker` matches *records*, and
@@ -2411,12 +2462,17 @@ def test_the_blocking_count_names_the_population_its_link_opens():
 
     # Two records, five blockers between them: ready needs an owner, a reviewer
     # and an effort, and one of the three is filled in on the second.
-    nameless = Task(id="task-000001", kind="task", title="Ready and nameless",
-                    status="ready")
-    fine = Task(id="task-000002", kind="task", title="Fine", status="ready",
-                owner="ann", reviewers=["bo"], person_weeks=1)
-    half = Task(id="task-000003", kind="task", title="Half named", status="ready",
-                owner="ann")
+    nameless = Task(id="task-000001", kind="task", title="Ready and nameless", status="ready")
+    fine = Task(
+        id="task-000002",
+        kind="task",
+        title="Fine",
+        status="ready",
+        owner="ann",
+        reviewers=["bo"],
+        person_weeks=1,
+    )
+    half = Task(id="task-000003", kind="task", title="Half named", status="ready", owner="ann")
     index = build_index([nameless, fine, half], Config(), date(2026, 8, 17))
 
     problems = [p for p in index.problems if p.severity == "blocker"]
@@ -2434,8 +2490,10 @@ def test_the_blocking_count_names_the_population_its_link_opens():
     # And the script rebuilds the same sentence after a save, off the same pass
     # that decides the predicate.
     body = script(page)
-    assert "BLOCKED = Object.values(TROUBLE).filter(severity => severity === 'blocker').length;" \
+    assert (
+        "BLOCKED = Object.values(TROUBLE).filter(severity => severity === 'blocker').length;"
         in body
+    )
     assert "on ${BLOCKED} ` +" in body
 
 
@@ -2452,8 +2510,15 @@ def test_a_title_somebody_typed_never_becomes_markup():
     from openproj.render import render_table
 
     hostile = 'Fix <b>&"the" </script><img src=x> seam'
-    record = Task(id="task-000001", kind="task", title=hostile, owner='a"b',
-                  person_weeks=1, tags=["<i>one", "two&three"], prs=["kilnlab/kiln4py#1"])
+    record = Task(
+        id="task-000001",
+        kind="task",
+        title=hostile,
+        owner='a"b',
+        person_weeks=1,
+        tags=["<i>one", "two&three"],
+        prs=["kilnlab/kiln4py#1"],
+    )
     index = build_index([record], Config(), date(2026, 8, 17))
     # `may_write`, because the editor is a way in too.
     page = render_table(index, base_commit="0" * 40, may_write=True)
@@ -2470,12 +2535,12 @@ def test_a_title_somebody_typed_never_becomes_markup():
     assert "const esc = value => String(value ?? '').replace(/[&<>\"]/g," in body
     assert "attr(" not in body, "one helper for cells and attributes, not two standards"
     for interpolation in (
-        "${esc(row.title)}",            # the title cell, which is also a link
-        "${esc(row.id)}",               # and the href it is a link to
+        "${esc(row.title)}",  # the title cell, which is also a link
+        "${esc(row.id)}",  # and the href it is a link to
         "return esc(stored(row, key));",  # owner, assignees, reviewers, dates
-        "${esc(human(row.status))}",    # the kind is no longer drawn in any cell
-        "${esc(ref)}",                  # a PR reference, repo and number both
-        "${esc(was)}",                  # and the value the editor opens with
+        "${esc(human(row.status))}",  # the kind is no longer drawn in any cell
+        "${esc(ref)}",  # a PR reference, repo and number both
+        "${esc(was)}",  # and the value the editor opens with
     ):
         assert interpolation in body, interpolation
     assert "clamped((value || []).map(esc), 'tag', 'tags')" in body
@@ -2537,8 +2602,10 @@ def test_clearing_the_filters_is_a_button_and_never_a_form_field(page: str):
     assert 'name="clear' not in page
     # The sort is not a filter: losing the column you sorted by would be a second
     # surprise on top of the one you were undoing.
-    cleared = (r"for \(const field of \[\.\.\.FILTERS, \.\.\.onPage, 'predicate', 'q'\]\)"
-               r" params\.delete")
+    cleared = (
+        r"for \(const field of \[\.\.\.FILTERS, \.\.\.onPage, 'predicate', 'q'\]\)"
+        r" params\.delete"
+    )
     assert re.search(cleared, body)
     # And every control the page draws, not only the record fields: the people
     # page filters by role, which is not a field of a record and was left set.
@@ -2594,7 +2661,7 @@ def test_the_header_and_the_two_identity_columns_stay_put(page: str):
     assert "thead th {\n  position: sticky; top: 0; z-index: 3; background: var(--surface);" in page
     assert '[data-col="id"] { position: sticky; left: 0; z-index: 1;' in page
     assert '[data-col="title"] { position: sticky; left: var(--sticky-1, 0px); z-index: 1;' in page
-    assert "thead [data-col=\"id\"], thead [data-col=\"title\"] { z-index: 4; }" in page
+    assert 'thead [data-col="id"], thead [data-col="title"] { z-index: 4; }' in page
     # A collapsed border is not painted on a sticky cell; the row scrolls over it.
     assert "box-shadow: inset 0 -1px 0 var(--line);" in page
 
@@ -2618,8 +2685,9 @@ def test_the_narrow_layout_drops_the_columns_that_are_lookups(page: str):
     # The served stylesheet with its comments taken out — the comments say what
     # the breakpoint was and why it went, and a search that reads them is a search
     # that cannot tell a rule from an explanation of one.
-    styles = re.sub(r"/\*.*?\*/", "", "".join(re.findall(r"<style>(.*?)</style>", page, re.S)),
-                    flags=re.S)
+    styles = re.sub(
+        r"/\*.*?\*/", "", "".join(re.findall(r"<style>(.*?)</style>", page, re.S)), flags=re.S
+    )
     # **Not "no `@media (max-width` anywhere on this page", which is what this
     # asked before.** That was a proxy that happened to hold, and it broke the
     # day a rule about something else needed one: the sheet carrying the suggest
@@ -2678,8 +2746,8 @@ def test_the_narrow_layout_drops_the_columns_that_are_lookups(page: str):
 # Every window the audit walked, plus the two edges of the drift it found: 1101
 # was 293px of sideways scroll and 1393 was one pixel of it.
 @pytest.mark.parametrize(
-    "room", [900, 1050, 1091, 1100, 1101, 1280, 1353, 1354, 1366, 1393, 1440, 1500,
-             1600, 1920, 2560],
+    "room",
+    [900, 1050, 1091, 1100, 1101, 1280, 1353, 1354, 1366, 1393, 1440, 1500, 1600, 1920, 2560],
 )
 def test_no_window_leaves_the_table_scrolling_sideways_by_choice(page: str, room: int):
     """The fit and the shedding are one number now, so this is the check that the
@@ -2764,7 +2832,7 @@ def test_the_tags_cell_is_one_line_with_the_rest_behind_a_count(page: str):
     assert "td.clamp.open .more { display: none; }" not in page
 
     body = script(page)
-    assert 'const expand = `Show ${rest.length} more ${word}`;' in body, (
+    assert "const expand = `Show ${rest.length} more ${word}`;" in body, (
         "the reveal has a name, not only a plus sign"
     )
     assert 'data-collapse="Show ${rest.length} fewer ${word}"' in body, (
@@ -2838,9 +2906,11 @@ def test_a_clamped_cell_says_what_it_is_hiding_before_it_says_how_to_edit_it(pag
     """
     one, two, none = _tips(
         page,
-        [{"id": "task-000001", "assignees": ["merganserly", "nightjarelli"]},
-         {"id": "task-000002", "assignees": ["Oxpeckerly", "nightjarelli", "jackdawrie"]},
-         {"id": "task-000003", "assignees": ["sanderlingly"]}],
+        [
+            {"id": "task-000001", "assignees": ["merganserly", "nightjarelli"]},
+            {"id": "task-000002", "assignees": ["Oxpeckerly", "nightjarelli", "jackdawrie"]},
+            {"id": "task-000003", "assignees": ["sanderlingly"]},
+        ],
         "assignees",
     )
     assert one == "+1 more: nightjarelli\nDouble-click to edit assignees"
@@ -2856,8 +2926,9 @@ def test_a_clamped_cell_says_what_it_is_hiding_before_it_says_how_to_edit_it(pag
     # because it never varies, and a tooltip has room to say which one it is.
     tags, prs, reviewers = (
         _tips(page, [{"id": "task-000001", "tags": ["ci", "hearth", "port"]}], "tags")[0],
-        _tips(page, [{"id": "task-000001", "prs": ["kilnlab/kiln4py#1", "kilnlab/kiln4py#2"]}],
-         "prs")[0],
+        _tips(
+            page, [{"id": "task-000001", "prs": ["kilnlab/kiln4py#1", "kilnlab/kiln4py#2"]}], "prs"
+        )[0],
         _tips(page, [{"id": "task-000001", "reviewers": ["a", "b"]}], "reviewers")[0],
     )
     assert tags.startswith("+2 more: hearth, port\n")
@@ -2883,8 +2954,9 @@ def test_a_problem_still_comes_first_and_a_long_list_is_capped(page: str):
     the instruction lost at the bottom of it, so the line is capped at what reads
     as a line and says how many it did not print.
     """
-    marks = {"task-000001": {"assignees": {"severity": "blocker",
-                                           "messages": ["nobody is on this"]}}}
+    marks = {
+        "task-000001": {"assignees": {"severity": "blocker", "messages": ["nobody is on this"]}}
+    }
     tip = _tips(page, [{"id": "task-000001", "assignees": ["a", "b"]}], "assignees", marks)[0]
     assert tip == "nobody is on this\n+1 more: b\nDouble-click to edit assignees"
 
@@ -2911,9 +2983,9 @@ def test_the_reveal_line_cannot_smuggle_markup_into_the_cell(page: str):
     from test_injection import assert_clean, run_js
 
     hostile = ["ok", '" onmouseover="alert(1)', "<img src=x onerror=alert(1)>"]
-    written = run_js(
-        page, f"cell({{id: 'task-000001', tags: {json.dumps(hostile)}}}, 'tags')"
-    )["value"]
+    written = run_js(page, f"cell({{id: 'task-000001', tags: {json.dumps(hostile)}}}, 'tags')")[
+        "value"
+    ]
     # The raw markup, judged by the same census every other seam on the page gets:
     # what matters is what a browser parses, not what the string looks like here.
     assert_clean(written, f"the clamped cell's tooltip: {written[:200]}")
@@ -2921,8 +2993,7 @@ def test_the_reveal_line_cannot_smuggle_markup_into_the_cell(page: str):
     # would pass the census above while answering nothing — which is the failure
     # mode a census cannot see.
     assert unescape(re.search(r'title="([^"]*)"', written).group(1)) == (
-        '+2 more: " onmouseover="alert(1), <img src=x onerror=alert(1)>\n'
-        "Double-click to edit tags"
+        '+2 more: " onmouseover="alert(1), <img src=x onerror=alert(1)>\nDouble-click to edit tags'
     )
 
 
@@ -2943,7 +3014,7 @@ def test_an_editable_cell_shows_it_and_a_derived_one_says_why_not(page: str):
     why = json.loads(re.search(r"const WHY = (\{.*?\});", body, re.S).group(1))
     assert set(why) == set(_TABLE_DERIVED)
     assert all(sentence.strip() for sentence in why.values())
-    assert "data-why=\"${esc(WHY[key])}\"" in body
+    assert 'data-why="${esc(WHY[key])}"' in body
     # Through `announce`, so the refusal reaches somebody who cannot see the bar
     # it is drawn in — and from Enter as well as from a double-click. The
     # sentence is a parameter now, because a row refusing to hold another one is
@@ -3007,9 +3078,7 @@ def test_the_grouping_of_problems_is_written_once(page: str):
 
     assert isinstance(carried["problems"], list)
     assert {"severity", "record_id", "field", "message"} <= set(carried["problems"][0])
-    assert "problems" not in next(iter(carried["rows"].values())), (
-        "one list, not one per row"
-    )
+    assert "problems" not in next(iter(carried["rows"].values())), "one list, not one per row"
     # The two predicates that read the problem list are recomputed with it.
     assert "row.predicates.push('missing_required_fields');" in script(page)
     assert "row.predicates.push('has_blocker');" in script(page)
@@ -3092,9 +3161,7 @@ return {wasOpen, first, wrote: window.__wrote,
 """
 
 
-def test_escape_over_an_open_list_closes_the_list_and_keeps_the_edit(
-    page: str, tmp_path: Path
-):
+def test_escape_over_an_open_list_closes_the_list_and_keeps_the_edit(page: str, tmp_path: Path):
     """Two dismissable things can be up at once — the cell editor, and the
     suggestion list over it — and one Escape shipped as dismissing both: the list
     closed AND the whole cell edit was discarded, typing included.
@@ -3104,8 +3171,9 @@ def test_escape_over_an_open_list_closes_the_list_and_keeps_the_edit(
     editor — driven with real key events because the collision is between two
     listeners on one trip up, which no grep of either can see.
     """
-    got = measured_in(chrome(), page, tmp_path / "escape.html", 1400,
-                      _ESCAPE_WITH_A_LIST_OPEN, height=900)
+    got = measured_in(
+        chrome(), page, tmp_path / "escape.html", 1400, _ESCAPE_WITH_A_LIST_OPEN, height=900
+    )
 
     assert got["wasOpen"], "the list never opened, so nothing here was asked"
     assert got["first"]["listShut"] is True
@@ -3148,8 +3216,12 @@ def test_the_suggestion_popup_announces_itself(page: str):
     assert "input.removeAttribute('aria-activedescendant');" in highlight
     # The arrows go through it rather than toggling the class themselves, or the
     # announcement and the highlight are two things that can disagree.
-    arrows = re.search(r"if \(event\.key === 'ArrowDown' \|\| event\.key === 'ArrowUp'\).*?\n"
-                       r"    \} else", body, re.S).group(0)
+    arrows = re.search(
+        r"if \(event\.key === 'ArrowDown' \|\| event\.key === 'ArrowUp'\).*?\n"
+        r"    \} else",
+        body,
+        re.S,
+    ).group(0)
     assert "highlight();" in arrows and "classList" not in arrows
     # One counter for the page: `aria-controls` is a reference by id, and the
     # detail form carries a dozen of these.
@@ -3258,9 +3330,9 @@ def drive_table(page: str, expression: str, replies: list[dict] | None = None) -
         "the expression never settled: something in the write path hung, which in "
         "a browser is a row that stays half-created with nothing said"
     )
-    assert not [error for error in answer["errors"] if error.startswith("expression:")], (
-        answer["errors"]
-    )
+    assert not [error for error in answer["errors"] if error.startswith("expression:")], answer[
+        "errors"
+    ]
     return answer
 
 
@@ -3299,8 +3371,9 @@ def test_an_empty_plan_still_offers_the_row_that_would_end_it(client: TestClient
     from openproj.model import Config
     from openproj.render import render_table
 
-    page = render_table(build_index([], Config(), date(2026, 8, 17)), base_commit="deadbee",
-                        may_write=True)
+    page = render_table(
+        build_index([], Config(), date(2026, 8, 17)), base_commit="deadbee", may_write=True
+    )
     answer = drive_table(
         page,
         "(() => ({empty: !!tbody.querySelector('tr.nothing'),"
@@ -3368,7 +3441,7 @@ def test_the_row_says_which_columns_it_cannot_be_typed_into_and_why(page: str):
         "(() => {"
         "  openDraft(); chooseKind('project');"
         "  const tip = column => {"
-        "    const td = tbody.querySelector(`tr.draft td[data-col=\"${column}\"]`);"
+        '    const td = tbody.querySelector(`tr.draft td[data-col="${column}"]`);'
         "    return [td.getAttribute('class'), td.getAttribute('title')];"
         "  };"
         "  return {size: tip('size'), start: tip('start'), title: tip('title')};"
@@ -3384,7 +3457,7 @@ def test_the_row_says_which_columns_it_cannot_be_typed_into_and_why(page: str):
 
 
 def test_the_kind_is_chosen_first_and_the_row_follows_from_it(page: str):
-    """"First choose the kind, then set the fields" — because until the kind is
+    """ "First choose the kind, then set the fields" — because until the kind is
     chosen there is no answer to which fields the row even has.
 
     Switching it afterwards keeps what has been typed, which is the lesson the
@@ -3441,8 +3514,10 @@ def test_a_row_created_inline_goes_through_the_one_create_route(page: str):
         "  return document.getElementById('state').textContent;"
         "})()",
         replies=[
-            {"status": 201, "json": {"id": "task-a1b2c3", "outcome": "committed",
-                                     "commit": "c0ffee"}},
+            {
+                "status": 201,
+                "json": {"id": "task-a1b2c3", "outcome": "committed", "commit": "c0ffee"},
+            },
             {"status": 200, "json": {"rows": {}, "problems": []}},
         ],
     )
@@ -3476,11 +3551,17 @@ def test_the_created_row_is_re_read_rather_than_invented(page: str):
         "  return {base: BASE.value, rows: Object.keys(DATA.rows).length, draft: DRAFT};"
         "})()",
         replies=[
-            {"status": 201, "json": {"id": "task-a1b2c3", "outcome": "committed",
-                                     "commit": "c0ffee"}},
-            {"status": 200, "json": {"rows": {"task-a1b2c3": {"id": "task-a1b2c3",
-                                                              "predicates": []}},
-                                     "problems": []}},
+            {
+                "status": 201,
+                "json": {"id": "task-a1b2c3", "outcome": "committed", "commit": "c0ffee"},
+            },
+            {
+                "status": 200,
+                "json": {
+                    "rows": {"task-a1b2c3": {"id": "task-a1b2c3", "predicates": []}},
+                    "problems": [],
+                },
+            },
         ],
     )
 
@@ -3537,17 +3618,31 @@ def test_what_the_server_refuses_a_row_with_is_shown_beside_it(page: str):
         "            .map(li => li.textContent),"
         "          draft: !!DRAFT};"
         "})()",
-        replies=[{"status": 422, "json": {"problems": [
-            {"severity": "blocker", "record_id": "pitch-000000", "field": "owner",
-             "message": "a ready record needs an owner"},
-            {"severity": "blocker", "record_id": "pitch-000000", "field": "assignees",
-             "message": "a ready record needs somebody on it"},
-        ]}}],
+        replies=[
+            {
+                "status": 422,
+                "json": {
+                    "problems": [
+                        {
+                            "severity": "blocker",
+                            "record_id": "pitch-000000",
+                            "field": "owner",
+                            "message": "a ready record needs an owner",
+                        },
+                        {
+                            "severity": "blocker",
+                            "record_id": "pitch-000000",
+                            "field": "assignees",
+                            "message": "a ready record needs somebody on it",
+                        },
+                    ]
+                },
+            }
+        ],
     )
     got = answer["value"]
 
-    assert got["said"] == ["a ready record needs an owner",
-                           "a ready record needs somebody on it"]
+    assert got["said"] == ["a ready record needs an owner", "a ready record needs somebody on it"]
     assert got["draft"] is True, "the row is still there, with everything typed into it"
 
 
@@ -3593,8 +3688,12 @@ def test_a_row_created_inline_lands_as_a_commit_with_the_right_kind_and_author(
     """
     made = create(
         client,
-        {"kind": "task", "title": "Write the migration note", "status": "shaping",
-         "priority": "medium"},
+        {
+            "kind": "task",
+            "title": "Write the migration note",
+            "status": "shaping",
+            "priority": "medium",
+        },
         body="## Problem\n\n## Progress\n\n- [ ]\n",
     )
 
@@ -3676,11 +3775,11 @@ def test_a_drop_that_breaks_containment_is_refused_before_it_is_sent(page: str):
         # The mark this gesture adds, not the whole class list: a row also
         # carries how deep in the tree it is drawn, and reading the attribute
         # made this test fail on a row moving one level in.
-        + f'  const target = tbody.querySelector(\'tr[data-id="{OTHER}"]\');'
+        + f"  const target = tbody.querySelector('tr[data-id=\"{OTHER}\"]');"
         + "  const drawn = ['can-hold', 'no-hold']"
         + "    .filter(one => target.classList.contains(one)).join(' ');"
         + "  const drop = new Event('drop');"
-        + f'  drop.target = tbody.querySelector(\'tr[data-id="{OTHER}"] td\');'
+        + f"  drop.target = tbody.querySelector('tr[data-id=\"{OTHER}\"] td');"
         + "  tbody.dispatchEvent(drop);"
         "  return {allowed: over.defaultPrevented, drawn, moving: MOVING};"
         "})()",
@@ -3707,9 +3806,7 @@ def test_a_row_that_may_hold_it_says_so_before_the_mouse_arrives(page: str):
     """
     answer = drive_table(
         page,
-        "(() => {"
-        + PICK_UP % {"id": TASK}
-        + "  const seen = {};"
+        "(() => {" + PICK_UP % {"id": TASK} + "  const seen = {};"
         "  for (const tr of tbody.querySelectorAll('tr[data-id]'))"
         # A row may already carry the stripe that says something on it is wrong,
         # so what is read here is the mark this gesture adds, not the class list.
@@ -3750,7 +3847,7 @@ def test_a_row_that_belongs_to_nothing_is_never_offered_a_move(page: str):
     answer = drive_table(
         page,
         "(() => {"
-        "  const grip = id => !!tbody.querySelector(`tr[data-id=\"${id}\"] .rowgrip`);"
+        '  const grip = id => !!tbody.querySelector(`tr[data-id="${id}"] .rowgrip`);'
         "  const top = Object.keys(PARENT_KINDS)"
         "    .filter(k => !(PARENT_KINDS[k] || []).length);"
         + f"  return {{project: grip('{PROJECT}'), task: grip('{TASK}'),"
@@ -3791,8 +3888,7 @@ def test_a_drop_is_one_patch_of_one_field_through_the_save_path(page: str):
         "  return {moving: MOVING, said: document.getElementById('state').textContent};"
         "})()" % PROJECT,
         replies=[
-            {"status": 200, "json": {"outcome": "committed", "commit": "c0ffee",
-                                     "conflict": None}},
+            {"status": 200, "json": {"outcome": "committed", "commit": "c0ffee", "conflict": None}},
             {"status": 200, "json": {"rows": {}, "problems": []}},
         ],
     )
@@ -3824,7 +3920,8 @@ def test_a_row_can_be_taken_out_of_what_holds_it(page: str):
         + PICK_UP % {"id": TASK}
         + "  const out = document.getElementById('unparent');"
         "  const offered = {hidden: out.hidden, said: out.textContent};"
-        + OVER % {"where": "tr.adder"}
+        + OVER
+        % {"where": "tr.adder"}
         + "  const drop = new Event('drop');"
         "  drop.target = tbody.querySelector('tr.adder td');"
         "  tbody.dispatchEvent(drop);"
@@ -3884,7 +3981,7 @@ def test_a_reparent_leaves_no_derived_column_stale(client: TestClient, page: str
         # tooltip; the date columns are drawn short. Both are read where they are
         # drawn rather than where they used to be.
         "  const cell = column => tbody.querySelector("
-        "    `tr[data-id=\"%s\"] td[data-col=\"${column}\"]`);"
+        '    `tr[data-id="%s"] td[data-col="${column}"]`);'
         "  const meter = cell('progress').querySelector('.meter');"
         # `getAttribute` and not `.title`: the driver's DOM reflects attributes,
         # not every property a browser mirrors them onto.
@@ -3928,9 +4025,7 @@ def test_a_column_is_dragged_in_the_header_and_a_row_in_the_body(page: str):
     """
     body = script(page)
     # The header's grip, and everything the header does with a grab.
-    column = re.search(
-        r"headers\.forEach\(\(th, i\) => \{\n.*?\n\}\);", body, re.S
-    ).group(0)
+    column = re.search(r"headers\.forEach\(\(th, i\) => \{\n.*?\n\}\);", body, re.S).group(0)
 
     assert "grip.onpointerdown = event => {" in column and "th.append(grip);" in column
     # `dragging` is the column resize's own flag and says nothing about a native
@@ -3969,7 +4064,7 @@ def test_a_row_can_be_moved_without_a_mouse(page: str):
         "    const event = new Event('keydown');"
         "    event.key = key;"
         "    event.target = tbody.querySelector("
-        "      `tr[data-id=\"${id}\"] td[data-col=\"${column}\"]`);"
+        '      `tr[data-id="${id}"] td[data-col="${column}"]`);'
         "    tbody.dispatchEvent(event);"
         "    return event.defaultPrevented;"
         "  };"
@@ -4014,7 +4109,7 @@ def test_escape_leaves_the_row_where_it_was(page: str):
         "    const event = new Event('keydown');"
         "    event.key = key;"
         "    event.target = tbody.querySelector("
-        "      `tr[data-id=\"${id}\"] td[data-col=\"${column}\"]`);"
+        '      `tr[data-id="${id}"] td[data-col="${column}"]`);'
         "    tbody.dispatchEvent(event);"
         "  };"
         + f"  press('{TASK}', 'id', 'Enter');"
@@ -4064,7 +4159,7 @@ def test_the_route_the_table_re_reads_is_the_payload_it_was_drawn_from(
 
 
 def test_the_count_says_how_many_rows_there_are_to_be_shown_of(page: str, client: TestClient):
-    """"18 of 17 shown", live on the page, the first time a row was created from
+    """ "18 of 17 shown", live on the page, the first time a row was created from
     the table.
 
     The first number was the script's and the second was the template's, which
@@ -4086,18 +4181,22 @@ def test_the_count_says_how_many_rows_there_are_to_be_shown_of(page: str, client
         "})()",
         replies=[
             {"status": 201, "json": {"id": "task-a1b2c3", "commit": "c0ffee"}},
-            {"status": 200, "json": {"rows": {
-                "task-a1b2c3": {"id": "task-a1b2c3", "predicates": []},
-                "task-d4e5f6": {"id": "task-d4e5f6", "predicates": []},
-            }, "problems": []}},
+            {
+                "status": 200,
+                "json": {
+                    "rows": {
+                        "task-a1b2c3": {"id": "task-a1b2c3", "predicates": []},
+                        "task-d4e5f6": {"id": "task-d4e5f6", "predicates": []},
+                    },
+                    "problems": [],
+                },
+            },
         ],
     )
 
     # As strings, because a live region holds text and the shim holds what it was
     # handed: what is asserted is the two numbers agreeing, not their type.
-    assert [str(one) for one in answer["value"]] == ["2", "2"], (
-        "one plan, one number of rows in it"
-    )
+    assert [str(one) for one in answer["value"]] == ["2", "2"], "one plan, one number of rows in it"
 
 
 def test_a_redraw_in_the_middle_of_a_move_leaves_the_last_row_saying_what_it_says(page: str):
@@ -4124,9 +4223,7 @@ def test_a_redraw_in_the_middle_of_a_move_leaves_the_last_row_saying_what_it_say
         "    const rootless = document.getElementById('rootless');"
         "    return {said: out.hidden ? '' : out.textContent,"
         "            rootless: rootless.hidden ? '' : rootless.textContent};"
-        "  };"
-        + PICK_UP % {"id": TASK}
-        + "  const held = bar();"
+        "  };" + PICK_UP % {"id": TASK} + "  const held = bar();"
         "  draw();"
         "  const redrawn = bar();"
         # The other state, on the same row: one nothing holds. There is no such
@@ -4169,14 +4266,20 @@ def test_the_row_a_drop_would_land_in_is_named_beside_the_cursor(page: str):
         + PICK_UP % {"id": TASK}
         # Each drag-over in a block of its own: the snippet names the event, and
         # three of them in one scope is a redeclaration rather than three moves.
-        + "{" + OVER % {"where": f'tr[data-id="{PROJECT}"] td'} + "}"
+        + "{"
+        + OVER % {"where": f'tr[data-id="{PROJECT}"] td'}
+        + "}"
         # Parked on the body, so that is where it is asked for — the same place
         # the cells' suggestion popups are found, and for the same reason.
         + "  const into = document.body.querySelector('#into');"
         "  const onto = {said: into.textContent, hidden: into.hidden};"
-        + "{" + OVER % {"where": f'tr[data-id="{OTHER}"] td'} + "}"
+        + "{"
+        + OVER % {"where": f'tr[data-id="{OTHER}"] td'}
+        + "}"
         + "  const refused = {said: into.textContent, hidden: into.hidden};"
-        + "{" + OVER % {"where": "tr.adder"} + "}"
+        + "{"
+        + OVER % {"where": "tr.adder"}
+        + "}"
         + "  const out = {said: into.textContent, hidden: into.hidden};"
         "  stopMoving();"
         "  return {onto, refused, out, after: into.hidden};"
@@ -4233,16 +4336,32 @@ def test_the_row_a_drop_would_land_in_is_named_beside_the_cursor(page: str):
 # connector computed from the rows apart from one computed from the records.
 TREE = [
     Project(id="proj-a10000", kind="project", title="Porting the bed", owner="ann"),
-    Pitch(id="pitch-b90000", kind="pitch", title="Aroma transport", parent="proj-a10000",
-          owner="bo", person_weeks=3),
+    Pitch(
+        id="pitch-b90000",
+        kind="pitch",
+        title="Aroma transport",
+        parent="proj-a10000",
+        owner="bo",
+        person_weeks=3,
+    ),
     Task(id="task-c10000", kind="task", title="Blend weights", parent="pitch-b90000", owner="ann"),
-    Task(id="task-c20000", kind="task", title="Tap-point reference", parent="pitch-b90000",
-         owner="ann"),
-    Task(id="task-c30000", kind="task", title="Seam artefact", parent="pitch-b90000",
-         owner="bo"),
+    Task(
+        id="task-c20000",
+        kind="task",
+        title="Tap-point reference",
+        parent="pitch-b90000",
+        owner="ann",
+    ),
+    Task(id="task-c30000", kind="task", title="Seam artefact", parent="pitch-b90000", owner="bo"),
     Project(id="proj-a90000", kind="project", title="Distributed driver", owner="bo"),
-    Pitch(id="pitch-b10000", kind="pitch", title="Halo exchange", parent="proj-a90000",
-          owner="bo", person_weeks=2),
+    Pitch(
+        id="pitch-b10000",
+        kind="pitch",
+        title="Halo exchange",
+        parent="proj-a90000",
+        owner="bo",
+        person_weeks=2,
+    ),
     Task(id="task-c90000", kind="task", title="One rank", parent="proj-a90000", owner="ann"),
 ]
 
@@ -4265,8 +4384,9 @@ DRAWN = """
 @pytest.fixture
 def tree_page() -> str:
     """The table over `TREE`, editable, rendered by the real renderer."""
-    return render_table(build_index(TREE, Config(), date(2026, 8, 17)), base_commit="deadbee",
-                        may_write=True)
+    return render_table(
+        build_index(TREE, Config(), date(2026, 8, 17)), base_commit="deadbee", may_write=True
+    )
 
 
 def test_the_id_sort_draws_the_plan_depth_first(tree_page: str):
@@ -4404,7 +4524,7 @@ def test_the_connector_that_ends_a_branch_is_the_last_row_drawn(tree_page: str):
     # own comment says which glyphs these rungs stand for, in prose, which is
     # where a box-drawing character is a fine thing to be.
     drawn = "".join(answer["written"])
-    assert "class=\"rung " in drawn, "or the next line is asserting about nothing"
+    assert 'class="rung ' in drawn, "or the next line is asserting about nothing"
     assert not set(drawn) & set("├└│─"), "drawn as borders, never typed"
 
 
@@ -4423,7 +4543,7 @@ def test_the_indent_never_takes_the_drop_target_with_it(tree_page: str):
     the rows that are hardest to reach the hardest to hit.
     """
     assert "const TREE_DEPTH = 3;" in script(tree_page)
-    assert "tr.d3 > td[data-col=\"title\"] { padding-left: calc(.5rem + 42px); }" in tree_page
+    assert 'tr.d3 > td[data-col="title"] { padding-left: calc(.5rem + 42px); }' in tree_page
     assert "tr.d4" not in tree_page, "capped, and the cap is drawn as well as computed"
     assert ".tree { position: absolute;" in tree_page, "so it costs the words nothing"
 
@@ -4481,6 +4601,7 @@ def test_no_template_comment_reaches_the_page(client: TestClient, route: str):
 
     assert served.count("{#") == 0, "a comment that reached the page never opened one"
     assert "#}" not in served, f"a template comment leaked into {route}"
+
 
 # The draft row's controls, in the browser that has to draw them. The row does
 # not exist in the rendered file — it is built by the page's own script when the
@@ -4625,15 +4746,38 @@ def test_a_row_that_names_no_reviewer_shows_the_ones_under_it(tmp_path: Path):
     # reviewers, which is what a plan somebody has been keeping looks like — and
     # the whole question here is about one that does not.
     records = [
-        Pitch(id="pitch-000001", kind="pitch", title="Held up by its tasks",
-              status="ready", owner="ann", reviewers=[], person_weeks=4,
-              assigned_on=date(2026, 8, 10)),
-        Task(id="task-000001", kind="task", title="One", parent="pitch-000001",
-             status="ready", owner="ann", reviewers=["bo"], person_weeks=2,
-             assigned_on=date(2026, 8, 10)),
-        Task(id="task-000002", kind="task", title="Two", parent="pitch-000001",
-             status="ready", owner="bo", reviewers=["cy"], person_weeks=2,
-             assigned_on=date(2026, 8, 10)),
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Held up by its tasks",
+            status="ready",
+            owner="ann",
+            reviewers=[],
+            person_weeks=4,
+            assigned_on=date(2026, 8, 10),
+        ),
+        Task(
+            id="task-000001",
+            kind="task",
+            title="One",
+            parent="pitch-000001",
+            status="ready",
+            owner="ann",
+            reviewers=["bo"],
+            person_weeks=2,
+            assigned_on=date(2026, 8, 10),
+        ),
+        Task(
+            id="task-000002",
+            kind="task",
+            title="Two",
+            parent="pitch-000001",
+            status="ready",
+            owner="bo",
+            reviewers=["cy"],
+            person_weeks=2,
+            assigned_on=date(2026, 8, 10),
+        ),
     ]
     page = render_table(build_index(records, Config(), date(2026, 8, 17)))
     got = measured_in(chrome(), page, tmp_path / "inherited.html", 1460, _INHERITED)
@@ -4677,9 +4821,7 @@ return {
 """
 
 
-def test_a_drop_on_a_dead_connection_takes_its_own_sentence_back_down(
-    page: str, tmp_path: Path
-):
+def test_a_drop_on_a_dead_connection_takes_its_own_sentence_back_down(page: str, tmp_path: Path):
     """`reparent` announces `moving task-3 into project-a…` before the request and
     takes it back only when an answer arrives — and it was `try`/`finally` with no
     `catch`.
@@ -4698,9 +4840,13 @@ def test_a_drop_on_a_dead_connection_takes_its_own_sentence_back_down(
     the first one landed.
     """
     got = measured_in(
-        chrome(), page, tmp_path / "drop-dropped.html", 1460,
-        _DROP_ON_A_DEAD_CONNECTION.replace("CHILD", json.dumps(TASK))
-        .replace("PARENT", json.dumps(PROJECT)),
+        chrome(),
+        page,
+        tmp_path / "drop-dropped.html",
+        1460,
+        _DROP_ON_A_DEAD_CONNECTION.replace("CHILD", json.dumps(TASK)).replace(
+            "PARENT", json.dumps(PROJECT)
+        ),
         patience=4800,
     )
 
@@ -4720,9 +4866,7 @@ def test_a_drop_on_a_dead_connection_takes_its_own_sentence_back_down(
     assert got["waiting"] is None and got["dimmed"] is False, (
         "the row is still drawn as though the write were in the air"
     )
-    assert got["parent"] == PITCH, (
-        f"the row moved on a write that never landed: {got['parent']!r}"
-    )
+    assert got["parent"] == PITCH, f"the row moved on a write that never landed: {got['parent']!r}"
 
 
 # Drag a column wider, which is what ends the automatic fit, then resize the
@@ -4760,9 +4904,7 @@ return {dragged, narrow, wide, columns: [...table.querySelectorAll('th')].length
 """
 
 
-def test_a_dragged_table_still_fits_the_window_it_is_looked_at_in(
-    page: str, tmp_path: Path
-):
+def test_a_dragged_table_still_fits_the_window_it_is_looked_at_in(page: str, tmp_path: Path):
     """Reported by jcanton, 2026-08-20: "the table keeps its width, which means it
     can be smaller than the page when enlarging and (worse) larger than the page
     when reducing the size of the browser".
@@ -4809,8 +4951,9 @@ def test_a_blocker_that_is_done_is_not_a_blocker(client: TestClient, repo_path: 
         # `/api/index.json` is the flat index and answers a different question.
         page = client.get("/table").text
         rows = json.loads(
-            re.search(r'<script id="payload" type="application/json">(.*?)</script>', page, re.S)
-            .group(1)
+            re.search(
+                r'<script id="payload" type="application/json">(.*?)</script>', page, re.S
+            ).group(1)
         )["rows"]
         return rows[record_id]["blocked_by"]
 
@@ -5005,16 +5148,16 @@ def test_a_second_press_while_the_create_is_in_flight_makes_no_second_record(pag
         "  return {held, after: CREATING, draft: DRAFT};"
         "})()",
         replies=[
-            {"status": 201, "json": {"id": "task-a1b2c3", "outcome": "committed",
-                                     "commit": "c0ffee"}},
+            {
+                "status": 201,
+                "json": {"id": "task-a1b2c3", "outcome": "committed", "commit": "c0ffee"},
+            },
             {"status": 200, "json": {"rows": {}, "problems": []}},
         ],
     )
     posts = [call for call in answer["calls"] if call["method"] == "POST"]
 
-    assert len(posts) == 1, (
-        f"the check was pressed twice and posted {len(posts)} records: {posts}"
-    )
+    assert len(posts) == 1, f"the check was pressed twice and posted {len(posts)} records: {posts}"
     assert answer["value"]["held"] is True, "the row does not say it is working"
     assert answer["value"]["after"] is False, "the flag outlived its own request"
     assert answer["value"]["draft"] is None, "the row that was typed is a record now"
@@ -5040,10 +5183,20 @@ def test_a_refused_create_gives_the_check_back(page: str):
         "          said: [...document.getElementById('draft-problems').children]"
         "                  .map(item => item.textContent)};"
         "})()",
-        replies=[{"status": 422, "json": {"problems": [
-            {"record_id": "task-a1b2c3", "severity": "blocker",
-             "message": "a task needs an owner before it can be ready"},
-        ]}}],
+        replies=[
+            {
+                "status": 422,
+                "json": {
+                    "problems": [
+                        {
+                            "record_id": "task-a1b2c3",
+                            "severity": "blocker",
+                            "message": "a task needs an owner before it can be ready",
+                        },
+                    ]
+                },
+            }
+        ],
     )
 
     assert answer["value"]["creating"] is False, "the flag survived a refusal"
@@ -5125,8 +5278,12 @@ def test_the_check_creates_the_row_on_one_press_with_the_editor_still_open(
     where = tmp_path / "press.html"
     where.write_text(page)
     got, said = pressed_in(
-        chrome(), where.as_uri(), tmp_path / "profile",
-        setup=_PRESS_SETUP, at=_PRESS_AT, then=_PRESS_OUTCOME,
+        chrome(),
+        where.as_uri(),
+        tmp_path / "profile",
+        setup=_PRESS_SETUP,
+        at=_PRESS_AT,
+        then=_PRESS_OUTCOME,
     )
 
     assert got["posts"] == ["/api/record"], (
@@ -5166,7 +5323,7 @@ def test_a_saved_row_wears_the_mark_until_a_landing_names_its_commit(page: str):
     answer = drive_table(
         page,
         "(async () => {"
-        f"  const cell = tbody.querySelector('td[data-record=\"{TASK}\"]"
+        f'  const cell = tbody.querySelector(\'td[data-record="{TASK}"]'
         '[data-field="priority"]\');'
         f"  await saveCell(cell, 'high'); {SETTLE}"
         f"  const mark = () => tbody.querySelector('tr[data-id=\"{TASK}\"] .unlanded');"
@@ -5178,8 +5335,15 @@ def test_a_saved_row_wears_the_mark_until_a_landing_names_its_commit(page: str):
         "  return {marked, said, cleared: !mark()};"
         "})()",
         replies=[
-            {"status": 200, "json": {"outcome": "committed", "commit": committed,
-                                     "conflict": None, "pushed": False}},
+            {
+                "status": 200,
+                "json": {
+                    "outcome": "committed",
+                    "commit": committed,
+                    "conflict": None,
+                    "pushed": False,
+                },
+            },
             {"status": 200, "json": {"problems": []}},
         ],
     )
@@ -5200,12 +5364,11 @@ def test_a_re_minted_commit_clears_its_mark_through_the_old_to_new_map(page: str
     carried the re-mint succeeded.
     """
     committed = "a" * 40
-    frame = {"t": "landed", "landed": "f" * 40,
-             "remapped": {committed: "e" * 40}, "parked": []}
+    frame = {"t": "landed", "landed": "f" * 40, "remapped": {committed: "e" * 40}, "parked": []}
     answer = drive_table(
         page,
         "(async () => {"
-        f"  const cell = tbody.querySelector('td[data-record=\"{TASK}\"]"
+        f'  const cell = tbody.querySelector(\'td[data-record="{TASK}"]'
         '[data-field="priority"]\');'
         f"  await saveCell(cell, 'high'); {SETTLE}"
         f"  const mark = () => tbody.querySelector('tr[data-id=\"{TASK}\"] .unlanded');"
@@ -5215,8 +5378,15 @@ def test_a_re_minted_commit_clears_its_mark_through_the_old_to_new_map(page: str
         "  return {marked, cleared: !mark()};"
         "})()",
         replies=[
-            {"status": 200, "json": {"outcome": "committed", "commit": committed,
-                                     "conflict": None, "pushed": False}},
+            {
+                "status": 200,
+                "json": {
+                    "outcome": "committed",
+                    "commit": committed,
+                    "conflict": None,
+                    "pushed": False,
+                },
+            },
             {"status": 200, "json": {"problems": []}},
         ],
     )
@@ -5243,16 +5413,15 @@ def test_a_parked_commit_turns_its_mark_into_a_problem_naming_the_branch(page: s
     committed = "a" * 40
     second = "c" * 40
     branch = f"openproj/stranded-{committed}"
-    parked = {"t": "landed", "landed": second, "remapped": {},
-              "parked": [[committed, branch]]}
+    parked = {"t": "landed", "landed": second, "remapped": {}, "parked": [[committed, branch]]}
     later = {"t": "landed", "landed": "e" * 40, "remapped": {}, "parked": []}
     answer = drive_table(
         page,
         "(async () => {"
-        f"  const cell = tbody.querySelector('td[data-record=\"{TASK}\"]"
+        f'  const cell = tbody.querySelector(\'td[data-record="{TASK}"]'
         '[data-field="priority"]\');'
         f"  await saveCell(cell, 'high'); {SETTLE}"
-        f"  const other = tbody.querySelector('td[data-record=\"{OTHER}\"]"
+        f'  const other = tbody.querySelector(\'td[data-record="{OTHER}"]'
         '[data-field="priority"]\');'
         f"  await saveCell(other, 'low'); {SETTLE}"
         f"  const row = () => tbody.querySelector('tr[data-id=\"{TASK}\"]');"
@@ -5269,11 +5438,25 @@ def test_a_parked_commit_turns_its_mark_into_a_problem_naming_the_branch(page: s
         "          kept: !!row().querySelector('.stranded')};"
         "})()",
         replies=[
-            {"status": 200, "json": {"outcome": "committed", "commit": committed,
-                                     "conflict": None, "pushed": False}},
+            {
+                "status": 200,
+                "json": {
+                    "outcome": "committed",
+                    "commit": committed,
+                    "conflict": None,
+                    "pushed": False,
+                },
+            },
             {"status": 200, "json": {"problems": []}},
-            {"status": 200, "json": {"outcome": "committed", "commit": second,
-                                     "conflict": None, "pushed": False}},
+            {
+                "status": 200,
+                "json": {
+                    "outcome": "committed",
+                    "commit": second,
+                    "conflict": None,
+                    "pushed": False,
+                },
+            },
             {"status": 200, "json": {"problems": []}},
         ],
     )
@@ -5304,12 +5487,16 @@ def test_a_tab_that_missed_every_frame_still_clears_its_mark_by_polling(page: st
     anywhere in this test.
     """
     committed = "a" * 40
-    fresh = {"rows": {TASK: {"id": TASK, "predicates": []}}, "problems": [],
-             "landed": "f" * 40, "unpushed": 0}
+    fresh = {
+        "rows": {TASK: {"id": TASK, "predicates": []}},
+        "problems": [],
+        "landed": "f" * 40,
+        "unpushed": 0,
+    }
     answer = drive_table(
         page,
         "(async () => {"
-        f"  const cell = tbody.querySelector('td[data-record=\"{TASK}\"]"
+        f'  const cell = tbody.querySelector(\'td[data-record="{TASK}"]'
         '[data-field="priority"]\');'
         f"  await saveCell(cell, 'high'); {SETTLE}"
         f"  const mark = () => tbody.querySelector('tr[data-id=\"{TASK}\"] .unlanded');"
@@ -5319,8 +5506,15 @@ def test_a_tab_that_missed_every_frame_still_clears_its_mark_by_polling(page: st
         "  return {marked, pending, cleared: !mark(), rearmed: __pending()};"
         "})()",
         replies=[
-            {"status": 200, "json": {"outcome": "committed", "commit": committed,
-                                     "conflict": None, "pushed": False}},
+            {
+                "status": 200,
+                "json": {
+                    "outcome": "committed",
+                    "commit": committed,
+                    "conflict": None,
+                    "pushed": False,
+                },
+            },
             {"status": 200, "json": {"problems": []}},
             {"status": 200, "json": fresh},
         ],
@@ -5353,12 +5547,17 @@ def test_a_poll_whose_fetch_fails_re_arms_and_the_next_one_clears_the_mark(page:
     finished redeploy ends.
     """
     committed = "a" * 40
-    fresh = {"rows": {TASK: {"id": TASK, "predicates": []}}, "problems": [],
-             "landed": "f" * 40, "unpushed": 0, "parked": []}
+    fresh = {
+        "rows": {TASK: {"id": TASK, "predicates": []}},
+        "problems": [],
+        "landed": "f" * 40,
+        "unpushed": 0,
+        "parked": [],
+    }
     answer = drive_table(
         page,
         "(async () => {"
-        f"  const cell = tbody.querySelector('td[data-record=\"{TASK}\"]"
+        f'  const cell = tbody.querySelector(\'td[data-record="{TASK}"]'
         '[data-field="priority"]\');'
         f"  await saveCell(cell, 'high'); {SETTLE}"
         f"  const mark = () => tbody.querySelector('tr[data-id=\"{TASK}\"] .unlanded');"
@@ -5374,8 +5573,15 @@ def test_a_poll_whose_fetch_fails_re_arms_and_the_next_one_clears_the_mark(page:
         "  return {marked, rearmed, cleared: !mark(), quiet: __pending()};"
         "})()",
         replies=[
-            {"status": 200, "json": {"outcome": "committed", "commit": committed,
-                                     "conflict": None, "pushed": False}},
+            {
+                "status": 200,
+                "json": {
+                    "outcome": "committed",
+                    "commit": committed,
+                    "conflict": None,
+                    "pushed": False,
+                },
+            },
             {"status": 200, "json": {"problems": []}},
             {"status": 200, "json": fresh},
         ],
@@ -5403,7 +5609,7 @@ def test_the_poll_waits_rather_than_redrawing_over_an_open_editor(page: str):
         page,
         "(async () => {"
         f"  markSaved({{commit: '{'b' * 40}', pushed: false}}, '{TASK}');"
-        f"  const cell = tbody.querySelector('td[data-record=\"{TASK}\"]"
+        f'  const cell = tbody.querySelector(\'td[data-record="{TASK}"]'
         '[data-field="title"]\');'
         "  openEditor(cell);"
         f"  __tick(); {SETTLE}"
@@ -5425,8 +5631,12 @@ def test_a_save_answering_while_the_poll_is_in_the_air_keeps_its_mark(page: str)
     landed while it exists only on this instance — the one thing no state on
     this page may ever say.
     """
-    fresh = {"rows": {TASK: {"id": TASK, "predicates": []}}, "problems": [],
-             "landed": "f" * 40, "unpushed": 0}
+    fresh = {
+        "rows": {TASK: {"id": TASK, "predicates": []}},
+        "problems": [],
+        "landed": "f" * 40,
+        "unpushed": 0,
+    }
     answer = drive_table(
         page,
         "(async () => {"
@@ -5459,12 +5669,17 @@ def test_a_parked_save_reaches_a_tab_that_missed_the_frame_through_the_poll(page
     """
     committed = "a" * 40
     branch = f"openproj/stranded-{committed}"
-    fresh = {"rows": {TASK: {"id": TASK, "predicates": []}}, "problems": [],
-             "landed": "f" * 40, "unpushed": 0, "parked": [[committed, branch]]}
+    fresh = {
+        "rows": {TASK: {"id": TASK, "predicates": []}},
+        "problems": [],
+        "landed": "f" * 40,
+        "unpushed": 0,
+        "parked": [[committed, branch]],
+    }
     answer = drive_table(
         page,
         "(async () => {"
-        f"  const cell = tbody.querySelector('td[data-record=\"{TASK}\"]"
+        f'  const cell = tbody.querySelector(\'td[data-record="{TASK}"]'
         '[data-field="priority"]\');'
         f"  await saveCell(cell, 'high'); {SETTLE}"
         f"  const row = () => tbody.querySelector('tr[data-id=\"{TASK}\"]');"
@@ -5477,8 +5692,15 @@ def test_a_parked_save_reaches_a_tab_that_missed_the_frame_through_the_poll(page
         "          announced: document.getElementById('state').textContent};"
         "})()",
         replies=[
-            {"status": 200, "json": {"outcome": "committed", "commit": committed,
-                                     "conflict": None, "pushed": False}},
+            {
+                "status": 200,
+                "json": {
+                    "outcome": "committed",
+                    "commit": committed,
+                    "conflict": None,
+                    "pushed": False,
+                },
+            },
             {"status": 200, "json": {"problems": []}},
             {"status": 200, "json": fresh},
         ],
@@ -5632,7 +5854,10 @@ def test_both_landing_marks_are_pixels_a_browser_draws(page: str, tmp_path: Path
     the claim that it exists is a claim about pixels and is asked of the pixels.
     """
     got = measured_in(
-        chrome(), page, tmp_path / "landing.html", 1460,
+        chrome(),
+        page,
+        tmp_path / "landing.html",
+        1460,
         _LANDING_MARKS % {"task": TASK, "pitch": PITCH, "project": PROJECT},
     )
 
@@ -5679,8 +5904,11 @@ def test_the_table_teaches_its_gestures_beside_the_search_box(seed_root: Path):
     page = render_table(index, ROUTES, base_commit="deadbee", may_write=True)
 
     drawn = elements(page)
-    asides = [i for i, e in enumerate(drawn) if e.tag == "div"
-              and "aside" in e.attrs.get("class", "").split()]
+    asides = [
+        i
+        for i, e in enumerate(drawn)
+        if e.tag == "div" and "aside" in e.attrs.get("class", "").split()
+    ]
     assert len(asides) == 1, f"the table draws {len(asides)} aside slots"
     said = drawn[asides[0] + 1]
     assert (said.tag, said.attrs.get("class")) == ("p", "hint"), (
@@ -5693,16 +5921,17 @@ def test_the_table_teaches_its_gestures_beside_the_search_box(seed_root: Path):
     # And the control it used to stand beside is off the page, not merely
     # restyled: the `+` row at the foot is the one way in now.
     assert not [
-        e for e in drawn
-        if e.tag == "a" and "button" in e.attrs.get("class", "").split()
+        e
+        for e in drawn
+        if e.tag == "a"
+        and "button" in e.attrs.get("class", "").split()
         and e.text.strip() == "New record"
     ], "the table still draws a second way to create a record above the rows"
 
     reader = elements(render_table(index, ROUTES, base_commit="deadbee"))
-    assert not [e for e in reader if e.tag == "div"
-                and "aside" in e.attrs.get("class", "").split()], (
-        "the reader's table promises gestures it has no server for"
-    )
+    assert not [
+        e for e in reader if e.tag == "div" and "aside" in e.attrs.get("class", "").split()
+    ], "the reader's table promises gestures it has no server for"
 
 
 # Modifier bits as `Input.dispatchMouseEvent` counts them. Named, because `4` and
@@ -5735,24 +5964,36 @@ def _picking(browser: str, page: str, where: Path, steps: list[tuple[str, int]])
     with _devtools(browser, where.as_uri(), profile) as (call, _said):
         time.sleep(2.5)
         for selector, modifiers in steps:
-            at = _evaluated(call, f"""(() => {{
+            at = _evaluated(
+                call,
+                f"""(() => {{
               const cell = document.querySelector({json.dumps(selector)});
               if (!cell) return null;
               cell.scrollIntoView({{block: 'center'}});
               const box = cell.getBoundingClientRect();
               return [Math.round(box.left + box.width / 2),
                       Math.round(box.top + box.height / 2)];
-            }})()""")
+            }})()""",
+            )
             assert at, f"no cell matched {selector}"
             for kind in ("mousePressed", "mouseReleased"):
-                call("Input.dispatchMouseEvent", {
-                    "type": kind, "x": at[0], "y": at[1], "button": "left",
-                    "clickCount": 1, "modifiers": modifiers,
-                    "buttons": 1 if kind == "mousePressed" else 0,
-                })
+                call(
+                    "Input.dispatchMouseEvent",
+                    {
+                        "type": kind,
+                        "x": at[0],
+                        "y": at[1],
+                        "button": "left",
+                        "clickCount": 1,
+                        "modifiers": modifiers,
+                        "buttons": 1 if kind == "mousePressed" else 0,
+                    },
+                )
                 time.sleep(0.08)
             time.sleep(0.35)
-        return _evaluated(call, """(() => {
+        return _evaluated(
+            call,
+            """(() => {
           const picked = [...document.querySelectorAll('#rows td.picked')];
           return {
             ids: picked.map(c => c.dataset.record),
@@ -5762,7 +6003,8 @@ def _picking(browser: str, page: str, where: Path, steps: list[tuple[str, int]])
             // everywhere else.
             selectedText: (getSelection().toString() || '').trim().length,
           };
-        })()""")
+        })()""",
+        )
 
 
 def _priority_cells(page: str) -> list[str]:
@@ -5787,8 +6029,7 @@ def test_a_modifier_click_picks_a_cell_and_shift_takes_the_range(page: str, tmp_
     from browser import chrome
 
     first, _second, third = _priority_cells(page)
-    got = _picking(chrome(), page, tmp_path / "range.html",
-                   [(first, _META), (third, _SHIFT)])
+    got = _picking(chrome(), page, tmp_path / "range.html", [(first, _META), (third, _SHIFT)])
 
     assert len(got["ids"]) == 3, f"cmd then shift picked {got['ids']}"
     assert got["fields"] == ["priority"], got["fields"]
@@ -5798,9 +6039,7 @@ def test_a_modifier_click_picks_a_cell_and_shift_takes_the_range(page: str, tmp_
     )
 
 
-def test_a_selection_is_one_column_and_picking_another_replaces_it(
-    page: str, tmp_path: Path
-):
+def test_a_selection_is_one_column_and_picking_another_replaces_it(page: str, tmp_path: Path):
     """**The whole safety model, and it is a refusal rather than a warning.**
 
     A selection that could span columns is a selection that can write a status
@@ -5813,8 +6052,9 @@ def test_a_selection_is_one_column_and_picking_another_replaces_it(
 
     first, second, _third = _priority_cells(page)
     other = '#rows tr:nth-of-type(1) td[data-field="status"]'
-    got = _picking(chrome(), page, tmp_path / "columns.html",
-                   [(first, _META), (second, _META), (other, _META)])
+    got = _picking(
+        chrome(), page, tmp_path / "columns.html", [(first, _META), (second, _META), (other, _META)]
+    )
 
     assert got["fields"] == ["status"], (
         f"a selection spans {got['fields']}, so one edit could write two columns"
@@ -5834,7 +6074,8 @@ def test_a_plain_click_puts_the_selection_down(page: str, tmp_path: Path):
     from browser import chrome
 
     first, second, _third = _priority_cells(page)
-    got = _picking(chrome(), page, tmp_path / "clear.html",
-                   [(first, _META), (second, _META), (second, 0)])
+    got = _picking(
+        chrome(), page, tmp_path / "clear.html", [(first, _META), (second, _META), (second, 0)]
+    )
 
     assert not got["ids"], f"{got['ids']} survived a plain click"

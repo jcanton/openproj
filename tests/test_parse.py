@@ -114,7 +114,7 @@ def test_serialise_writes_one_edited_key_and_leaves_its_neighbours_alone():
     output = serialise(record, text)
     assert "status: done\n" in output
     assert "prs: [kilnlab/kiln4py#1234]\n" in output
-    assert "owner: \"grünfink\"      # quoted on purpose" in output
+    assert 'owner: "grünfink"      # quoted on purpose' in output
     assert output.split("---\n")[1].count("\n") == text.split("---\n")[1].count("\n")
 
 
@@ -257,7 +257,10 @@ def test_a_template_quoted_inside_a_fence_is_not_this_records_own_plan(seed_root
     assert "## <symbol>" in body and "- [ ] one line on what it is for" in body
     assert "<symbol>" not in sections(body), "a heading in a fence is somebody else's document"
     assert set(sections(body)) == {
-        "freeze the backend api before the shutdown", "problem", "solution", "progress",
+        "freeze the backend api before the shutdown",
+        "problem",
+        "solution",
+        "progress",
     }
     assert (done, total) == (0, 3), "the quoted point is not a fourth thing to do"
 

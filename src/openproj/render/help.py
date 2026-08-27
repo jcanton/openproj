@@ -124,7 +124,7 @@ def _without_title(text: str) -> str:
     keeps its first section, which is what the regex not matching already means.
     """
     match = _LEADING_HEADING.match(text)
-    return text[match.end():].lstrip("\n") if match else text
+    return text[match.end() :].lstrip("\n") if match else text
 
 
 _HELP = """
@@ -358,8 +358,13 @@ def render_help(index: Index, links: Links = STATIC) -> str:
     drawn = []
     for doc in DOCS:
         text, why = _read_doc(root, doc)
-        html, headings = document_html(_without_title(text), links, doc.key) if text else (
-            Markup(""), (),
+        html, headings = (
+            document_html(_without_title(text), links, doc.key)
+            if text
+            else (
+                Markup(""),
+                (),
+            )
         )
         drawn.append(
             {
@@ -372,5 +377,11 @@ def render_help(index: Index, links: Links = STATIC) -> str:
             }
         )
     body = _compiled(_HELP).render(docs=drawn)
-    return _page("openproj — help", body, _SUGGEST_STYLE + _DETAIL_STYLE + _HELP_STYLE,
-                 links, "help", index.unreadable)
+    return _page(
+        "openproj — help",
+        body,
+        _SUGGEST_STYLE + _DETAIL_STYLE + _HELP_STYLE,
+        links,
+        "help",
+        index.unreadable,
+    )

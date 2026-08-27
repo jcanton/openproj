@@ -629,9 +629,7 @@ def test_a_commit_made_in_git_arrives_whole_in_a_body_written_in_house_style(
     assert stored_body(plan).strip() == ("A LINE TYPED IN THE ROOM\n" + theirs).strip()
 
 
-def test_an_overlap_is_still_the_same_refusal_it_has_always_been(
-    client: TestClient, plan: Path
-):
+def test_an_overlap_is_still_the_same_refusal_it_has_always_been(client: TestClient, plan: Path):
     """A genuine overlap comes back as the conflict report, shown to the room and
     never pasted into the editing surface."""
     with open_room(client, "ann") as one:
@@ -1021,9 +1019,7 @@ def test_every_refusal_a_room_makes_leaves_through_one_door():
         if isinstance(node, ast.Assign)
         and any(isinstance(t, ast.Attribute) and t.attr == "refusal" for t in node.targets)
     ]
-    inside = [
-        line for line in refusal_writes if door[0].lineno <= line <= door[0].end_lineno
-    ]
+    inside = [line for line in refusal_writes if door[0].lineno <= line <= door[0].end_lineno]
     assert refusal_writes == inside, (
         f"room.refusal is assigned outside _refuse_room at line(s) "
         f"{sorted(set(refusal_writes) - set(inside))} — a refusal that skips the "
@@ -1359,9 +1355,9 @@ def test_a_room_for_a_record_that_is_not_there_never_opens(client: TestClient):
     deleted, the other has a session that timed out. Both used to be code 1006
     and silence."""
     _, closed = refusal_of(
-        client, "task-ffffff",
-        cookie=f"{SESSION_COOKIE}="
-        f"{sign_session(User(login='ann', member=True), SECRET)}",
+        client,
+        "task-ffffff",
+        cookie=f"{SESSION_COOKIE}={sign_session(User(login='ann', member=True), SECRET)}",
     )
 
     assert closed["type"] == "websocket.close" and closed["code"] == 4404, closed
@@ -1521,22 +1517,28 @@ CORPUS = (
     # at the first character.
     Case(
         "a thumb up becomes a thumb down",
-        "\U0001f44d done\n", "\U0001f44e done\n",
-        (0, 1), (0, 4),
+        "\U0001f44d done\n",
+        "\U0001f44e done\n",
+        (0, 1),
+        (0, 4),
         "\U0001f44e",
     ),
     Case(
         "backspacing the first of two adjacent emoji",
-        "\U0001f600\U0001f601 ok\n", "\U0001f601 ok\n",
-        (0, 1), (0, 4),
+        "\U0001f600\U0001f601 ok\n",
+        "\U0001f601 ok\n",
+        (0, 1),
+        (0, 4),
         # The whole document. `del` ran from byte 0 to byte 1 — inside the first
         # emoji — and took everything with it.
         "",
     ),
     Case(
         "a flag, whose second half changes",
-        "\U0001f1e9\U0001f1ea\n", "\U0001f1e9\U0001f1eb\n",
-        (1, 2), (4, 8),
+        "\U0001f1e9\U0001f1ea\n",
+        "\U0001f1e9\U0001f1eb\n",
+        (1, 2),
+        (4, 8),
         PANICKED,
     ),
     # -- Family B: a boundary inside a multi-BYTE, single-code-unit character --
@@ -1549,7 +1551,8 @@ CORPUS = (
         "an edit after a run of em dashes",
         "one \u2014 two \u2014 three \u2014 four \u2014 five\n",
         "one \u2014 two \u2014 three \u2014 four \u2014 six\n",
-        (27, 31), (35, 39),
+        (27, 31),
+        (35, 39),
         # Well formed, no replacement character anywhere, one word deleted from
         # the wrong place and its replacement stranded inside another. This is
         # the shape `byte_offset`'s docstring records as shipped and committed.
@@ -1557,14 +1560,18 @@ CORPUS = (
     ),
     Case(
         "a commit changes a word after an em dash",
-        "Shape it \u2014 then bet on it.\n", "Shape it \u2014 then bet on that.\n",
-        (23, 24), (25, 26),
+        "Shape it \u2014 then bet on it.\n",
+        "Shape it \u2014 then bet on that.\n",
+        (23, 24),
+        (25, 26),
         "Shape it \u2014 then bet otha it.\n",
     ),
     Case(
         "CJK, where every character is three bytes and one unit",
-        "週次の計画を書く\n", "週次の計画を読む\n",
-        (6, 8), (18, 24),
+        "週次の計画を書く\n",
+        "週次の計画を読む\n",
+        (6, 8),
+        (18, 24),
         # Five characters of somebody's sentence gone, and the newline with them.
         "週次読む",
     ),
@@ -1575,8 +1582,10 @@ CORPUS = (
     # one-press-one-glyph.
     Case(
         "a decomposed é, and a backspace that takes the accent",
-        "le cafe\u0301 est pre\u0302t\n", "le cafe est pre\u0302t\n",
-        (7, 8), (7, 9),
+        "le cafe\u0301 est pre\u0302t\n",
+        "le cafe est pre\u0302t\n",
+        (7, 8),
+        (7, 9),
         # The rest of the line destroyed: the delete ended inside a two-byte
         # character, so it ran to the end of the document.
         "le cafe",
@@ -1585,7 +1594,8 @@ CORPUS = (
         "a family whose first member changes",
         "\U0001f469\u200d\U0001f469\u200d\U0001f467 crew\n",
         "\U0001f468\u200d\U0001f469\u200d\U0001f467 crew\n",
-        (0, 1), (0, 4),
+        (0, 1),
+        (0, 4),
         "\U0001f468",
     ),
     # -- Family D and E: deletion, and a replacement that spans a character ---
@@ -1593,7 +1603,8 @@ CORPUS = (
         "an insertion at the end of the last line, not of the document",
         "第一週の計画\n第二週の計画\n第三週の計画\n",
         "第一週の計画\n第二週の計画\n第三週の計画は未定\n",
-        (20, 20), (56, 56),
+        (20, 20),
+        (56, 56),
         # The trap this case exists to avoid: an append at the very end of the
         # document CANNOT fail, because the wrong index lands at the end anyway
         # and the end is where it belonged. This one goes after the last line and
@@ -1603,15 +1614,19 @@ CORPUS = (
     ),
     Case(
         "a selection whose ends are whole but whose length is not",
-        "six weeks \u2014 the appetite\n", "six weeks appetite\n",
-        (10, 16), (10, 18),
+        "six weeks \u2014 the appetite\n",
+        "six weeks appetite\n",
+        (10, 16),
+        (10, 18),
         # A stray `e`: the classic two-bytes-short signature.
         "six weeks e appetite\n",
     ),
     Case(
         "a replacement spanning an astral emoji",
-        "ship \U0001f680 on friday\n", "ship today\n",
-        (5, 13), (5, 16),
+        "ship \U0001f680 on friday\n",
+        "ship today\n",
+        (5, 13),
+        (5, 16),
         "ship tofriday\n",
     ),
     # -- Family F: the controls, declared per confusion -----------------------
@@ -1624,8 +1639,10 @@ CORPUS = (
     # over there and a live case here, and only saying which makes either useful.
     Case(
         "the mandated footer, edited after the robot",
-        "\U0001f916 written by an agent\n", "\U0001f916 written by somebody\n",
-        (13, 21), (16, 24),
+        "\U0001f916 written by an agent\n",
+        "\U0001f916 written by somebody\n",
+        (13, 21),
+        (16, 24),
         "\U0001f916 written somebodyent\n",
     ),
     # The two below are the controls FOR THIS CONFUSION: both carry a character
@@ -1634,14 +1651,18 @@ CORPUS = (
     # file say "has an emoji in it" and "has an em dash in it" are not the case.
     Case(
         "an emoji typed in from the picker, after an ASCII prefix",
-        "a fine result\n", "a fine \U0001f389 result\n",
-        (7, 7), (7, 7),
+        "a fine result\n",
+        "a fine \U0001f389 result\n",
+        (7, 7),
+        (7, 7),
         "a fine \U0001f389 result\n",
     ),
     Case(
         "an em dash that sits after both boundaries",
-        "hello \u2014 world\n", "hi \u2014 world\n",
-        (1, 5), (1, 5),
+        "hello \u2014 world\n",
+        "hi \u2014 world\n",
+        (1, 5),
+        (1, 5),
         "hi \u2014 world\n",
     ),
 )
@@ -1768,13 +1789,13 @@ def test_absorbing_holds_for_every_shape_of_edit_in_a_body_that_is_not_ascii():
     body = "Ann — who ran it — says…\nthe 🎉 case is fine.\nAnd the last line.\n"
     room = coedit.Room(TASK, PATH, "0" * 40, body)
     for landed in (
-        "PREPENDED\n" + body,                                    # at the top
-        body.replace("the 🎉 case", "the 🎉 CASE"),              # in the middle
-        body + "APPENDED\n",                                     # at the end
-        body.replace("\nthe 🎉 case is fine.", ""),              # a line taken out
-        body.replace("says…", "says… and then said it again"),   # after the ellipsis
-        "",                                                      # cleared
-        body,                                                    # and back again
+        "PREPENDED\n" + body,  # at the top
+        body.replace("the 🎉 case", "the 🎉 CASE"),  # in the middle
+        body + "APPENDED\n",  # at the end
+        body.replace("\nthe 🎉 case is fine.", ""),  # a line taken out
+        body.replace("says…", "says… and then said it again"),  # after the ellipsis
+        "",  # cleared
+        body,  # and back again
     ):
         room.absorb(landed)
         assert room.body() == landed, f"absorbing {landed!r} left {room.body()!r}"
@@ -1873,8 +1894,10 @@ def test_every_case_in_the_corpus_makes_two_index_spaces_disagree():
         for mark in getattr(obj, "pytestmark", ()):
             if mark.name == "parametrize" and mark.args[0] == "case":
                 taken[name] = tuple(one.name for one in mark.args[1])
-    whole = {"CORPUS": tuple(one.name for one in CORPUS),
-             "BROWSER_CORPUS": tuple(one.name for one in BROWSER_CORPUS)}
+    whole = {
+        "CORPUS": tuple(one.name for one in CORPUS),
+        "BROWSER_CORPUS": tuple(one.name for one in BROWSER_CORPUS),
+    }
     assert taken, "nothing is parametrised over a case any more, so this checks nothing"
     for name, names in taken.items():
         assert names in whole.values(), (
@@ -2055,8 +2078,7 @@ def test_an_index_inside_a_character_is_not_an_error_and_that_is_the_defect():
     del text[23:24]
     text.insert(23, "tha")
     assert str(text) == "Shape it \u2014 then bet otha it.\n", (
-        "the splice that shipped, reproduced: nothing raised and the document is "
-        "not the text"
+        "the splice that shipped, reproduced: nothing raised and the document is not the text"
     )
     assert "\ufffd" not in str(text), (
         "well formed, no replacement character anywhere — which is why the browser's "
@@ -2225,8 +2247,7 @@ def test_an_edit_across_an_emoji_reaches_the_room_as_the_character_it_was(
 
     room = typed_in_the_page(client, shown, [case.now])
     assert room.body() == case.now, (
-        f"the browser typed {case.now!r} and the room ended up holding "
-        f"{room.body()!r}"
+        f"the browser typed {case.now!r} and the room ended up holding {room.body()!r}"
     )
 
 
@@ -2307,18 +2328,20 @@ def in_chrome_room(
     # did.
     query = f"?editor={editor}" if editor else ""
     page = client.get(f"/detail/{TASK}{query}").text
-    seeded = page.replace(
-        '<link rel="icon"', f'<script>{_ROOM_STUB}</script><link rel="icon"', 1
-    )
+    seeded = page.replace('<link rel="icon"', f'<script>{_ROOM_STUB}</script><link rel="icon"', 1)
     answer = measured_in(
-        chrome(), seeded, where, 1400,
+        chrome(),
+        seeded,
+        where,
+        1400,
         # A session first, or there is no socket to welcome: `connect()` runs at
         # session start now — a reader holds no seat — so the room this helper
         # welcomes the page into exists only once a session is open.
         "if (!document.querySelector('article.record').classList.contains('editing'))"
         " flipEditing();\n"
         f"window.__room.onmessage({{data: {json.dumps(json.dumps(welcome))}}});\n" + script,
-        patience=6800, query=query,
+        patience=6800,
+        query=query,
     )
     assert answer["errors"] == [], f"the page threw: {answer['errors']}"
     for frame in answer.get("sent", []):
@@ -2367,15 +2390,17 @@ def test_an_edit_across_an_emoji_reaches_the_room_through_the_adapter(
 
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     answer = in_chrome_room(
-        client, tmp_path / "emoji.html", room, _welcome(room),
+        client,
+        tmp_path / "emoji.html",
+        room,
+        _welcome(room),
         _TYPED_IN_CHROME.replace("NEXT", json.dumps(case.now)),
     )
     assert answer["opened"] == case.was, (
         "the welcome did not reach the editing surface, so nothing below was driven"
     )
     assert room.body() == case.now, (
-        f"the browser typed {case.now!r} and the room ended up holding "
-        f"{room.body()!r}"
+        f"the browser typed {case.now!r} and the room ended up holding {room.body()!r}"
     )
 
 
@@ -2424,7 +2449,10 @@ def test_a_carriage_return_in_a_room_is_a_thing_the_box_cannot_hold(
     typed = "Ann says\nand then\nlast line and more\n"
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     answer = in_chrome_room(
-        client, tmp_path / "crlf.html", room, _welcome(room),
+        client,
+        tmp_path / "crlf.html",
+        room,
+        _welcome(room),
         _TYPED_IN_CHROME.replace("NEXT", json.dumps(typed)),
     )
     assert answer["opened"] == shown.replace("\r\n", "\n"), (
@@ -2543,7 +2571,10 @@ def test_somebody_elses_keystroke_is_reflected_and_never_sent_back(
     room.apply(update, "bob")
 
     answer = in_chrome_room(
-        client, tmp_path / "reflect.html", room, welcome,
+        client,
+        tmp_path / "reflect.html",
+        room,
+        welcome,
         _REFLECTED.replace("REMOTE", json.dumps(base64.b64encode(update).decode())),
     )
 
@@ -2675,7 +2706,9 @@ def in_node(asked: dict) -> dict:
     done = subprocess.run(
         [node_or_skip(), str(DRIVER)],
         input=json.dumps({"script": str(_yjs()), "seed": coedit.SEED, **asked}),
-        capture_output=True, text=True, timeout=120,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout)
@@ -2787,9 +2820,7 @@ def test_the_servers_update_lands_in_the_vendored_yjs():
     body = "one\ntwo\n"
     server = coedit.seeded(body)
     server[coedit.BODY].insert(0, "typed on the server\n")
-    answer = in_node(
-        {"body": body, "apply": base64.b64encode(server.get_update()).decode()}
-    )
+    answer = in_node({"body": body, "apply": base64.b64encode(server.get_update()).decode()})
     assert answer["text"] == "typed on the server\none\ntwo\n"
 
 
@@ -2818,7 +2849,7 @@ def test_the_parsed_editing_surface_answers_the_body_the_server_rendered(
     for every body containing a quote. This corpus's prose is full of them.
     """
     front, _ = split_front_matter(stored(plan))
-    body = "Ann's note <b> & \"quoted\" — done.\n"
+    body = 'Ann\'s note <b> & "quoted" — done.\n'
     commit_directly(plan, {**SEED, PATH: f"---\n{front}\n---\n\n{body}"}, "escapes")
     shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
     assert shown == body, "the record under test is not the one the page is showing"
@@ -3564,8 +3595,9 @@ def test_a_real_browser_opens_the_socket_under_this_policy_and_draws_the_room(
     from wsclient import Client
 
     token = sign_session(User(login="bo", member=True), SECRET)
-    with Client("127.0.0.1", serving, f"/api/coedit/{TASK}",
-                cookie=f"{SESSION_COOKIE}={token}") as bo:
+    with Client(
+        "127.0.0.1", serving, f"/api/coedit/{TASK}", cookie=f"{SESSION_COOKIE}={token}"
+    ) as bo:
         bo.send_json({"t": "hello", "seed": None, "sv": None})
         assert bo.receive_json()["t"] == "welcome"
 
@@ -3633,8 +3665,9 @@ def test_a_restored_draft_survives_the_welcome_and_is_offered_to_the_room(
     from wsclient import Client
 
     token = sign_session(User(login="bo", member=True), SECRET)
-    with Client("127.0.0.1", serving, f"/api/coedit/{TASK}",
-                cookie=f"{SESSION_COOKIE}={token}") as bo:
+    with Client(
+        "127.0.0.1", serving, f"/api/coedit/{TASK}", cookie=f"{SESSION_COOKIE}={token}"
+    ) as bo:
         bo.send_json({"t": "hello", "seed": None, "sv": None})
         welcome = bo.receive_json()
         assert welcome["t"] == "welcome"
@@ -3714,8 +3747,9 @@ def test_a_draft_against_a_room_that_has_moved_is_reported_and_not_thrown_away(
     from wsclient import Client
 
     token = sign_session(User(login="bo", member=True), SECRET)
-    with Client("127.0.0.1", serving, f"/api/coedit/{TASK}",
-                cookie=f"{SESSION_COOKIE}={token}") as bo:
+    with Client(
+        "127.0.0.1", serving, f"/api/coedit/{TASK}", cookie=f"{SESSION_COOKIE}={token}"
+    ) as bo:
         bo.send_json({"t": "hello", "seed": None, "sv": None})
         welcome = bo.receive_json()
         assert welcome["t"] == "welcome"
@@ -3724,9 +3758,7 @@ def test_a_draft_against_a_room_that_has_moved_is_reported_and_not_thrown_away(
         his.apply_update(base64.b64decode(welcome["update"]))
         before = his.get_state()
         his[coedit.BODY].insert(0, "BO WROTE THIS WHILE YOU WERE AWAY\n")
-        bo.send_json(
-            {"t": "update", "u": base64.b64encode(his.get_update(before)).decode()}
-        )
+        bo.send_json({"t": "update", "u": base64.b64encode(his.get_update(before)).decode()})
 
         mark = "MY DRAFT FROM THE TRAIN"
         # Forty lines of it, and the length is the point rather than decoration.
@@ -3930,8 +3962,12 @@ def test_a_seat_that_is_not_a_number_is_not_a_seat(client: TestClient):
         ann, bo = Session(one, "ann"), Session(two, "bo")
         ann.hello()
         bo.hello()
-        for nonsense in ({"t": "at", "at": "here"}, {"t": "at", "at": -3},
-                         {"t": "at", "at": 10 ** 9}, {"t": "at"}):
+        for nonsense in (
+            {"t": "at", "at": "here"},
+            {"t": "at", "at": -3},
+            {"t": "at", "at": 10**9},
+            {"t": "at"},
+        ):
             one.send_json(nonsense)
         # Still a room, still speaking: a real seat after the nonsense arrives.
         one.send_json({"t": "at", "at": 7})
@@ -4021,8 +4057,12 @@ def test_an_edit_in_the_second_surface_reaches_the_room_as_the_character_it_was(
 
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     answer = in_chrome_room(
-        client, tmp_path / "ace-emoji.html", room, _welcome(room),
-        _ACE_RETYPED.replace("NEXT", json.dumps(case.now)), editor="ace",
+        client,
+        tmp_path / "ace-emoji.html",
+        room,
+        _welcome(room),
+        _ACE_RETYPED.replace("NEXT", json.dumps(case.now)),
+        editor="ace",
     )
     assert answer["surface"] == "ace", "the page mounted the box, so nothing here was driven"
     assert answer["opened"] == case.was, (
@@ -4092,7 +4132,11 @@ def test_backspacing_a_whole_glyph_in_the_second_surface_leaves_both_copies_agre
 
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     answer = in_chrome_room(
-        client, tmp_path / "ace-back.html", room, _welcome(room), _ACE_BACKSPACED,
+        client,
+        tmp_path / "ace-back.html",
+        room,
+        _welcome(room),
+        _ACE_BACKSPACED,
         editor="ace",
     )
     assert answer["surface"] == "ace"
@@ -4139,7 +4183,12 @@ def test_opening_the_second_surface_changes_no_byte_of_the_document(
 
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     answer = in_chrome_room(
-        client, tmp_path / "ace-open.html", room, _welcome(room), _ACE_OPENED, editor="ace",
+        client,
+        tmp_path / "ace-open.html",
+        room,
+        _welcome(room),
+        _ACE_OPENED,
+        editor="ace",
     )
     assert answer["surface"] == "ace"
     # Counted in CHARACTERS CREDITED and not in frames, and the difference is the
@@ -4169,9 +4218,7 @@ def test_opening_the_second_surface_changes_no_byte_of_the_document(
     # argument for putting the rule there rather than in either surface is on
     # that function. What must not have happened is a MOVE: nothing between the
     # welcome and this line changed a character.
-    assert room.body() == coedit.one_newline(shown), (
-        "the room's copy moved without anybody typing"
-    )
+    assert room.body() == coedit.one_newline(shown), "the room's copy moved without anybody typing"
     assert "\r" in shown and "\r" not in room.body(), (
         "the fixture is not the mixed-ending body this test is about"
     )
@@ -4225,8 +4272,12 @@ def test_a_tab_that_is_only_watching_the_second_surface_is_credited_zero_charact
     remote = base64.b64encode(update).decode()
 
     answer = in_chrome_room(
-        client, tmp_path / "ace-watch.html", room, welcome,
-        _ACE_WATCHED.replace("REMOTE", json.dumps(remote)), editor="ace",
+        client,
+        tmp_path / "ace-watch.html",
+        room,
+        welcome,
+        _ACE_WATCHED.replace("REMOTE", json.dumps(remote)),
+        editor="ace",
     )
     assert answer["surface"] == "ace"
     assert answer["box"] == room.body(), "the remote keystroke did not reach the surface"
@@ -4287,11 +4338,20 @@ def test_two_editors_in_one_room_over_a_body_with_crlf_in_it_settle_on_one_docum
     # The box first, then Ace, into the SAME room — each welcomed with the state
     # the room is in when it joins, which is what a second tab really gets.
     box = in_chrome_room(
-        client, tmp_path / "two-box.html", room, _welcome(room), _TWO_EDITORS,
+        client,
+        tmp_path / "two-box.html",
+        room,
+        _welcome(room),
+        _TWO_EDITORS,
     )
     assert box["surface"] == "textarea"
     ace = in_chrome_room(
-        client, tmp_path / "two-ace.html", room, _welcome(room), _TWO_EDITORS, editor="ace",
+        client,
+        tmp_path / "two-ace.html",
+        room,
+        _welcome(room),
+        _TWO_EDITORS,
+        editor="ace",
     )
     assert ace["surface"] == "ace"
 
@@ -4365,8 +4425,10 @@ def test_a_substitution_over_a_whole_document_is_announced_before_it_is_sent(
       loud — three of its shipped defects were branches that decided something in
       silence.
     """
-    body = ("A cycle is six weeks and a cycle is what a bet is made for.\n"
-            "Every cycle has a cool-down, and the cycle after it starts cold.\n") * 12
+    body = (
+        "A cycle is six weeks and a cycle is what a bet is made for.\n"
+        "Every cycle has a cool-down, and the cycle after it starts cold.\n"
+    ) * 12
     front, _ = split_front_matter(stored(plan))
     commit_directly(plan, {**SEED, PATH: f"---\n{front}\n---\n\n{body}"}, "cycles")
     shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
@@ -4374,7 +4436,12 @@ def test_a_substitution_over_a_whole_document_is_announced_before_it_is_sent(
 
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     answer = in_chrome_room(
-        client, tmp_path / "ace-subst.html", room, _welcome(room), _SUBSTITUTED, editor="ace",
+        client,
+        tmp_path / "ace-subst.html",
+        room,
+        _welcome(room),
+        _SUBSTITUTED,
+        editor="ace",
     )
     assert answer["handler"] == "ace/keyboard/vim", "the keymap did not come on"
     assert answer["opened"] == shown
@@ -4459,7 +4526,10 @@ def test_undo_never_takes_back_something_somebody_else_typed(
     room.apply(update, "bob")
 
     answer = in_chrome_room(
-        client, tmp_path / "undo.html", room, welcome,
+        client,
+        tmp_path / "undo.html",
+        room,
+        welcome,
         _UNDO_IN_A_ROOM.replace("REMOTE", json.dumps(base64.b64encode(update).decode())),
         editor="ace",
     )
@@ -4469,8 +4539,7 @@ def test_undo_never_takes_back_something_somebody_else_typed(
         "Bob's keystroke never reached the box, so there is nothing here to take back"
     )
     assert "BOB WAS HERE" in answer["after"], (
-        "one press of undo deleted what somebody else typed: the box now reads "
-        f"{answer['after']!r}"
+        f"one press of undo deleted what somebody else typed: the box now reads {answer['after']!r}"
     )
     assert not answer["after"].startswith("ANN "), (
         "and it did not take back Ann's own edit either, which is what she pressed it for"
@@ -4559,10 +4628,11 @@ def test_undo_in_a_room_gives_back_your_own_last_thing_on_the_textarea(
     room.apply(update, "bob")
 
     answer = in_chrome_room(
-        client, tmp_path / "undo-box.html", room, welcome,
-        _UNDO_IN_A_ROOM_ON_THE_BOX.replace(
-            "REMOTE", json.dumps(base64.b64encode(update).decode())
-        ),
+        client,
+        tmp_path / "undo-box.html",
+        room,
+        welcome,
+        _UNDO_IN_A_ROOM_ON_THE_BOX.replace("REMOTE", json.dumps(base64.b64encode(update).decode())),
     )
 
     assert not answer.get("missing"), "the toolbar carries no history buttons"
@@ -4587,8 +4657,7 @@ def test_undo_in_a_room_gives_back_your_own_last_thing_on_the_textarea(
     )
 
     assert "BOB WAS HERE" in answer["after"], (
-        f"one press of undo deleted what somebody else typed: the box now reads "
-        f"{answer['after']!r}"
+        f"one press of undo deleted what somebody else typed: the box now reads {answer['after']!r}"
     )
     assert not answer["after"].startswith("ANN "), (
         "and it did not take back Ann's own edit either, which is what she pressed it for"
@@ -4702,16 +4771,14 @@ def test_the_history_buttons_answer_the_keyboard_and_say_when_a_stack_is_empty(
     assert not answer["undone"]["text"].endswith("a sentence"), (
         f"Ctrl+Z gave nothing back: {answer['undone']['text']!r}"
     )
-    assert answer["undone"] == {
-        "text": answer["undone"]["text"], "undo": True, "redo": False
-    }, "after the last step is taken back, undo is empty and redo is not"
+    assert answer["undone"] == {"text": answer["undone"]["text"], "undo": True, "redo": False}, (
+        "after the last step is taken back, undo is empty and redo is not"
+    )
 
     assert answer["redone"]["text"].endswith("a sentence"), (
         f"the redo button did not answer a keyboard press: {answer['redone']['text']!r}"
     )
-    assert answer["redone"] == {
-        "text": answer["redone"]["text"], "undo": False, "redo": True
-    }
+    assert answer["redone"] == {"text": answer["redone"]["text"], "undo": False, "redo": True}
 
     assert answer["tookUndoAgain"] and answer["tookRedo"], "the shifted chord was not claimed"
     assert answer["ended"].endswith("a sentence"), (
@@ -4775,9 +4842,7 @@ def test_saving_in_a_room_leaves_the_read_view_showing_what_was_saved(
     )
 
 
-def test_what_the_room_said_about_a_save_survives_the_reload(
-    client: TestClient, plan: Path
-):
+def test_what_the_room_said_about_a_save_survives_the_reload(client: TestClient, plan: Path):
     """A merge is the one thing worth saying and the only tab that can say it is
     the one that goes away.
 

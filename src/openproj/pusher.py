@@ -80,9 +80,7 @@ class Pusher:
         # A daemon, so a process that dies without calling `close` is not held
         # open by this thread waiting on a poke that will never come. The drain
         # on an orderly shutdown does not rely on daemonhood; `close` joins.
-        self._thread = threading.Thread(
-            target=self._run, name="openproj-pusher", daemon=True
-        )
+        self._thread = threading.Thread(target=self._run, name="openproj-pusher", daemon=True)
 
     def start(self) -> None:
         # Poked once at birth: a backlog can predate this process — a laptop

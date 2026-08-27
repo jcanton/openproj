@@ -144,7 +144,7 @@ class _Unreadable(HTMLParser):
 
 
 def unreadable_in(page: str) -> list[str]:
-    """"<path> — <why>" for each plan file the page says is not a record.
+    """ "<path> — <why>" for each plan file the page says is not a record.
 
     Read out of the parsed document and not searched for in the served bytes.
     The shell inlines its own stylesheet into every page and the comments in it
@@ -180,6 +180,7 @@ def lit(page: str) -> list[str]:
     none, and a helper answering `str | None` cannot tell them apart.
     """
     return [label for label, _, marked in nav_of(page) if marked]
+
 
 class _Selects(HTMLParser):
     """Every `<select>` on the page, as the list of options inside it, and the id
@@ -233,7 +234,8 @@ def selects(page: str) -> list[list[tuple[str, str]]]:
     # The scheme picker is not a filter and has no "all". Dropped here rather
     # than in each caller, because every caller is asking about filters.
     return [
-        options for options, which in zip(parser.found, parser.ids, strict=True)
+        options
+        for options, which in zip(parser.found, parser.ids, strict=True)
         if which != "scheme"
     ]
 
@@ -264,9 +266,7 @@ class _Elements(HTMLParser):
     # `<input>` is the one that matters here — a task list is an input inside a
     # list item — and the rest are named so that an unclosed `<br>` or `<img>`
     # cannot swallow the elements after it.
-    VOID = frozenset(
-        "area base br col embed hr img input link meta param source track wbr".split()
-    )
+    VOID = frozenset("area base br col embed hr img input link meta param source track wbr".split())
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)

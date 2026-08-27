@@ -283,9 +283,7 @@ def swamped(state: Condition) -> str | None:
     ceiling is a pile the next write would grow past it.
     """
     age = state.oldest_unpushed_age
-    if state.unpushed < PILE_CEILING_COMMITS and (
-        age is None or age < PILE_CEILING_SECONDS
-    ):
+    if state.unpushed < PILE_CEILING_COMMITS and (age is None or age < PILE_CEILING_SECONDS):
         return None
     return _swamped_message(state.unpushed, age or 0.0)
 
@@ -449,9 +447,7 @@ def _merge_body(base: str, mine: str, theirs: str) -> tuple[str | None, list[str
                     if span[0] == span[1]
                     else f"lines {span[0] + 1}-{span[1]}"
                 )
-                conflicts.append(
-                    f"  {where}: stored {stored_text!r} · yours {yours_text!r}"
-                )
+                conflicts.append(f"  {where}: stored {stored_text!r} · yours {yours_text!r}")
     if conflicts:
         return None, conflicts
 
@@ -1158,13 +1154,9 @@ class Store:
         # answer is given by code that has fetched, rather than guessed here
         # from a tracking ref that is stale by design.
         if remote_head is not None and not self._repo.descendant_of(local, remote_head):
-            raise _Rejected(
-                f"the remote is at {remote_head[:7]} and this is not on top of it"
-            )
+            raise _Rejected(f"the remote is at {remote_head[:7]} and this is not on top of it")
         try:
-            self._repo.remotes[_ORIGIN].push(
-                [f"{_BRANCH}:{_BRANCH}"], callbacks=self._callbacks()
-            )
+            self._repo.remotes[_ORIGIN].push([f"{_BRANCH}:{_BRANCH}"], callbacks=self._callbacks())
         except Exception:
             # A refusal and an unreachable host arrive as the same class, and they
             # want opposite answers: one is recoverable by replaying the backlog
@@ -1420,9 +1412,7 @@ class Store:
             repo.references.create(_PUSHED, tip, force=True)
         return SyncOutcome(landed=tip, remapped=remapped, parked=parked, state="landed")
 
-    def _local_only(
-        self, repo: pygit2.Repository, tip: str, floor: str
-    ) -> list[pygit2.Commit]:
+    def _local_only(self, repo: pygit2.Repository, tip: str, floor: str) -> list[pygit2.Commit]:
         """The commits reachable from `tip` and not from `floor`, oldest first.
 
         Oldest first because each replay's delta is against its own parent, so a
@@ -1477,9 +1467,7 @@ class Store:
             try:
                 was = repo[was_oid].data.decode("utf-8") if was_oid is not None else None
                 mine = repo[mine_oid].data.decode("utf-8") if mine_oid is not None else None
-                stored = (
-                    repo[stored_oid].data.decode("utf-8") if stored_oid is not None else None
-                )
+                stored = repo[stored_oid].data.decode("utf-8") if stored_oid is not None else None
             except UnicodeDecodeError:
                 # Three genuinely different byte states and at least one is not
                 # text: there is no line merge to run. Content-addressed assets
@@ -1501,9 +1489,7 @@ class Store:
             if refusal is not None:
                 refusals.append(refusal)
                 continue
-            resolved[path] = (
-                repo.create_blob(text.encode("utf-8")) if text is not None else None
-            )
+            resolved[path] = repo.create_blob(text.encode("utf-8")) if text is not None else None
         if refusals or not resolved:
             return onto, refusals
         tree = repo[onto].tree.id
@@ -1868,9 +1854,7 @@ class Store:
         """One file, one commit. The overwhelming majority of writes here."""
         return self.write_all({path: content}, base_commit, author, message)
 
-    def remove(
-        self, path: str, base_commit: str, author: str, message: str
-    ) -> WriteResult:
+    def remove(self, path: str, base_commit: str, author: str, message: str) -> WriteResult:
         """Take one file out of the plan, in a commit.
 
         `None` and not an empty string, which is a real file with nothing in it —
@@ -1977,9 +1961,7 @@ class Store:
             # caller, the replay, has no outcome to report to anybody.
             outcomes.append("retried" if was == stored else "merged")
         if conflicts:
-            return WriteResult(
-                commit=None, outcome="conflict", conflict="\n".join(conflicts)
-            )
+            return WriteResult(commit=None, outcome="conflict", conflict="\n".join(conflicts))
         # The most eventful thing that happened to any of them. A caller shown
         # "committed" for a set in which one file had to be merged has been
         # told the quiet half of what happened.

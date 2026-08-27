@@ -299,9 +299,7 @@ def test_the_bar_says_how_much_is_unsaved(page: str):
     assert ".commitbar.dirty { border-color: var(--warn); }" in page
 
 
-def test_reset_puts_the_record_back_and_stays_in_the_editor(
-    client: TestClient, tmp_path: Path
-):
+def test_reset_puts_the_record_back_and_stays_in_the_editor(client: TestClient, tmp_path: Path):
     """Reset undoes, and it is the only thing it does.
 
     jcanton, 2026-08-25: "the 'Cancel' button exits editing and goes to preview,
@@ -328,7 +326,10 @@ def test_reset_puts_the_record_back_and_stays_in_the_editor(
     """
     plain = client.get(f"/detail/{TASK}{PLAIN}").text
     found = measured_in(
-        chrome(), plain, tmp_path / "reset.html", 1100,
+        chrome(),
+        plain,
+        tmp_path / "reset.html",
+        1100,
         """
         const bar = document.getElementById('commitbar');
         const owner = document.querySelector('[name=owner]');
@@ -354,13 +355,16 @@ def test_reset_puts_the_record_back_and_stays_in_the_editor(
                 said: document.getElementById('unsaved').textContent,
                 announced: document.getElementById('state').textContent};
         """,
-        height=1200, patience=2500,
+        height=1200,
+        patience=2500,
     )
     # Nothing typed yet, so there is nothing to undo and the control says so.
     assert found["quiet"] is True, "Reset is pressable over a record nobody has typed into"
     # The changes were real and counted while they were being made.
     assert found["typed"] == {
-        "said": "2 unsaved changes", "hidden": False, "disabled": False,
+        "said": "2 unsaved changes",
+        "hidden": False,
+        "disabled": False,
     }
     # And are gone afterwards, from the boxes as well as from the bar.
     assert found["owner"] == found["was"]["owner"], "Reset left the typed value in the control"
@@ -409,7 +413,10 @@ def test_reset_puts_the_base_back_with_the_text(client: TestClient, tmp_path: Pa
         f"{json.dumps(json.dumps(draft))}); }} catch (e) {{}}",
     )
     got = measured_in(
-        chrome(), seeded, tmp_path / "base.html", 1100,
+        chrome(),
+        seeded,
+        tmp_path / "base.html",
+        1100,
         """
         const base = () => document.querySelector('[name=base_commit]').value;
         const body = () => document.querySelector('[name=body]').value;
@@ -418,9 +425,12 @@ def test_reset_puts_the_base_back_with_the_text(client: TestClient, tmp_path: Pa
         document.getElementById('reset').click();
         await new Promise(settled => setTimeout(settled, 60));
         return {restored, base: base(), body: body(),
-                held: localStorage.getItem(""" + json.dumps(key) + """)};
+                held: localStorage.getItem("""
+        + json.dumps(key)
+        + """)};
         """,
-        height=1200, patience=2500,
+        height=1200,
+        patience=2500,
     )
 
     assert got["restored"]["base"] == first, (
@@ -436,9 +446,7 @@ def test_reset_puts_the_base_back_with_the_text(client: TestClient, tmp_path: Pa
     assert got["held"] is None, "Reset left the draft in storage"
 
 
-def test_resetting_an_edit_nobody_made_is_refused_rather_than_silent(
-    page: str, tmp_path: Path
-):
+def test_resetting_an_edit_nobody_made_is_refused_rather_than_silent(page: str, tmp_path: Path):
     """Opening an edit and pressing Reset is not an event — and it is not a
     press either.
 
@@ -450,7 +458,10 @@ def test_resetting_an_edit_nobody_made_is_refused_rather_than_silent(
     nothing is indistinguishable from one that is broken.
     """
     found = measured_in(
-        chrome(), page, tmp_path / "quiet.html", 1100,
+        chrome(),
+        page,
+        tmp_path / "quiet.html",
+        1100,
         """
         flipEditing();
         await new Promise(settled => setTimeout(settled, 40));
@@ -462,7 +473,8 @@ def test_resetting_an_edit_nobody_made_is_refused_rather_than_silent(
                 editing: document.querySelector('article.record')
                   .classList.contains('editing')};
         """,
-        height=1200, patience=2500,
+        height=1200,
+        patience=2500,
     )
     assert found["disabled"] is True
     assert found["announced"] == "Nothing to reset"
@@ -682,6 +694,7 @@ def test_the_kind_is_read_before_the_name_on_every_page_that_has_one(client: Tes
     substring cannot tell markup from prose about markup; `elements` can, and
     the question here was always "in what order does the document put these".
     """
+
     def order(page: str, *wanted: str) -> list[int]:
         """Where each of these sits in document order, by name."""
         found = {}
@@ -724,9 +737,9 @@ def test_the_kind_is_read_before_the_name_on_every_page_that_has_one(client: Tes
     new = client.get("/new").text
     back, picker, heading = order(new, "back", "eyebrow", "heading")
     assert back < picker < heading, "the kind picker is not where the kind chip is"
-    assert any(
-        "kindpick" in e.attrs.get("class", "") for e in elements(new)
-    ), "the eyebrow on the create form is not the picker that decides the kind"
+    assert any("kindpick" in e.attrs.get("class", "") for e in elements(new)), (
+        "the eyebrow on the create form is not the picker that decides the kind"
+    )
 
     # The cycle page has no eyebrow on purpose: its heading is "Cycle 37", so the
     # kind is already the first word of the name and a chip above it would be the
@@ -808,8 +821,7 @@ def test_one_key_does_one_thing_at_the_betting_table(client: TestClient, tmp_pat
     grep of any of them can see it.
     """
     page = client.get("/cycle/37").text
-    got = measured_in(chrome(), page, tmp_path / "bets-keys.html", 1400, _BETS_ONE_KEY,
-                      height=900)
+    got = measured_in(chrome(), page, tmp_path / "bets-keys.html", 1400, _BETS_ONE_KEY, height=900)
 
     assert got["wasOpen"], "the list never opened, so nothing here was asked"
     # Enter with the list open picks the name, completes the token, and leaves
@@ -922,7 +934,7 @@ def test_capacity_moves_while_the_rate_is_being_typed(client: TestClient):
     assert "function recount()" in page
     assert re.search(r"if \(event\.target\.matches\('input\.rate'\)\) recount\(\);", page)
     assert re.search(r"const BUILD_WEEKS = [0-9.]+;", page), "the server's own answer"
-    assert "#setup input[type=date]" in page and 'getElementById(\'stale\')' in page
+    assert "#setup input[type=date]" in page and "getElementById('stale')" in page
 
 
 def test_a_new_cycle_starts_from_the_last_one_s_roster(client: TestClient, repo_path: Path):
@@ -1225,6 +1237,8 @@ def test_leaving_a_session_keeps_the_draft_and_the_commit_it_was_written_against
     assert key in after["stored"], "leaving the editor threw away the unsaved draft"
     assert body == draft["text"], "the text leaving the editor keeps in the box"
     assert base == first, "leaving put the page's own commit back under older text"
+
+
 # --- writing in the body ----------------------------------------------------
 
 
@@ -1306,23 +1320,23 @@ def _coedit_source(page: str) -> str:
 # writing to the box: if one of these has no replacement, the sweep was partial
 # and the boundary is a boundary with a hole in it.
 _THROUGH_THE_SURFACE = (
-    "let ORIGINAL_BODY = SURFACE.text();",                       # the baseline
+    "let ORIGINAL_BODY = SURFACE.text();",  # the baseline
     "const count = Object.keys(fields).length + (SURFACE.text()",  # dirty
     "const body = SURFACE.text() === ORIGINAL_BODY ? null : SURFACE.text();",  # save
-    "text: SURFACE.text()}))",                                   # the draft writer
-    "draft.text !== SURFACE.text()",                             # the draft restorer
+    "text: SURFACE.text()}))",  # the draft writer
+    "draft.text !== SURFACE.text()",  # the draft restorer
     "SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, draft.text))",
-    "body: SURFACE.text(), title: TITLED.value",                 # the preview
-    "SURFACE.lineCoords()",                                      # the scroll sync
-    "const now = SURFACE.text(), was = text.toString();",        # typed
-    "const want = text.toString(), was = SURFACE.text();",       # reflect
-    "SURFACE.seats.draw(",                                       # drawSeats
-    "const at = SURFACE.caret().from;",                          # sit
-    "const mine = SURFACE.text() !== ORIGINAL_BODY;",            # welcomed
-    "const draft = SURFACE.text();",                             # welcomed's report
-    "const count = surface.text().split",                        # attachGutter
-    "const text = surface.text();",                              # attachStatus, applyMark
-    "surface.text().indexOf(token)",                             # attachUploads
+    "body: SURFACE.text(), title: TITLED.value",  # the preview
+    "SURFACE.lineCoords()",  # the scroll sync
+    "const now = SURFACE.text(), was = text.toString();",  # typed
+    "const want = text.toString(), was = SURFACE.text();",  # reflect
+    "SURFACE.seats.draw(",  # drawSeats
+    "const at = SURFACE.caret().from;",  # sit
+    "const mine = SURFACE.text() !== ORIGINAL_BODY;",  # welcomed
+    "const draft = SURFACE.text();",  # welcomed's report
+    "const count = surface.text().split",  # attachGutter
+    "const text = surface.text();",  # attachStatus, applyMark
+    "surface.text().indexOf(token)",  # attachUploads
 )
 
 
@@ -1355,15 +1369,21 @@ def test_the_body_is_read_through_one_place_and_nothing_else(client: TestClient)
         surface = _surface_source(page)
         assert "function textareaSurface(area)" in surface, path
         # Every one of the seven, by name, in the one place they are implemented.
-        for method in ("text:", "caret:", "setCaret(", "splice(", "onInput(",
-                       "onCaret(", "seats:"):
+        for method in ("text:", "caret:", "setCaret(", "splice(", "onInput(", "onCaret(", "seats:"):
             assert method in surface, f"{method} is not in the surface on {path}"
         assert "let applying = false;" in surface, path
 
         rest = page.replace(surface, "")
-        for reach in ("BODY.value", "BODY.selectionStart", "BODY.selectionEnd",
-                      "BODY.setSelectionRange", "area.value", "area.selectionStart",
-                      "area.selectionEnd", "area.setSelectionRange"):
+        for reach in (
+            "BODY.value",
+            "BODY.selectionStart",
+            "BODY.selectionEnd",
+            "BODY.setSelectionRange",
+            "area.value",
+            "area.selectionStart",
+            "area.selectionEnd",
+            "area.setSelectionRange",
+        ):
             assert reach not in rest, (
                 f"`{reach}` on {path} reads the document from outside the one place "
                 "that is allowed to. Every other surface fires its change event for "
@@ -1387,8 +1407,14 @@ def test_the_body_is_read_through_one_place_and_nothing_else(client: TestClient)
     # than reading it, so this stays literally one place.
     with_ace = _without_the_library(client.get(f"/detail/{TASK}?editor=ace").text)
     rest = with_ace.replace(_surface_source(with_ace), "")
-    for reach in ("BODY.value", "BODY.selectionStart", "BODY.setSelectionRange",
-                  "area.value", "area.selectionStart", "area.setSelectionRange"):
+    for reach in (
+        "BODY.value",
+        "BODY.selectionStart",
+        "BODY.setSelectionRange",
+        "area.value",
+        "area.selectionStart",
+        "area.setSelectionRange",
+    ):
         assert reach not in rest, (
             f"`{reach}` is in the page that carries the second editor, outside the one "
             "place allowed to read a textarea — and on that page the textarea is stale"
@@ -1449,9 +1475,7 @@ def test_the_second_surface_never_sets_or_replaces_the_whole_document(client: Te
     # Over the CODE and not over the prose: the block argues at length about the
     # two APIs it refuses, and a count that included the argument would go up
     # every time somebody explained it better.
-    code = "\n".join(
-        line for line in surface.splitlines() if not line.lstrip().startswith("//")
-    )
+    code = "\n".join(line for line in surface.splitlines() if not line.lstrip().startswith("//"))
     assert code.count("setValue") == 1, (
         "there is more than one whole-document write in the second surface"
     )
@@ -1467,8 +1491,13 @@ def test_the_second_surface_never_sets_or_replaces_the_whole_document(client: Te
         "up the socket as this tab's typing"
     )
     # The five commands that fetch a module over the network, by name.
-    for command in ("'find'", "'replace'", "'showSettingsMenu'",
-                    "'goToNextError'", "'goToPreviousError'"):
+    for command in (
+        "'find'",
+        "'replace'",
+        "'showSettingsMenu'",
+        "'goToNextError'",
+        "'goToPreviousError'",
+    ):
         assert command in surface, f"{command} still reaches config.loadModule"
     assert "removeCommand" in surface
     # And the line-ending boundary, which is the case no length or index check
@@ -1515,8 +1544,13 @@ def test_no_script_ever_assigns_a_textarea_its_value(client: TestClient):
     # supposed to be judging. A guard scanning nothing passes for ever, and the
     # spelling this replaced was scanning a window that stopped four functions
     # short of `applyMark` — the largest write path in the block, and the newest.
-    for named in ("function applyMark", "function indentLines", "function attachEditing",
-                  "function attachUploads", "function historyOf"):
+    for named in (
+        "function applyMark",
+        "function indentLines",
+        "function attachEditing",
+        "function attachUploads",
+        "function historyOf",
+    ):
         assert named in editing, f"the guard's window does not contain {named}"
 
     assert "document.execCommand('insertText', false, text)" in helpers
@@ -1572,10 +1606,23 @@ def test_the_toolbar_is_the_one_in_the_screenshot_and_that_overrules_a_count(
     named = [re.search(r"title: '([^']*)'", entry).group(1).split("  ")[0] for entry in entries]
 
     assert named == [
-        "Undo", "Redo",
-        "Bold", "Italic", "Strikethrough", "Heading",
-        "Code", "Code block", "Quote", "Bullet list", "Numbered list", "Check list",
-        "Link", "Image", "Drawings", "Table", "Horizontal rule",
+        "Undo",
+        "Redo",
+        "Bold",
+        "Italic",
+        "Strikethrough",
+        "Heading",
+        "Code",
+        "Code block",
+        "Quote",
+        "Bullet list",
+        "Numbered list",
+        "Check list",
+        "Link",
+        "Image",
+        "Drawings",
+        "Table",
+        "Horizontal rule",
     ]
     # Where the rules fall, and not merely how many there are: a separator in the
     # wrong place groups the buttons into a claim about them that is false.
@@ -1644,7 +1691,10 @@ def test_the_drawing_menu_lists_what_the_body_embeds_in_the_order_it_embeds_them
     of the regex — the two would drift the day one of them changed alone.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "drawings.html", 1200,
+        chrome(),
+        client.get(f"/detail/{TASK}").text,
+        tmp_path / "drawings.html",
+        1200,
         """
         const body = "![two](drawings/draw-bbbbbb.png)\\n"
           + "![one](drawings/draw-aaaaaa.png){width=60}\\n"
@@ -1662,12 +1712,18 @@ def test_the_drawing_menu_lists_what_the_body_embeds_in_the_order_it_embeds_them
     # whichever occurrence `indexOf` found — proven by the span pointing at the
     # first `draw-bbbbbb`, three lines before the "again" that repeats it.
     assert got[0] == {
-        "id": "draw-bbbbbb", "path": "drawings/draw-bbbbbb.png", "alt": "two",
-        "from": 0, "to": 32,
+        "id": "draw-bbbbbb",
+        "path": "drawings/draw-bbbbbb.png",
+        "alt": "two",
+        "from": 0,
+        "to": 32,
     }
     assert got[1] == {
-        "id": "draw-aaaaaa", "path": "drawings/draw-aaaaaa.png", "alt": "one",
-        "from": 33, "to": 65,
+        "id": "draw-aaaaaa",
+        "path": "drawings/draw-aaaaaa.png",
+        "alt": "one",
+        "from": 33,
+        "to": 65,
     }
 
 
@@ -1689,7 +1745,10 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
     were both verified by hand in headless Chrome and neither was asserted.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "drawmenu.html", 1200,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "drawmenu.html",
+        1200,
         """
         const area = document.querySelector('textarea[name=body]');
         area.value = 'before\\n![mine](drawings/draw-123abc.png)\\nafter';
@@ -1798,9 +1857,7 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
         "the drawings button is in the bar but not beside the figure button: it "
         f"follows {got['beside']!r}"
     )
-    assert got["markStyled"], (
-        "the button is in the mark bar wearing the view switcher's clothes"
-    )
+    assert got["markStyled"], "the button is in the mark bar wearing the view switcher's clothes"
     assert got["inTheMarkBar"], (
         "the button is not in `.markbar`, which is the row `article.record.view-view "
         ".markbar` hides — so it would show in the reading view"
@@ -1836,10 +1893,14 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
     assert got["openAfterInsideMousedown"], "a press inside the menu closed it before it chose"
     assert got["closedByOutsideMousedown"], "a press outside the button and the menu left it open"
     assert got["afterPress"] == {
-        "hidden": True, "expanded": "false",
+        "hidden": True,
+        "expanded": "false",
         "heard": {
-            "id": "draw-123abc", "path": "drawings/draw-123abc.png", "alt": "mine",
-            "from": 7, "to": 40,
+            "id": "draw-123abc",
+            "path": "drawings/draw-123abc.png",
+            "alt": "mine",
+            "from": 7,
+            "to": 40,
         },
         "status": "loading the drawing editor…",
         "popupOpened": True,
@@ -1860,7 +1921,10 @@ def test_a_second_drawing_cannot_be_opened_over_the_first(client: TestClient, tm
     is the second call into `openDrawing`, from wherever it comes.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "second-drawing.html", 1200,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "second-drawing.html",
+        1200,
         """
         const area = document.querySelector('textarea[name=body]');
         area.dispatchEvent(new CustomEvent('openproj:draw', {detail: null}));
@@ -1906,8 +1970,11 @@ def test_the_goal_is_above_the_bet_and_the_notes_are_below_it(client: TestClient
         "/api/cycle/51",
         json={
             "base_commit": git_head(repo_path),
-            "fields": {"starts_on": "2027-06-07", "reviews_on": "2027-07-05",
-                       "goal": "Ship the core solver port"},
+            "fields": {
+                "starts_on": "2027-06-07",
+                "reviews_on": "2027-07-05",
+                "goal": "Ship the core solver port",
+            },
             "body": "Throughflow was left out: no reviewer free.\n",
         },
     )
@@ -1928,7 +1995,7 @@ def test_starting_a_cycle_asks_for_dates_and_nothing_else(client: TestClient):
     page, above the betting table it is about — this form's whole job is to bring
     a record into existence, and two places to write one field is one too many."""
     page = client.get("/cycles").text
-    create = page[page.index('<section id="create">'):page.index("</section>")]
+    create = page[page.index('<section id="create">') : page.index("</section>")]
 
     assert 'id="number"' in create and 'id="starts"' in create and 'id="reviews"' in create
     assert 'id="start"' in create
@@ -2022,8 +2089,12 @@ def test_escape_still_arms_the_tab_hatch_where_the_box_is_on_the_page(
     form's ordinary page, which has no landing and keeps the surface-off
     state."""
     got = measured_in(
-        chrome(), client.get(f"/new{PLAIN}").text, tmp_path / "hatch.html", 1200,
-        _STUB_PREVIEW + """
+        chrome(),
+        client.get(f"/new{PLAIN}").text,
+        tmp_path / "hatch.html",
+        1200,
+        _STUB_PREVIEW
+        + """
         const area = document.querySelector('textarea[name=body]');
         // Out of the session views first: the create form's pressed segment
         // goes to the old surface-off state and the box stays on the page.
@@ -2241,8 +2312,11 @@ def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
     put into that branch left the guard and all twenty assertions passing.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text,
-        tmp_path / "marks.html", width, _MARKING
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "marks.html",
+        width,
+        _MARKING,
     )
 
     assert got["struck"] == "~~alpha~~ beta"
@@ -2255,9 +2329,9 @@ def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
     assert got["checked"] == "- [ ] one\n- [ ] two"
     assert got["boxed"] == "- [ ] one\n- [ ] two", "the prefix was stacked on the bullet"
     assert got["unboxed"] == "- one\n- two", "and pressing it again did not take the box off"
-    assert got["table"] == (
-        "alpha\n\n| Heading | Heading |\n| --- | --- |\n| Cell | Cell |"
-    ), "a table that interrupts a paragraph is a wall of pipes"
+    assert got["table"] == ("alpha\n\n| Heading | Heading |\n| --- | --- |\n| Cell | Cell |"), (
+        "a table that interrupts a paragraph is a wall of pipes"
+    )
     assert got["picked"] == "Heading", "the word to replace was not chosen for you"
     # A caret and not a selection, on the two marks that leave one. The fence
     # puts it on the language — the one word you type before the code and cannot
@@ -2334,6 +2408,8 @@ def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
     assert got["refused"] == "appetite.pdf is not an image", (
         "a file that is not an image was refused in silence"
     )
+
+
 # --- three views of one page, and the two panes ------------------------------
 #
 # Layout, selection and pixels, so Chrome: `tests/js/drive.js` has no box model
@@ -2365,7 +2441,9 @@ window.fetch = async (url, options) => {
 };
 """
 
-_VIEWING = _STUB_PREVIEW + """
+_VIEWING = (
+    _STUB_PREVIEW
+    + """
 const article = document.querySelector('article.record');
 const area = document.querySelector('textarea[name=body]');
 const pane = document.getElementById('body-preview');
@@ -2451,6 +2529,7 @@ const escaped = state();
 return {atLoad, editing, both, split, viewing, writing, out, chorded, unchorded,
         afterEuro, escaped, told, asked: window.asked.length};
 """
+)
 
 
 def test_the_three_views_are_one_of_three_and_each_pane_scrolls_on_its_own(
@@ -2475,19 +2554,34 @@ def test_the_three_views_are_one_of_three_and_each_pane_scrolls_on_its_own(
     stays in the surface and only Cancel restores fields.
     """
     LANDED = {
-        "classes": ["view-view"], "pressed": ["view"], "editing": False,
-        "box": False, "pane": False, "marks": False, "doc": True,
+        "classes": ["view-view"],
+        "pressed": ["view"],
+        "editing": False,
+        "box": False,
+        "pane": False,
+        "marks": False,
+        "doc": True,
         "position": "relative",
     }
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "views.html",
-        1400, _VIEWING, patience=4800,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "views.html",
+        1400,
+        _VIEWING,
+        patience=4800,
     )
 
     assert got["atLoad"] == LANDED, f"the page did not load on the landing: {got['atLoad']}"
     assert got["editing"] == {
-        "classes": ["view-edit"], "pressed": ["edit"], "editing": True,
-        "box": True, "pane": False, "marks": True, "doc": False, "position": "relative",
+        "classes": ["view-edit"],
+        "pressed": ["edit"],
+        "editing": True,
+        "box": True,
+        "pane": False,
+        "marks": True,
+        "doc": False,
+        "position": "relative",
     }, "pressing Write did not open a session in the edit view, on the same page"
 
     assert got["both"]["classes"] == ["view-both"]
@@ -2501,8 +2595,11 @@ def test_the_three_views_are_one_of_three_and_each_pane_scrolls_on_its_own(
     # bar. Under full page this was False because `body.fullpage` cut the
     # page's own scrollbar off — that surface is gone.
     assert got["split"] == {
-        "sideBySide": True, "sameHeight": True,
-        "boxScrolls": True, "paneScrolls": True, "pageScrolls": True,
+        "sideBySide": True,
+        "sameHeight": True,
+        "boxScrolls": True,
+        "paneScrolls": True,
+        "pageScrolls": True,
     }, "the two panes do not sit beside each other and scroll on their own"
 
     assert got["viewing"] == LANDED, (
@@ -2526,7 +2623,9 @@ def test_the_three_views_are_one_of_three_and_each_pane_scrolls_on_its_own(
     assert got["asked"] >= 1, "the preview was never asked for"
 
 
-_DEEP_LINK = _STUB_PREVIEW + """
+_DEEP_LINK = (
+    _STUB_PREVIEW
+    + """
 const article = document.querySelector('article.record');
 return {
   classes: [...article.classList].filter(c => c === 'full' || c.startsWith('view-')).sort(),
@@ -2535,6 +2634,7 @@ return {
     id => document.getElementById(id).getAttribute('aria-pressed') === 'true'),
 };
 """
+)
 
 
 def test_a_link_to_the_split_view_opens_in_the_split_view(client: TestClient, tmp_path: Path):
@@ -2542,9 +2642,7 @@ def test_a_link_to_the_split_view_opens_in_the_split_view(client: TestClient, tm
     address bar in the observed note actually carries. A flag and not a value:
     `?both=` answers the empty string to `get`, which reads as false."""
     page = client.get(f"/detail/{TASK}").text
-    got = measured_in(
-        chrome(), page, tmp_path / "deep.html", 1400, _DEEP_LINK, query="?both="
-    )
+    got = measured_in(chrome(), page, tmp_path / "deep.html", 1400, _DEEP_LINK, query="?both=")
 
     assert got["classes"] == ["view-both"]
     assert got["pressed"] == ["view-both"]
@@ -2619,8 +2717,7 @@ def test_a_view_link_is_sessionless_and_a_both_link_opens_a_session(
         "<head>", "<head><script>" + _SOCKETS + _STUB_PREVIEW + "</script>", 1
     )
 
-    viewed = measured_in(chrome(), page, tmp_path / "viewlink.html", 1400, _LINKED,
-                         query="?view=")
+    viewed = measured_in(chrome(), page, tmp_path / "viewlink.html", 1400, _LINKED, query="?view=")
     assert viewed["classes"] == ["view-view"] and viewed["pressed"] == ["preview"]
     assert not viewed["editing"], "?view opened a session"
     assert not viewed["fullpage"] and not viewed["navInert"]
@@ -2631,8 +2728,7 @@ def test_a_view_link_is_sessionless_and_a_both_link_opens_a_session(
         "the landing asked /api/preview to redraw bytes the server already rendered"
     )
 
-    both = measured_in(chrome(), page, tmp_path / "bothlink.html", 1400, _LINKED,
-                       query="?both=")
+    both = measured_in(chrome(), page, tmp_path / "bothlink.html", 1400, _LINKED, query="?both=")
     assert both["classes"] == ["view-both"] and both["pressed"] == ["view-both"]
     assert both["editing"], "?both did not open the session it is a view of"
     # A session is the same page now: nothing full, nothing inert, the nav
@@ -2683,8 +2779,7 @@ def test_cancel_with_a_divergent_draft_lands_on_the_stored_commit(
     page = client.get(f"/detail/{TASK}{PLAIN}").text.replace(
         "<head>", "<head><script>" + _SOCKETS + _STUB_PREVIEW + "</script>", 1
     )
-    got = measured_in(chrome(), page, tmp_path / "diverged.html", 1400, _DIVERGED,
-                      patience=2400)
+    got = measured_in(chrome(), page, tmp_path / "diverged.html", 1400, _DIVERGED, patience=2400)
 
     assert got["landed"] == ["view-view"] and not got["editing"]
     assert got["docShown"], "no document on the page Cancel landed on"
@@ -2717,7 +2812,10 @@ def test_a_draft_at_load_forces_a_session_and_the_room_refusal_still_fires(
     page = page.replace("<head>", "<head><script>" + _SOCKETS + _STUB_PREVIEW + "</script>", 1)
 
     got = measured_in(
-        chrome(), page, tmp_path / "draftload.html", 1400,
+        chrome(),
+        page,
+        tmp_path / "draftload.html",
+        1400,
         """
         const article = document.querySelector('article.record');
         const area = document.querySelector('textarea[name=body]');
@@ -2770,8 +2868,10 @@ def test_a_stored_legacy_view_mode_opens_the_next_session_in_edit(
         _before_the_page_runs(
             client.get(f"/detail/{TASK}{PLAIN}").text, _SEED % '{"mode": "view"}'
         ),
-        tmp_path / "legacy.html", 1400,
-        _STUB_PREVIEW + """
+        tmp_path / "legacy.html",
+        1400,
+        _STUB_PREVIEW
+        + """
         flipEditing();
         const article = document.querySelector('article.record');
         return {view: VIEW, editing: article.classList.contains('editing'),
@@ -2786,7 +2886,9 @@ def test_a_stored_legacy_view_mode_opens_the_next_session_in_edit(
     )
 
 
-_GRIPPING = _STUB_PREVIEW + """
+_GRIPPING = (
+    _STUB_PREVIEW
+    + """
 const article = document.querySelector('article.record');
 // `.panes` and not the article, since 2026-08-24: the article is the width of
 // the page in every view — that is what stops the header moving — and a handle
@@ -2815,6 +2917,7 @@ seg('view').click();               // the landing: session over
 const back = where();
 return {reading, inView, back};
 """
+)
 
 
 def test_the_width_handle_finds_the_pane_in_every_view(client: TestClient, tmp_path: Path):
@@ -2877,7 +2980,9 @@ def test_the_width_handle_finds_the_pane_in_every_view(client: TestClient, tmp_p
 # container query on the column from a media query on the window — and, since
 # 2026-08-24, a container on `.panes` from one left behind on a full-width
 # `article.record`.
-_DRAGGED_NARROW = _STUB_PREVIEW + """
+_DRAGGED_NARROW = (
+    _STUB_PREVIEW
+    + """
 const facts = document.querySelector('.panes > .facts');
 const main = document.querySelector('.panes > .main');
 const grip = document.getElementById('grip');
@@ -2930,6 +3035,7 @@ return {wide, narrow, back, width: innerWidth,
         measure: getComputedStyle(document.documentElement)
                    .getPropertyValue('--measure').trim()};
 """
+)
 
 
 def test_the_facts_answer_to_the_column_the_reader_drags_and_not_to_the_window(
@@ -2949,8 +3055,12 @@ def test_the_facts_answer_to_the_column_the_reader_drags_and_not_to_the_window(
     still green.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "column.html",
-        1400, _DRAGGED_NARROW, patience=2000,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "column.html",
+        1400,
+        _DRAGGED_NARROW,
+        patience=2000,
     )
 
     assert got["width"] == 1400, "the window moved, so this is not asking about the column"
@@ -2978,7 +3088,9 @@ def test_the_facts_answer_to_the_column_the_reader_drags_and_not_to_the_window(
 # of it of `tests/js/drive.js`, where `getClientRects()` answers `[]` for every
 # element and the one question this feature turns on — is there a handle drawn —
 # would answer "no" for ever.
-_DIVIDING = _STUB_PREVIEW + """
+_DIVIDING = (
+    _STUB_PREVIEW
+    + """
 const article = document.querySelector('article.record');
 const split = article.querySelector('.bodysplit');
 const handle = article.querySelector('#splitter');
@@ -3042,6 +3154,7 @@ return {
   grip: document.getElementById('grip').hidden,
 };
 """
+)
 
 
 def test_the_facts_column_does_not_move_when_the_join_between_the_panes_does(
@@ -3072,8 +3185,12 @@ def test_the_facts_column_does_not_move_when_the_join_between_the_panes_does(
     and a pane crushed to nothing is one that cannot be taken hold of again.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "split.html",
-        1400, _DIVIDING, patience=4800,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "split.html",
+        1400,
+        _DIVIDING,
+        patience=4800,
     )
 
     # It is a separator, it says which way it lies, it has a name, and it can be
@@ -3164,7 +3281,10 @@ def test_every_surface_that_splits_carries_the_same_handle(client: TestClient, w
     assert 'role="separator"' in inside and 'aria-orientation="vertical"' in inside
     assert 'tabindex="0"' in inside, "a splitter no key can reach"
 
-_SPLIT_BY_KEY = _STUB_PREVIEW + """
+
+_SPLIT_BY_KEY = (
+    _STUB_PREVIEW
+    + """
 const article = document.querySelector('article.record');
 const handle = article.querySelector('#splitter');
 const box = article.querySelector('.bodywrap');
@@ -3191,11 +3311,10 @@ const ignored = press('a');
 return {before, focused, right, left, end, past, home, ignored,
         stored: JSON.parse(localStorage.getItem('openproj:editor:1')).split};
 """
+)
 
 
-def test_the_join_between_the_panes_moves_for_the_keyboard_too(
-    client: TestClient, tmp_path: Path
-):
+def test_the_join_between_the_panes_moves_for_the_keyboard_too(client: TestClient, tmp_path: Path):
     """A splitter that answers only a mouse is the same defect as the thirteen
     mouse-only toolbar buttons this branch shipped and had to fix, and it is one
     jcanton's reviewers have already caught once here.
@@ -3205,8 +3324,12 @@ def test_the_join_between_the_panes_moves_for_the_keyboard_too(
     an `a` out of the box the moment focus was anywhere near it.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "keys.html",
-        1400, _SPLIT_BY_KEY, patience=4800,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "keys.html",
+        1400,
+        _SPLIT_BY_KEY,
+        patience=4800,
     )
 
     assert got["focused"], "the separator cannot take focus, so no key can reach it"
@@ -3222,12 +3345,14 @@ def test_the_join_between_the_panes_moves_for_the_keyboard_too(
         f"the two extremes are not the same floor: {got['home']} against {got['end']}"
     )
     assert got["ignored"] == got["home"], "a key that is not a nudge moved the join"
-    assert got["stored"] == pytest.approx(
-        got["home"]["box"] / got["home"]["pane"], rel=1e-6
-    ), "the keyboard moved the join without writing down where it left it"
+    assert got["stored"] == pytest.approx(got["home"]["box"] / got["home"]["pane"], rel=1e-6), (
+        "the keyboard moved the join without writing down where it left it"
+    )
 
 
-_SPLIT_AT_A_WIDTH = _STUB_PREVIEW + """
+_SPLIT_AT_A_WIDTH = (
+    _STUB_PREVIEW
+    + """
 const article = document.querySelector('article.record');
 const handle = article.querySelector('#splitter');
 const facts = article.querySelector('.panes > .facts');
@@ -3258,6 +3383,7 @@ seg('view').click();               // out of the session altogether
 const outside = drawn();
 return {inTheSplit, elsewhere, outside, win: innerWidth};
 """
+)
 
 
 @pytest.mark.parametrize("width", [1400, 936, 934, 700])
@@ -3283,14 +3409,17 @@ def test_there_is_no_handle_where_there_is_nothing_to_divide(
     middle of a split is worse than none.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text,
-        tmp_path / f"where-{width}.html", width, _SPLIT_AT_A_WIDTH, patience=4800,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / f"where-{width}.html",
+        width,
+        _SPLIT_AT_A_WIDTH,
+        patience=4800,
     )
     wide = width >= 936
 
     assert got["inTheSplit"]["handle"] is wide, (
-        f"at {width}px the handle is "
-        f"{'missing' if wide else 'drawn'} in the split view"
+        f"at {width}px the handle is {'missing' if wide else 'drawn'} in the split view"
     )
     assert got["inTheSplit"]["factsBeside"] is wide, (
         f"at {width}px the facts are {'under' if wide else 'beside'} the document, "
@@ -3310,7 +3439,9 @@ def test_there_is_no_handle_where_there_is_nothing_to_divide(
     assert not got["outside"], "a splitter on the page outside the writing surface"
 
 
-_SPLIT_REMEMBERED = _STUB_PREVIEW + """
+_SPLIT_REMEMBERED = (
+    _STUB_PREVIEW
+    + """
 const article = document.querySelector('article.record');
 const handle = article.querySelector('#splitter');
 const box = article.querySelector('.bodywrap');
@@ -3329,6 +3460,7 @@ return {
   tracks: getComputedStyle(split).gridTemplateColumns.split(' ').length,
 };
 """
+)
 
 
 @pytest.mark.parametrize(
@@ -3358,7 +3490,10 @@ def test_the_split_a_reader_chose_is_there_the_next_time(
         _before_the_page_runs(
             client.get(f"/detail/{TASK}{PLAIN}").text, _SEED % json.dumps(stored)
         ),
-        tmp_path / f"held-{held}.html", 1400, _SPLIT_REMEMBERED, patience=4800,
+        tmp_path / f"held-{held}.html",
+        1400,
+        _SPLIT_REMEMBERED,
+        patience=4800,
     )
 
     assert got["view"] == "both", "the remembered view did not open, so nothing was split"
@@ -3399,13 +3534,15 @@ def test_the_pane_splitter_takes_a_focus_ring_that_is_actually_painted(
 
     def shot(name: str, focus: str) -> bytes:
         html = tmp_path / f"splitring-{name}.html"
-        html.write_text(page.replace(
-            "</body>",
-            "<script>setTimeout(() => {"
-            "  document.getElementById('view-both').click();"
-            f" {focus}"
-            "}, 900);</script></body>",
-        ))
+        html.write_text(
+            page.replace(
+                "</body>",
+                "<script>setTimeout(() => {"
+                "  document.getElementById('view-both').click();"
+                f" {focus}"
+                "}, 900);</script></body>",
+            )
+        )
         return screenshot(browser, html, tmp_path / f"splitring-{name}.png", 1400, 900)
 
     dark = shot("off", "")
@@ -3418,7 +3555,9 @@ def test_the_pane_splitter_takes_a_focus_ring_that_is_actually_painted(
 
 # The join dragged as far as it will go, on a window wide enough that the outer
 # fence is what stops it rather than the pixel floor.
-_SPLIT_TO_THE_END = _STUB_PREVIEW + """
+_SPLIT_TO_THE_END = (
+    _STUB_PREVIEW
+    + """
 const article = document.querySelector('article.record');
 const handle = article.querySelector('#splitter');
 const box = article.querySelector('.bodywrap');
@@ -3432,9 +3571,12 @@ return {box: box.getBoundingClientRect().width, pane: pane.getBoundingClientRect
         most: Number(handle.getAttribute('aria-valuemax')),
         stored: localStorage.getItem('openproj:editor:1')};
 """
+)
 
 # And the same page opened again with exactly what that left behind in the store.
-_SPLIT_AS_FOUND = _STUB_PREVIEW + """
+_SPLIT_AS_FOUND = (
+    _STUB_PREVIEW
+    + """
 const article = document.querySelector('article.record');
 const handle = article.querySelector('#splitter');
 const box = article.querySelector('.bodywrap');
@@ -3444,6 +3586,7 @@ await new Promise(go => setTimeout(go, 80));
 return {box: box.getBoundingClientRect().width, pane: pane.getBoundingClientRect().width,
         held: EDITOR.split, view: VIEW};
 """
+)
 
 
 @pytest.mark.parametrize("width", [1400, 3440])
@@ -3481,8 +3624,12 @@ def test_the_split_dragged_to_the_end_on_a_wide_screen_is_the_one_that_comes_bac
             "try { localStorage.setItem('openproj:measure', '1900px'); } catch (e) {}",
         )
     first = measured_in(
-        chrome(), page,
-        tmp_path / f"end-{width}.html", width, _SPLIT_TO_THE_END, patience=4800,
+        chrome(),
+        page,
+        tmp_path / f"end-{width}.html",
+        width,
+        _SPLIT_TO_THE_END,
+        patience=4800,
     )
     # It went somewhere, and the separator says it is at the end of its own range.
     assert first["box"] > first["pane"] and first["now"] == first["most"], first
@@ -3506,7 +3653,10 @@ def test_the_split_dragged_to_the_end_on_a_wide_screen_is_the_one_that_comes_bac
     again = measured_in(
         chrome(),
         _before_the_page_runs(client.get(f"/detail/{TASK}{PLAIN}").text, seed),
-        tmp_path / f"back-{width}.html", width, _SPLIT_AS_FOUND, patience=4800,
+        tmp_path / f"back-{width}.html",
+        width,
+        _SPLIT_AS_FOUND,
+        patience=4800,
     )
     assert again["view"] == "both", "the remembered view did not open"
     assert (again["box"], again["pane"]) == (first["box"], first["pane"]), (
@@ -3516,7 +3666,9 @@ def test_the_split_dragged_to_the_end_on_a_wide_screen_is_the_one_that_comes_bac
     )
 
 
-_CANCELLED_DRAG = _STUB_PREVIEW + """
+_CANCELLED_DRAG = (
+    _STUB_PREVIEW
+    + """
 const article = document.querySelector('article.record');
 const handle = article.querySelector('#splitter');
 const box = article.querySelector('.bodywrap');
@@ -3538,11 +3690,10 @@ dispatchEvent(new PointerEvent('pointermove', {bubbles: true, pointerId: 1,
   clientX: from + 260}));
 return {down, cancelled, after: w(), touch: getComputedStyle(handle).touchAction};
 """
+)
 
 
-def test_a_drag_the_browser_takes_away_lets_go_of_the_join(
-    client: TestClient, tmp_path: Path
-):
+def test_a_drag_the_browser_takes_away_lets_go_of_the_join(client: TestClient, tmp_path: Path):
     """A drag does not always end in a `pointerup`.
 
     The browser can revoke the pointer — a touch it decides is a pan is the
@@ -3558,8 +3709,12 @@ def test_a_drag_the_browser_takes_away_lets_go_of_the_join(
     lands on: it is what stops the browser wanting the gesture at all.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text,
-        tmp_path / "cancel.html", 1400, _CANCELLED_DRAG, patience=4800,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "cancel.html",
+        1400,
+        _CANCELLED_DRAG,
+        patience=4800,
     )
     assert got["down"]["dragging"], "the drag never started, so nothing here is being tested"
     assert not got["cancelled"]["dragging"], (
@@ -3575,7 +3730,9 @@ def test_a_drag_the_browser_takes_away_lets_go_of_the_join(
     )
 
 
-_MODIFIED_KEYS = _STUB_PREVIEW + """
+_MODIFIED_KEYS = (
+    _STUB_PREVIEW
+    + """
 const article = document.querySelector('article.record');
 const handle = article.querySelector('#splitter');
 const box = article.querySelector('.bodywrap');
@@ -3599,6 +3756,7 @@ return {
   plain: press('ArrowRight', {}),
 };
 """
+)
 
 
 def test_the_separator_hands_back_every_key_that_carries_a_modifier(
@@ -3619,13 +3777,16 @@ def test_the_separator_hands_back_every_key_that_carries_a_modifier(
     is the worse half of the same defect.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text,
-        tmp_path / "modified.html", 1400, _MODIFIED_KEYS, patience=4800,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "modified.html",
+        1400,
+        _MODIFIED_KEYS,
+        patience=4800,
     )
     for name in ("alt", "ctrl", "meta", "shift"):
         assert got[name]["box"] == got["before"], (
-            f"a modified key ({name}) moved the join from {got['before']} to "
-            f"{got[name]['box']}"
+            f"a modified key ({name}) moved the join from {got['before']} to {got[name]['box']}"
         )
         assert not got[name]["swallowed"], (
             f"the separator cancelled a modified key ({name}), so whatever the browser "
@@ -3641,11 +3802,8 @@ def test_the_separator_hands_back_every_key_that_carries_a_modifier(
 # enough to wrap. One that wrapped nowhere would be a corpus that does not
 # contain the string that matters — `scrollTop / lineHeight` is exactly right on
 # it, and the measuring mirror this replaces it with would have nothing to prove.
-_WRAPPING_BODY = (
-    "\n".join(
-        ("word " * 60).strip() if at == 40 else f"line {at + 1}"
-        for at in range(161)
-    )
+_WRAPPING_BODY = "\n".join(
+    ("word " * 60).strip() if at == 40 else f"line {at + 1}" for at in range(161)
 )
 
 # The stub's blocks, moved onto the lines the body above actually has: this is
@@ -3654,7 +3812,10 @@ _SYNC_STUB = _STUB_PREVIEW
 for _was, _now in (("3", "41"), ("5", "82"), ("7", "121")):
     _SYNC_STUB = _SYNC_STUB.replace(f'data-startline="{_was}"', f'data-startline="{_now}"')
 
-_SYNCING = f"const WRAPPING_BODY = {json.dumps(_WRAPPING_BODY)};" + _SYNC_STUB + """
+_SYNCING = (
+    f"const WRAPPING_BODY = {json.dumps(_WRAPPING_BODY)};"
+    + _SYNC_STUB
+    + """
 const area = document.querySelector('textarea[name=body]');
 const pane = document.getElementById('body-preview');
 // A timer and not `requestAnimationFrame`, and that is worth recording: under
@@ -3727,6 +3888,7 @@ const settled = {box: area.scrollTop, pane: pane.scrollTop};
 return {longRows, step, topOfEightyTwo, blockOfEightyTwo, offsetSays, whereIsIt,
         followed, backAgain, settled};
 """
+)
 
 
 def test_the_two_panes_scroll_to_the_same_line(client: TestClient, tmp_path: Path):
@@ -3752,8 +3914,12 @@ def test_the_two_panes_scroll_to_the_same_line(client: TestClient, tmp_path: Pat
     block is at the top of the pane.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "sync.html", 1400,
-        _SYNCING, patience=1800,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "sync.html",
+        1400,
+        _SYNCING,
+        patience=1800,
     )
 
     assert got["longRows"] > 1, (
@@ -3777,7 +3943,9 @@ def test_the_two_panes_scroll_to_the_same_line(client: TestClient, tmp_path: Pat
     assert abs(got["settled"]["pane"] - got["blockOfEightyTwo"]) < 2
 
 
-_LIVE = _STUB_PREVIEW + """
+_LIVE = (
+    _STUB_PREVIEW
+    + """
 const area = document.querySelector('textarea[name=body]');
 const pane = document.getElementById('body-preview');
 const settle = ms => new Promise(go => setTimeout(go, ms));
@@ -3822,6 +3990,7 @@ const kept = pane.scrollTop;
 return {opened, duringTyping, soonAfter, afterTyping, sent, unchanged, held, kept,
         replies: window.replies};
 """
+)
 
 
 def test_the_preview_keeps_up_and_stays_where_the_reader_left_it(
@@ -3839,8 +4008,12 @@ def test_the_preview_keeps_up_and_stays_where_the_reader_left_it(
     real endpoint what it renders.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "live.html", 1400,
-        _LIVE, patience=2200,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "live.html",
+        1400,
+        _LIVE,
+        patience=2200,
     )
 
     assert got["opened"] == 1, "opening the split view did not draw a preview"
@@ -3894,8 +4067,12 @@ def test_a_preview_that_has_been_overtaken_is_called_off(client: TestClient, tmp
     is 300ms and a slow render is longer than that, so this is not a corner: it is
     what a big pitch on a busy server does every time."""
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "abort.html", 1400,
-        _OVERTAKEN, patience=1200,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "abort.html",
+        1400,
+        _OVERTAKEN,
+        patience=1200,
     )
 
     assert got["asked"] == 2, "the second render was never asked for"
@@ -3936,26 +4113,30 @@ def test_a_view_change_tells_the_seat_layer_the_box_moved(client: TestClient):
 # character, a hard tab whose width is `tab-size` and not a space, a URL with
 # nothing in it to break on, and an empty line — which has no box at all unless
 # something is put in it.
-_GUTTER_BODY = "\n".join((
-    "line one is short",
-    # Long on purpose, and this is the sensitivity of the whole test. A line of
-    # two rows changes its row count only at the few widths where its one break
-    # moves; a line of fifty changes it at most of them, so an error of two pixels
-    # in the mirror's width — which is exactly the error the old seat mirror had —
-    # shows up as every number below it being a whole row out.
-    "and the second line is ordinary prose, long enough that it has to wrap many "
-    "times over at any of the widths below, which is the case the whole mirror "
-    "exists for and the one a count of characters gets wrong. " * 12,
-    "這是一段中文字這是一段中文字這是一段中文字這是一段中文字這是一段中文字這是一段中文字這是一段中文字",
-    "\tone\ttwo\tthree tabbed columns and then a run of words long enough to wrap",
-    "family 👨‍👩‍👧‍👦 flags 🇨🇭🇩🇪 and coders "
-    "👩‍💻👨‍🚒 with words after them to carry the line past a break",
-    "https://example.com/a/very/long/unbreakable/path/that/has/nothing/in/it/to/break/on/at/all",
-    "",
-    "last line",
-))
+_GUTTER_BODY = "\n".join(
+    (
+        "line one is short",
+        # Long on purpose, and this is the sensitivity of the whole test. A line of
+        # two rows changes its row count only at the few widths where its one break
+        # moves; a line of fifty changes it at most of them, so an error of two pixels
+        # in the mirror's width — which is exactly the error the old seat mirror had —
+        # shows up as every number below it being a whole row out.
+        "and the second line is ordinary prose, long enough that it has to wrap many "
+        "times over at any of the widths below, which is the case the whole mirror "
+        "exists for and the one a count of characters gets wrong. " * 12,
+        "這是一段中文字這是一段中文字這是一段中文字這是一段中文字這是一段中文字這是一段中文字這是一段中文字",
+        "\tone\ttwo\tthree tabbed columns and then a run of words long enough to wrap",
+        "family 👨‍👩‍👧‍👦 flags 🇨🇭🇩🇪 and coders "
+        "👩‍💻👨‍🚒 with words after them to carry the line past a break",
+        "https://example.com/a/very/long/unbreakable/path/that/has/nothing/in/it/to/break/on/at/all",
+        "",
+        "last line",
+    )
+)
 
-_NUMBERING = f"const GUTTER_BODY = {json.dumps(_GUTTER_BODY)};" + """
+_NUMBERING = (
+    f"const GUTTER_BODY = {json.dumps(_GUTTER_BODY)};"
+    + """
 const area = document.querySelector('textarea[name=body]');
 const settle = ms => new Promise(go => setTimeout(go, ms));
 
@@ -4044,6 +4225,7 @@ for (let measure = 520; measure < 580; measure++) {
 
 return {answers};
 """
+)
 
 
 def test_every_line_number_sits_on_the_line_it_numbers(client: TestClient, tmp_path: Path):
@@ -4063,8 +4245,12 @@ def test_every_line_number_sits_on_the_line_it_numbers(client: TestClient, tmp_p
     20.15625px row.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "gutter.html", 1400,
-        _NUMBERING, patience=4800,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "gutter.html",
+        1400,
+        _NUMBERING,
+        patience=4800,
     )
 
     for answer in got["answers"]:
@@ -4076,15 +4262,17 @@ def test_every_line_number_sits_on_the_line_it_numbers(client: TestClient, tmp_p
             f"{where}: nothing wrapped, so this width proves nothing about a gutter "
             "that counts logical lines rather than visual rows"
         )
-        assert answer["labels"] == ",".join(
-            str(n + 1) for n in range(answer["lines"])
-        ), f"{where}: the numbers are not 1..n in order"
+        assert answer["labels"] == ",".join(str(n + 1) for n in range(answer["lines"])), (
+            f"{where}: the numbers are not 1..n in order"
+        )
         assert answer["worst"] < 0.25, (
             f"{where}: a line number is {answer['worst']:.3f}px off the line it numbers"
         )
 
 
-_LEAVING = _STUB_PREVIEW + """
+_LEAVING = (
+    _STUB_PREVIEW
+    + """
 const article = document.querySelector('article.record');
 const nav = document.querySelector('body > nav');
 const link = nav.querySelector('a');
@@ -4118,6 +4306,7 @@ for (const [name, id] of [['edit', 'view-edit'], ['both', 'view-both']]) {
 }
 return answers;
 """
+)
 
 
 def test_a_session_never_takes_the_page_away_and_cancel_lands_on_the_landing(
@@ -4136,8 +4325,12 @@ def test_a_session_never_takes_the_page_away_and_cancel_lands_on_the_landing(
     of the boundary.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "leave.html", 1400,
-        _LEAVING, patience=1800,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "leave.html",
+        1400,
+        _LEAVING,
+        patience=1800,
     )
 
     for name, answer in got.items():
@@ -4149,18 +4342,22 @@ def test_a_session_never_takes_the_page_away_and_cancel_lands_on_the_landing(
             f"{name}: a pointer aimed at the nav does not reach it inside a session"
         )
         assert answer["after"] == {
-            "classes": ["view-view"], "fullpage": False, "navInert": False, "over": True,
-            "switcher": True, "editing": False,
-        }, (
-            f"Cancel from the {name} view did not land on the landing: {answer['after']}"
-        )
+            "classes": ["view-view"],
+            "fullpage": False,
+            "navInert": False,
+            "over": True,
+            "switcher": True,
+            "editing": False,
+        }, f"Cancel from the {name} view did not land on the landing: {answer['after']}"
 
 
 # The same question as `_LEAVING`, asked at the door Cancel is not: a bare
 # `showEditing(false)`, the call every door out of a session ends in. The
 # room's own save reloads nowadays — the test above pins that — so what this
 # drives is the shared ending itself, not a door invented for a test.
-_SAVED_IN_A_ROOM = _STUB_PREVIEW + """
+_SAVED_IN_A_ROOM = (
+    _STUB_PREVIEW
+    + """
 const article = document.querySelector('article.record');
 const nav = document.querySelector('body > nav');
 const link = nav.querySelector('a');
@@ -4195,6 +4392,7 @@ for (const [name, id] of [['edit', 'view-edit'], ['both', 'view-both']]) {
 }
 return answers;
 """
+)
 
 
 # A save made from the split view, driven through the page's own `save()`. The
@@ -4251,7 +4449,9 @@ def test_saving_keeps_the_view_it_was_saved_from(client: TestClient):
     page = client.get(f"/detail/{TASK}{PLAIN}").text
 
     saving = run_js(
-        page, _SAVING_FROM_A_VIEW, page=True,
+        page,
+        _SAVING_FROM_A_VIEW,
+        page=True,
         replies=[{"status": 200, "json": {"commit": "0" * 40}}],
     )
     assert not saving["errors"], saving["errors"]
@@ -4266,9 +4466,7 @@ def test_saving_keeps_the_view_it_was_saved_from(client: TestClient):
     # And the page that comes up. Not the same run — a reload is a new document
     # with a new script, which is the whole reason this goes through the tab's
     # own store rather than through a variable.
-    landed = run_js(
-        page, _WHERE_IT_LANDS, page=True, session={"openproj:resumed": "both"}
-    )
+    landed = run_js(page, _WHERE_IT_LANDS, page=True, session={"openproj:resumed": "both"})
     assert not landed["errors"], landed["errors"]
     assert landed["value"] == {"view": "both", "editing": True, "split": True}, (
         f"the reloaded page did not come back into the split: {landed['value']}"
@@ -4302,8 +4500,11 @@ def test_a_link_beats_the_view_a_save_left_behind_and_still_spends_it(
 
     page = client.get(f"/detail/{TASK}{PLAIN}").text
     got = run_js(
-        page, _WHERE_IT_LANDS, page=True,
-        session={"openproj:resumed": "both"}, here=f"/detail/{TASK}?view",
+        page,
+        _WHERE_IT_LANDS,
+        page=True,
+        session={"openproj:resumed": "both"},
+        here=f"/detail/{TASK}?view",
     )
     assert not got["errors"], got["errors"]
     assert got["value"] == {"view": "view", "editing": False, "split": False}, (
@@ -4364,8 +4565,12 @@ def test_ending_a_session_leaves_the_surface_by_every_door(client: TestClient, t
     chrome where it always was.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "roomsave.html",
-        1400, _SAVED_IN_A_ROOM, patience=1800,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "roomsave.html",
+        1400,
+        _SAVED_IN_A_ROOM,
+        patience=1800,
     )
 
     for name, answer in got.items():
@@ -4377,12 +4582,14 @@ def test_ending_a_session_leaves_the_surface_by_every_door(client: TestClient, t
             f"{name}: the nav is not whole inside a session: {answer['inside']}"
         )
         assert answer["after"] == {
-            "classes": ["view-view"], "fullpage": False, "navInert": False, "over": True,
-            "switcher": True, "editing": False, "cornerInNav": True,
-        }, (
-            f"a room's save from the {name} view did not land on the landing: "
-            f"{answer['after']}"
-        )
+            "classes": ["view-view"],
+            "fullpage": False,
+            "navInert": False,
+            "over": True,
+            "switcher": True,
+            "editing": False,
+            "cornerInNav": True,
+        }, f"a room's save from the {name} view did not land on the landing: {answer['after']}"
 
 
 # The two page-chrome controls, watched through a session.
@@ -4391,7 +4598,9 @@ def test_ending_a_session_leaves_the_surface_by_every_door(client: TestClient, t
 # `file://` — so it is filled here with exactly what that script builds for a
 # stranger. What is being asked is that the control never LEAVES and stays
 # reachable by a pointer, not whether a fetch succeeded.
-_THE_CORNER = _STUB_PREVIEW + """
+_THE_CORNER = (
+    _STUB_PREVIEW
+    + """
 const nav = document.querySelector('body > nav');
 const corner = document.querySelector('.corner');
 const theme = document.getElementById('theme');
@@ -4439,11 +4648,10 @@ flipEditing();
 await new Promise(go => setTimeout(go, 200));
 return {before, inside, themed, after: shape()};
 """
+)
 
 
-def test_the_theme_toggle_and_the_way_in_never_leave_the_corner(
-    client: TestClient, tmp_path: Path
-):
+def test_the_theme_toggle_and_the_way_in_never_leave_the_corner(client: TestClient, tmp_path: Path):
     """jcanton, 2026-08-20: "the light/dark mode toggle and sign in button seem
     to have disappeared from the edit view, bring those back please".
 
@@ -4462,8 +4670,12 @@ def test_the_theme_toggle_and_the_way_in_never_leave_the_corner(
     check cannot see paint.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "corner.html",
-        1400, _THE_CORNER, patience=2400,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "corner.html",
+        1400,
+        _THE_CORNER,
+        patience=2400,
     )
 
     assert got["before"]["parent"] == "NAV" and got["before"]["inNav"]
@@ -4472,8 +4684,7 @@ def test_the_theme_toggle_and_the_way_in_never_leave_the_corner(
 
     inside = got["inside"]
     assert inside == got["before"], (
-        f"opening the split view changed the nav's corner: {inside} "
-        f"against {got['before']}"
+        f"opening the split view changed the nav's corner: {inside} against {got['before']}"
     )
     assert not inside["onArticle"], "the corner was moved onto the record"
     assert not inside["navInert"], "the nav went inert for a session on the same page"
@@ -4504,7 +4715,9 @@ def test_the_theme_toggle_and_the_way_in_never_leave_the_corner(
 # the header is the six boxes above the line jcanton drew under the meta line,
 # and "full width, so they stay left aligned like the nav" is a claim about
 # every one of them and about their right edges as well as their left.
-_THE_HEADER_STAYS = _STUB_PREVIEW + """
+_THE_HEADER_STAYS = (
+    _STUB_PREVIEW
+    + """
 const box = sel => {
   const b = document.querySelector(sel).getBoundingClientRect();
   return {top: Math.round(b.top), height: Math.round(b.height),
@@ -4550,11 +4763,10 @@ document.getElementById('preview').click();
 await new Promise(go => setTimeout(go, 150));
 return {landing, writing, split, back: header(), header: HEADER, switcher: SWITCHER};
 """
+)
 
 
-def test_opening_a_session_moves_nothing_above_the_document(
-    client: TestClient, tmp_path: Path
-):
+def test_opening_a_session_moves_nothing_above_the_document(client: TestClient, tmp_path: Path):
     """jcanton, 2026-08-24: "ideally page elements should not move or appear or
     disappear when switching views in this page" — measured at the two places
     the sentence was still false after the full-page surface went.
@@ -4593,8 +4805,12 @@ def test_opening_a_session_moves_nothing_above_the_document(
     from the end and moves nothing.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "still.html",
-        1400, _THE_HEADER_STAYS, patience=3000,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "still.html",
+        1400,
+        _THE_HEADER_STAYS,
+        patience=3000,
     )
     landing = got["landing"]
 
@@ -4650,7 +4866,9 @@ def test_opening_a_session_moves_nothing_above_the_document(
 # which is the shape jcanton looked at on 2026-08-25 — "you were right that left
 # aligning the edit header and centering the body and fields looks awkward. let's
 # left align everything in the editor".
-_THE_COLUMN_STARTS_LEFT = _STUB_PREVIEW + """
+_THE_COLUMN_STARTS_LEFT = (
+    _STUB_PREVIEW
+    + """
 const box = sel => {
   const b = document.querySelector(sel).getBoundingClientRect();
   return {left: Math.round(b.left), width: Math.round(b.width)};
@@ -4675,11 +4893,10 @@ await new Promise(go => setTimeout(go, 150));
 const split = seen();
 return {landing, writing, split, column: COLUMN};
 """
+)
 
 
-def test_the_document_starts_where_its_own_title_starts(
-    client: TestClient, tmp_path: Path
-):
+def test_the_document_starts_where_its_own_title_starts(client: TestClient, tmp_path: Path):
     """One left edge for the whole page, in all three views.
 
     The measure below the line is unchanged — the column is still `--measure`
@@ -4702,18 +4919,25 @@ def test_the_document_starts_where_its_own_title_starts(
     here starts at the same place whatever the rule says, which is a green test
     that has looked at nothing.
     """
-    made = client.post("/api/record", json={
-        "base_commit": head(client),
-        "body": "The seam is not where we thought it was.",
-        "fields": {"kind": "note", "title": "A note whose column starts left"},
-    })
+    made = client.post(
+        "/api/record",
+        json={
+            "base_commit": head(client),
+            "body": "The seam is not where we thought it was.",
+            "fields": {"kind": "note", "title": "A note whose column starts left"},
+        },
+    )
     assert made.status_code == 201, made.text
     page = client.get(f"/detail/{made.json()['id']}{PLAIN}").text
     assert '<div id="promote">' in page, "the note's page has no promotion bar to measure"
 
     got = measured_in(
-        chrome(), page, tmp_path / "column-left.html", 1400,
-        _THE_COLUMN_STARTS_LEFT, patience=3000,
+        chrome(),
+        page,
+        tmp_path / "column-left.html",
+        1400,
+        _THE_COLUMN_STARTS_LEFT,
+        patience=3000,
     )
     assert got["landing"][".panes"]["width"] < got["landing"]["nav"]["width"], (
         "the column is already the page's width at 1400px, so this test cannot "
@@ -4740,7 +4964,9 @@ def test_the_document_starts_where_its_own_title_starts(
 # `#promote` is the second and last direct child of the article below it, and
 # the only element on the page whose width was the article's by inheritance
 # rather than by a rule of its own.
-_THE_BAR_UNDER_THE_COLUMN = _STUB_PREVIEW + """
+_THE_BAR_UNDER_THE_COLUMN = (
+    _STUB_PREVIEW
+    + """
 const box = sel => {
   const el = document.querySelector(sel);
   if (!el) return null;
@@ -4752,11 +4978,10 @@ return {nav: box('body > nav'), panes: box('.panes'), promote: box('#promote'),
         hint: box('#promote .hint'),
         overflow: document.documentElement.scrollWidth, window: innerWidth};
 """
+)
 
 
-def test_the_promotion_bar_keeps_the_column_it_sits_under(
-    client: TestClient, tmp_path: Path
-):
+def test_the_promotion_bar_keeps_the_column_it_sits_under(client: TestClient, tmp_path: Path):
     """Below the line is the column's width, and the promotion bar is below the
     line. jcanton, 2026-08-24: everything above the line he drew under the meta
     row is the page's width, "and only the body and fields below it keep the
@@ -4781,11 +5006,14 @@ def test_the_promotion_bar_keeps_the_column_it_sits_under(
     measure, where `max-width: 100%` decides the width instead and the question
     is whether the bar overflows the page.
     """
-    made = client.post("/api/record", json={
-        "base_commit": head(client),
-        "body": "The seam is not where we thought it was.",
-        "fields": {"kind": "note", "title": "A note somebody may promote"},
-    })
+    made = client.post(
+        "/api/record",
+        json={
+            "base_commit": head(client),
+            "body": "The seam is not where we thought it was.",
+            "fields": {"kind": "note", "title": "A note somebody may promote"},
+        },
+    )
     assert made.status_code == 201, made.text
     page = client.get(f"/detail/{made.json()['id']}{PLAIN}").text
     # The guard against this going quietly vacuous: no bar, no measurement, and
@@ -4805,7 +5033,8 @@ def test_the_promotion_bar_keeps_the_column_it_sits_under(
     )
     for window, got in (("1400px", wide), ("700px", narrow)):
         assert (got["promote"]["left"], got["promote"]["width"]) == (
-            got["panes"]["left"], got["panes"]["width"]
+            got["panes"]["left"],
+            got["panes"]["width"],
         ), (
             f"at {window} the promotion bar is not the column it sits under: "
             f"{got['promote']} against {got['panes']}"
@@ -4813,9 +5042,7 @@ def test_the_promotion_bar_keeps_the_column_it_sits_under(
         assert got["hint"]["width"] == got["panes"]["width"], (
             f"at {window} the sentence inside it sets at another width: {got}"
         )
-        assert got["overflow"] == got["window"], (
-            f"at {window} the page scrolls sideways: {got}"
-        )
+        assert got["overflow"] == got["window"], f"at {window} the page scrolls sideways: {got}"
 
 
 _A_FAILED_PREVIEW = """
@@ -4868,8 +5095,12 @@ def test_a_preview_that_fails_says_so_and_never_writes_the_word_undefined(
     retried for that text.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "failed.html", 1400,
-        _A_FAILED_PREVIEW, patience=2800,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "failed.html",
+        1400,
+        _A_FAILED_PREVIEW,
+        patience=2800,
     )
 
     # At least one, not exactly one: a failure is deliberately not remembered as
@@ -4882,13 +5113,11 @@ def test_a_preview_that_fails_says_so_and_never_writes_the_word_undefined(
         f"and said nothing in the live region: {got['refused']['said']!r}"
     )
     assert "undefined" not in got["shapeless"]["pane"], (
-        f"an answer with no document in it was written into the pane: "
-        f"{got['shapeless']['pane']!r}"
+        f"an answer with no document in it was written into the pane: {got['shapeless']['pane']!r}"
     )
     assert got["shapeless"]["said"], "and it was not announced either"
     assert got["recovered"] == "it came back", (
-        "the failure was remembered as the text that had been shown, so the pane "
-        "never asked again"
+        "the failure was remembered as the text that had been shown, so the pane never asked again"
     )
 
 
@@ -4906,7 +5135,7 @@ def _before_the_page_runs(page: str, script: str) -> str:
     preference is read the moment `_COMBOBOX` parses. So this goes in ahead of the
     shell's first `<script>`, which is the one right after the icon link.
     """
-    return page.replace('<link rel="icon"', f"<script>{script}</script><link rel=\"icon\"", 1)
+    return page.replace('<link rel="icon"', f'<script>{script}</script><link rel="icon"', 1)
 
 
 _SEED = """try { localStorage.setItem('openproj:editor:1', JSON.stringify(%s)); } catch (e) {}"""
@@ -4935,7 +5164,9 @@ window.fetch = async () => ({ok: true, json: async () => (
   {html: '<p data-startline="1">rendered</p>'})});
 """
 
-_STATUS = _STUB_RENDER + r"""
+_STATUS = (
+    _STUB_RENDER
+    + r"""
 const bar = document.getElementById('statusbar');
 const area = document.querySelector('textarea[name=body]');
 const item = at => bar.children[at].textContent;
@@ -4980,6 +5211,7 @@ return {
   order: [...bar.children].map(child => child.id || child.tagName.toLowerCase()),
 };
 """
+)
 
 
 def test_the_status_bar_says_where_the_caret_is_how_long_it_is_and_what_tab_types(
@@ -5000,8 +5232,12 @@ def test_the_status_bar_says_where_the_caret_is_how_long_it_is_and_what_tab_type
     * and the choice is remembered under the one versioned key.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "status.html", 1400,
-        _STATUS, patience=4800,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "status.html",
+        1400,
+        _STATUS,
+        patience=4800,
     )
 
     assert got["drawn"], "the status bar is not drawn in an editing session"
@@ -5024,12 +5260,12 @@ def test_the_status_bar_says_where_the_caret_is_how_long_it_is_and_what_tab_type
     )
     assert json.loads(got["stored"])["indent"] == 4
     assert got["untouched"], "pressing the indent picker rewrote the document"
-    assert got["typed"] == "    ", (
-        f"Tab typed {got['typed']!r} after the picker was moved to four"
-    )
+    assert got["typed"] == "    ", f"Tab typed {got['typed']!r} after the picker was moved to four"
 
 
-_LONG = _STUB_RENDER + r"""
+_LONG = (
+    _STUB_RENDER
+    + r"""
 const size = document.getElementById('statusbar').lastElementChild;
 const area = document.querySelector('textarea[name=body]');
 flipEditing();
@@ -5043,11 +5279,10 @@ area.dispatchEvent(new Event('input'));
 const over = {...shape(), said: said()};
 return {under, over};
 """
+)
 
 
-def test_the_length_says_the_ceiling_before_a_save_is_refused(
-    client: TestClient, tmp_path: Path
-):
+def test_the_length_says_the_ceiling_before_a_save_is_refused(client: TestClient, tmp_path: Path):
     """`MAX_BODY_BYTES` was a number only the server knew, and the only way to
     find out you were over it was to press Save on writing you had already done.
 
@@ -5058,8 +5293,12 @@ def test_the_length_says_the_ceiling_before_a_save_is_refused(
     from openproj.model import MAX_BODY_BYTES
 
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "long.html", 1400,
-        _LONG % (MAX_BODY_BYTES // 2, MAX_BODY_BYTES + 1000), patience=4800,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "long.html",
+        1400,
+        _LONG % (MAX_BODY_BYTES // 2, MAX_BODY_BYTES + 1000),
+        patience=4800,
     )
 
     assert got["under"]["text"] == f"Length: {MAX_BODY_BYTES // 2:,}", got["under"]
@@ -5075,7 +5314,9 @@ def test_the_length_says_the_ceiling_before_a_save_is_refused(
     )
 
 
-_DRAFTING = _STUB_RENDER + r"""
+_DRAFTING = (
+    _STUB_RENDER
+    + r"""
 const area = document.querySelector('textarea[name=body]');
 const key = 'openproj:draft:2:' + document.getElementById('edit').dataset.id;
 const held = () => {
@@ -5115,6 +5356,7 @@ const restarted = held();
 return {first, throttled, flushed, after, restarted,
         every: document.getElementById('draftevery').textContent};
 """
+)
 
 
 def test_a_throttled_draft_is_still_written_before_the_tab_can_be_closed(
@@ -5134,20 +5376,21 @@ def test_a_throttled_draft_is_still_written_before_the_tab_can_be_closed(
         _before_the_page_runs(
             client.get(f"/detail/{TASK}{PLAIN}").text, _SEED % '{"indent": 2, "autosave": 10}'
         ),
-        tmp_path / "draft.html", 1400, _DRAFTING, patience=4800,
+        tmp_path / "draft.html",
+        1400,
+        _DRAFTING,
+        patience=4800,
     )
 
     assert got["every"] == "Draft: 10", (
         f"the remembered interval is not the one in the picker: {got['every']!r}"
     )
     assert got["first"]["held"] == "the first thing typed", (
-        "the first keystroke of a burst was throttled, so a tab closed a second "
-        "later holds nothing"
+        "the first keystroke of a burst was throttled, so a tab closed a second later holds nothing"
     )
     assert got["first"]["receipt"] == "draft saved just now", got["first"]["receipt"]
     assert got["throttled"] == "the first thing typed", (
-        "the second keystroke was written straight through, so there is no "
-        "throttle here at all"
+        "the second keystroke was written straight through, so there is no throttle here at all"
     )
     assert got["flushed"] == "and the second thing", (
         "the throttled write was never flushed, so the last thing typed before "
@@ -5155,8 +5398,7 @@ def test_a_throttled_draft_is_still_written_before_the_tab_can_be_closed(
     )
     assert got["after"]["held"] is None, "resetting left the draft in storage"
     assert got["after"]["receipt"] == "", (
-        f"the receipt still claims a draft that no longer exists: "
-        f"{got['after']['receipt']!r}"
+        f"the receipt still claims a draft that no longer exists: {got['after']['receipt']!r}"
     )
     assert got["restarted"] == "written after the reset", (
         "the first keystroke after a reset was throttled against the write "
@@ -5165,7 +5407,9 @@ def test_a_throttled_draft_is_still_written_before_the_tab_can_be_closed(
     )
 
 
-_REFUSED = _STUB_RENDER + r"""
+_REFUSED = (
+    _STUB_RENDER
+    + r"""
 const bar = document.getElementById('statusbar');
 const area = document.querySelector('textarea[name=body]');
 flipEditing();
@@ -5199,6 +5443,7 @@ return {
   reached,
 };
 """
+)
 
 
 def test_the_editor_preference_is_one_key_and_survives_a_browser_that_refuses_storage(
@@ -5244,8 +5489,12 @@ def test_the_editor_preference_is_one_key_and_survives_a_browser_that_refuses_st
     )
 
     got = measured_in(
-        chrome(), _before_the_page_runs(page, _NO_STORE), tmp_path / "denied.html",
-        1400, _REFUSED, patience=4800,
+        chrome(),
+        _before_the_page_runs(page, _NO_STORE),
+        tmp_path / "denied.html",
+        1400,
+        _REFUSED,
+        patience=4800,
     )
 
     assert got["errors"] == [], f"the page threw against a refusing store: {got['errors']}"
@@ -5272,7 +5521,9 @@ def test_the_editor_preference_is_one_key_and_survives_a_browser_that_refuses_st
     )
 
 
-_STICKY = _STUB_RENDER + r"""
+_STICKY = (
+    _STUB_RENDER
+    + r"""
 const article = document.querySelector('article.record');
 const mode = () => VIEW;
 const atLoad = {view: mode(), full: article.classList.contains('full'),
@@ -5286,6 +5537,7 @@ document.getElementById('view-edit').click();
 return {atLoad, afterEdit, afterCancel,
         chosen: JSON.parse(localStorage.getItem('openproj:editor:1')).mode};
 """
+)
 
 
 def test_the_view_a_person_chose_is_the_one_the_next_session_opens_in(
@@ -5303,15 +5555,15 @@ def test_the_view_a_person_chose_is_the_one_the_next_session_opens_in(
     """
     got = measured_in(
         chrome(),
-        _before_the_page_runs(
-            client.get(f"/detail/{TASK}").text, _SEED % '{"mode": "both"}'
-        ),
-        tmp_path / "sticky.html", 1400, _STICKY, patience=4800,
+        _before_the_page_runs(client.get(f"/detail/{TASK}").text, _SEED % '{"mode": "both"}'),
+        tmp_path / "sticky.html",
+        1400,
+        _STICKY,
+        patience=4800,
     )
 
     assert got["atLoad"] == {"view": "view", "full": False, "editing": False}, (
-        f"a remembered mode opened a record somebody came to read as an "
-        f"editor: {got['atLoad']}"
+        f"a remembered mode opened a record somebody came to read as an editor: {got['atLoad']}"
     )
     # `full: False` in a session too, since 2026-08-24: the split opens on the
     # page it was asked from, and the class would mean the surface came back.
@@ -5356,8 +5608,12 @@ def test_the_box_and_the_column_beside_it_are_one_face(client: TestClient, tmp_p
     it and one to a browser. That is why this is here and not there.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "face.html", 1400,
-        _ONE_FACE, patience=2800,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "face.html",
+        1400,
+        _ONE_FACE,
+        patience=2800,
     )
 
     assert "mono" in got["box"].lower(), (
@@ -5430,9 +5686,7 @@ _KEYMAP_FETCHES = r"""
 """
 
 
-def test_no_editor_asks_for_a_script_after_the_page_has_loaded(
-    client: TestClient, tmp_path: Path
-):
+def test_no_editor_asks_for_a_script_after_the_page_has_loaded(client: TestClient, tmp_path: Path):
     """The half of the network rule that a source grep structurally cannot see.
 
     `test_no_page_reaches_the_network` scans the rendered text for
@@ -5450,11 +5704,16 @@ def test_no_editor_asks_for_a_script_after_the_page_has_loaded(
     script throws nothing, logs nothing and returns normally, so a test with no
     forced failure beside it is a test that cannot fail.
     """
-    page = _before_the_page_runs(
-        client.get(f"/detail/{TASK}?editor=ace").text, _WATCH_THE_NETWORK
+    page = _before_the_page_runs(client.get(f"/detail/{TASK}?editor=ace").text, _WATCH_THE_NETWORK)
+    got = measured_in(
+        chrome(),
+        page,
+        tmp_path / "keymap.html",
+        1400,
+        _KEYMAP_FETCHES,
+        query="?editor=ace",
+        patience=6800,
     )
-    got = measured_in(chrome(), page, tmp_path / "keymap.html", 1400, _KEYMAP_FETCHES,
-                      query="?editor=ace", patience=6800)
 
     quiet, control = got["quiet"], got["control"]
     assert quiet["gone"] == [], f"these still reach config.loadModule: {quiet['gone']}"
@@ -5530,8 +5789,13 @@ def test_the_second_surface_holds_one_line_ending_whatever_is_pasted_into_it(
     only Ace can answer for it.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}?editor=ace").text, tmp_path / "crlf.html",
-        1400, _PASTED_CRLF, query="?editor=ace", patience=4800,
+        chrome(),
+        client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "crlf.html",
+        1400,
+        _PASTED_CRLF,
+        query="?editor=ace",
+        patience=4800,
     )
     assert got["carriage"] == -1, (
         "a carriage return came back out of the second editor at offset "
@@ -5607,9 +5871,7 @@ _VIM_ON = r"""
 """
 
 
-def test_the_toolbar_and_the_keymap_do_not_cancel_each_other(
-    client: TestClient, tmp_path: Path
-):
+def test_the_toolbar_and_the_keymap_do_not_cancel_each_other(client: TestClient, tmp_path: Path):
     """Ask 2 and ask 6 destroyed each other on the path this does not take.
 
     Measured, and it is the reason the toolbar had to move behind the surface
@@ -5632,8 +5894,13 @@ def test_the_toolbar_and_the_keymap_do_not_cancel_each_other(
     page's `indentLines` both fire and one press indents twice.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}?editor=ace").text, tmp_path / "vim.html",
-        1400, _VIM_ON, query="?editor=ace", patience=6800,
+        chrome(),
+        client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "vim.html",
+        1400,
+        _VIM_ON,
+        query="?editor=ace",
+        patience=6800,
     )
     assert not got.get("noPicker"), "the second editor carries no keymap control"
     assert got["label"] == "Keymap: vim"
@@ -5714,15 +5981,25 @@ def test_the_keymap_a_person_chose_is_the_one_the_next_session_opens_in(
     page = client.get(f"/detail/{TASK}?editor=ace").text
 
     kept = measured_in(
-        chrome(), _before_the_page_runs(page, _SEED % '{"keymap": "vim"}'),
-        tmp_path / "keymap-kept.html", 1400, _KEYMAP_KEPT, query="?editor=ace", patience=6800,
+        chrome(),
+        _before_the_page_runs(page, _SEED % '{"keymap": "vim"}'),
+        tmp_path / "keymap-kept.html",
+        1400,
+        _KEYMAP_KEPT,
+        query="?editor=ace",
+        patience=6800,
     )
     assert kept["handler"] == "ace/keyboard/vim", "the remembered keymap did not open"
     assert kept["label"] == "Keymap: vim"
 
     made_up = measured_in(
-        chrome(), _before_the_page_runs(page, _SEED % '{"keymap": "emacs"}'),
-        tmp_path / "keymap-junk.html", 1400, _KEYMAP_KEPT, query="?editor=ace", patience=6800,
+        chrome(),
+        _before_the_page_runs(page, _SEED % '{"keymap": "emacs"}'),
+        tmp_path / "keymap-junk.html",
+        1400,
+        _KEYMAP_KEPT,
+        query="?editor=ace",
+        patience=6800,
     )
     assert made_up["label"] == "Keymap: default", (
         "a keymap this control does not offer was taken from the store and handed to "
@@ -5775,10 +6052,11 @@ def test_the_editor_is_chosen_by_the_address_and_by_nothing_else(
     #    is Ace for them, like it is for everybody.
     stale = measured_in(
         chrome(),
-        _before_the_page_runs(
-            client.get(f"/detail/{TASK}").text, _SEED % '{"editor": "plain"}'
-        ),
-        tmp_path / "editor-stale.html", 1400, _STICKY_EDITOR, patience=6800,
+        _before_the_page_runs(client.get(f"/detail/{TASK}").text, _SEED % '{"editor": "plain"}'),
+        tmp_path / "editor-stale.html",
+        1400,
+        _STICKY_EDITOR,
+        patience=6800,
     )
     assert stale["editor"] == "ace", (
         "a preference stored before the toggle was removed is still deciding which "
@@ -5791,15 +6069,18 @@ def test_the_editor_is_chosen_by_the_address_and_by_nothing_else(
     #    server sends no library, and the box is what mounts. Silently — this is
     #    what was asked for.
     asked = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text,
-        tmp_path / "editor-plain.html", 1400, _STICKY_EDITOR, query="?editor=plain",
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "editor-plain.html",
+        1400,
+        _STICKY_EDITOR,
+        query="?editor=plain",
         patience=4800,
     )
     assert asked["editor"] == "plain", "the address asked for the box and was not read"
     assert asked["surface"] == "textarea"
     assert asked["said"] == "", (
-        f"the box is what this address asked for and getting it is not news: "
-        f"{asked['said']!r}"
+        f"the box is what this address asked for and getting it is not news: {asked['said']!r}"
     )
 
     # 3. And nothing is written down. This is the assertion the whole change is:
@@ -5816,10 +6097,11 @@ def test_the_editor_is_chosen_by_the_address_and_by_nothing_else(
     #     carry a dead key in for years.
     cleared = measured_in(
         chrome(),
-        _before_the_page_runs(
-            client.get(f"/detail/{TASK}").text, _SEED % '{"editor": "plain"}'
-        ),
-        tmp_path / "editor-cleared.html", 1400, _EDITOR_FORGOTTEN, patience=6800,
+        _before_the_page_runs(client.get(f"/detail/{TASK}").text, _SEED % '{"editor": "plain"}'),
+        tmp_path / "editor-cleared.html",
+        1400,
+        _EDITOR_FORGOTTEN,
+        patience=6800,
     )
     assert cleared["before"] == "plain", "the seed did not take, so this asks nothing"
     assert cleared["after"] is None, (
@@ -5831,14 +6113,17 @@ def test_the_editor_is_chosen_by_the_address_and_by_nothing_else(
     #    would refuse a save from, or a copy of the page saved to a file. That is
     #    still news, and it is the branch `chosen` exists for.
     refused = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text,
-        tmp_path / "editor-refused.html", 1400, _STICKY_EDITOR, query="?editor=ace",
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "editor-refused.html",
+        1400,
+        _STICKY_EDITOR,
+        query="?editor=ace",
         patience=4800,
     )
     assert refused["surface"] == "textarea"
     assert "does not carry the second editor" in refused["said"], (
-        f"the page was asked for an editor it does not have and said nothing: "
-        f"{refused['said']!r}"
+        f"the page was asked for an editor it does not have and said nothing: {refused['said']!r}"
     )
     assert refused["kept"] is None, "a refusal was written down as a preference"
 
@@ -5847,13 +6132,16 @@ def test_the_editor_is_chosen_by_the_address_and_by_nothing_else(
     #    every signed-out reader on every record about a thing they never asked
     #    for is the noise this guard exists to prevent.
     silent = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text,
-        tmp_path / "editor-silent.html", 1400, _STICKY_EDITOR, patience=4800,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "editor-silent.html",
+        1400,
+        _STICKY_EDITOR,
+        patience=4800,
     )
     assert silent["surface"] == "textarea"
     assert silent["said"] == "", (
-        f"a page nobody asked anything of announced the absence of a library: "
-        f"{silent['said']!r}"
+        f"a page nobody asked anything of announced the absence of a library: {silent['said']!r}"
     )
 
     # 6. And the machinery is gone rather than merely unreached. A redirect that
@@ -5879,7 +6167,9 @@ def test_the_editor_is_chosen_by_the_address_and_by_nothing_else(
 # pane holds one line of refusal, and the create form's preview — which sizes
 # to its content, exactly as the landing document does — would be measured
 # holding nothing.
-_NARROW_WRITING = _STUB_PREVIEW + """
+_NARROW_WRITING = (
+    _STUB_PREVIEW
+    + """
 const article = document.querySelector('article.record');
 const area = document.querySelector('textarea[name=body]');
 const facts = document.querySelector('.facts');
@@ -5924,6 +6214,7 @@ out.read = {
 out.width = innerWidth;
 return out;
 """
+)
 
 
 @pytest.mark.parametrize("where", ["detail", "new"])
@@ -5944,9 +6235,7 @@ def test_the_writing_views_are_usable_at_a_window_that_is_not_wide(
     Asked of Chrome and not of `tests/cascade.py`, because the stacked layout
     lives behind a container query, which that engine skips by construction.
     """
-    page = client.get(
-        f"/detail/{TASK}{PLAIN}" if where == "detail" else f"/new{PLAIN}"
-    ).text
+    page = client.get(f"/detail/{TASK}{PLAIN}" if where == "detail" else f"/new{PLAIN}").text
     got = measured_in(chrome(), page, tmp_path / f"narrow-{where}.html", 900, _NARROW_WRITING)
 
     assert got["width"] == 900 and got["position"] == "relative"
@@ -5956,17 +6245,14 @@ def test_the_writing_views_are_usable_at_a_window_that_is_not_wide(
             f"the {view} view gives the document {got[view]['rows']} lines at a 900px window"
         )
         assert got[view]["factsWhole"], (
-            "the facts grew a scrollbar of their own: fifteen fields in a box a "
-            "few lines tall"
+            "the facts grew a scrollbar of their own: fifteen fields in a box a few lines tall"
         )
         assert got[view]["factsReachable"], "and there is no way to scroll down to them"
     assert got["paneRows"] >= 12, "the rendered half of the split is not readable either"
     if where == "new":
         assert got["read"]["paneRows"] >= 12, "the create form's preview is not readable"
     else:
-        assert got["read"]["landed"], (
-            "pressing the eye did not land on the record's own read page"
-        )
+        assert got["read"]["landed"], "pressing the eye did not land on the record's own read page"
 
 
 _TEMPLATE_SWAP = """
@@ -6018,11 +6304,11 @@ def test_choosing_a_template_leaves_the_numbers_and_the_length_telling_the_truth
     # Singular, and spelled out here rather than left as a substring: an empty
     # document is the first thing anybody sees on this page, and `1 Lines` is
     # what it opened with.
-    assert "— 1 Line" in got["blank"]["said"] and "1 Lines" not in got["blank"]["said"] and (
-        "Length: 0" in got["blank"]["said"]
-    ), (
-        f"the status bar is still describing the document before it: {got['blank']['said']}"
-    )
+    assert (
+        "— 1 Line" in got["blank"]["said"]
+        and "1 Lines" not in got["blank"]["said"]
+        and ("Length: 0" in got["blank"]["said"])
+    ), f"the status bar is still describing the document before it: {got['blank']['said']}"
     assert got["project"]["length"] > 0, "and it did not put the next template in"
     lines = int(got["project"]["said"].split(" Lines")[0].split("\u2014 ")[-1].replace(",", ""))
     assert got["project"]["numbers"] == lines, (
@@ -6106,8 +6392,11 @@ def test_the_history_buttons_use_the_browsers_own_stack_when_there_is_no_room(
     questions about pixels and both are asked of Chrome.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "history.html",
-        1400, _HISTORY_WITH_NO_ROOM,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "history.html",
+        1400,
+        _HISTORY_WITH_NO_ROOM,
     )
 
     assert not got.get("missing"), "the toolbar carries no history buttons"
@@ -6184,9 +6473,7 @@ return {atRest, lengthWas, lengthAfterAnUndoAtRest, ownsItself, typed, undone,
 """
 
 
-def test_the_history_buttons_reach_the_second_editors_own_stack(
-    client: TestClient, tmp_path: Path
-):
+def test_the_history_buttons_reach_the_second_editors_own_stack(client: TestClient, tmp_path: Path):
     """The fourth state, and the one where the answer is "not this page's".
 
     `f7bde59` taught Ace's own `UndoManager` to ignore the deltas this tab did
@@ -6203,8 +6490,13 @@ def test_the_history_buttons_reach_the_second_editors_own_stack(
     produce too, on this document, in this order.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}?editor=ace").text, tmp_path / "ace-history.html",
-        1400, _HISTORY_ON_ACE, query="?editor=ace", patience=6800,
+        chrome(),
+        client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "ace-history.html",
+        1400,
+        _HISTORY_ON_ACE,
+        query="?editor=ace",
+        patience=6800,
     )
 
     assert not got.get("missing"), "the second editor carries no history buttons"
@@ -6325,8 +6617,12 @@ def test_a_connection_that_drops_leaves_no_placeholder_and_no_sentence_that_is_s
     happened, and the compare-and-swap is what settles it on the next press.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "dropped.html", 1200,
-        _CONNECTION_GONE, patience=4800,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "dropped.html",
+        1200,
+        _CONNECTION_GONE,
+        patience=4800,
     )
 
     assert got["loose"] == [], f"a rejection still escapes: {got['loose']}"
@@ -6363,13 +6659,15 @@ def test_a_connection_that_drops_leaves_no_placeholder_and_no_sentence_that_is_s
     assert "saving" not in got["saving"]["said"], (
         f"the live region is still saying the save is happening: {got['saving']['said']!r}"
     )
-    assert "not saved" in got["saving"]["said"] and (
-        "Press Save again" in got["saving"]["said"]
-    ), got["saving"]["said"]
+    assert "not saved" in got["saving"]["said"] and ("Press Save again" in got["saving"]["said"]), (
+        got["saving"]["said"]
+    )
     assert got["saving"]["enabled"], "the way out of a dropped connection is the same button"
 
 
-_TOOLBAR_AT_A_WIDTH = _STUB_RENDER + r"""
+_TOOLBAR_AT_A_WIDTH = (
+    _STUB_RENDER
+    + r"""
 // The detail page opens read-only and the create forms open editing, so this
 // asks for the surface rather than assuming which page it is on.
 if (typeof flipEditing === 'function') {
@@ -6399,6 +6697,7 @@ return {
   flex: getComputedStyle(marks).flex + ' | ' + getComputedStyle(marks).minWidth,
 };
 """
+)
 
 
 @pytest.mark.parametrize("where", ["detail", "note"])
@@ -6438,7 +6737,11 @@ def test_every_button_on_the_toolbar_can_be_reached_at_a_window_that_is_not_wide
         else client.get("/new?kind=note").text
     )
     got = measured_in(
-        chrome(), page, tmp_path / f"bar-{where}-{width}.html", width, _TOOLBAR_AT_A_WIDTH,
+        chrome(),
+        page,
+        tmp_path / f"bar-{where}-{width}.html",
+        width,
+        _TOOLBAR_AT_A_WIDTH,
         patience=4800,
     )
 
@@ -6531,8 +6834,13 @@ def test_the_second_editors_caret_is_reported_when_it_moves_and_not_when_it_type
     replacement and `attachStatus`'s refresh splits the whole document.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}?editor=ace").text, tmp_path / "ace-caret.html",
-        1400, _ACE_CARET_MOVES, query="?editor=ace", patience=6800,
+        chrome(),
+        client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "ace-caret.html",
+        1400,
+        _ACE_CARET_MOVES,
+        query="?editor=ace",
+        patience=6800,
     )
 
     assert not got.get("missing"), "the second editor did not mount, or carries no status bar"
@@ -6540,8 +6848,7 @@ def test_the_second_editors_caret_is_reported_when_it_moves_and_not_when_it_type
         f"the document was not seeded where this expects: {got['seeded']!r}"
     )
     assert got["afterJump"].startswith("Line 3, Column 5"), (
-        f"a jump moved the caret and the bar went on describing the last edit: "
-        f"{got['afterJump']!r}"
+        f"a jump moved the caret and the bar went on describing the last edit: {got['afterJump']!r}"
     )
     assert got["afterArrow"].startswith("Line 2, Column 5"), (
         f"an arrow key moved the caret and nothing said so: {got['afterArrow']!r}"
@@ -6684,8 +6991,10 @@ _REFLECTED = (
     # their high surrogate, so the scan stops at head 1 — inside a pair and
     # inside a grapheme cluster at once. Nothing in `src/` counts graphemes,
     # which is why what this asserts is the document and never one-press-one-glyph.
-    ("\U0001f469\u200d\U0001f469\u200d\U0001f467 crew\n",
-     "\U0001f468\u200d\U0001f469\u200d\U0001f467 crew\n"),
+    (
+        "\U0001f469\u200d\U0001f469\u200d\U0001f467 crew\n",
+        "\U0001f468\u200d\U0001f469\u200d\U0001f467 crew\n",
+    ),
     # A3, in the reflect direction. Two regional indicators; the boundary falls
     # inside the SECOND pair, at head 3. Half a flag is a valid DIFFERENT flag
     # rather than a broken character, so a corpus that only looked for U+FFFD
@@ -6725,7 +7034,9 @@ _REFLECTED = (
     ("hello \u2014 world\n", "hi \u2014 world\n"),
 )
 
-_REFLECTING = _A_ROOM_IN_THE_PAGE + r"""
+_REFLECTING = (
+    _A_ROOM_IN_THE_PAGE
+    + r"""
 const answers = [];
 for (const [was, now] of CASES) {
   await remote(was);
@@ -6748,6 +7059,7 @@ for (const [was, now] of CASES) {
 return {errors: window.__errors, answers, frames,
         surface: SURFACE.onSplice ? 'ace' : 'textarea'};
 """
+)
 
 
 @pytest.mark.parametrize("editor", ["ace", "plain"])
@@ -6793,9 +7105,13 @@ def test_a_remote_keystroke_between_the_halves_of_a_pair_reaches_the_surface_who
         '<link rel="icon"', f'<script>{_ONE_PAGE_ROOM}</script><link rel="icon"', 1
     )
     got = measured_in(
-        chrome(), page, tmp_path / f"reflect-{editor}.html", 1400,
+        chrome(),
+        page,
+        tmp_path / f"reflect-{editor}.html",
+        1400,
         _REFLECTING.replace("CASES", json.dumps([list(pair) for pair in _REFLECTED])),
-        query=f"?editor={editor}", patience=9000,
+        query=f"?editor={editor}",
+        patience=9000,
     )
 
     assert not got.get("missing"), got.get("missing")
@@ -6847,20 +7163,35 @@ _GESTURES = (
     # graphemes, Ace's `moveCursorLeft` is `moveCursorBy(0, -1)`, and measured it
     # removes U+0301 alone and leaves `cafe`. That is Ace's decision, and what
     # must hold is that whatever Ace removed is what the room removed.
-    {"was": "le cafe\u0301 est pre\u0302t\n", "at": "le cafe\u0301", "select": "",
-     "put": "", "now": None},
+    {
+        "was": "le cafe\u0301 est pre\u0302t\n",
+        "at": "le cafe\u0301",
+        "select": "",
+        "put": "",
+        "now": None,
+    },
     # E1. A selection whose ends are both on whole characters and whose LENGTH is
     # not: the run `"— the "` is 6 code points, 8 bytes and 6 code units. A
     # CONTROL FOR BOTH BROWSER CONFUSIONS for the reason C1 is — an em dash is
     # one of each — and a live case for the byte one, where those 6 are 8 and
     # the wrong answer is `'six weeks e appetite\n'`.
-    {"was": "six weeks \u2014 the appetite\n", "at": "six weeks ",
-     "select": "\u2014 the ", "put": "", "now": "six weeks appetite\n"},
+    {
+        "was": "six weeks \u2014 the appetite\n",
+        "at": "six weeks ",
+        "select": "\u2014 the ",
+        "put": "",
+        "now": "six weeks appetite\n",
+    },
     # E2. A replacement spanning an astral emoji. Both boundaries are on whole
     # characters, so no scan can fail — what this tests is the LENGTH, which is
     # 8 code points, 11 bytes and 9 code units for the one run.
-    {"was": "ship \U0001f680 on friday\n", "at": "ship ",
-     "select": "\U0001f680 on friday", "put": "today", "now": "ship today\n"},
+    {
+        "was": "ship \U0001f680 on friday\n",
+        "at": "ship ",
+        "select": "\U0001f680 on friday",
+        "put": "today",
+        "now": "ship today\n",
+    },
     # And the shape none of the three above has: an edit that is only MOVED by
     # what sits in front of it. Every other `at` here is an all-ASCII prefix, so
     # the caret's index is the same number in both browser spaces and a `run.from`
@@ -6868,11 +7199,18 @@ _GESTURES = (
     # that defect in place. The rocket is one code point and two code units, so
     # this one is 10 in the space Ace reports and 9 in the other. It is the
     # browser's analogue of the em-dash run on the server's side of the wire.
-    {"was": "\U0001f680 ship it\n", "at": "\U0001f680 ship it", "select": "",
-     "put": "", "now": "\U0001f680 ship i\n"},
+    {
+        "was": "\U0001f680 ship it\n",
+        "at": "\U0001f680 ship it",
+        "select": "",
+        "put": "",
+        "now": "\U0001f680 ship i\n",
+    },
 )
 
-_ACE_GESTURED = _A_ROOM_IN_THE_PAGE + r"""
+_ACE_GESTURED = (
+    _A_ROOM_IN_THE_PAGE
+    + r"""
 const editor = SURFACE.editor;
 if (!editor) return {missing: 'the page mounted the box, so nothing here was driven'};
 let said = [];
@@ -6904,6 +7242,7 @@ for (const one of CASES) {
 return {errors: window.__errors, answers, frames,
         surface: SURFACE.onSplice ? 'ace' : 'textarea'};
 """
+)
 
 
 def test_what_the_second_surface_says_it_changed_is_what_the_room_changes(
@@ -6942,9 +7281,13 @@ def test_what_the_second_surface_says_it_changed_is_what_the_room_changes(
         '<link rel="icon"', f'<script>{_ONE_PAGE_ROOM}</script><link rel="icon"', 1
     )
     got = measured_in(
-        chrome(), page, tmp_path / "ace-gestures.html", 1400,
+        chrome(),
+        page,
+        tmp_path / "ace-gestures.html",
+        1400,
         _ACE_GESTURED.replace("CASES", json.dumps(list(_GESTURES))),
-        query="?editor=ace", patience=9000,
+        query="?editor=ace",
+        patience=9000,
     )
 
     assert not got.get("missing"), got.get("missing")
@@ -6965,8 +7308,7 @@ def test_what_the_second_surface_says_it_changed_is_what_the_room_changes(
         )
         if case["now"] is not None:
             assert answer["surface"] == case["now"], (
-                f"the gesture should have left {case['now']!r} and left "
-                f"{answer['surface']!r}"
+                f"the gesture should have left {case['now']!r} and left {answer['surface']!r}"
             )
 
 
@@ -6978,10 +7320,14 @@ def test_what_the_second_surface_says_it_changed_is_what_the_room_changes(
 # the mechanical three-length check has to be applied to the intermediate
 # document here and not to the endpoints, which would reject this case for being
 # ASCII on the way in.
-_BULK = ("A cycle is six weeks and a cycle is what a bet is made for.\n"
-         "Every cycle has a cool-down, and the cycle after it starts cold.\n") * 12
+_BULK = (
+    "A cycle is six weeks and a cycle is what a bet is made for.\n"
+    "Every cycle has a cool-down, and the cycle after it starts cold.\n"
+) * 12
 
-_SUBSTITUTED_ASTRAL = _A_ROOM_IN_THE_PAGE + r"""
+_SUBSTITUTED_ASTRAL = (
+    _A_ROOM_IN_THE_PAGE
+    + r"""
 const editor = SURFACE.editor;
 if (!editor) return {missing: 'the page mounted the box, so nothing here was driven'};
 const keymap = [...document.querySelectorAll('#statusbar button')]
@@ -7011,6 +7357,7 @@ return {errors: window.__errors, opened, seeded, frames, places, touched,
         said: document.getElementById('state').textContent,
         handler: String(editor.getKeyboardHandler().$id)};
 """
+)
 
 
 def test_a_substitution_that_types_an_emoji_keeps_every_later_run_where_it_belongs(
@@ -7042,9 +7389,13 @@ def test_a_substitution_that_types_an_emoji_keeps_every_later_run_where_it_belon
         '<link rel="icon"', f'<script>{_ONE_PAGE_ROOM}</script><link rel="icon"', 1
     )
     got = measured_in(
-        chrome(), page, tmp_path / "ace-subst.html", 1400,
+        chrome(),
+        page,
+        tmp_path / "ace-subst.html",
+        1400,
         _SUBSTITUTED_ASTRAL.replace("CORPUS", json.dumps(_BULK)),
-        query="?editor=ace", patience=9000,
+        query="?editor=ace",
+        patience=9000,
     )
 
     assert not got.get("missing"), got.get("missing")
@@ -7075,7 +7426,9 @@ def test_a_substitution_that_types_an_emoji_keeps_every_later_run_where_it_belon
     )
 
 
-_LONG_AND_NOT_ASCII = _STUB_RENDER + r"""
+_LONG_AND_NOT_ASCII = (
+    _STUB_RENDER
+    + r"""
 const size = document.getElementById('statusbar').lastElementChild;
 const area = document.querySelector('textarea[name=body]');
 flipEditing();
@@ -7084,6 +7437,7 @@ area.dispatchEvent(new Event('input'));
 return {text: size.textContent, over: size.classList.contains('over'),
         said: document.getElementById('state').textContent, units: area.value.length};
 """
+)
 
 
 def test_the_length_and_the_ceiling_are_not_the_same_number_on_a_document_that_is_not_ascii(
@@ -7107,12 +7461,15 @@ def test_the_length_and_the_ceiling_are_not_the_same_number_on_a_document_that_i
 
     characters = 90_000
     assert characters < MAX_BODY_BYTES < characters * 3, (
-        "this is only a fixture while it is under the ceiling as a number and over "
-        "it as a document"
+        "this is only a fixture while it is under the ceiling as a number and over it as a document"
     )
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "long-cjk.html",
-        1400, _LONG_AND_NOT_ASCII.replace("CHARACTERS", str(characters)), patience=4800,
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "long-cjk.html",
+        1400,
+        _LONG_AND_NOT_ASCII.replace("CHARACTERS", str(characters)),
+        patience=4800,
     )
 
     assert got["units"] == characters, "the box is not holding the document this is about"
@@ -7182,10 +7539,18 @@ def test_a_room_save_is_quiet_and_the_alarm_is_kept_for_a_parked_commit(client: 
         {"t": "saved", "commit": first, "outcome": "committed", "pushed": False},
         {"t": "saved", "commit": second, "outcome": "committed", "pushed": False},
     ]
-    stranger = {"t": "landed", "landed": "d" * 40, "remapped": {},
-                "parked": [["9" * 40, "openproj/stranded-" + "9" * 40]]}
-    verdict = {"t": "landed", "landed": "e" * 40, "remapped": {second: "e" * 40},
-               "parked": [[first, f"openproj/stranded-{first}"]]}
+    stranger = {
+        "t": "landed",
+        "landed": "d" * 40,
+        "remapped": {},
+        "parked": [["9" * 40, "openproj/stranded-" + "9" * 40]],
+    }
+    verdict = {
+        "t": "landed",
+        "landed": "e" * 40,
+        "remapped": {second: "e" * 40},
+        "parked": [[first, f"openproj/stranded-{first}"]],
+    }
     answer = run_js(
         page,
         "(async () => {"
@@ -7215,8 +7580,7 @@ def test_a_room_save_is_quiet_and_the_alarm_is_kept_for_a_parked_commit(client: 
         "fires every time warns nobody"
     )
     assert "stranded-999" not in got["afterStranger"], (
-        f"a parked sha this room never saved raised this document's alarm: "
-        f"{got['afterStranger']!r}"
+        f"a parked sha this room never saved raised this document's alarm: {got['afterStranger']!r}"
     )
     assert "could not land" in got["afterParked"], (
         f"the pusher parked this room's save and the page said {got['afterParked']!r} — "
@@ -7225,9 +7589,7 @@ def test_a_room_save_is_quiet_and_the_alarm_is_kept_for_a_parked_commit(client: 
     assert verdict["parked"][0][1] in got["afterParked"], (
         f"the alarm does not say where the commit went: {got['afterParked']!r}"
     )
-    assert got["reloads"] == 0, (
-        "nobody here pressed Save, so no frame above may tear the page down"
-    )
+    assert got["reloads"] == 0, "nobody here pressed Save, so no frame above may tear the page down"
 
 
 def test_a_stranded_save_raises_the_alarm_on_a_tab_that_missed_every_frame(client: TestClient):
@@ -7304,15 +7666,9 @@ def test_a_stranded_save_raises_the_alarm_on_a_tab_that_missed_every_frame(clien
         f"the pusher parked this room's save, no frame arrived, and the page said "
         f"{got['said']!r} — the alarm the poll exists to deliver never fired"
     )
-    assert branch in got["said"], (
-        f"the alarm does not say where the commit went: {got['said']!r}"
-    )
-    assert got["waiting"] == 0, (
-        "nothing is unconfirmed any more, so nothing should keep polling"
-    )
-    assert got["reloads"] == 0, (
-        "nobody here pressed Save, so nothing above may tear the page down"
-    )
+    assert branch in got["said"], f"the alarm does not say where the commit went: {got['said']!r}"
+    assert got["waiting"] == 0, "nothing is unconfirmed any more, so nothing should keep polling"
+    assert got["reloads"] == 0, "nobody here pressed Save, so nothing above may tear the page down"
 
 
 # --- linking one record from another's document ------------------------------
@@ -7400,7 +7756,11 @@ def test_the_body_knows_which_reference_is_being_typed(client: TestClient):
         "task-0a1001",
     ], got["value"]["texts"]
     assert got["value"]["refs"] == [
-        None, "GridTools/", "C2SM/icon4py#14", None, None,
+        None,
+        "GridTools/",
+        "C2SM/icon4py#14",
+        None,
+        None,
     ], got["value"]["refs"]
 
 
@@ -7431,11 +7791,14 @@ def test_only_a_page_with_a_document_carries_the_list_of_linkable_records(
     # the inbox half of the claim is seeded here rather than assumed — through
     # the write path, which is also what proves the list follows the plan rather
     # than a snapshot of it.
-    made = client.post("/api/record", json={
-        "base_commit": head(client),
-        "body": "Somebody noticed this in a meeting.\n",
-        "fields": {"kind": "note", "title": "A note worth citing", "written_by": "ann"},
-    })
+    made = client.post(
+        "/api/record",
+        json={
+            "base_commit": head(client),
+            "body": "Somebody noticed this in a meeting.\n",
+            "fields": {"kind": "note", "title": "A note worth citing", "written_by": "ann"},
+        },
+    )
     assert made.status_code == 201, made.text
     noted = made.json()["id"]
 
@@ -7552,9 +7915,7 @@ _COMPLETING_A_LINK = r"""
 """
 
 
-def test_the_second_editor_completes_a_link_to_a_record(
-    client: TestClient, tmp_path: Path
-):
+def test_the_second_editor_completes_a_link_to_a_record(client: TestClient, tmp_path: Path):
     """jcanton, 2026-08-25: "I'd like to have links to other records in the body
     of a record, with autofill functioning when adding the link" — and, asked
     which surface, "only ace editor. autofill the title with autocompletion and
@@ -7580,16 +7941,20 @@ def test_the_second_editor_completes_a_link_to_a_record(
     `test_the_body_knows_which_reference_is_being_typed`.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}?editor=ace").text,
-        tmp_path / "linking.html", 1400, _COMPLETING_A_LINK,
-        query="?editor=ace", patience=6800,
+        chrome(),
+        client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "linking.html",
+        1400,
+        _COMPLETING_A_LINK,
+        query="?editor=ace",
+        patience=6800,
     )
 
-    assert got["opened"] and len(got["opened"]) > 1, (
-        f"typing `[` opened no list of records: {got}"
-    )
-    assert all(value.split("-")[0] in {"prod", "proj", "pitch", "task", "issue", "note"}
-               for value in got["opened"]), got["opened"]
+    assert got["opened"] and len(got["opened"]) > 1, f"typing `[` opened no list of records: {got}"
+    assert all(
+        value.split("-")[0] in {"prod", "proj", "pitch", "task", "issue", "note"}
+        for value in got["opened"]
+    ), got["opened"]
     # The completion is on the TITLE, which is the half of the ask that a list
     # of everything cannot show: `Verify` is a word in one record's name and in
     # no record's id.
@@ -7618,9 +7983,7 @@ def test_the_second_editor_completes_a_link_to_a_record(
     assert re.fullmatch(
         r"\nSee \[[^\]]+\]\((?:prod|proj|pitch|task|issue|note)-[0-9a-f]{6}\)",
         got["tail"],
-    ), (
-        f"what was written is not a title and an id: {got['tail']!r}"
-    )
+    ), f"what was written is not a title and an id: {got['tail']!r}"
     assert not got["tookWhenClosed"], (
         "Return is claimed with no list open, so this popup has taken the newline "
         "away from everybody writing a paragraph"
@@ -7673,9 +8036,7 @@ _COMPLETING_A_PULL_REQUEST = r"""
 """
 
 
-def test_the_second_editor_completes_a_pull_request_in_the_body(
-    client: TestClient, tmp_path: Path
-):
+def test_the_second_editor_completes_a_pull_request_in_the_body(client: TestClient, tmp_path: Path):
     """jcanton, 2026-08-25, asked whether the autofill reaches pull requests from
     the two repositories this plan is about — "ideally both in the PRs field as
     well as in the body".
@@ -7700,15 +8061,24 @@ def test_the_second_editor_completes_a_pull_request_in_the_body(
         (OTHER, ["C2SM/icon4py#1403"]),
         (DONE, ["GridTools/gt4py#1877", "C2SM/icon4py#1521"]),
     ):
-        written = client.patch(f"/api/record/{record}", json={
-            "base_commit": head(client), "fields": {"prs": refs}, "body": None,
-        })
+        written = client.patch(
+            f"/api/record/{record}",
+            json={
+                "base_commit": head(client),
+                "fields": {"prs": refs},
+                "body": None,
+            },
+        )
         assert written.status_code == 200, written.text
 
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}?editor=ace").text,
-        tmp_path / "prs.html", 1400, _COMPLETING_A_PULL_REQUEST,
-        query="?editor=ace", patience=6800,
+        chrome(),
+        client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "prs.html",
+        1400,
+        _COMPLETING_A_PULL_REQUEST,
+        query="?editor=ace",
+        patience=6800,
     )
 
     assert got["overProse"] is None, (
@@ -7724,13 +8094,16 @@ def test_the_second_editor_completes_a_pull_request_in_the_body(
     )
     assert got["narrowed"] == ["GridTools/gt4py#1877"], got["narrowed"]
     assert got["tookRef"] and got["afterRef"] == {
-        "line": "See GridTools/gt4py#1877", "list": None,
+        "line": "See GridTools/gt4py#1877",
+        "list": None,
     }, got["afterRef"]
     # The bare `org/repo#` leads, because `icon4py#` is a substring of it too —
     # and it is the entry that is worth the most when the number is the part
     # nobody has memorised.
     assert got["other"] == [
-        "C2SM/icon4py#", "C2SM/icon4py#1521", "C2SM/icon4py#1403",
+        "C2SM/icon4py#",
+        "C2SM/icon4py#1521",
+        "C2SM/icon4py#1403",
     ], f"the other repository's references are not offered: {got['other']}"
 
 
@@ -7774,18 +8147,33 @@ def test_the_page_widens_its_pull_requests_with_what_is_open_now(client: TestCli
     """
     from test_injection import run_js
 
-    cited = client.patch(f"/api/record/{TASK}", json={
-        "base_commit": head(client), "fields": {"prs": ["C2SM/icon4py#1403"]}, "body": None,
-    })
+    cited = client.patch(
+        f"/api/record/{TASK}",
+        json={
+            "base_commit": head(client),
+            "fields": {"prs": ["C2SM/icon4py#1403"]},
+            "body": None,
+        },
+    )
     assert cited.status_code == 200, cited.text
 
     got = run_js(
-        client.get(f"/detail/{TASK}{PLAIN}").text, _WIDENING, page=True,
-        replies=[{"status": 200, "json": {"prs": [
-            {"value": "C2SM/icon4py#1403", "label": "The one already cited"},
-            {"value": "C2SM/icon4py#1521", "label": "Open and never mentioned"},
-            {"value": "GridTools/gt4py#1877", "label": "In a repository nobody cited"},
-        ], "stale": False}}],
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        _WIDENING,
+        page=True,
+        replies=[
+            {
+                "status": 200,
+                "json": {
+                    "prs": [
+                        {"value": "C2SM/icon4py#1403", "label": "The one already cited"},
+                        {"value": "C2SM/icon4py#1521", "label": "Open and never mentioned"},
+                        {"value": "GridTools/gt4py#1877", "label": "In a repository nobody cited"},
+                    ],
+                    "stale": False,
+                },
+            }
+        ],
     )
     assert not got["errors"], got["errors"]
     answer = got["value"]
@@ -7814,7 +8202,9 @@ def test_the_page_widens_its_pull_requests_with_what_is_open_now(client: TestCli
 # The slide editor's plain surface — `render_slide_editor`'s first test
 # --------------------------------------------------------------------------- #
 
-_SLIDE_TOOLBAR_AND_STATUS = _STUB_RENDER + r"""
+_SLIDE_TOOLBAR_AND_STATUS = (
+    _STUB_RENDER
+    + r"""
 const marks = document.getElementById('marks');
 const bar = document.getElementById('statusbar');
 return {
@@ -7822,6 +8212,7 @@ return {
   said: bar.textContent,
 };
 """
+)
 
 
 def test_the_plain_slide_editor_draws_a_toolbar_and_a_status_strip(
@@ -7843,8 +8234,11 @@ def test_the_plain_slide_editor_draws_a_toolbar_and_a_status_strip(
     on the same guarded `SURFACE`.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}?view=slide&editor=plain").text,
-        tmp_path / "slide-plain.html", 1400, _SLIDE_TOOLBAR_AND_STATUS,
+        chrome(),
+        client.get(f"/detail/{TASK}?view=slide&editor=plain").text,
+        tmp_path / "slide-plain.html",
+        1400,
+        _SLIDE_TOOLBAR_AND_STATUS,
         query="?editor=plain",
     )
     assert got["buttons"] > 0, "the plain slide editor drew no toolbar at all"
@@ -7895,7 +8289,12 @@ def test_a_reader_of_the_slide_editor_gets_no_surface_and_no_toolbar(
     index = build_index(records, config, date.today())
 
     page = render_slide_editor(
-        index, TASK, ROUTES, base_commit=commit, may_write=False, editor="plain",
+        index,
+        TASK,
+        ROUTES,
+        base_commit=commit,
+        may_write=False,
+        editor="plain",
     )
     assert "bodySurface(PROSE)" in page, "the guard changed shape entirely"
     assert re.search(r"MAY_WRITE\s*\?\s*bodySurface\(PROSE\)\s*:\s*null", page), (
@@ -7903,7 +8302,11 @@ def test_a_reader_of_the_slide_editor_gets_no_surface_and_no_toolbar(
     )
 
     got = measured_in(
-        chrome(), page, tmp_path / "slide-reader.html", 1400, _SLIDE_READER_SURFACE,
+        chrome(),
+        page,
+        tmp_path / "slide-reader.html",
+        1400,
+        _SLIDE_READER_SURFACE,
         query="?editor=plain",
     )
     assert not got["hasBodySurface"], (
@@ -7991,11 +8394,21 @@ def _drag(call, x1: float, y1: float, x2: float, y2: float) -> None:
     click through, extended to a drag because a shape needs two points and
     `pressed_in` only ever presses one."""
     for kind, x, y, buttons in (
-        ("mousePressed", x1, y1, 1), ("mouseMoved", x2, y2, 1), ("mouseReleased", x2, y2, 0),
+        ("mousePressed", x1, y1, 1),
+        ("mouseMoved", x2, y2, 1),
+        ("mouseReleased", x2, y2, 0),
     ):
-        call("Input.dispatchMouseEvent", {
-            "type": kind, "x": x, "y": y, "button": "left", "buttons": buttons, "clickCount": 1,
-        })
+        call(
+            "Input.dispatchMouseEvent",
+            {
+                "type": kind,
+                "x": x,
+                "y": y,
+                "button": "left",
+                "buttons": buttons,
+                "clickCount": 1,
+            },
+        )
         time.sleep(0.05)
 
 
@@ -8026,9 +8439,9 @@ def _png_text_chunks(data: bytes) -> dict[bytes, bytes]:
     chunks: dict[bytes, bytes] = {}
     pos = 8
     while pos < len(data):
-        length = int.from_bytes(data[pos:pos + 4], "big")
-        kind = data[pos + 4:pos + 8]
-        body = data[pos + 8:pos + 8 + length]
+        length = int.from_bytes(data[pos : pos + 4], "big")
+        kind = data[pos + 4 : pos + 8]
+        body = data[pos + 8 : pos + 8 + length]
         if kind == b"tEXt":
             key, _, value = body.partition(b"\x00")
             chunks[key] = value
@@ -8131,8 +8544,11 @@ def test_the_fetch_and_inject_delivery_is_clean_under_the_real_policy(
     did not — not an assertion that could only ever pass.
     """
     drawn, said = in_a_live_page(
-        chrome(), f"{live_server}/detail/{TASK}?editor=plain",
-        _WATCH_INJECTIONS_AND_OPEN, tmp_path / "profile", seconds=30,
+        chrome(),
+        f"{live_server}/detail/{TASK}?editor=plain",
+        _WATCH_INJECTIONS_AND_OPEN,
+        tmp_path / "profile",
+        seconds=30,
     )
     before, after = drawn["before"], drawn["after"]
     assert before["violations"] == [], (
@@ -8305,9 +8721,12 @@ def test_the_drawing_popup_takes_the_whole_page_and_remembers_that_it_did(
         assert big["drawings"] == 4, "the contract icon is not the same four brackets back"
         # The keyboard goes back to the drawing rather than staying on a button
         # that has done its job — the press was made in order to draw bigger.
-        assert _evaluated(call, """
+        assert _evaluated(
+            call,
+            """
           !!(document.activeElement && document.activeElement.closest('.excalidraw'))
-        """), "the size toggle kept the keyboard"
+        """,
+        ), "the size toggle kept the keyboard"
 
         # And it is remembered. Closed and reopened in the same page, which is
         # what `localStorage` promises and what somebody who wants a big canvas
@@ -8394,14 +8813,17 @@ def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
         assert set(_png_text_chunks(served.content)) == {b"application/vnd.excalidraw+json"}, (
             "the exported PNG carries no scene, or carries it under a different key"
         )
-        round_trip = _evaluated(call, f"""
+        round_trip = _evaluated(
+            call,
+            f"""
         (async () => {{
           const blob = await (await fetch('/drawings/{drawing_id}.png')).blob();
           const loaded = await EXCALIDRAW.loadSceneOrLibraryFromBlob(blob, null, null);
           return {{count: loaded.data.elements.length,
                    types: loaded.data.elements.map(e => e.type)}};
         }})()
-        """)
+        """,
+        )
         assert round_trip == {"count": 2, "types": ["rectangle", "ellipse"]}, round_trip
 
         # Reload, and reopen the SAME drawing through the menu — not a fresh
@@ -8437,16 +8859,20 @@ def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
         )
         assert after_resave == after_create, "the body moved between the two saves, not just in one"
 
-        resaved_round_trip = _evaluated(call, f"""
+        resaved_round_trip = _evaluated(
+            call,
+            f"""
         (async () => {{
           const blob = await (await fetch('/drawings/{drawing_id}.png')).blob();
           const loaded = await EXCALIDRAW.loadSceneOrLibraryFromBlob(blob, null, null);
           return {{count: loaded.data.elements.length,
                    types: loaded.data.elements.map(e => e.type)}};
         }})()
-        """)
+        """,
+        )
         assert resaved_round_trip == {
-            "count": 3, "types": ["rectangle", "ellipse", "diamond"],
+            "count": 3,
+            "types": ["rectangle", "ellipse", "diamond"],
         }, resaved_round_trip
         assert not [line for line in said if "Content Security Policy" in line], said
 
@@ -8455,7 +8881,7 @@ def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(
     live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
     tmp_path: Path,
 ):
-    """"The loser is refused, in one sentence, and their strokes are gone" —
+    """ "The loser is refused, in one sentence, and their strokes are gone" —
     from the file. `design/drawings.md` is explicit that a conflict dialog which
     also throws away the work it refused is the worse of the two losses, so
     this is what "the popup stays open with the work still in it" means asked
@@ -8511,9 +8937,9 @@ def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(
             f"drawings/{drawing_id}.png — somebody changed this drawing while you had it "
             "open, and a drawing has no merge. Reopen it."
         )
-        assert _until(
-            call, f"document.getElementById('state').textContent === {expected!r}"
-        ), _evaluated(call, "document.getElementById('state').textContent")
+        assert _until(call, f"document.getElementById('state').textContent === {expected!r}"), (
+            _evaluated(call, "document.getElementById('state').textContent")
+        )
         assert _evaluated(call, "!!document.querySelector('.drawpopup')"), (
             "the popup closed on a refusal — the strokes in it went with it"
         )
@@ -8555,25 +8981,32 @@ def test_closing_unsaved_strokes_asks_first_and_keep_drawing_preserves_them(
         time.sleep(0.2)
 
         _evaluated(call, "document.getElementById('draw-close').click()")
-        asked = _evaluated(call, """({
+        asked = _evaluated(
+            call,
+            """({
           popupThere: !!document.querySelector('.drawpopup'),
           asking: !document.querySelector('.drawask').hidden,
           saveHidden: document.getElementById('draw-save').hidden,
           closeHidden: document.getElementById('draw-close').hidden,
-        })""")
+        })""",
+        )
         assert asked == {
-            "popupThere": True, "asking": True, "saveHidden": True, "closeHidden": True,
+            "popupThere": True,
+            "asking": True,
+            "saveHidden": True,
+            "closeHidden": True,
         }, asked
 
         _evaluated(call, "document.querySelector('.drawask .keep').click()")
-        backed_out = _evaluated(call, """({
+        backed_out = _evaluated(
+            call,
+            """({
           popupThere: !!document.querySelector('.drawpopup'),
           asking: !document.querySelector('.drawask').hidden,
           saveHidden: document.getElementById('draw-save').hidden,
-        })""")
-        assert backed_out == {"popupThere": True, "asking": False, "saveHidden": False}, (
-            backed_out
+        })""",
         )
+        assert backed_out == {"popupThere": True, "asking": False, "saveHidden": False}, backed_out
 
         _evaluated(call, "document.getElementById('draw-save').click()")
         assert _until(call, "!document.querySelector('.drawpopup')"), (
@@ -8586,13 +9019,16 @@ def test_closing_unsaved_strokes_asks_first_and_keep_drawing_preserves_them(
 
         served = httpx.get(f"{live_server}/drawings/{drawing_id}.png")
         assert served.status_code == 200
-        loaded = _evaluated(call, f"""
+        loaded = _evaluated(
+            call,
+            f"""
         (async () => {{
           const blob = await (await fetch('/drawings/{drawing_id}.png')).blob();
           const scene = await EXCALIDRAW.loadSceneOrLibraryFromBlob(blob, null, null);
           return {{count: scene.data.elements.length, types: scene.data.elements.map(e => e.type)}};
         }})()
-        """)
+        """,
+        )
         assert loaded == {"count": 1, "types": ["rectangle"]}, (
             f"keep drawing did not actually keep the shape drawn before Close: {loaded}"
         )
@@ -8660,16 +9096,27 @@ def test_escape_backs_out_of_the_question_and_discard_throws_the_drawing_away(
         # measured doing nothing: `root.render` is React 18's and returns before
         # the tree commits, so `api` was still null on the next line,
         # `document.activeElement` was `<body>`, and `r` picked nothing.
-        focused = _evaluated(call, """
+        focused = _evaluated(
+            call,
+            """
           !!(document.activeElement && document.activeElement.closest('.excalidraw'))
-        """)
+        """,
+        )
         assert focused, (
             "the popup mounted with the keyboard still outside it — Excalidraw "
             "never sees Escape, and Tab walks the page under the overlay"
         )
         for kind in ("rawKeyDown", "keyUp"):
-            call("Input.dispatchKeyEvent", {"type": kind, "key": "r", "code": "KeyR",
-                                            "windowsVirtualKeyCode": 82, "text": "r"})
+            call(
+                "Input.dispatchKeyEvent",
+                {
+                    "type": kind,
+                    "key": "r",
+                    "code": "KeyR",
+                    "windowsVirtualKeyCode": 82,
+                    "text": "r",
+                },
+            )
         time.sleep(0.3)
         assert _evaluated(
             call, "document.querySelector('[data-testid=\"toolbar-rectangle\"]').checked"
@@ -8680,8 +9127,7 @@ def test_escape_backs_out_of_the_question_and_discard_throws_the_drawing_away(
         time.sleep(0.2)
 
         escape = (
-            "document.dispatchEvent("
-            "new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))"
+            "document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))"
         )
 
         # An Escape pressed where the person is actually drawing is Excalidraw's
@@ -8689,10 +9135,13 @@ def test_escape_backs_out_of_the_question_and_discard_throws_the_drawing_away(
         # must not take the editor with it. `focusContainer` put the keyboard
         # there when the popup mounted, so this is the ordinary case and not a
         # contrived one.
-        stray = _evaluated(call, f"(() => {{ {escape}; return {{"
-                                 "popupThere: !!document.querySelector('.drawpopup'),"
-                                 "asking: !document.querySelector('.drawask').hidden,"
-                                 "}; })()")
+        stray = _evaluated(
+            call,
+            f"(() => {{ {escape}; return {{"
+            "popupThere: !!document.querySelector('.drawpopup'),"
+            "asking: !document.querySelector('.drawask').hidden,"
+            "}; })()",
+        )
         assert stray == {"popupThere": True, "asking": False}, (
             "an Escape pressed in the drawing reached the popup — with nothing "
             f"drawn this is the close that reads as a crash: {stray}"
@@ -8703,20 +9152,26 @@ def test_escape_backs_out_of_the_question_and_discard_throws_the_drawing_away(
         # cannot raise the question from inside the canvas any more, which is
         # the whole point of the assertion above it.
         _evaluated(call, "document.getElementById('draw-close').click()")
-        first = _evaluated(call, """({
+        first = _evaluated(
+            call,
+            """({
           popupThere: !!document.querySelector('.drawpopup'),
           asking: !document.querySelector('.drawask').hidden,
-        })""")
+        })""",
+        )
         assert first == {"popupThere": True, "asking": True}, first
 
         # Second Escape, with the question up: backs OUT OF THE QUESTION, not
         # out of the popup — a reflexive double-Escape must not both dismiss
         # the question and lose the drawing.
         _evaluated(call, escape)
-        second = _evaluated(call, """({
+        second = _evaluated(
+            call,
+            """({
           popupThere: !!document.querySelector('.drawpopup'),
           asking: !document.querySelector('.drawask').hidden,
-        })""")
+        })""",
+        )
         assert second == {"popupThere": True, "asking": False}, (
             f"the second Escape closed the popup instead of backing out of the question: {second}"
         )

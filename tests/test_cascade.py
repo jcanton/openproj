@@ -57,16 +57,16 @@ def served_pages(index: Index) -> dict[str, str]:
         "table": render_table(index, ROUTES, base_commit=HEAD, may_write=True),
         "graph": render_graph(index, ROUTES, base_commit=HEAD),
         "timeline": render_timeline(index, ROUTES),
-        "detail": render_detail(index, ROUTES, only=sorted(index.plan)[0],
-                                base_commit=HEAD, may_write=True),
+        "detail": render_detail(
+            index, ROUTES, only=sorted(index.plan)[0], base_commit=HEAD, may_write=True
+        ),
         # The editing surface, which a served detail page does not show: the
         # toolbar, the view switcher and the status bar are all `.field`s inside
         # `article.record.editing`, so on a record somebody is only READING they
         # have no client rects and the sweep below never sees them. The create
         # page is the same markup and the same stylesheet with the mode already
         # on — twenty controls that would otherwise be measured on no page at all.
-        "create": render_detail(index, ROUTES, base_commit=HEAD, may_write=True,
-                                creating="task"),
+        "create": render_detail(index, ROUTES, base_commit=HEAD, may_write=True, creating="task"),
     }
 
 
@@ -99,15 +99,22 @@ def cell(
     column: str, classes: str = "", within: list[El] | None = None, states: str = ""
 ) -> list[El]:
     return (within or SCROLL) + [
-        el("tbody"), el("tr"), el("td", classes, states=states, data_col=column)
+        el("tbody"),
+        el("tr"),
+        el("td", classes, states=states, data_col=column),
     ]
 
 
 def says(sheet: Sheet, path: list[El], prop: str) -> str:
     """The winning declaration, and every rule it beat, for a failure message."""
     reaching = sheet.selectors_reaching(path, prop)
-    return "\n".join(f"  {r.specificity} {r.selector} {{ {prop}: {r.declarations[prop][0]} }}"
-                     for r in reaching) or "  (no rule sets it)"
+    return (
+        "\n".join(
+            f"  {r.specificity} {r.selector} {{ {prop}: {r.declarations[prop][0]} }}"
+            for r in reaching
+        )
+        or "  (no rule sets it)"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -141,8 +148,7 @@ def test_the_frozen_headers_are_drawn_over_the_rows_that_pass_under_them(table: 
     under it and the columns scrolling sideways under it. Below either, the plan
     scrolls its own header away."""
     for column in ("id", "title"):
-        assert table.value(header(column), "z-index") == "4", says(
-            table, header(column), "z-index")
+        assert table.value(header(column), "z-index") == "4", says(table, header(column), "z-index")
     # Above the rest of the header, which is above the rest of the body.
     assert table.value(header("owner"), "z-index") == "3"
     assert table.value(cell("id"), "z-index") == "1"
@@ -157,12 +163,14 @@ def test_the_title_header_keeps_the_rule_along_its_bottom_edge(table: Sheet):
     state that has a right edge to draw."""
     drawn = table.value(header("title", within=SCROLLED), "box-shadow")
     assert drawn == "inset 0 -1px 0 var(--line), inset -1px 0 0 var(--line)", says(
-        table, header("title", within=SCROLLED), "box-shadow")
+        table, header("title", within=SCROLLED), "box-shadow"
+    )
     # Unscrolled it is a header like any other. This is the half that regressed:
     # the right-edge shadow replaced the bottom rule wholesale, so naming one
     # without the other is how the line along the bottom disappears again.
     assert table.value(header("title"), "box-shadow") == "inset 0 -1px 0 var(--line)", says(
-        table, header("title"), "box-shadow")
+        table, header("title"), "box-shadow"
+    )
     # The id header has no right edge of its own — the title column carries it
     # for the pair — so it keeps the plain bottom rule every other header has.
     assert table.value(header("id"), "box-shadow") == "inset 0 -1px 0 var(--line)"
@@ -194,16 +202,20 @@ def test_the_frozen_edge_is_drawn_only_while_the_table_is_scrolled(table: Sheet)
     which opens the page in Chrome and compares the screenshots.
     """
     assert table.value(cell("title", "edit"), "box-shadow") is None, says(
-        table, cell("title", "edit"), "box-shadow")
+        table, cell("title", "edit"), "box-shadow"
+    )
     assert table.value(cell("title", "edit", within=SCROLLED), "box-shadow") == (
         "inset -1px 0 0 var(--line)"
     ), says(table, cell("title", "edit", within=SCROLLED), "box-shadow")
     # And the ground under it is unchanged by either state: `.scrolled` adds an
     # edge, and must not win `background` off the severity rules below.
-    for path in (cell("title", "edit sev-cell-blocker"),
-                 cell("title", "edit sev-cell-blocker", within=SCROLLED)):
+    for path in (
+        cell("title", "edit sev-cell-blocker"),
+        cell("title", "edit sev-cell-blocker", within=SCROLLED),
+    ):
         assert table.value(path, "background") == "var(--sev-blocker-soft)", says(
-            table, path, "background")
+            table, path, "background"
+        )
 
 
 def test_a_frozen_cell_never_asks_for_an_outset_shadow(table: Sheet):
@@ -221,12 +233,20 @@ def test_a_frozen_cell_never_asks_for_an_outset_shadow(table: Sheet):
     assert table.value(TABLE, "border-collapse") == "collapse", (
         "the premise of every assertion here"
     )
-    for path in (header("id"), header("title"), header("owner"),
-                 header("id", within=SCROLLED), header("title", within=SCROLLED),
-                 cell("id"), cell("title", "edit"), cell("owner", "edit"),
-                 cell("id", within=SCROLLED), cell("title", "edit", within=SCROLLED),
-                 cell("title", "edit", within=SCROLLED, states="hover"),
-                 cell("owner", "edit", states="hover")):
+    for path in (
+        header("id"),
+        header("title"),
+        header("owner"),
+        header("id", within=SCROLLED),
+        header("title", within=SCROLLED),
+        cell("id"),
+        cell("title", "edit"),
+        cell("owner", "edit"),
+        cell("id", within=SCROLLED),
+        cell("title", "edit", within=SCROLLED),
+        cell("title", "edit", within=SCROLLED, states="hover"),
+        cell("owner", "edit", states="hover"),
+    ):
         drawn = table.value(path, "box-shadow")
         if drawn in (None, "none"):
             continue
@@ -248,7 +268,8 @@ def test_a_problem_on_a_frozen_column_still_gets_its_ground(
     ground is a table where the marked cells are the ones nobody can see."""
     path = cell(column, f"edit sev-cell-{severity}")
     assert table.value(path, "background") == f"var(--sev-{severity}-soft)", says(
-        table, path, "background")
+        table, path, "background"
+    )
 
 
 @pytest.mark.parametrize("column", ["id", "title", "owner"])
@@ -256,8 +277,7 @@ def test_a_refused_cell_says_so_on_a_frozen_column_too(table: Sheet, column: str
     """The fourth casualty of the same weight, and the one nobody listed: the
     ground that says a save came back refused is a `td.` rule as well."""
     path = cell(column, "edit refused")
-    assert table.value(path, "background") == "var(--surface-2)", says(
-        table, path, "background")
+    assert table.value(path, "background") == "var(--surface-2)", says(table, path, "background")
 
 
 def test_every_rule_that_corrects_a_frozen_column_outweighs_it(table: Sheet):
@@ -302,7 +322,8 @@ def test_the_column_control_is_drawn_as_a_control_and_the_label_is_not(table: Sh
     label = header("reviewers", "expands") + [el("button")]
 
     assert table.value(control, "border") == "1px solid var(--line-strong)", says(
-        table, control, "border")
+        table, control, "border"
+    )
     assert table.value(control, "position") == "absolute", says(table, control, "position")
     won = table.winner(control, "border")
     lost = table.winner(label, "border")
@@ -340,7 +361,8 @@ def test_the_suggestion_popup_hangs_off_the_body_where_nothing_clips_it(table: S
     """
     popup = [el("body"), el("ul", "suggest", id="suggest-1")]
     assert table.value(popup[:1], "overflow") in (None, "visible"), says(
-        table, popup[:1], "overflow")
+        table, popup[:1], "overflow"
+    )
     assert table.value(popup, "position") == "absolute"
     # Above the commit bar (10) and below the banner that says the plan moved
     # under you (40), which is the one thing that must never be behind anything.
@@ -497,10 +519,10 @@ def test_the_timeline_window_controls_stand_on_one_line(index: Index):
     assert sheet.value(bar, "grid-auto-flow") == "column"
     assert sheet.value(bar, "align-items") == "end"
     for child, row in (
-        (el("label", "facet"), "1"),      # FROM, TO, ZOOM
-        (el("input"), "2"),               # the two date boxes
-        (el("select"), "2"),              # the zoom picker, level with them
-        (el("span", "acts"), "2"),        # and Apply and Reset, level with those
+        (el("label", "facet"), "1"),  # FROM, TO, ZOOM
+        (el("input"), "2"),  # the two date boxes
+        (el("select"), "2"),  # the zoom picker, level with them
+        (el("span", "acts"), "2"),  # and Apply and Reset, level with those
     ):
         path = bar + [child]
         assert sheet.value(path, "grid-row") == row, says(sheet, path, "grid-row")
@@ -533,8 +555,11 @@ def test_a_conflict_report_is_a_report_on_the_table_as_well_as_the_detail_page(i
     the save did not land."""
     for name, page, box in (
         ("detail", render_detail(index, ROUTES, base_commit=HEAD), el("div", id="conflict")),
-        ("table", render_table(index, ROUTES, base_commit=HEAD, may_write=True),
-         el("div", id="row-conflict")),
+        (
+            "table",
+            render_table(index, ROUTES, base_commit=HEAD, may_write=True),
+            el("div", id="row-conflict"),
+        ),
     ):
         sheet = sheet_of(page)
         path = PAGE + [box]
@@ -573,8 +598,8 @@ def test_an_overrunning_bar_still_reads_as_overrunning(index: Index):
     # be drawn after the bar's and straight down the middle of the outline.
     hatch = plot + [el("rect", "mark mark-estimated st-ready")]
 
-    assert sheet.value(ordinary, "stroke") == "var(--st-ready-line)", (
-        says(sheet, ordinary, "stroke")
+    assert sheet.value(ordinary, "stroke") == "var(--st-ready-line)", says(
+        sheet, ordinary, "stroke"
     )
     assert sheet.value(ordinary, "stroke-width") == "1"
     assert sheet.value(overrun, "stroke") == "var(--danger)", says(sheet, overrun, "stroke")
@@ -595,8 +620,8 @@ def test_a_bar_and_the_key_that_names_it_are_drawn_the_same_way(index: Index):
     key = PAGE + [el("ul", "legend"), el("li"), el("span", "swatch outline late")]
 
     width = sheet.value(overrun, "stroke-width")
-    assert sheet.value(key, "border") == f"{width}px solid var(--danger)", (
-        says(sheet, key, "border")
+    assert sheet.value(key, "border") == f"{width}px solid var(--danger)", says(
+        sheet, key, "border"
     )
     # STATUSES, because this is the one harness that can answer "does the
     # generated .st-<word> rule actually WIN, and against what" — and written as
@@ -604,8 +629,8 @@ def test_a_bar_and_the_key_that_names_it_are_drawn_the_same_way(index: Index):
     for status in STATUSES:
         swatch = PAGE + [el("ul", "legend"), el("li"), el("span", f"swatch st-{status}")]
         assert sheet.value(swatch, "background") == f"var(--st-{status})", status
-        assert sheet.value(swatch, "border") == f"1px solid var(--st-{status}-line)", (
-            says(sheet, swatch, "border")
+        assert sheet.value(swatch, "border") == f"1px solid var(--st-{status}-line)", says(
+            sheet, swatch, "border"
         )
         # The key is the same 20x11 as every other key: on content-box a border
         # would have made the bordered ones two pixels taller than the rules.
@@ -792,9 +817,7 @@ def test_the_draft_rows_controls_stand_on_one_line(index: Index):
     option decided the width of a 135px column.
     """
     sheet = sheet_of(render_table(index, ROUTES, base_commit=HEAD, may_write=True))
-    assert sheet.value(DRAFTING, "display") == "inline-flex", (
-        says(sheet, DRAFTING, "display")
-    )
+    assert sheet.value(DRAFTING, "display") == "inline-flex", says(sheet, DRAFTING, "display")
     assert sheet.value(DRAFTING, "align-items") == "center"
     picker = DRAFTING + [el("select", id="draft-kind")]
     assert sheet.value(picker, "min-width") == "0", says(sheet, picker, "min-width")
@@ -859,14 +882,18 @@ def test_the_view_classes_do_not_beat_the_editing_class(detail: Sheet):
     # on WEIGHT — (0,3,1) over `.record.editing .bodybar`'s (0,3,0) — not on
     # order, which is what keeps it correct if either block moves.
     bars = PAGE + [
-        el("article", "record editing view-view"), el("form", id="edit"),
-        el("div", "panes"), el("div", "main"), el("p", "field bodybar markbar"),
+        el("article", "record editing view-view"),
+        el("form", id="edit"),
+        el("div", "panes"),
+        el("div", "main"),
+        el("p", "field bodybar markbar"),
     ]
     barwon = detail.winner(bars, "display")
     assert barwon and barwon.value == "none", says(detail, bars, "display")
     assert barwon.selector == "article.record.view-view .markbar", barwon.selector
     editing_bar = next(
-        reach for reach in detail.selectors_reaching(bars, "display")
+        reach
+        for reach in detail.selectors_reaching(bars, "display")
         if reach.selector == ".record.editing .bodybar"
     )
     assert barwon.specificity > editing_bar.specificity, (
@@ -882,18 +909,17 @@ def test_the_view_classes_do_not_beat_the_editing_class(detail: Sheet):
     # written in.
     split = PAGE + [el("article", "record editing view-both"), el("div", "panes")]
     ordinary = PAGE + [el("article", "record editing view-edit"), el("div", "panes")]
-    assert detail.value(split, "width") == "calc(2 * var(--measure) - 21rem)", (
-        says(detail, split, "width")
+    assert detail.value(split, "width") == "calc(2 * var(--measure) - 21rem)", says(
+        detail, split, "width"
     )
     won = detail.winner(split, "width")
-    base = next(reach for reach in detail.selectors_reaching(split, "width")
-                if reach.selector == ".panes")
+    base = next(
+        reach for reach in detail.selectors_reaching(split, "width") if reach.selector == ".panes"
+    )
     assert won.specificity > base.specificity, (
         "the split's width is winning on order, not weight\n" + says(detail, split, "width")
     )
-    assert detail.value(ordinary, "width") == "var(--measure)", (
-        says(detail, ordinary, "width")
-    )
+    assert detail.value(ordinary, "width") == "var(--measure)", says(detail, ordinary, "width")
     # `max-width: 100%` still reaches the split off the base rule — it is what
     # caps this in a narrow window. There is no `margin: 0 auto` any more: the
     # column is pinned to the page's left edge, level with the header above it,
@@ -918,9 +944,9 @@ def test_the_view_classes_do_not_beat_the_editing_class(detail: Sheet):
     bar = PAGE + [el("article", "record"), el("div", "", id="promote")]
     assert detail.value(bar, "width") == "var(--measure)", says(detail, bar, "width")
     assert detail.value(bar, "max-width") == "100%", says(detail, bar, "max-width")
-    assert [reach.selector for reach in detail.selectors_reaching(bar, "width")] == [
-        "#promote"
-    ], says(detail, bar, "width")
+    assert [reach.selector for reach in detail.selectors_reaching(bar, "width")] == ["#promote"], (
+        says(detail, bar, "width")
+    )
     # And it needs no split-view width of its own, because it is never drawn in
     # one: `editing` is on the article for the whole of a session and `view-both`
     # is always a session. `.record.editing #promote` is (1,2,0) and carries the
@@ -937,9 +963,7 @@ def test_the_view_classes_do_not_beat_the_editing_class(detail: Sheet):
     assert detail.value(marks, "flex") == "none", says(detail, marks, "flex")
 
 
-def test_the_handle_between_the_panes_is_a_control_in_one_view_and_nowhere_else(
-    detail: Sheet
-):
+def test_the_handle_between_the_panes_is_a_control_in_one_view_and_nowhere_else(detail: Sheet):
     """The splitter, resolved by name, because "the rule is in the stylesheet" is
     not what a reader sees.
 
@@ -968,24 +992,27 @@ def test_the_handle_between_the_panes_is_a_control_in_one_view_and_nowhere_else(
     split = _writing("both")
     won = detail.winner(split, "grid-template-columns")
     assert won and won.selector == "article.record.view-both .bodysplit", (
-        f"the split's columns are decided by {won}\n"
-        + says(detail, split, "grid-template-columns")
+        f"the split's columns are decided by {won}\n" + says(detail, split, "grid-template-columns")
     )
     assert won.value == "minmax(0, var(--split, 1fr)) 1.5rem minmax(0, 1fr)", won.value
 
     handle = _writing("both") + [el("div", id="splitter")]
     on = detail.winner(handle, "display")
     assert on and on.value == "block", (
-        f"the handle is displayed by {on} in the split view\n"
-        + says(detail, handle, "display")
+        f"the handle is displayed by {on} in the split view\n" + says(detail, handle, "display")
     )
     # And every other place it could be drawn, which is every other place it is
     # rendered into: the two one-pane views, and the page outside the surface.
     for where in (
         _writing("edit") + [el("div", id="splitter")],
         _writing("view") + [el("div", id="splitter")],
-        PAGE + [el("article", "record editing"), el("form", id="edit"),
-                el("div", "bodysplit"), el("div", id="splitter")],
+        PAGE
+        + [
+            el("article", "record editing"),
+            el("form", id="edit"),
+            el("div", "bodysplit"),
+            el("div", id="splitter"),
+        ],
     ):
         off = detail.winner(where, "display")
         assert off and off.value == "none" and off.selector == "#splitter", (
@@ -1000,6 +1027,7 @@ def test_the_handle_between_the_panes_is_a_control_in_one_view_and_nowhere_else(
         + says(detail, pane, "border-left")
     )
 
+
 # --------------------------------------------------------------------------- #
 # One editing surface, one stylesheet
 # --------------------------------------------------------------------------- #
@@ -1012,13 +1040,16 @@ def record(index: Index) -> Sheet:
     stylesheets could not drift; the second stylesheet is gone with the page,
     and what these tests still pin is true of the survivor."""
     return sheet_of(
-        render_detail(index, ROUTES, only=sorted(index.records)[0], base_commit=HEAD,
-                      may_write=True)
+        render_detail(
+            index, ROUTES, only=sorted(index.records)[0], base_commit=HEAD, may_write=True
+        )
     )
 
 
 _RECORD_EDITING = [
-    el("body"), el("main", id="main"), el("article", "record editing"),
+    el("body"),
+    el("main", id="main"),
+    el("article", "record editing"),
 ]
 
 
@@ -1071,12 +1102,12 @@ def test_the_box_on_a_record_page_is_monospace_and_fits_its_pane(record: Sheet):
     article.
     """
     box = _RECORD_EDITING + [
-        el("form", id="edit"), el("div", "bodysplit"), el("div", "bodywrap"),
+        el("form", id="edit"),
+        el("div", "bodysplit"),
+        el("div", "bodywrap"),
         el("textarea", "field body-field"),
     ]
-    assert record.value(box, "font-family") == "var(--font-mono)", says(
-        record, box, "font-family"
-    )
+    assert record.value(box, "font-family") == "var(--font-mono)", says(record, box, "font-family")
     # **This engine cannot see a shorthand fight, and that is worth stating
     # rather than leaving as a gap.** `_DETAIL_STYLE` carries
     # `input.field, select.field, textarea.field { font: inherit }` at the same
@@ -1089,8 +1120,7 @@ def test_the_box_on_a_record_page_is_monospace_and_fits_its_pane(record: Sheet):
     # `test_the_box_and_the_column_beside_it_are_one_face`.
     assert record.value(box, "font") == "inherit", (
         "the shorthand this note is about is gone, so either the browser test it "
-        "points at is now the only guard or it is no longer needed\n"
-        + says(record, box, "font")
+        "points at is now the only guard or it is no longer needed\n" + says(record, box, "font")
     )
 
     assert record.value(box, "box-sizing") == "border-box", says(record, box, "box-sizing")
@@ -1100,14 +1130,17 @@ def test_the_box_on_a_record_page_is_monospace_and_fits_its_pane(record: Sheet):
     # `min-height: var(--writing…)` would otherwise stretch a pane the split
     # means to keep level with the pane beside it.
     inside = [
-        el("body"), el("main", id="main"),
+        el("body"),
+        el("main", id="main"),
         el("article", "record editing view-both"),
-        el("form", id="edit"), el("div", "bodysplit"), el("div", "bodywrap"),
+        el("form", id="edit"),
+        el("div", "bodysplit"),
+        el("div", "bodywrap"),
         el("textarea", "field body-field"),
     ]
     won = record.winner(inside, "height")
-    assert won and won.selector == "article.record.view-both textarea.body-field", (
-        says(record, inside, "height")
+    assert won and won.selector == "article.record.view-both textarea.body-field", says(
+        record, inside, "height"
     )
     assert record.value(inside, "min-height") == "0", says(record, inside, "min-height")
 
@@ -1119,12 +1152,14 @@ def test_a_hidden_control_stays_hidden_on_the_one_stylesheet(record: Sheet):
     a `.field`, `hidden` until a view asks for it — must stay dark.
     """
     pane = [
-        el("body"), el("main", id="main"), el("article", "record editing"),
+        el("body"),
+        el("main", id="main"),
+        el("article", "record editing"),
         el("div", "field doc", id="body-preview", hidden="hidden"),
     ]
     won = record.winner(pane, "display")
-    assert won and won.value == "none", (
-        f"a hidden pane is displayed by {won}\n" + says(record, pane, "display")
+    assert won and won.value == "none", f"a hidden pane is displayed by {won}\n" + says(
+        record, pane, "display"
     )
 
 
@@ -1145,22 +1180,27 @@ def test_the_handle_between_the_panes_is_one_control_on_the_one_stylesheet(
     back from mid-drag.
     """
     inside = [
-        el("body"), el("main", id="main"),
-        el("article", "record editing view-both"), el("form", id="edit"),
-        el("div", "bodysplit"), el("div", id="splitter"),
+        el("body"),
+        el("main", id="main"),
+        el("article", "record editing view-both"),
+        el("form", id="edit"),
+        el("div", "bodysplit"),
+        el("div", id="splitter"),
     ]
     won = record.winner(inside, "display")
     assert won and won.value == "block", (
-        f"the handle in the split view is displayed by {won}\n"
-        + says(record, inside, "display")
+        f"the handle in the split view is displayed by {won}\n" + says(record, inside, "display")
     )
     assert record.value(inside, "touch-action") == "none", (
         "a finger on the handle can start a pan\n" + says(record, inside, "touch-action")
     )
 
     outside = [
-        el("body"), el("main", id="main"), el("article", "record editing"),
-        el("div", "bodysplit"), el("div", id="splitter"),
+        el("body"),
+        el("main", id="main"),
+        el("article", "record editing"),
+        el("div", "bodysplit"),
+        el("div", id="splitter"),
     ]
     off = record.winner(outside, "display")
     assert off and off.value == "none" and off.selector == "#splitter", (
@@ -1200,12 +1240,16 @@ def test_every_commit_bar_sticks_to_the_same_edge_and_one_rule_decides_it(index:
     number = sorted(index.cycles)[0]
     bar = el("div", "commitbar", id="commitbar")
     pages = {
-        "detail": (render_detail(index, ROUTES, only=sorted(index.plan)[0],
-                                 base_commit=HEAD, may_write=True),
-                   [el("article", "record editing"), bar]),
-        "create": (render_detail(index, ROUTES, base_commit=HEAD, may_write=True,
-                                 creating="task"),
-                   [el("article", "record editing"), bar]),
+        "detail": (
+            render_detail(
+                index, ROUTES, only=sorted(index.plan)[0], base_commit=HEAD, may_write=True
+            ),
+            [el("article", "record editing"), bar],
+        ),
+        "create": (
+            render_detail(index, ROUTES, base_commit=HEAD, may_write=True, creating="task"),
+            [el("article", "record editing"), bar],
+        ),
         "cycle": (render_cycle(index, number, ROUTES, base_commit=HEAD), [bar]),
         "graph": (render_graph(index, ROUTES, base_commit=HEAD), [bar]),
     }
@@ -1231,6 +1275,8 @@ def test_every_commit_bar_sticks_to_the_same_edge_and_one_rule_decides_it(index:
             f"the {name} page's bar is not sticky, so which edge it names is a "
             "coordinate rather than a guarantee\n" + says(sheet, path, "position")
         )
+
+
 # Every button and every select on the page, and what it is actually drawn with.
 # Measured, not read: the version of this test that read the stylesheet passed
 # while `#preview`, `#connect`, `#clear-filters` and a dozen others were being
@@ -1265,6 +1311,7 @@ for (const el of document.querySelectorAll('button, select')) {
 return out;
 """
 
+
 def bare(one: dict) -> bool:
     """Whether this control is deliberately drawn with nothing.
 
@@ -1289,9 +1336,7 @@ def bare(one: dict) -> bool:
     return one["border"].endswith(" none") and one["ground"] == "rgba(0, 0, 0, 0)"
 
 
-@pytest.mark.parametrize(
-    "view", ["table", "graph", "timeline", "detail", "create"]
-)
+@pytest.mark.parametrize("view", ["table", "graph", "timeline", "detail", "create"])
 def test_every_control_on_every_page_is_drawn_the_same(view, served_pages, tmp_path):
     """jcanton, 2026-08-20, on finding "Preview the body" still native: "I thought
     we had managed to impose the style of buttons and dropdowns to be coherent
@@ -1323,8 +1368,7 @@ def test_every_control_on_every_page_is_drawn_the_same(view, served_pages, tmp_p
     assert {one["border"] for one in styled} == {"1px solid"}, (
         f"controls on the {view} page are bordered differently: "
         + "; ".join(
-            f"{one['what']} is {one['border']}"
-            for one in styled if one["border"] != "1px solid"
+            f"{one['what']} is {one['border']}" for one in styled if one["border"] != "1px solid"
         )
     )
     # And the corner, of everything that HAS one. `50%` is not a corner, it is a
@@ -1339,7 +1383,8 @@ def test_every_control_on_every_page_is_drawn_the_same(view, served_pages, tmp_p
         f"controls on the {view} page are cornered differently: "
         + "; ".join(
             f"{one['what']} is r{one['radius']}"
-            for one in styled if one["radius"] not in ("3px", "50%")
+            for one in styled
+            if one["radius"] not in ("3px", "50%")
         )
     )
     # `2px outset` is Chrome's own default for a button nobody styled, and it is

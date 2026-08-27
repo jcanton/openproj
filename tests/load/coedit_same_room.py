@@ -85,8 +85,15 @@ ROOT = harness.ROOT
 # characters each SOCKET typed, and two sockets sharing a login would make the
 # attribution half of that unreadable while changing none of the timings.
 LOGINS = harness.PEOPLE + [
-    "havogt", "samkellerhals", "tehrengruber", "ninaburg", "stubbiali",
-    "cponder", "dropd", "ckuehnlein", "philip-paul-mueller",
+    "havogt",
+    "samkellerhals",
+    "tehrengruber",
+    "ninaburg",
+    "stubbiali",
+    "cponder",
+    "dropd",
+    "ckuehnlein",
+    "philip-paul-mueller",
 ]
 
 # One propagation marker every this many keystrokes, on a residue that differs
@@ -101,15 +108,15 @@ MARK_EVERY = 15
 # POINTS, and the browser that is not in this test counts UTF-16 CODE UNITS.
 # Byte lengths are written down because they are what the middle space uses.
 MULTIBYTE = [
-    "\U0001f44d",                                   # 👍  1 cp, 4 bytes, 2 UTF-16 units
-    "a",                                            #     1 cp, 1 byte
-    "é",                                      # é   2 cp, 3 bytes (combining acute)
-    "—",                                       # —   1 cp, 3 bytes
-    "\U0001f916",                                   # 🤖  1 cp, 4 bytes, surrogate pair
+    "\U0001f44d",  # 👍  1 cp, 4 bytes, 2 UTF-16 units
+    "a",  #     1 cp, 1 byte
+    "é",  # é   2 cp, 3 bytes (combining acute)
+    "—",  # —   1 cp, 3 bytes
+    "\U0001f916",  # 🤖  1 cp, 4 bytes, surrogate pair
     "b",
-    "\U0001f1ee\U0001f1f9",                         # 🇮🇹  2 cp, 8 bytes, two regional indicators
-    "ñ",                                      # ñ   2 cp, 3 bytes (combining tilde)
-    "\U0001f468‍\U0001f469‍\U0001f467",   # 👨‍👩‍👧 5 cp, 18 bytes, two ZWJs
+    "\U0001f1ee\U0001f1f9",  # 🇮🇹  2 cp, 8 bytes, two regional indicators
+    "ñ",  # ñ   2 cp, 3 bytes (combining tilde)
+    "\U0001f468‍\U0001f469‍\U0001f467",  # 👨‍👩‍👧 5 cp, 18 bytes, two ZWJs
     "c",
 ]
 
@@ -176,8 +183,16 @@ class RoomTypist(users.CoEditor):
 
     TYPIST = GapTypist
 
-    def __init__(self, *args, pieces: list[str], pings: list, pings_lock,
-                 save_after: float | None = None, carets: bool = False, **kwargs) -> None:
+    def __init__(
+        self,
+        *args,
+        pieces: list[str],
+        pings: list,
+        pings_lock,
+        save_after: float | None = None,
+        carets: bool = False,
+        **kwargs,
+    ) -> None:
         super().__init__(*args, **kwargs)
         # Every person emits a marker on a different residue of the cadence.
         # Without this all fifteen emit on the same step, they all started
@@ -194,7 +209,7 @@ class RoomTypist(users.CoEditor):
         self.pieces = pieces
         self.pings = pings
         self.pings_lock = pings_lock
-        self.save_after = save_after      # seconds into the window, or None
+        self.save_after = save_after  # seconds into the window, or None
         # `{"t":"at"}` after every keystroke, the way the real editor does it.
         # `render.py:sit()` sends the caret whenever it lands somewhere new and
         # dedupes only against the last position it sent, so typing sends one
@@ -205,7 +220,7 @@ class RoomTypist(users.CoEditor):
         self.carets = carets
         self.caret_frames = 0
         self.written: list[str] = []
-        self.after = 0                    # code points typed after the anchor
+        self.after = 0  # code points typed after the anchor
         self.step = 0
         self.marks_sent = 0
         self.save_pressed_at: float | None = None
@@ -239,8 +254,9 @@ class RoomTypist(users.CoEditor):
                         self.pings.append(Ping(token, self.who, pressed, wire))
             else:
                 self.result.trouble.append(f"{answer} after {self.after} code points")
-            self.note(kind="WS keystroke", ms=(wire - pressed) * 1000, status=answer,
-                      record=self.record)
+            self.note(
+                kind="WS keystroke", ms=(wire - pressed) * 1000, status=answer, record=self.record
+            )
             if self.member.gone:
                 self.result.trouble.append(f"socket gone: {self.member.gone}")
                 return
@@ -290,8 +306,7 @@ class CommitWatch(threading.Thread):
                 head = self._head
             if head != self._head:
                 self._head = head
-                self.seen.append({"at": round(time.monotonic() - self.zero, 2),
-                                  "head": head[:10]})
+                self.seen.append({"at": round(time.monotonic() - self.zero, 2), "head": head[:10]})
             self._halt.wait(self.every)
 
     def stop(self) -> list[dict]:
@@ -354,13 +369,15 @@ def propagation(pings: list[Ping], people: list[RoomTypist], began: float) -> di
             landed.append((at - ping.wire) * 1000)
             per_person.setdefault(person.who, []).append((at - ping.wire) * 1000)
         if landed:
-            timeline.append({
-                "at": round(ping.pressed - began, 2),
-                "sender": ping.who,
-                "recipients": len(landed),
-                "p50_ms": round(sorted(landed)[len(landed) // 2], 2),
-                "max_ms": round(max(landed), 2),
-            })
+            timeline.append(
+                {
+                    "at": round(ping.pressed - began, 2),
+                    "sender": ping.who,
+                    "recipients": len(landed),
+                    "p50_ms": round(sorted(landed)[len(landed) // 2], 2),
+                    "max_ms": round(max(landed), 2),
+                }
+            )
     timeline.sort(key=lambda row: row["at"])
     worst = max(timeline, key=lambda row: row["max_ms"], default=None)
     return {
@@ -378,8 +395,9 @@ def propagation(pings: list[Ping], people: list[RoomTypist], began: float) -> di
     }
 
 
-def encoding(plan: Path, head: str, path: str, multibyte_who: str,
-             people: list[RoomTypist]) -> dict:
+def encoding(
+    plan: Path, head: str, path: str, multibyte_who: str, people: list[RoomTypist]
+) -> dict:
     """Did the astral characters survive the room, the merge and git?"""
     raw = raw_blob(plan, head, path)
     out: dict = {"path": path, "bytes": len(raw)}
@@ -416,8 +434,9 @@ def encoding(plan: Path, head: str, path: str, multibyte_who: str,
     return out
 
 
-def silence(people: list[RoomTypist], ledger: measure.Ledger, zero: float,
-            began: float, saves: list[dict]) -> dict:
+def silence(
+    people: list[RoomTypist], ledger: measure.Ledger, zero: float, began: float, saves: list[dict]
+) -> dict:
     """How long the room went completely quiet, per member, and when.
 
     A gap between two consecutive applied updates at ONE socket. With fifteen
@@ -464,48 +483,44 @@ def silence(people: list[RoomTypist], ledger: measure.Ledger, zero: float,
                 # `began`, and the first version of this line mixed the two —
                 # which reads as "nobody sent anything, ever" and made every
                 # gap look like a quiet room.
-                "others_sent_meanwhile": sent_between(
-                    a - began, b - began, person.who
-                ),
+                "others_sent_meanwhile": sent_between(a - began, b - began, person.who),
             }
             for a, b in zip(arrivals, arrivals[1:], strict=False)
         ]
         stalls = [g for g in gaps if g["others_sent_meanwhile"] >= 2]
         widest = sorted(stalls, key=lambda g: -g["ms"])[:3]
         quiet = sorted(gaps, key=lambda g: -g["ms"])[:1]
-        rows.append({
-            "who": person.who,
-            "updates_applied": len(arrivals),
-            "median_gap_ms": (
-                round(sorted(g["ms"] for g in gaps)[len(gaps) // 2], 1) if gaps else None
-            ),
-            "widest_stalls": widest,
-            "widest_gap_of_any_kind": quiet,
-        })
+        rows.append(
+            {
+                "who": person.who,
+                "updates_applied": len(arrivals),
+                "median_gap_ms": (
+                    round(sorted(g["ms"] for g in gaps)[len(gaps) // 2], 1) if gaps else None
+                ),
+                "widest_stalls": widest,
+                "widest_gap_of_any_kind": quiet,
+            }
+        )
     saved_at = [s["pressed_at"] for s in saves]
-    over = [
-        {"who": r["who"], **g}
-        for r in rows for g in r["widest_stalls"] if g["ms"] >= 200.0
-    ]
+    over = [{"who": r["who"], **g} for r in rows for g in r["widest_stalls"] if g["ms"] >= 200.0]
     over.sort(key=lambda g: -g["ms"])
     return {
         "per_member": rows,
-        "worst_stall_ms": max(
-            (g["ms"] for r in rows for g in r["widest_stalls"]), default=None
-        ),
+        "worst_stall_ms": max((g["ms"] for r in rows for g in r["widest_stalls"]), default=None),
         "worst_gap_of_any_kind_ms": max(
             (g["ms"] for r in rows for g in r["widest_gap_of_any_kind"]), default=None
         ),
         "stalls_over_200ms": over[:20],
         "save_pressed_at": saved_at,
         "note": "a stall is two consecutive updates at one socket with at least two "
-                "updates from other people put on the wire in between; a gap with "
-                "nothing sent into it is a room where nobody was typing",
+        "updates from other people put on the wire in between; a gap with "
+        "nothing sent into it is a room where nobody was typing",
     }
 
 
-def one_run(name: str, *, args, seconds: float, save_after: float | None,
-            rtt_ms: float, quiet_wait: float) -> dict:
+def one_run(
+    name: str, *, args, seconds: float, save_after: float | None, rtt_ms: float, quiet_wait: float
+) -> dict:
     """One world, fifteen sockets, one room, `seconds` of typing, then git."""
     ledger = measure.Ledger()
     pings: list[Ping] = []
@@ -513,17 +528,23 @@ def one_run(name: str, *, args, seconds: float, save_after: float | None,
     blob: dict = {
         "run": name,
         "config": {
-            "coeditors": args.users, "seconds": seconds, "save_after": save_after,
+            "coeditors": args.users,
+            "seconds": seconds,
+            "save_after": save_after,
             "carets": args.carets,
-            "rtt_ms": rtt_ms, "quiet_wait": quiet_wait, "seed": args.seed,
-            "size": args.size, "mark_every": MARK_EVERY,
+            "rtt_ms": rtt_ms,
+            "quiet_wait": quiet_wait,
+            "seed": args.seed,
+            "size": args.size,
+            "mark_every": MARK_EVERY,
             "chars_per_second": users.CHARS_PER_SECOND,
         },
     }
     rusage_before = resource.getrusage(resource.RUSAGE_SELF)
 
-    with harness.Harness(seed=args.seed, rtt_ms=rtt_ms, corpus="corpus",
-                         size=args.size, remote=True) as world:
+    with harness.Harness(
+        seed=args.seed, rtt_ms=rtt_ms, corpus="corpus", size=args.size, remote=True
+    ) as world:
         ids = world.record_ids("task-")
         if not ids:
             raise SystemExit("the corpus has no tasks to aim at")
@@ -540,11 +561,21 @@ def one_run(name: str, *, args, seconds: float, save_after: float | None,
             pieces = MULTIBYTE if multibyte else _ascii_stream(i)
             people.append(
                 RoomTypist(
-                    f"coeditor-{i:02d}", LOGINS[i % len(LOGINS)], world, ledger,
-                    args.seed, 0.0, zero,
-                    record=target, client_id=1000 + i, seed=args.seed,
-                    save_every=0.0, save_at_end=False,
-                    pieces=pieces, pings=pings, pings_lock=pings_lock,
+                    f"coeditor-{i:02d}",
+                    LOGINS[i % len(LOGINS)],
+                    world,
+                    ledger,
+                    args.seed,
+                    0.0,
+                    zero,
+                    record=target,
+                    client_id=1000 + i,
+                    seed=args.seed,
+                    save_every=0.0,
+                    save_at_end=False,
+                    pieces=pieces,
+                    pings=pings,
+                    pings_lock=pings_lock,
                     save_after=save_after if i == 0 else None,
                     carets=args.carets,
                 )
@@ -644,9 +675,13 @@ def one_run(name: str, *, args, seconds: float, save_after: float | None,
             "carets": args.carets,
         }
         blob["saves_early"] = [
-            {"who": p.who, "pressed_at": round(p.save_pressed_at - began, 1),
-             "answer": p.save_answer}
-            for p in people if p.save_pressed_at is not None
+            {
+                "who": p.who,
+                "pressed_at": round(p.save_pressed_at - began, 1),
+                "answer": p.save_answer,
+            }
+            for p in people
+            if p.save_pressed_at is not None
         ]
         blob["propagation"] = propagation(pings, people, began)
         blob["silence"] = silence(people, ledger, zero, began, blob["saves_early"])
@@ -659,14 +694,15 @@ def one_run(name: str, *, args, seconds: float, save_after: float | None,
             "rss_mb": round(world.rss_mb(), 1),
         }
         after = resource.getrusage(resource.RUSAGE_SELF)
-        driver_cpu = ((after.ru_utime + after.ru_stime)
-                      - (rusage_before.ru_utime + rusage_before.ru_stime))
+        driver_cpu = (after.ru_utime + after.ru_stime) - (
+            rusage_before.ru_utime + rusage_before.ru_stime
+        )
         blob["driver"] = {
             "cpu_seconds": round(driver_cpu, 2),
             "cpu_per_wall_second": round(driver_cpu / elapsed, 3),
             "note": "the harness applies every update in fifteen documents; the server "
-                    "applies each update once. A driver above ~1.0 core-seconds per wall "
-                    "second is the GIL, and every latency here would then be partly its own.",
+            "applies each update once. A driver above ~1.0 core-seconds per wall "
+            "second is the GIL, and every latency here would then be partly its own.",
         }
         blob["saves"] = blob["saves_early"]
         del blob["saves_early"]
@@ -682,8 +718,12 @@ def one_run(name: str, *, args, seconds: float, save_after: float | None,
         path = harness.record_paths(world.plan, head)[target]
         blob["encoding"] = encoding(world.plan, head, path, people[-1].who, people)
         verdict = verify.verify(
-            world.plan, world.origin, typed, [],
-            logins={p.login for p in people}, before=before,
+            world.plan,
+            world.origin,
+            typed,
+            [],
+            logins={p.login for p in people},
+            before=before,
         )
         blob["verification"] = verdict
         commits = users.commit_log(world.plan)
@@ -707,7 +747,7 @@ def one_run(name: str, *, args, seconds: float, save_after: float | None,
 
 def _ascii_stream(i: int) -> list[str]:
     """Ten characters, rotated per person, so no two runs read as each other's."""
-    rotated = users.ALPHABET[i % len(users.ALPHABET):] + users.ALPHABET
+    rotated = users.ALPHABET[i % len(users.ALPHABET) :] + users.ALPHABET
     return list(rotated[:10])
 
 
@@ -756,7 +796,8 @@ def summarise(blob: dict) -> str:
         f"  saves            {blob['saves'] or 'none'}",
         f"  commits          {blob['commits']['made_by_this_run']} by "
         f"{blob['commits']['by_author']}",
-        "  encoding         " + json.dumps(
+        "  encoding         "
+        + json.dumps(
             {k: v for k, v in blob["encoding"].items() if k != "pieces"}, ensure_ascii=False
         ),
     ]
@@ -782,32 +823,59 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--users", type=int, default=15)
     p.add_argument("--seconds", type=float, default=90.0)
-    p.add_argument("--rtt-seconds", type=float, default=40.0,
-                   help="length of the third run, the one with a real push charged")
-    p.add_argument("--rtt-ms", type=float, default=600.0,
-                   help="push/fetch round trip charged inside pygit2 for the third run")
+    p.add_argument(
+        "--rtt-seconds",
+        type=float,
+        default=40.0,
+        help="length of the third run, the one with a real push charged",
+    )
+    p.add_argument(
+        "--rtt-ms",
+        type=float,
+        default=600.0,
+        help="push/fetch round trip charged inside pygit2 for the third run",
+    )
     p.add_argument("--quiet-wait", type=float, default=32.0)
     p.add_argument("--seed", type=int, default=11)
     p.add_argument("--size", default="medium", choices=["small", "medium", "large"])
     p.add_argument("--only", default="", help="run just one of: storm, save, rtt")
-    p.add_argument("--carets", action="store_true",
-                   help="send {t:'at'} after every keystroke, the way the editor does — "
-                        "each one costs a `who` broadcast to the whole room")
-    p.add_argument("--out", type=Path,
-                   default=ROOT / "docs" / "probes" / "load" / "coedit-same-room.json")
+    p.add_argument(
+        "--carets",
+        action="store_true",
+        help="send {t:'at'} after every keystroke, the way the editor does — "
+        "each one costs a `who` broadcast to the whole room",
+    )
+    p.add_argument(
+        "--out", type=Path, default=ROOT / "docs" / "probes" / "load" / "coedit-same-room.json"
+    )
     return p.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse(argv)
     plan = [
-        ("storm", dict(seconds=args.seconds, save_after=None, rtt_ms=0.0,
-                       quiet_wait=args.quiet_wait)),
-        ("save-mid-storm", dict(seconds=args.seconds, save_after=args.seconds / 2,
-                                rtt_ms=0.0, quiet_wait=args.quiet_wait)),
-        ("save-mid-storm-rtt600", dict(seconds=args.rtt_seconds,
-                                       save_after=args.rtt_seconds / 2,
-                                       rtt_ms=args.rtt_ms, quiet_wait=args.quiet_wait)),
+        (
+            "storm",
+            dict(seconds=args.seconds, save_after=None, rtt_ms=0.0, quiet_wait=args.quiet_wait),
+        ),
+        (
+            "save-mid-storm",
+            dict(
+                seconds=args.seconds,
+                save_after=args.seconds / 2,
+                rtt_ms=0.0,
+                quiet_wait=args.quiet_wait,
+            ),
+        ),
+        (
+            "save-mid-storm-rtt600",
+            dict(
+                seconds=args.rtt_seconds,
+                save_after=args.rtt_seconds / 2,
+                rtt_ms=args.rtt_ms,
+                quiet_wait=args.quiet_wait,
+            ),
+        ),
     ]
     if args.only:
         keep = {"storm": 0, "save": 1, "rtt": 2}[args.only]
@@ -822,8 +890,14 @@ def main(argv: list[str] | None = None) -> int:
     out = args.out
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
-        json.dumps({"scenario": "coedit-same-room", "runs": runs}, indent=2,
-                   sort_keys=True, default=str, ensure_ascii=False) + "\n"
+        json.dumps(
+            {"scenario": "coedit-same-room", "runs": runs},
+            indent=2,
+            sort_keys=True,
+            default=str,
+            ensure_ascii=False,
+        )
+        + "\n"
     )
     print(f"\nwritten to {out}")
     bad = [r for r in runs if not r["verification"]["ok"] or r["driver_failures"]]

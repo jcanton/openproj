@@ -100,11 +100,22 @@ assert not set(CSP) & set('<>&"'), "a policy needing escaping cannot be written 
 
 STATIC = Links()
 ROUTES = Links(
-    records="/", issues="/issues", notes="/notes",
-    table="/table", detail="/detail", graph="/graph", timeline="/timeline",
-    record="/detail/", new="/new", people="/people",
-    cycles="/cycles", cycle="/cycle/", help="/help",
-    repo="/", deck="/deck/", body="/api/body/",
+    records="/",
+    issues="/issues",
+    notes="/notes",
+    table="/table",
+    detail="/detail",
+    graph="/graph",
+    timeline="/timeline",
+    record="/detail/",
+    new="/new",
+    people="/people",
+    cycles="/cycles",
+    cycle="/cycle/",
+    help="/help",
+    repo="/",
+    deck="/deck/",
+    body="/api/body/",
 )
 
 
@@ -3263,12 +3274,17 @@ def _titles(index: Index) -> dict[str, str]:
 # written out by hand were six places for a seventh page to be added and marked
 # nowhere.
 _NAV = (
-    ("records", "Records"), ("table", "Table"), ("graph", "Graph"),
-    ("timeline", "Timeline"), ("cycles", "Cycles"), ("people", "People"),
+    ("records", "Records"),
+    ("table", "Table"),
+    ("graph", "Graph"),
+    ("timeline", "Timeline"),
+    ("cycles", "Cycles"),
+    ("people", "People"),
     # The two inbox views of the landing list, back in the nav on jcanton's
     # ruling: quick access to what would otherwise be a click on a filter. At
     # the end, where they sat before the records flip retired their own pages.
-    ("issues", "Issues"), ("notes", "Notes"),
+    ("issues", "Issues"),
+    ("notes", "Notes"),
     # Last, and after the two inboxes, because it is the one item that is not a
     # view of the plan: everything to its left answers "what is in the plan" and
     # this answers "what is this tool". jcanton, 2026-08-27, given the choice
@@ -3379,7 +3395,7 @@ def _page(
             "One file in the plan is not a record, so nothing in it is on this page."
             if len(unreadable) == 1
             else f"{len(unreadable)} files in the plan are not records, "
-                 "so nothing in them is on this page."
+            "so nothing in them is on this page."
         ),
         nav=[
             {"href": getattr(links, key), "label": label, "current": key == current}
@@ -3399,7 +3415,8 @@ def _page(
         # wrong place. A page that is only ever reached FROM somewhere passes
         # neither and reads the stamp instead.
         origin=(
-            origin if origin is not None
+            origin
+            if origin is not None
             else next((_BACK_LABEL.get(key, label) for key, label in _NAV if key == current), "")
         ),
         origin_path=_ORIGIN_PATH,

@@ -51,6 +51,7 @@ def _row(index: Index, record_id: str) -> dict:
 
     def read(name, value):
         return None if name in unread else value
+
     return {
         "id": record.id,
         "title": record.title,

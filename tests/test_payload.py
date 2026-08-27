@@ -108,13 +108,11 @@ def test_no_page_ships_a_data_block_that_is_not_json(page, size: str):
     characters are absent, it is whether a JSON parser accepts the block — which
     is the same question the page's own script asks.
     """
-    rendered = page(index_with(ORDINARY, HAND_EDITED.format(size=size)), STATIC,
-                    base_commit="deadbee")
+    rendered = page(
+        index_with(ORDINARY, HAND_EDITED.format(size=size)), STATIC, base_commit="deadbee"
+    )
 
-    blocks = [
-        text
-        for text in rendered.split('type="application/json">')[1:]
-    ]
+    blocks = [text for text in rendered.split('type="application/json">')[1:]]
     assert blocks, "the page shipped no data block at all, so this proved nothing"
     for block in blocks:
         # `<` and friends are what `_json` writes for the characters that
@@ -157,7 +155,9 @@ def test_a_size_somebody_hand_edited_does_not_empty_the_table(size: str, tmp_pat
     from browser import chrome, measured_in
 
     page = render_table(
-        index_with(ORDINARY, HAND_EDITED.format(size=size)), STATIC, base_commit="deadbee",
+        index_with(ORDINARY, HAND_EDITED.format(size=size)),
+        STATIC,
+        base_commit="deadbee",
         may_write=True,
     )
 
@@ -178,9 +178,7 @@ def test_a_size_somebody_hand_edited_does_not_empty_the_table(size: str, tmp_pat
 
 
 @pytest.mark.parametrize("size", NOT_NUMBERS)
-def test_the_index_route_answers_rather_than_faulting_on_such_a_size(
-    size: str, tmp_path: Path
-):
+def test_the_index_route_answers_rather_than_faulting_on_such_a_size(size: str, tmp_path: Path):
     """`JSONResponse` encodes with `allow_nan=False`, so this raised inside the
     encoder — after the response object existed, which is a 500 in `text/plain`
     on the one route whose readers are all scripts."""
@@ -208,8 +206,16 @@ def test_every_page_still_serves_when_a_file_carries_such_a_size(size: str, tmp_
     file. The value that was found got fixed; the range it was one end of did not.
     """
     with TestClient(create_app(plan_repo(tmp_path, size), auth="dev")) as client:
-        for route in ("/", "/graph", "/timeline", "/people", "/cycles", "/detail",
-                      "/detail/task-e00002", "/api/index.json"):
+        for route in (
+            "/",
+            "/graph",
+            "/timeline",
+            "/people",
+            "/cycles",
+            "/detail",
+            "/detail/task-e00002",
+            "/api/index.json",
+        ):
             assert client.get(route).status_code == 200, f"{route} with a size of {size}"
 
 

@@ -199,9 +199,7 @@ def why_it_will_not_read(error: BaseException, path: str = "") -> str:
     return said[len(prefix) :] if path and said.startswith(prefix) else said
 
 
-def readable[T](
-    paths: Iterable[str], load: Callable[[str], T]
-) -> tuple[list[T], list[Unreadable]]:
+def readable[T](paths: Iterable[str], load: Callable[[str], T]) -> tuple[list[T], list[Unreadable]]:
     """The records that loaded, and one `Unreadable` for every file that did not.
 
     The one place a plan file is read, because there were four and not one of
@@ -562,9 +560,7 @@ class Config(BaseModel):
         """
         resolved = [self._resolve(c, plans) for c in plans]
         windows = dict(self.cycles) | {c.cycle: (c.starts_on, c.ends_on) for c in resolved}
-        return self.model_copy(
-            update={"cycles": windows, "plans": {c.cycle: c for c in resolved}}
-        )
+        return self.model_copy(update={"cycles": windows, "plans": {c.cycle: c for c in resolved}})
 
     def _resolve(self, plan: Cycle, plans: list[Cycle]) -> Cycle:
         """One record's derived dates and its length in working weeks.
@@ -635,9 +631,7 @@ class Config(BaseModel):
             return 0.0
         weeks, rest = divmod((last - first).days + 1, 7)
         days = weeks * _WORKING_DAYS_PER_WEEK
-        days += sum(
-            days_after(first, weeks * 7 + offset).weekday() < 5 for offset in range(rest)
-        )
+        days += sum(days_after(first, weeks * 7 + offset).weekday() < 5 for offset in range(rest))
         days -= sum(1 for one in self.holidays if first <= one <= last and one.weekday() < 5)
         return round(max(0, days) / _WORKING_DAYS_PER_WEEK, 3)
 
@@ -699,9 +693,7 @@ def _config_on_disk(root: Path) -> tuple[list[str], Callable[[str], str]]:
     the normal state of three of the four, and reporting `holidays.yaml` as
     unreadable because nobody wrote one would make the banner meaningless.
     """
-    paths = [
-        f"config/{name}" for name in CONFIG_FILES if (root / "config" / name).is_file()
-    ]
+    paths = [f"config/{name}" for name in CONFIG_FILES if (root / "config" / name).is_file()]
     return paths, lambda path: (root / path).read_text(encoding="utf-8")
 
 
@@ -1213,15 +1205,15 @@ class Rung(NamedTuple):
     """One kind, and everything that is true of it and not of its neighbours."""
 
     name: str
-    prefix: str            # what its ids start with
-    directory: str         # where its files live
+    prefix: str  # what its ids start with
+    directory: str  # where its files live
     model: type[Record]
     under: tuple[str, ...]  # the kinds it may be filed under, nearest first
-    schedules: bool        # does the scheduler give it dates
-    depends: bool          # may it wait on anything
-    sized: bool            # may it carry person_weeks
-    carded: bool           # does a hover show its shaping document
-    planned: bool          # does it appear in the plan: table, graph, timeline, people, scheduler
+    schedules: bool  # does the scheduler give it dates
+    depends: bool  # may it wait on anything
+    sized: bool  # may it carry person_weeks
+    carded: bool  # does a hover show its shaping document
+    planned: bool  # does it appear in the plan: table, graph, timeline, people, scheduler
     statuses: tuple[str, ...]  # the status vocabulary this kind reads; () means status is not read
     # The field that answers "who is behind this record". Per rung because the
     # kinds do not share one: `owner` is who HOLDS a piece of work, `reported_by`
@@ -1239,28 +1231,94 @@ KINDS: tuple[Rung, ...] = (
     # and a product is not work): the readers of `who` go through
     # `unread_fields`, so a product answers "Who" with nothing rather than with
     # a field it does not read.
-    Rung("product", "prod", "products", Product, under=(),
-         schedules=False, depends=False, sized=False, carded=False,
-         planned=True, statuses=(), who="owner"),
-    Rung("project", "proj", "projects", Project, under=("product",),
-         schedules=True, depends=True, sized=False, carded=True,
-         planned=True, statuses=STATUS_ORDER, who="owner"),
-    Rung("pitch", "pitch", "pitches", Pitch, under=("project",),
-         schedules=True, depends=True, sized=True, carded=True,
-         planned=True, statuses=STATUS_ORDER, who="owner"),
+    Rung(
+        "product",
+        "prod",
+        "products",
+        Product,
+        under=(),
+        schedules=False,
+        depends=False,
+        sized=False,
+        carded=False,
+        planned=True,
+        statuses=(),
+        who="owner",
+    ),
+    Rung(
+        "project",
+        "proj",
+        "projects",
+        Project,
+        under=("product",),
+        schedules=True,
+        depends=True,
+        sized=False,
+        carded=True,
+        planned=True,
+        statuses=STATUS_ORDER,
+        who="owner",
+    ),
+    Rung(
+        "pitch",
+        "pitch",
+        "pitches",
+        Pitch,
+        under=("project",),
+        schedules=True,
+        depends=True,
+        sized=True,
+        carded=True,
+        planned=True,
+        statuses=STATUS_ORDER,
+        who="owner",
+    ),
     # A task may skip the pitch — work that nobody shaped still belongs to a
     # project — which is why `under` is written out per rung rather than derived
     # as "everything coarser". Derived, a task could be filed straight under a
     # product, three rungs up, which is not a thing anybody means.
-    Rung("task", "task", "tasks", Task, under=("pitch", "project"),
-         schedules=True, depends=True, sized=True, carded=True,
-         planned=True, statuses=STATUS_ORDER, who="owner"),
-    Rung("issue", "issue", "issues", Issue, under=(), schedules=False, depends=False,
-         sized=False, carded=False, planned=False, statuses=ISSUE_STATUS,
-         who="reported_by"),
-    Rung("note",  "note",  "notes",  Note,  under=(), schedules=False, depends=False,
-         sized=False, carded=False, planned=False, statuses=NOTE_STATUS,
-         who="written_by"),
+    Rung(
+        "task",
+        "task",
+        "tasks",
+        Task,
+        under=("pitch", "project"),
+        schedules=True,
+        depends=True,
+        sized=True,
+        carded=True,
+        planned=True,
+        statuses=STATUS_ORDER,
+        who="owner",
+    ),
+    Rung(
+        "issue",
+        "issue",
+        "issues",
+        Issue,
+        under=(),
+        schedules=False,
+        depends=False,
+        sized=False,
+        carded=False,
+        planned=False,
+        statuses=ISSUE_STATUS,
+        who="reported_by",
+    ),
+    Rung(
+        "note",
+        "note",
+        "notes",
+        Note,
+        under=(),
+        schedules=False,
+        depends=False,
+        sized=False,
+        carded=False,
+        planned=False,
+        statuses=NOTE_STATUS,
+        who="written_by",
+    ),
 )
 
 KIND_NAMES: tuple[str, ...] = tuple(rung.name for rung in KINDS)
@@ -1274,8 +1332,14 @@ KIND_NAMES: tuple[str, ...] = tuple(rung.name for rung in KINDS)
 # read one without ever being scheduled — gated here, giving it a status would
 # have dragged in the eight fields that come with being work.
 _WORK_FIELDS = (
-    "owner", "assignees", "reviewers", "review_waived", "assigned_on",
-    "cycle", "priority", "prs",
+    "owner",
+    "assignees",
+    "reviewers",
+    "review_waived",
+    "assigned_on",
+    "cycle",
+    "priority",
+    "prs",
 )
 
 
@@ -1304,6 +1368,8 @@ def unread_fields(kind: str) -> tuple[str, ...]:
     if not rung.statuses:
         fields.append("status")
     return tuple(fields)
+
+
 RUNG: dict[str, Rung] = {rung.name: rung for rung in KINDS}
 _MODELS: dict[str, type[Record]] = {rung.name: rung.model for rung in KINDS}
 _ID_PREFIXES = {rung.prefix: rung.name for rung in KINDS}
@@ -1646,9 +1712,7 @@ def load_repo(root: Path) -> tuple[list[Record], Config, list[Unreadable]]:
     cycle_paths, nested_plans = _plan_files(root, _CYCLE_DIR)
     plans, unreadable_plans = readable(
         cycle_paths,
-        lambda relative: parse_cycle_text(
-            (root / relative).read_text(encoding="utf-8"), relative
-        ),
+        lambda relative: parse_cycle_text((root / relative).read_text(encoding="utf-8"), relative),
     )
     # The person records, through the same door. One file per person is
     # what makes a bad one cost one person's icon instead of the whole page — the
@@ -1657,9 +1721,7 @@ def load_repo(root: Path) -> tuple[list[Record], Config, list[Unreadable]]:
     people_paths, nested_people = _plan_files(root, PEOPLE_DIR)
     people, unreadable_people = readable(
         people_paths,
-        lambda relative: parse_person_text(
-            (root / relative).read_text(encoding="utf-8"), relative
-        ),
+        lambda relative: parse_person_text((root / relative).read_text(encoding="utf-8"), relative),
     )
     config, unreadable_config = read_config(*_config_on_disk(root))
     return (
@@ -1847,7 +1909,7 @@ def checklist_items(body: str) -> list[tuple[bool, str]]:
             continue
         mark = _CHECKBOX.match(line)
         if mark:
-            found.append((mark.group(1) != " ", line[mark.end():].strip()))
+            found.append((mark.group(1) != " ", line[mark.end() :].strip()))
     return found
 
 
@@ -1891,7 +1953,7 @@ def without_checklist(body: str) -> str:
 
 def _under(kept: list[tuple[str, bool]], at: int, level: int) -> Iterator[tuple[str, bool]]:
     """Everything under the heading at `at`: down to the next one as shallow."""
-    for line, in_code in kept[at + 1:]:
+    for line, in_code in kept[at + 1 :]:
         heading = None if in_code else _HEADING.match(line)
         if heading and len(heading.group(1)) <= level:
             return
@@ -1917,9 +1979,7 @@ def _without_emptied_headings(kept: list[tuple[str, bool]]) -> str:
         if heading:
             under = _under(kept, at, len(heading.group(1)))
             if not any(
-                text.strip()
-                for text, nested in under
-                if nested or not _HEADING.match(text)
+                text.strip() for text, nested in under if nested or not _HEADING.match(text)
             ):
                 continue
         out.append(line)
@@ -2103,8 +2163,8 @@ class Inbox(NamedTuple):
     """
 
     author: str  # defaults to whoever is writing; the caller may say otherwise
-    dated: str   # never the caller's: when a record was made is not an opinion
-    link: str    # what a promotion appends the new record's id to
+    dated: str  # never the caller's: when a record was made is not an opinion
+    link: str  # what a promotion appends the new record's id to
 
 
 INBOXES = {
@@ -2249,6 +2309,7 @@ def _an(kind: str) -> str:
     how one of them comes to say "a issue" again.
     """
     return f"an {kind}" if kind[:1] in "aeiou" else f"a {kind}"
+
 
 # Five levels, because three were not enough to say the thing the team was already
 # writing: the HackMD table escalates past its top value as `High+`. A scale whose
@@ -2547,8 +2608,7 @@ def _vocabulary_problems(record: Record) -> Iterator[tuple[str, str | None, str,
         yield (
             "blocker",
             "priority",
-            f"{record.priority!r} is not a priority: expected one of "
-            f"{', '.join(PRIORITY_RANK)}",
+            f"{record.priority!r} is not a priority: expected one of {', '.join(PRIORITY_RANK)}",
             1,
         )
 
@@ -2694,8 +2754,7 @@ def _bet_problems(
     yield (
         "warning",
         "cycle",
-        f"the bet is on the pitch, so this task takes its cycle{named}; "
-        "the number here is ignored",
+        f"the bet is on the pitch, so this task takes its cycle{named}; the number here is ignored",
         4,
     )
 
@@ -2786,9 +2845,7 @@ def _carries(record: Record, field: str) -> bool:
     value = getattr(record, field)
     if value in (None, [], "", False):
         return False
-    return value != type(record).model_fields[field].get_default(
-        call_default_factory=True
-    )
+    return value != type(record).model_fields[field].get_default(call_default_factory=True)
 
 
 # The links a promotion writes on its source, and the phrase each is reported
@@ -2814,7 +2871,7 @@ _PROMOTION_LINKS = {"pitched_into": "pitched into", "became": "became"}
 # holds it.
 _RETIRED = {
     "shaped_by": "owner records who shaped a pitch and holds it — "
-                 "move the name there and delete this key",
+    "move the name there and delete this key",
 }
 
 
@@ -3006,6 +3063,8 @@ def promoted_from(source_id: str, what: str, who: str | None, when: date | None)
         # document came from, which is the only thing it is for.
         said = "in this plan"
     return f"> Promoted from {source_id} — {what} {said}."
+
+
 def named_for(record: Record) -> bool:
     """Whether the file this record was read from is named for the id it declares.
 

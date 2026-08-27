@@ -18,6 +18,7 @@ Used by `test_graph_layout.py` at a size the suite can afford. For the sizes it
 cannot, run it by hand — the numbers measured on 2026-08-20 at 1900x820 are in
 the `LAYOUT` comment in `render.py`.
 """
+
 import pathlib
 import random
 import shutil
@@ -35,8 +36,15 @@ def _share(total: int, groups: int, which: int) -> int:
     return total // groups + (1 if which < total % groups else 0)
 
 
-def build(root: pathlib.Path, projects: int, pitches: int, tasks: int, seed: int = 7,
-          products: int = 2, box_deps: bool = True) -> int:
+def build(
+    root: pathlib.Path,
+    projects: int,
+    pitches: int,
+    tasks: int,
+    seed: int = 7,
+    products: int = 2,
+    box_deps: bool = True,
+) -> int:
     """Write a plan and return how many records it holds.
 
     Seeded, so the same arguments give the same plan: a layout test whose corpus
@@ -45,16 +53,17 @@ def build(root: pathlib.Path, projects: int, pitches: int, tasks: int, seed: int
     rng = random.Random(seed)
     if root.exists():
         shutil.rmtree(root)
-    DIRS = {"product": "products", "project": "projects",
-            "pitch": "pitches", "task": "tasks"}
+    DIRS = {"product": "products", "project": "projects", "pitch": "pitches", "task": "tasks"}
     for d in (*DIRS.values(), "config"):
         (root / d).mkdir(parents=True)
     people = [f"dev{n}" for n in range(8)]
     (root / "config/people.yaml").write_text(f"known_people: [{', '.join(people)}]\n")
     (root / "config/defaults.yaml").write_text(
-        "schema_version: 2\nnominal_availability: 1.0\ndefault_task_effort: 0.5\n")
+        "schema_version: 2\nnominal_availability: 1.0\ndefault_task_effort: 0.5\n"
+    )
 
     made, ids = [], {"product": [], "project": [], "pitch": [], "task": []}
+
     def write(kind, num, parent, extra=""):
         eid = f"{PREFIX[kind]}-{num:06d}"
         ids[kind].append(eid)
@@ -72,7 +81,8 @@ def build(root: pathlib.Path, projects: int, pitches: int, tasks: int, seed: int
         if extra:
             front.append(extra)
         (root / DIRS[kind] / f"{eid}.md").write_text(
-            "---\n" + "\n".join(front) + "\n---\n\nSynthetic.\n")
+            "---\n" + "\n".join(front) + "\n---\n\nSynthetic.\n"
+        )
         return eid
 
     n = 0
@@ -141,16 +151,24 @@ def build(root: pathlib.Path, projects: int, pitches: int, tasks: int, seed: int
         deps.setdefault(boxes[0], []).append(pool[-1])
 
     for eid, on in deps.items():
-        kind = ("project" if eid.startswith("proj")
-                else "pitch" if eid.startswith("pitch") else "task")
+        kind = (
+            "project" if eid.startswith("proj") else "pitch" if eid.startswith("pitch") else "task"
+        )
         path = root / DIRS[kind] / f"{eid}.md"
-        text = path.read_text().replace("---\n\nSynthetic",
-            f"depends_on: [{', '.join(sorted(set(on)))}]\n---\n\nSynthetic", 1)
+        text = path.read_text().replace(
+            "---\n\nSynthetic", f"depends_on: [{', '.join(sorted(set(on)))}]\n---\n\nSynthetic", 1
+        )
         path.write_text(text)
     return len(made)
 
+
 if __name__ == "__main__":
     where = pathlib.Path(sys.argv[1])
-    count = build(where, int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]),
-                  products=int(sys.argv[5]) if len(sys.argv) > 5 else 2)
+    count = build(
+        where,
+        int(sys.argv[2]),
+        int(sys.argv[3]),
+        int(sys.argv[4]),
+        products=int(sys.argv[5]) if len(sys.argv) > 5 else 2,
+    )
     print(f"{count} records in {where}")

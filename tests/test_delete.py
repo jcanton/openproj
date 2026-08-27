@@ -69,7 +69,7 @@ def test_only_somebody_the_server_would_take_a_write_from_is_offered_the_button(
 
 
 def test_the_question_names_the_record_it_is_about(index: Index):
-    """"Are you sure?" over a record you cannot see is a question nobody can
+    """ "Are you sure?" over a record you cannot see is a question nobody can
     answer. This page is as long as a shaping document and the control is at the
     foot of it, so the title can easily be a screen and a half away."""
     record_id = one_task(index)
@@ -110,7 +110,7 @@ def test_delete_stands_beside_edit_and_wears_what_edit_wears(index: Index):
 
     bar = page[page.index('<p class="editbar">') :]
     bar = bar[: bar.index("</p>")]
-    assert "class=\"delete\"" in bar and 'id="views"' in bar, bar
+    assert 'class="delete"' in bar and 'id="views"' in bar, bar
 
     # No size or face of its own anywhere in the stylesheet — only the hover.
     for rule in re.findall(r"\.editbar button\.delete[^{]*\{([^}]*)\}", page):
@@ -139,11 +139,7 @@ def test_the_panel_says_what_the_delete_will_take_with_it(index: Index):
     asks — a panel built from a second derivation of that is a panel that can be
     wrong about the commit it is authorising.
     """
-    parent = next(
-        record_id
-        for record_id in sorted(index.plan)
-        if cascade_of(index, record_id)[0]
-    )
+    parent = next(record_id for record_id in sorted(index.plan) if cascade_of(index, record_id)[0])
     doomed, _ = cascade_of(index, parent)
     page = render_detail(index, ROUTES, only=parent, base_commit=HEAD, may_write=True)
     asking = page[page.index(MARKUP) :]
@@ -162,9 +158,7 @@ def test_a_leaf_record_asks_a_plain_question(index: Index):
     A panel that says "this also deletes 0 records" teaches people to skim the
     line that matters."""
     leaf = next(
-        record_id
-        for record_id in sorted(index.plan)
-        if cascade_of(index, record_id) == ([], [])
+        record_id for record_id in sorted(index.plan) if cascade_of(index, record_id) == ([], [])
     )
     page = render_detail(index, ROUTES, only=leaf, base_commit=HEAD, may_write=True)
     asking = page[page.index(MARKUP) :]
@@ -200,9 +194,7 @@ return {before, opened, backedOut, sent: window.__sent};
 """
 
 
-def test_it_takes_two_presses_and_the_first_one_writes_nothing(
-    index: Index, tmp_path: Path
-):
+def test_it_takes_two_presses_and_the_first_one_writes_nothing(index: Index, tmp_path: Path):
     """The whole point of the control. Everything up to the second press is a
     question, and a question that has already deleted the record is not one."""
     record_id = one_task(index)
@@ -245,9 +237,7 @@ return {bars: bars.length, sent: window.__sent.map(one => one.url)};
 """
 
 
-def test_the_delete_under_a_record_is_the_delete_of_that_record(
-    index: Index, tmp_path: Path
-):
+def test_the_delete_under_a_record_is_the_delete_of_that_record(index: Index, tmp_path: Path):
     """The page can hold every record in the plan — `/detail` serves them all on
     one route. Every other control here is found with `getElementById`, which on
     that page answers with the first element of the name whatever you pressed;
@@ -347,8 +337,7 @@ def test_the_commit_bar_is_not_readable_when_there_is_nothing_to_commit(
     got = measured_in(chrome(), page, tmp_path / "bar.html", 1200, _QUIET_BAR)
 
     assert got["before"]["readable"] is False, (
-        f"the bar was readable over a record nobody was editing, saying "
-        f"{got['before']['said']!r}"
+        f"the bar was readable over a record nobody was editing, saying {got['before']['said']!r}"
     )
     assert got["editing"]["readable"] is True, "and then it was not there when it was needed"
     assert got["after"]["readable"] is False, "Cancel left it readable"

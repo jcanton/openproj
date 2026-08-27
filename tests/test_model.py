@@ -211,8 +211,7 @@ def test_a_section_is_dropped_with_everything_written_underneath_it():
     slide with nothing above it to say what it was part of, which is worse than
     printing the whole section."""
     body = (
-        "## Rabbit holes\n\nThe TDMA.\n\n### Second one\n\nThe tap points.\n\n"
-        "## Notes\n\nKept.\n"
+        "## Rabbit holes\n\nThe TDMA.\n\n### Second one\n\nThe tap points.\n\n## Notes\n\nKept.\n"
     )
     assert without_sections(body, {"rabbit holes"}) == "## Notes\n\nKept."
     assert "The tap points." in only_sections(body, {"rabbit holes"})
@@ -315,17 +314,17 @@ def test_a_login_becomes_the_one_path_it_may_be_written_at(login: str):
 @pytest.mark.parametrize(
     "login",
     (
-        "",                      # nobody
-        "-ann",                  # a leading hyphen
-        "ann-",                  # and a trailing one
-        "a" * 40,                # one over the limit
-        "../config/defaults",    # the reason this is a pattern and not a check
+        "",  # nobody
+        "-ann",  # a leading hyphen
+        "ann-",  # and a trailing one
+        "a" * 40,  # one over the limit
+        "../config/defaults",  # the reason this is a pattern and not a check
         "a/b",
         "ann.md",
         "ann name",
         ".",
         "..",
-        "ann\n",                 # a trailing newline is not the end of a match
+        "ann\n",  # a trailing newline is not the end of a match
         "ann\nbo",
     ),
 )

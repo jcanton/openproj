@@ -179,8 +179,9 @@ def membership(state: str = "active", role: str = "member") -> dict:
 
 def github(*, user=None, membership_response=None, extra=None) -> FakeGitHub:
     routes = {
-        ("POST", TOKEN_URL): Response(200, payload={"access_token": TOKEN, "scope": "read:org",
-                                                    "token_type": "bearer"}),
+        ("POST", TOKEN_URL): Response(
+            200, payload={"access_token": TOKEN, "scope": "read:org", "token_type": "bearer"}
+        ),
         ("GET", USER_URL): user or Response(200, payload={"login": LOGIN, "id": 1234567}),
         ("GET", MEMBERSHIP_URL): membership_response or Response(200, payload=membership()),
     }
@@ -212,7 +213,9 @@ def test_the_authorize_url_asks_for_read_org_and_nothing_else():
     query = parse_qs(parsed.query)
 
     assert (parsed.scheme, parsed.netloc, parsed.path) == (
-        "https", "github.com", "/login/oauth/authorize",
+        "https",
+        "github.com",
+        "/login/oauth/authorize",
     )
     assert query["scope"] == ["read:org"]
     assert query["client_id"] == [CLIENT_ID]
@@ -288,10 +291,18 @@ def test_an_oauth_failure_raises_even_though_github_answers_200(error: str, desc
     `bad_verification_code` is not exotic — it is every user who left the consent
     tab open for ten minutes.
     """
-    client = github(extra={("POST", TOKEN_URL): Response(
-        200, payload={"error": error, "error_description": description,
-                      "error_uri": "https://docs.github.com/"},
-    )})
+    client = github(
+        extra={
+            ("POST", TOKEN_URL): Response(
+                200,
+                payload={
+                    "error": error,
+                    "error_description": description,
+                    "error_uri": "https://docs.github.com/",
+                },
+            )
+        }
+    )
 
     with pytest.raises(Exception) as caught:  # noqa: B017 — the type is the module's to choose
         run(exchange_code(CODE, CLIENT_ID, CLIENT_SECRET, client))
@@ -305,11 +316,15 @@ def test_a_form_encoded_body_is_an_error_and_never_mistaken_for_a_token():
     HTTP client, and above all not the string `access_token=gho_…` returned as if
     it were the token.
     """
-    client = github(extra={("POST", TOKEN_URL): Response(
-        200,
-        text=f"access_token={TOKEN}&scope=read%3Aorg&token_type=bearer",
-        headers={"content-type": "application/x-www-form-urlencoded; charset=utf-8"},
-    )})
+    client = github(
+        extra={
+            ("POST", TOKEN_URL): Response(
+                200,
+                text=f"access_token={TOKEN}&scope=read%3Aorg&token_type=bearer",
+                headers={"content-type": "application/x-www-form-urlencoded; charset=utf-8"},
+            )
+        }
+    )
 
     with pytest.raises(Exception) as caught:  # noqa: B017 — the type is the module's to choose
         run(exchange_code(CODE, CLIENT_ID, CLIENT_SECRET, client))
@@ -325,9 +340,14 @@ def test_a_grant_that_does_not_include_read_org_is_refused_here():
     it would produce a confident `member=False` for a genuine member — the lockout
     again, one endpoint earlier.
     """
-    client = github(extra={("POST", TOKEN_URL): Response(
-        200, payload={"access_token": TOKEN, "scope": "", "token_type": "bearer"},
-    )})
+    client = github(
+        extra={
+            ("POST", TOKEN_URL): Response(
+                200,
+                payload={"access_token": TOKEN, "scope": "", "token_type": "bearer"},
+            )
+        }
+    )
 
     with pytest.raises(Exception) as caught:  # noqa: B017 — the type is the module's to choose
         run(exchange_code(CODE, CLIENT_ID, CLIENT_SECRET, client))
@@ -375,11 +395,13 @@ def test_a_concealed_member_is_still_a_member():
     that reaches for them answers "not a member" for a member and fails here —
     which is the only place that failure is cheap.
     """
-    client = github(extra={
-        ("GET", REJECTED_URL): Response(302, headers={"location": REJECTED_REDIRECT}),
-        ("GET", REJECTED_REDIRECT): Response(404, payload={"message": "Not Found"}),
-        ("GET", REJECTED_PUBLIC): Response(404, payload={"message": "Not Found"}),
-    })
+    client = github(
+        extra={
+            ("GET", REJECTED_URL): Response(302, headers={"location": REJECTED_REDIRECT}),
+            ("GET", REJECTED_REDIRECT): Response(404, payload={"message": "Not Found"}),
+            ("GET", REJECTED_PUBLIC): Response(404, payload={"message": "Not Found"}),
+        }
+    )
 
     user = run(identify(TOKEN, ORG, client))
 

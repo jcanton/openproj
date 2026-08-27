@@ -70,28 +70,55 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
         "store.py prices a GitHub round trip at about 600 ms",
     )
     p.add_argument("--gap", type=float, default=2.0, help="seconds between a form writer's saves")
-    p.add_argument("--gap-max", type=float, default=None,
-                   help="with --gap, draw each pause from [gap, gap-max]: a person saving every "
-                        "3-8 seconds rather than twenty metronomes in lockstep")
-    p.add_argument("--watch-remote", action="store_true",
-                   help="sample plan HEAD against origin HEAD throughout, to see how long the "
-                        "instance held a commit the remote did not have")
+    p.add_argument(
+        "--gap-max",
+        type=float,
+        default=None,
+        help="with --gap, draw each pause from [gap, gap-max]: a person saving every "
+        "3-8 seconds rather than twenty metronomes in lockstep",
+    )
+    p.add_argument(
+        "--watch-remote",
+        action="store_true",
+        help="sample plan HEAD against origin HEAD throughout, to see how long the "
+        "instance held a commit the remote did not have",
+    )
     p.add_argument("--think", type=float, default=0.4, help="seconds between a reader's pages")
-    p.add_argument("--stale", action="store_true",
-                   help="form writers keep their first base_commit: a tab left open")
-    p.add_argument("--body-edit", choices=("append", "mixed"), default="append",
-                   help="'mixed' makes half the writers insert and half replace at one heading")
-    p.add_argument("--overlap", action="store_true",
-                   help="put one form writer on the co-editors' record as well")
-    p.add_argument("--coedit-save-every", type=float, default=0.0,
-                   help="force a room Save on this clock (0 = only at the end)")
-    p.add_argument("--no-coedit-save", action="store_true",
-                   help="never press Save: measures the twenty-second quiet window alone")
+    p.add_argument(
+        "--stale",
+        action="store_true",
+        help="form writers keep their first base_commit: a tab left open",
+    )
+    p.add_argument(
+        "--body-edit",
+        choices=("append", "mixed"),
+        default="append",
+        help="'mixed' makes half the writers insert and half replace at one heading",
+    )
+    p.add_argument(
+        "--overlap",
+        action="store_true",
+        help="put one form writer on the co-editors' record as well",
+    )
+    p.add_argument(
+        "--coedit-save-every",
+        type=float,
+        default=0.0,
+        help="force a room Save on this clock (0 = only at the end)",
+    )
+    p.add_argument(
+        "--no-coedit-save",
+        action="store_true",
+        help="never press Save: measures the twenty-second quiet window alone",
+    )
     p.add_argument("--corpus", choices=("corpus", "plans"), default="corpus")
     p.add_argument("--size", choices=("small", "medium", "large"), default="medium")
     p.add_argument("--port", type=int, default=None)
-    p.add_argument("--no-remote", action="store_true",
-                   help="run with no origin at all — measures the store without the push")
+    p.add_argument(
+        "--no-remote",
+        action="store_true",
+        help="run with no origin at all — measures the store without the push",
+    )
     p.add_argument("--keep", action="store_true", help="leave the temporary plan on disk")
     p.add_argument("--rows", action="store_true", help="put every single action in the JSON")
     p.add_argument("--out", type=Path, default=None)
@@ -170,7 +197,13 @@ def main(argv: list[str] | None = None) -> int:
 
         for i in range(editors):
             person = users.CoEditor(
-                f"coeditor-{i}", login(), world, ledger, args.seed, 0.0, zero,
+                f"coeditor-{i}",
+                login(),
+                world,
+                ledger,
+                args.seed,
+                0.0,
+                zero,
                 record=room_ids[i],
                 client_id=1000 + i,
                 seed=args.seed,
@@ -184,17 +217,33 @@ def main(argv: list[str] | None = None) -> int:
             if args.body_edit == "mixed":
                 style = "insert" if i % 2 == 0 else "replace"
             person = users.FormWriter(
-                f"writer-{i}", login(), world, ledger, args.seed, 0.0, zero,
-                record=writer_ids[i], gap=args.gap, gap_max=args.gap_max,
-                stale=args.stale, style=style,
+                f"writer-{i}",
+                login(),
+                world,
+                ledger,
+                args.seed,
+                0.0,
+                zero,
+                record=writer_ids[i],
+                gap=args.gap,
+                gap_max=args.gap_max,
+                stale=args.stale,
+                style=style,
             )
             formwriters.append(person)
             people.append(person)
         for i in range(readers):
             people.append(
                 users.Reader(
-                    f"reader-{i}", login(), world, ledger, args.seed, 0.0, zero,
-                    ids=ids, think=args.think,
+                    f"reader-{i}",
+                    login(),
+                    world,
+                    ledger,
+                    args.seed,
+                    0.0,
+                    zero,
+                    ids=ids,
+                    think=args.think,
                 )
             )
 
@@ -263,10 +312,16 @@ def main(argv: list[str] | None = None) -> int:
         "scenario": args.scenario,
         "seed": args.seed,
         "config": {
-            "readers": readers, "writers": writers, "coeditors": editors,
-            "seconds": args.seconds, "gap": args.gap, "gap_max": args.gap_max,
+            "readers": readers,
+            "writers": writers,
+            "coeditors": editors,
+            "seconds": args.seconds,
+            "gap": args.gap,
+            "gap_max": args.gap_max,
             "think": args.think,
-            "stale": args.stale, "body_edit": args.body_edit, "overlap": args.overlap,
+            "stale": args.stale,
+            "body_edit": args.body_edit,
+            "overlap": args.overlap,
             "coedit_save_every": args.coedit_save_every,
             "coedit_save_at_end": not args.no_coedit_save,
         },
@@ -282,8 +337,11 @@ def main(argv: list[str] | None = None) -> int:
             "remote_lag": lag_report,
         },
         "server": {"cpu_seconds": cpu, "rss_mb": rss, "driver_cpu_seconds": driver_cpu},
-        "commits": {"total": len(commits), "made_by_this_run": len(made),
-                    "by_author": _tally(c["author"] for c in made)},
+        "commits": {
+            "total": len(commits),
+            "made_by_this_run": len(made),
+            "by_author": _tally(c["author"] for c in made),
+        },
         "verification": verdict,
         "driver_failures": {p.who: p.failed for p in people if p.failed},
         "server_log_tail": log_tail,
@@ -328,22 +386,30 @@ def _print(blob: dict, report: dict, verdict: dict, out: Path) -> None:
     print(f"  store outcomes: {report['write_outcomes'] or '{}'}")
     print(f"  pushed:         {report['pushed']}")
     print(f"  throughput:     {report['throughput']}")
-    print(f"  commits:        {blob['commits']['made_by_this_run']} made by this run, "
-          f"by {blob['commits']['by_author']}")
-    print(f"  server:         {blob['server']['cpu_seconds']}s CPU, "
-          f"{blob['server']['rss_mb']} MB RSS "
-          f"(driver {blob['server']['driver_cpu_seconds']}s)")
+    print(
+        f"  commits:        {blob['commits']['made_by_this_run']} made by this run, "
+        f"by {blob['commits']['by_author']}"
+    )
+    print(
+        f"  server:         {blob['server']['cpu_seconds']}s CPU, "
+        f"{blob['server']['rss_mb']} MB RSS "
+        f"(driver {blob['server']['driver_cpu_seconds']}s)"
+    )
     queue = blob["queueing"]["patch"]
     if queue.get("n"):
         depth = queue["depth_at_start"]
         print("\n-- the queue in front of the writer lock --")
-        print(f"  saves in flight when a save began: p50 {depth['p50']:.0f}  p90 "
-              f"{depth['p90']:.0f}  max {depth['max']:.0f}  (peak {queue['peak_in_flight']}, "
-              f"time-weighted mean {queue['mean_in_flight']})")
+        print(
+            f"  saves in flight when a save began: p50 {depth['p50']:.0f}  p90 "
+            f"{depth['p90']:.0f}  max {depth['max']:.0f}  (peak {queue['peak_in_flight']}, "
+            f"time-weighted mean {queue['mean_in_flight']})"
+        )
         print(f"  little's law: {blob['queueing']['littles_law']}")
         for row in queue["over_time"]:
-            print(f"    t+{row['from_s']:>5.0f}s  {row['n']:>4} saves  "
-                  f"{row['per_second']:>5.2f}/s  p50 {row['p50_ms']:>8.1f} ms")
+            print(
+                f"    t+{row['from_s']:>5.0f}s  {row['n']:>4} saves  "
+                f"{row['per_second']:>5.2f}/s  p50 {row['p50_ms']:>8.1f} ms"
+            )
     if blob["queueing"]["remote_lag"].get("sampled"):
         print(f"  remote lag:     {blob['queueing']['remote_lag']}")
     print("\n-- verification --")

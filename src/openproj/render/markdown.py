@@ -113,7 +113,10 @@ def _pr_link(ref: str) -> Markup:
 # travelling inside a deck. `web.py`'s `IMAGE_TYPES` answers a different question
 # — what may be uploaded — and is deliberately not this.
 _ASSET_MEDIA = {
-    ".png": "image/png", ".jpg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
 }
 # Written as a repository-relative path so the markdown reads the same in git, on
 # GitHub and in the tool; only the prefix in front of it changes.
@@ -344,9 +347,7 @@ def _fence(
     return RendererHTML.fence(self, tokens, idx, options, env)
 
 
-def _link(
-    self: RendererHTML, tokens: Sequence[Token], idx: int, options: object, env: dict
-) -> str:
+def _link(self: RendererHTML, tokens: Sequence[Token], idx: int, options: object, env: dict) -> str:
     """A link whose target is a record id points at that record's page.
 
     jcanton, 2026-08-25: "I'd like to have links to other records in the body of
@@ -419,8 +420,7 @@ def _heading_text(inline: Token) -> str:
     between them are every leaf a heading in these documents has.
     """
     return "".join(
-        child.content for child in (inline.children or [])
-        if child.type in ("text", "code_inline")
+        child.content for child in (inline.children or []) if child.type in ("text", "code_inline")
     ).strip()
 
 
@@ -560,9 +560,7 @@ def _drop_repeated_title(body: str, title: str) -> str:
 
 
 def _body_html(record: Record, links: Links = STATIC) -> Markup:
-    return _markdown(
-        without_comments(_drop_repeated_title(record.body, record.title)), links
-    )
+    return _markdown(without_comments(_drop_repeated_title(record.body, record.title)), links)
 
 
 def _inlined_assets(bodies: Iterable[str], read: Callable[[str], bytes | None]) -> dict[str, str]:

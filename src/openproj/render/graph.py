@@ -43,9 +43,7 @@ def _elements(index: Index) -> list[dict]:
             # id in this page's bytes): it is what lets the canvas refuse an
             # edge edit that would rebuild `depends_on` from the filtered list
             # and silently delete somebody's line.
-            "off_plan_deps": any(
-                b not in index.plan for b in index.blocked_by[record_id]
-            ),
+            "off_plan_deps": any(b not in index.plan for b in index.blocked_by[record_id]),
         }
         # No parent guard of its own: `_row` already resolves `parent` against
         # the plan and nulls what it cannot draw, and a second spelling of that
@@ -1348,6 +1346,7 @@ cy.on('tap', 'node', evt => {
 </script>
 """
 
+
 def _graph_css() -> str:
     """The graph's stylesheet, with the one number in it that is a fact about the
     vocabularies rather than a choice.
@@ -1358,9 +1357,7 @@ def _graph_css() -> str:
     `_timeline_css`, and for the same reason: the number has to be derived, and a
     constant cannot derive.
     """
-    return _compiled(_GRAPH_STYLE).render(
-        statuses=STATUSES, priorities=PRIORITIES
-    )
+    return _compiled(_GRAPH_STYLE).render(statuses=STATUSES, priorities=PRIORITIES)
 
 
 _GRAPH_STYLE = """
@@ -1495,7 +1492,9 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         editable=base_commit is not None,
         base_commit=base_commit or "",
         facets=_facets_html(
-            index.facets, aside=_GRAPH_HINT, titles=_titles(index),
+            index.facets,
+            aside=_GRAPH_HINT,
+            titles=_titles(index),
             # Every planned record: this canvas draws all of them, and the
             # filtered count is what the script writes over the top of it.
             summary=_summary_html(index, len(index.plan)),

@@ -66,15 +66,25 @@ def main(scratch: Path) -> None:
     corpus.build(repo, 40, 10, 60, 60)
     import subprocess
 
-    subprocess.run(["git", "clone", "--bare", "--quiet", str(repo), str(remote)],
-                   check=True, capture_output=True)
-    subprocess.run(["git", "--git-dir", str(repo), "remote", "add", "origin",
-                    f"file://{remote}"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "clone", "--bare", "--quiet", str(repo), str(remote)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "--git-dir", str(repo), "remote", "add", "origin", f"file://{remote}"],
+        check=True,
+        capture_output=True,
+    )
 
     web.Store = Counting
     app = web.create_app(
-        repo, auth="dev", secret="dev-secret", remote=f"file://{remote}",
-        dev_login="jcanton", today=date(2026, 8, 17),
+        repo,
+        auth="dev",
+        secret="dev-secret",
+        remote=f"file://{remote}",
+        dev_login="jcanton",
+        today=date(2026, 8, 17),
     )
     app.state.warm_edited()
 
@@ -109,9 +119,11 @@ def main(scratch: Path) -> None:
             current = client.get("/api/health").json()["head"]
             client.patch(
                 f"/api/record/{record_id}",
-                json={"base_commit": current,
-                      "fields": {"person_weeks": 1.0 + state["n"] % 5 * 0.5},
-                      "body": None},
+                json={
+                    "base_commit": current,
+                    "fields": {"person_weeks": 1.0 + state["n"] % 5 * 0.5},
+                    "body": None,
+                },
             )
 
         measure("PATCH /api/record/<id> (+ the /api/health before it)", one_patch)
@@ -122,16 +134,20 @@ def main(scratch: Path) -> None:
             current = client.get("/api/health").json()["head"]
             client.patch(
                 f"/api/record/{record_id}",
-                json={"base_commit": current,
-                      "fields": {"person_weeks": 1.0 + state["n"] % 5 * 0.5},
-                      "body": None},
+                json={
+                    "base_commit": current,
+                    "fields": {"person_weeks": 1.0 + state["n"] % 5 * 0.5},
+                    "body": None,
+                },
             )
             client.get("/")
 
         measure("the same PATCH, then one GET / (cold index)", patch_then_read)
 
-    print("\nhead() costs one whole pygit2.Repository open each time — see "
-          "tests/load/micro.py for what that is in milliseconds.")
+    print(
+        "\nhead() costs one whole pygit2.Repository open each time — see "
+        "tests/load/micro.py for what that is in milliseconds."
+    )
 
 
 if __name__ == "__main__":

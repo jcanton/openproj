@@ -57,7 +57,7 @@ PLAN = {
     # A non-ASCII title and tag, because blob drift between the shared search
     # helper and its JS twin is exactly the kind of defect ASCII cannot see.
     "pitches/pitch-b20000--tracage.md": (
-        "---\nid: pitch-b20000\nkind: pitch\ntitle: \"Traçage à l'écoulement\"\n"
+        '---\nid: pitch-b20000\nkind: pitch\ntitle: "Traçage à l\'écoulement"\n'
         "status: ready\nowner: ann\ntags: [gpu, 焙煎]\nparent: proj-a10000\n"
         "cycle: 1\nperson_weeks: 2\n---\n\nA pitch.\n"
     ),
@@ -72,11 +72,11 @@ PLAN = {
     # in this corpus one commit ahead of the flip, matching nothing; now they
     # are records like everything else, and the needles below land on them.
     "issues/issue-ab12cd.md": (
-        "---\nid: issue-ab12cd\ntitle: \"Renormalisation à l'écoulement\"\n"
+        '---\nid: issue-ab12cd\ntitle: "Renormalisation à l\'écoulement"\n'
         "status: ready\nreported_by: ann\ntags: [数值]\n---\n\nSeen near the drum wall.\n"
     ),
     "notes/note-ef34ab.md": (
-        "---\nid: note-ef34ab\ntitle: \"Idée: flux passif\"\nstatus: thinking\n"
+        '---\nid: note-ef34ab\ntitle: "Idée: flux passif"\nstatus: thinking\n'
         "written_by: bo\ntags: [gpu]\n---\n\nHalf a thought.\n"
     ),
 }
@@ -183,7 +183,7 @@ def test_the_inbox_routes_render_the_landing_held_to_one_kind(tmp_path: Path):
     for view in (issues.text, notes.text):
         assert '<th data-col="kind">' in view and '<th data-col="who">' in view
         assert 'id="q"' in view and 'id="landing"' in view
-        assert 'state-filter' not in view
+        assert "state-filter" not in view
         assert 'class="facet"' not in view and "data-field=" not in view
 
 
@@ -215,9 +215,9 @@ def test_the_who_column_reads_the_field_the_rung_says(tmp_path: Path):
     with TestClient(create_app(path, auth="dev")) as client:
         page = client.get("/").text
     assert '<th data-col="who">Who</th>' in page
-    cells = dict(re.findall(
-        r'<tr data-id="([\w-]+)">.*?<td data-col="who">([^<]*)</td>', page, re.S
-    ))
+    cells = dict(
+        re.findall(r'<tr data-id="([\w-]+)">.*?<td data-col="who">([^<]*)</td>', page, re.S)
+    )
     assert cells["issue-ab12cd"] == "ann", "an issue's Who is its reporter"
     assert cells["note-ef34ab"] == "bo", "a note's Who is its writer"
     assert cells["task-c00001"] == "bo", "work's Who is its owner"
@@ -325,9 +325,7 @@ def test_a_plan_with_no_records_says_so_from_the_server(tmp_path: Path):
     # behind the page, `may_write` says this person may use it, and a signed-out
     # reader used to be offered a Create button that opened a form with every
     # control on it hidden.
-    served = render_records(
-        index, ROUTES, base_commit="abc", edited={}, now=0, may_write=True
-    )
+    served = render_records(index, ROUTES, base_commit="abc", edited={}, now=0, may_write=True)
     assert "This plan has no records yet." in served
     assert '<a class="button primary" href="/new">Create record</a>' in served
 
@@ -338,8 +336,7 @@ def test_an_empty_view_and_an_empty_plan_are_different_sentences(tmp_path: Path)
     invites the create control for its own kind. One shared sentence across
     the three views is the regression this pins out."""
     without_inbox = {
-        name: text for name, text in PLAN.items()
-        if not name.startswith(("issues/", "notes/"))
+        name: text for name, text in PLAN.items() if not name.startswith(("issues/", "notes/"))
     }
     path = plan_repo(tmp_path)
     commit_directly(path, without_inbox, "seed", when=1_000_000)
@@ -400,7 +397,7 @@ def test_a_filtered_out_row_is_display_none_and_not_merely_marked(tmp_path: Path
 
 
 def test_a_search_that_matches_nothing_says_so_in_the_views_own_words(tmp_path: Path):
-    """"No record", "no issue", "no note" — the population the sentence is
+    """ "No record", "no issue", "no note" — the population the sentence is
     about is the view's, and one shared sentence would claim more than the
     page shows on the two filtered views."""
     path = plan_repo(tmp_path)
@@ -471,7 +468,8 @@ def test_a_lost_payload_degrades_to_an_unfiltered_list_and_says_so(tmp_path: Pat
     total = len(re.findall(r'<tr data-id="', page))
     broken = page.replace(
         '<script id="landing" type="application/json">',
-        '<script id="landing" type="application/json">not json ', 1,
+        '<script id="landing" type="application/json">not json ',
+        1,
     )
     answer = run_js(
         broken,
@@ -551,22 +549,45 @@ def test_the_landing_box_and_the_server_find_the_same_records(tmp_path: Path):
     records, config, _ = load_repo_from_git(path)
     index = build_index(records, config, date(2026, 8, 17))
 
-    needles = ["traçage", "écoulement", "Écoulement", "焙煎", "gpu", "ann",
-               "task-c00001", "2211", "downgrade", "tag:gpu", "kind:pitch",
-               # The issue's and the note's words, non-ASCII where it counts —
-               # and their kinds by name, which only exist as facet values on
-               # the records side.
-               "renormalisation", "数值", "idée", "issue-ab12cd", "note-ef34ab",
-               "kind:issue", "kind:note",
-               # One needle per field the row could not answer before the
-               # widening, each finding something. `status:ready` lands on the
-               # pitch, the task AND the issue — the field crosses the
-               # plan/inbox line. `assignee:` and `reviewer:` are the aliases,
-               # so the alias map is in the claim too.
-               "status:ready", "owner:ann", "priority:medium",
-               "cycle:1", "assignee:cara", "reviewer:dan", "prs:2211",
-               "project:proj-a10000", "product:prod-e00001",
-               "predicate:untracked", "predicate:has_blocker"]
+    needles = [
+        "traçage",
+        "écoulement",
+        "Écoulement",
+        "焙煎",
+        "gpu",
+        "ann",
+        "task-c00001",
+        "2211",
+        "downgrade",
+        "tag:gpu",
+        "kind:pitch",
+        # The issue's and the note's words, non-ASCII where it counts —
+        # and their kinds by name, which only exist as facet values on
+        # the records side.
+        "renormalisation",
+        "数值",
+        "idée",
+        "issue-ab12cd",
+        "note-ef34ab",
+        "kind:issue",
+        "kind:note",
+        # One needle per field the row could not answer before the
+        # widening, each finding something. `status:ready` lands on the
+        # pitch, the task AND the issue — the field crosses the
+        # plan/inbox line. `assignee:` and `reviewer:` are the aliases,
+        # so the alias map is in the claim too.
+        "status:ready",
+        "owner:ann",
+        "priority:medium",
+        "cycle:1",
+        "assignee:cara",
+        "reviewer:dan",
+        "prs:2211",
+        "project:proj-a10000",
+        "product:prod-e00001",
+        "predicate:untracked",
+        "predicate:has_blocker",
+    ]
     disagreed = {}
     for needle in needles:
         # Membership is the claim; the two sides answer in different orders
@@ -582,17 +603,27 @@ def test_the_landing_box_and_the_server_find_the_same_records(tmp_path: Path):
             page=True,
         )
         assert not [e for e in answer["errors"] if e.startswith("expression:")], (
-            needle, answer["errors"],
+            needle,
+            answer["errors"],
         )
         if here != answer["value"]:
             disagreed[needle] = (here, answer["value"])
     assert not disagreed, f"the landing box and the server disagree: {disagreed}"
     # The vacuity guard for the widened fields: every field-needle must FIND
     # something on the server side, or its parity above proved [] == [].
-    for needle in ("status:ready", "owner:ann", "priority:medium", "cycle:1",
-                   "assignee:cara", "reviewer:dan", "prs:2211",
-                   "project:proj-a10000", "product:prod-e00001",
-                   "predicate:untracked", "predicate:has_blocker"):
+    for needle in (
+        "status:ready",
+        "owner:ann",
+        "priority:medium",
+        "cycle:1",
+        "assignee:cara",
+        "reviewer:dan",
+        "prs:2211",
+        "project:proj-a10000",
+        "product:prod-e00001",
+        "predicate:untracked",
+        "predicate:has_blocker",
+    ):
         assert apply_filters(index, {}, needle, over=index.records), needle
 
 
@@ -678,8 +709,10 @@ def test_an_export_of_a_repository_carries_the_times(tmp_path: Path):
     records, config, unreadable = load_repo(root)
     out = tmp_path / "site"
     render_static(
-        build_index(records, config, date(2026, 8, 17)), out,
-        edited=edited_by_id(stamps), now=2_000_000 + 3600,
+        build_index(records, config, date(2026, 8, 17)),
+        out,
+        edited=edited_by_id(stamps),
+        now=2_000_000 + 3600,
     )
     landing = (out / "index.html").read_text(encoding="utf-8")
     assert '<td data-col="edited">an hour ago</td>' in landing
@@ -708,11 +741,14 @@ def test_the_header_row_is_sticky_and_nothing_on_this_page_outranks_it(tmp_path:
         page = client.get("/").text
     sheet = sheet_of(page)
 
-    header = [el("div", "table-scroll"), el("table", id="records"),
-              el("thead"), el("tr"), el("th", data_col="title")]
-    assert sheet.value(header, "position") == "sticky", (
-        sheet.selectors_reaching(header, "position")
-    )
+    header = [
+        el("div", "table-scroll"),
+        el("table", id="records"),
+        el("thead"),
+        el("tr"),
+        el("th", data_col="title"),
+    ]
+    assert sheet.value(header, "position") == "sticky", sheet.selectors_reaching(header, "position")
     assert sheet.value(header, "top") == "0"
     # Over the rows that pass beneath it, on its own ground: translucent, the
     # frozen row would still be "sticky" and unreadable.

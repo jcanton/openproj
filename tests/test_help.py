@@ -76,9 +76,7 @@ class _Page(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         if tag == self._heading:
-            self.headings.append(
-                (tag, " ".join("".join(self._text).split()), self._section)
-            )
+            self.headings.append((tag, " ".join("".join(self._text).split()), self._section))
             self._heading = None
         if tag == "section":
             self._section = ""
@@ -171,8 +169,9 @@ def test_every_contents_entry_points_at_something_on_the_page(page: str):
     # document whose headings were not collected draws a title in the contents
     # and nothing under it.
     for doc in DOCS:
-        assert any(f.startswith(f"{doc.key}-") for f in found.fragments), \
+        assert any(f.startswith(f"{doc.key}-") for f in found.fragments), (
             f"{doc.path} contributed no headings to the contents"
+        )
 
 
 def test_a_document_is_demoted_under_the_heading_that_names_it(page: str):
@@ -314,9 +313,7 @@ def test_the_page_does_not_scroll_sideways_on_a_phone(page: str, tmp_path: Path)
     assert found["scrollWidth"] <= found["windowWidth"]
 
 
-def test_the_contents_folds_on_a_narrow_screen_and_sticks_on_a_wide_one(
-    page: str, tmp_path: Path
-):
+def test_the_contents_folds_on_a_narrow_screen_and_sticks_on_a_wide_one(page: str, tmp_path: Path):
     """Two claims a parsed document cannot answer, and both were wrong first time.
 
     A contents entry per heading in every document, stacked above the first word

@@ -271,12 +271,29 @@ class SameRecordWriter(users.FormWriter):
                 outcome, commit = got.get("outcome"), got.get("commit")
         except Exception as error:  # noqa: BLE001 - a driver thread may not take the run down
             status = type(error).__name__
-        self.note(kind="PATCH", ms=(time.monotonic() - begun) * 1000, status=status,
-                  outcome=outcome, commit=commit, record=self.record, marker=marker)
+        self.note(
+            kind="PATCH",
+            ms=(time.monotonic() - begun) * 1000,
+            status=status,
+            outcome=outcome,
+            commit=commit,
+            record=self.record,
+            marker=marker,
+        )
         self.saves.append(
-            Save(self.who, self.record, marker, status, outcome, commit,
-                 weeks if isinstance(weeks, int | float) else None,
-                 base, self.field, value, self.lane)
+            Save(
+                self.who,
+                self.record,
+                marker,
+                status,
+                outcome,
+                commit,
+                weeks if isinstance(weeks, int | float) else None,
+                base,
+                self.field,
+                value,
+                self.lane,
+            )
         )
 
 
@@ -295,8 +312,9 @@ def _norm(value: object) -> object:
     return str(value)
 
 
-def latest_values(verdict: verify.Verdict, plan: Path, head: str, path: str,
-                  saves: list[Save]) -> None:
+def latest_values(
+    verdict: verify.Verdict, plan: Path, head: str, path: str, saves: list[Save]
+) -> None:
     """Every last-writer-wins field holds its own writer's last ACCEPTED value.
 
     One writer per field, and a writer is one thread saving in sequence, so
@@ -320,16 +338,20 @@ def latest_values(verdict: verify.Verdict, plan: Path, head: str, path: str,
         if one.lane == "latest":
             by_writer.setdefault(one.who, []).append(one)
     for who, sent in sorted(by_writer.items()):
-        accepted = [s for s in sent
-                    if s.status == "200" and s.outcome in ("committed", "merged", "retried")]
+        accepted = [
+            s for s in sent if s.status == "200" and s.outcome in ("committed", "merged", "retried")
+        ]
         if not accepted:
             rows.append({"who": who, "field": sent[0].field, "accepted": 0})
             continue
         last = accepted[-1]
         final = getattr(record, last.field, None)
         row = {
-            "who": who, "field": last.field, "accepted": len(accepted),
-            "last_sent": _norm(last.value), "final": _norm(final),
+            "who": who,
+            "field": last.field,
+            "accepted": len(accepted),
+            "last_sent": _norm(last.value),
+            "final": _norm(final),
             "agrees": _norm(final) == _norm(last.value),
             "commit": last.commit,
         }
@@ -346,8 +368,9 @@ def latest_values(verdict: verify.Verdict, plan: Path, head: str, path: str,
         )
 
 
-def one_value_sent(verdict: verify.Verdict, plan: Path, head: str, path: str,
-                   saves: list[Save]) -> None:
+def one_value_sent(
+    verdict: verify.Verdict, plan: Path, head: str, path: str, saves: list[Save]
+) -> None:
     """The contended field holds a value SOMEBODY sent, and the right one.
 
     `--variant field` only. Twelve people move one key; the store must either
@@ -369,9 +392,11 @@ def one_value_sent(verdict: verify.Verdict, plan: Path, head: str, path: str,
         verdict.say(verify.BROKEN, f"{path} no longer parses: {error}")
         return
     final = record.person_weeks
-    accepted = {s.commit: s for s in saves
-                if s.status == "200" and s.outcome in ("committed", "merged", "retried")
-                and s.commit}
+    accepted = {
+        s.commit: s
+        for s in saves
+        if s.status == "200" and s.outcome in ("committed", "merged", "retried") and s.commit
+    }
     sent = {_norm(s.value) for s in saves if s.field == "person_weeks"}
     git = pygit2.Repository(str(plan))
     newest = None
@@ -400,8 +425,9 @@ def one_value_sent(verdict: verify.Verdict, plan: Path, head: str, path: str,
         )
 
 
-def lane_placement(verdict: verify.Verdict, plan: Path, head: str, path: str,
-                   saves: list[Save], lanes: int) -> None:
+def lane_placement(
+    verdict: verify.Verdict, plan: Path, head: str, path: str, saves: list[Save], lanes: int
+) -> None:
     """Every inserted line is under the heading its author aimed at.
 
     `--variant body` only, and this is the sharp end of the whole exercise. A
@@ -431,8 +457,14 @@ def lane_placement(verdict: verify.Verdict, plan: Path, head: str, path: str,
         if found is None:
             missing.append({"who": one.who, "marker": one.marker, "commit": one.commit})
         elif found != one.index_of_lane:
-            misplaced.append({"who": one.who, "marker": one.marker,
-                              "wanted_lane": one.index_of_lane, "found_in_lane": found})
+            misplaced.append(
+                {
+                    "who": one.who,
+                    "marker": one.marker,
+                    "wanted_lane": one.index_of_lane,
+                    "found_in_lane": found,
+                }
+            )
     verdict.checks["lane_placement"] = {
         "markers_in_file": len(where),
         "misplaced": misplaced[:10],
@@ -447,8 +479,9 @@ def lane_placement(verdict: verify.Verdict, plan: Path, head: str, path: str,
         )
 
 
-def nothing_vanished(verdict: verify.Verdict, plan: Path, head: str, path: str,
-                     before_text: str) -> None:
+def nothing_vanished(
+    verdict: verify.Verdict, plan: Path, head: str, path: str, before_text: str
+) -> None:
     """Every line and every frontmatter key that was there before is there now.
 
     Every edit any variant makes is additive — a list grows, a scalar moves, a
@@ -488,8 +521,7 @@ def nothing_vanished(verdict: verify.Verdict, plan: Path, head: str, path: str,
     if lost_keys:
         verdict.say(
             verify.LOST,
-            f"{len(lost_keys)} frontmatter keys are gone from a record nobody deleted a "
-            "key from",
+            f"{len(lost_keys)} frontmatter keys are gone from a record nobody deleted a key from",
             lost_keys,
         )
 
@@ -524,10 +556,19 @@ def run_one(variant: str, args: argparse.Namespace) -> dict:
         people: list[SameRecordWriter] = []
         for i in range(args.writers):
             person = SameRecordWriter(
-                f"writer-{i}", harness.PEOPLE[i % len(harness.PEOPLE)], world, ledger,
-                args.seed, 0.0, zero,
-                record=target, gap=args.gap, gap_max=args.gap_max,
-                variant=variant, index=i, path=path,
+                f"writer-{i}",
+                harness.PEOPLE[i % len(harness.PEOPLE)],
+                world,
+                ledger,
+                args.seed,
+                0.0,
+                zero,
+                record=target,
+                gap=args.gap,
+                gap_max=args.gap_max,
+                variant=variant,
+                index=i,
+                path=path,
             )
             person.pool = [x for x in ids if x != target][:400]
             person.index_of_lane = i
@@ -544,7 +585,9 @@ def run_one(variant: str, args: argparse.Namespace) -> dict:
 
         driver_cpu = round(
             resource.getrusage(resource.RUSAGE_SELF).ru_utime
-            + resource.getrusage(resource.RUSAGE_SELF).ru_stime, 2)
+            + resource.getrusage(resource.RUSAGE_SELF).ru_stime,
+            2,
+        )
         cpu, rss = world.cpu_seconds(), world.rss_mb()
         described = world.describe()
         log_tail = "\n".join(world.server_log().splitlines()[-10:])
@@ -559,8 +602,9 @@ def run_one(variant: str, args: argparse.Namespace) -> dict:
         # `verify.py`'s own six, asked of the rows they can answer for. Only the
         # append-only lanes go to `form_changes`: a last-writer-wins scalar whose
         # marker is absent is not a loss, it is the next save.
-        verify.form_changes(verdict, world.plan, head,
-                            [s for s in saves if s.lane in ("accumulate", "body")])
+        verify.form_changes(
+            verdict, world.plan, head, [s for s in saves if s.lane in ("accumulate", "body")]
+        )
         verify.conflict_markers(verdict, world.plan)
         verify.pushed(verdict, world.plan, world.origin)
         verify.fsck(verdict, world.plan, world.origin)
@@ -587,9 +631,14 @@ def run_one(variant: str, args: argparse.Namespace) -> dict:
         return {
             "variant": variant,
             "config": {
-                "writers": args.writers, "seconds": args.seconds, "gap": args.gap,
-                "gap_max": args.gap_max, "rtt_ms": args.rtt_ms, "seed": args.seed,
-                "target": target, "path": path,
+                "writers": args.writers,
+                "seconds": args.seconds,
+                "gap": args.gap,
+                "gap_max": args.gap_max,
+                "rtt_ms": args.rtt_ms,
+                "seed": args.seed,
+                "target": target,
+                "path": path,
             },
             "world": described,
             "measured": report,
@@ -598,12 +647,16 @@ def run_one(variant: str, args: argparse.Namespace) -> dict:
             "queueing": {
                 "patch": patch_queue,
                 "littles_law": queueing.littles_law(
-                    patch_queue, report["latency_ms"].get("PATCH", {}),
-                    len([a for a in ledger.actions if a.kind == "PATCH"]) / elapsed),
+                    patch_queue,
+                    report["latency_ms"].get("PATCH", {}),
+                    len([a for a in ledger.actions if a.kind == "PATCH"]) / elapsed,
+                ),
             },
             "server": {"cpu_seconds": cpu, "rss_mb": rss, "driver_cpu_seconds": driver_cpu},
-            "commits": {"made_by_this_run": len(made),
-                        "by_author": _tally(c["author"] for c in made)},
+            "commits": {
+                "made_by_this_run": len(made),
+                "by_author": _tally(c["author"] for c in made),
+            },
             "verification": verdict.as_dict(),
             "driver_failures": {p.who: p.failed for p in people if p.failed},
             "server_log_tail": log_tail,
@@ -611,8 +664,7 @@ def run_one(variant: str, args: argparse.Namespace) -> dict:
         }
 
 
-def seed_the_lanes(world: harness.Harness, target: str, path: str, head: str,
-                   lanes: int) -> str:
+def seed_the_lanes(world: harness.Harness, target: str, path: str, head: str, lanes: int) -> str:
     """Give the record one separately-editable paragraph per writer.
 
     Through the application's own PATCH rather than by rewriting the repository:
@@ -689,18 +741,23 @@ def main(argv: list[str] | None = None) -> int:
         merged = {}
     for run in runs:
         merged[run["label"]] = run
-    out.write_text(json.dumps({"runs": list(merged.values())}, indent=2, sort_keys=True,
-                              default=str) + "\n")
+    out.write_text(
+        json.dumps({"runs": list(merged.values())}, indent=2, sort_keys=True, default=str) + "\n"
+    )
     print(f"\nwritten to {out}")
     return 0 if all(r["verification"]["ok"] and not r["driver_failures"] for r in runs) else 1
 
 
 def _print(run: dict) -> None:
     c, w = run["config"], run["world"]
-    print(f"\n=== write-same · {run['variant']} · {c['writers']} form writers on "
-          f"{c['target']} for {c['seconds']}s ===")
-    print(f"plan: {w['records']} records ({w['corpus']}/{w['size']}), remote {w['remote']}, "
-          f"push rtt {w['rtt_ms']} ms, port {w['port']}, gap {c['gap']}-{c['gap_max']}s")
+    print(
+        f"\n=== write-same · {run['variant']} · {c['writers']} form writers on "
+        f"{c['target']} for {c['seconds']}s ==="
+    )
+    print(
+        f"plan: {w['records']} records ({w['corpus']}/{w['size']}), remote {w['remote']}, "
+        f"push rtt {w['rtt_ms']} ms, port {w['port']}, gap {c['gap']}-{c['gap_max']}s"
+    )
     print("\n-- latency (ms) --")
     print(measure.table(run["measured"]))
     print("\n-- answers --")
@@ -714,18 +771,29 @@ def _print(run: dict) -> None:
     print(f"  by lane:        {json.dumps(run['outcomes_by_lane'])}")
     print(f"  throughput:     {run['measured']['throughput']}")
     print(f"  commits:        {run['commits']['made_by_this_run']} made by this run")
-    print(f"  server:         {run['server']['cpu_seconds']}s CPU, "
-          f"{run['server']['rss_mb']} MB RSS (driver {run['server']['driver_cpu_seconds']}s)")
+    print(
+        f"  server:         {run['server']['cpu_seconds']}s CPU, "
+        f"{run['server']['rss_mb']} MB RSS (driver {run['server']['driver_cpu_seconds']}s)"
+    )
     queue = run["queueing"]["patch"]
     if queue.get("n"):
         depth = queue["depth_at_start"]
-        print(f"  queue at the writer lock: p50 {depth['p50']:.0f}  p90 {depth['p90']:.0f}  "
-              f"max {depth['max']:.0f}  (peak {queue['peak_in_flight']}, "
-              f"time-weighted mean {queue['mean_in_flight']})")
+        print(
+            f"  queue at the writer lock: p50 {depth['p50']:.0f}  p90 {depth['p90']:.0f}  "
+            f"max {depth['max']:.0f}  (peak {queue['peak_in_flight']}, "
+            f"time-weighted mean {queue['mean_in_flight']})"
+        )
     print("\n-- verification --")
     print(verify.summary(run["verification"]))
-    for name in ("form_writes", "latest_fields", "contended_field", "lane_placement",
-                 "nothing_vanished", "push", "parses"):
+    for name in (
+        "form_writes",
+        "latest_fields",
+        "contended_field",
+        "lane_placement",
+        "nothing_vanished",
+        "push",
+        "parses",
+    ):
         if name in run["verification"]["checks"]:
             print(f"  {name}: {json.dumps(run['verification']['checks'][name], default=str)[:420]}")
     if run["driver_failures"]:

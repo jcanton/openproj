@@ -401,9 +401,7 @@ _SOCKET_REFUSALS = {
 _CLOSE_REASON_BYTES = 123
 
 
-async def _refuse_socket(
-    socket: WebSocket, refused: HTTPException | None, record_id: str
-) -> None:
+async def _refuse_socket(socket: WebSocket, refused: HTTPException | None, record_id: str) -> None:
     """Turn a co-editing socket away, saying which of the reasons it was.
 
     `refused` is None when `_path_for` simply found no file, which is not an
@@ -433,9 +431,7 @@ async def _refuse_socket(
     # and the code is what a page can still act on when a proxy or an older
     # revision eats the frame.
     await socket.send_json({"t": "reload", "why": why})
-    await socket.close(
-        code=code, reason=why.encode()[:_CLOSE_REASON_BYTES].decode(errors="ignore")
-    )
+    await socket.close(code=code, reason=why.encode()[:_CLOSE_REASON_BYTES].decode(errors="ignore"))
 
 
 # Two names for one session, chosen by the scheme the request actually arrived
@@ -859,14 +855,16 @@ def _reject_bad_cycle(fields: dict) -> None:
         opens, reviews = (date.fromisoformat(one) for one in both)
         if reviews <= opens:
             raise HTTPException(
-                422, f"the review meeting is {reviews}, which is not after the betting "
-                f"table on {opens} — a cycle needs at least one day of build"
+                422,
+                f"the review meeting is {reviews}, which is not after the betting "
+                f"table on {opens} — a cycle needs at least one day of build",
             )
         if (reviews - opens).days > MAX_CYCLE_WEEKS * 7:
             raise HTTPException(
-                422, f"{(reviews - opens).days // 7} weeks from the betting table to the "
+                422,
+                f"{(reviews - opens).days // 7} weeks from the betting table to the "
                 f"review meeting is not a cycle; the most this will hold is "
-                f"{MAX_CYCLE_WEEKS:g} weeks"
+                f"{MAX_CYCLE_WEEKS:g} weeks",
             )
     # A sentence, and bounded — this reaches a `<h2>`-adjacent line on a page and
     # a line in a YAML file, and neither wants a pasted document. Coerced to a
@@ -876,8 +874,9 @@ def _reject_bad_cycle(fields: dict) -> None:
         goal = "" if fields["goal"] is None else str(fields["goal"]).strip()
         if len(goal) > MAX_GOAL_CHARS:
             raise HTTPException(
-                422, f"a cycle goal is {MAX_GOAL_CHARS} characters at most; that one is "
-                f"{len(goal)}. The rest belongs in the notes under the betting table."
+                422,
+                f"a cycle goal is {MAX_GOAL_CHARS} characters at most; that one is "
+                f"{len(goal)}. The rest belongs in the notes under the betting table.",
             )
         fields["goal"] = goal
     rates = fields.get("availability")
@@ -916,8 +915,8 @@ def _as_record_ids(value: object, name: str) -> list[str]:
         raise HTTPException(422, f"{name} is a list of record ids, not {value!r}")
     if len(value) > MAX_DECK_SLIDES:
         raise HTTPException(
-            422, f"{name} holds at most {MAX_DECK_SLIDES} record ids, and that one holds "
-            f"{len(value)}"
+            422,
+            f"{name} holds at most {MAX_DECK_SLIDES} record ids, and that one holds {len(value)}",
         )
     for one in value:
         if not isinstance(one, str) or not ID_PATTERN.match(one):
@@ -963,8 +962,7 @@ def _as_positive(value: object, name: str, most: float = math.inf) -> float:
 
 
 _NUMERIC = ("cycle", "person_weeks")
-_LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on",
-          "pitched_into", "became")
+_LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on", "pitched_into", "became")
 
 
 def _deletion_message(record_id: str, doomed: list[str], edited: list[str]) -> str:
@@ -1042,8 +1040,7 @@ def _as_slide(value: object) -> dict | None:
     if unknown:
         raise HTTPException(
             422,
-            f"slide has no setting called {unknown[0]!r}; it holds "
-            f"{', '.join(Slide.model_fields)}",
+            f"slide has no setting called {unknown[0]!r}; it holds {', '.join(Slide.model_fields)}",
         )
     for name in ("skip", "progress", "prs", "lead"):
         if name in value and not isinstance(value[name], bool):
@@ -1671,9 +1668,7 @@ def create_app(
             drawn,
             # Sorted by path, because a reader works through the list by opening
             # files and two walks finishing in whatever order is not that order.
-            unreadable=sorted(
-                [*unreadable_config, *unreadable_records], key=lambda one: one.path
-            ),
+            unreadable=sorted([*unreadable_config, *unreadable_records], key=lambda one: one.path),
         )
 
     # The last history walk, and the head it walked TO. Keyed on the commit
@@ -2205,9 +2200,7 @@ def create_app(
     @app.get("/people", response_class=HTMLResponse)
     def people(request: Request) -> HTMLResponse:
         me = picker_for(request)
-        return page(
-            render.render_people(index_now()[1], render.ROUTES, editable=bool(me), me=me)
-        )
+        return page(render.render_people(index_now()[1], render.ROUTES, editable=bool(me), me=me))
 
     @app.get("/new", response_class=HTMLResponse)
     def new(request: Request, kind: str = "task") -> HTMLResponse:
@@ -2811,12 +2804,8 @@ def create_app(
         # What sits under it. `under` is per rung, so a pitch with tasks under it
         # can become a project (a task may be filed under a project) and cannot
         # become a task (nothing is filed under a task).
-        below = sorted(
-            other.id for other in index.records.values() if other.parent == record.id
-        )
-        stranded = [
-            other for other in below if kind not in RUNG[index.records[other].kind].under
-        ]
+        below = sorted(other.id for other in index.records.values() if other.parent == record.id)
+        stranded = [other for other in below if kind not in RUNG[index.records[other].kind].under]
         if stranded:
             refusals.append(
                 f"{_and_then(stranded)} {'is' if len(stranded) == 1 else 'are'} filed "
@@ -2828,7 +2817,8 @@ def create_app(
         # own answer and the same one the editors ask, so a field this drops is
         # a field the new kind would not have offered.
         drops = sorted(
-            field for field in unread_fields(kind)
+            field
+            for field in unread_fields(kind)
             if getattr(record, field, None) not in (None, "", [], False)
         )
         return refusals, drops
@@ -2935,9 +2925,7 @@ def create_app(
         # not read taken out. `patch_text` cannot remove a key by setting it to
         # `None` — that writes `field:` with nothing after it, which is a field
         # that is present and empty, and `validate_all` reads the difference.
-        content = _patched(
-            original, {"id": new_id, "kind": kind}, None, path, drop=drops
-        )
+        content = _patched(original, {"id": new_id, "kind": kind}, None, path, drop=drops)
         try:
             candidate = parse_text(content, path)
         except ValueError as error:
@@ -2992,10 +2980,18 @@ def create_app(
         if written.outcome == "conflict":
             return _result(written, base)
         if written.commit:
-            await announce(written.commit, [record_id, new_id, *sorted(
-                one for one in index.records if one != record_id
-                and _path_for(store, base, one) in files
-            )])
+            await announce(
+                written.commit,
+                [
+                    record_id,
+                    new_id,
+                    *sorted(
+                        one
+                        for one in index.records
+                        if one != record_id and _path_for(store, base, one) in files
+                    ),
+                ],
+            )
         return JSONResponse(
             {
                 "id": new_id,
@@ -3102,8 +3098,7 @@ def create_app(
             except ValueError as error:
                 raise HTTPException(
                     422,
-                    f"{record_id} would not read back as a record: "
-                    f"{why_it_will_not_read(error)}",
+                    f"{record_id} would not read back as a record: {why_it_will_not_read(error)}",
                 ) from None
             files[path] = content
 
@@ -3340,8 +3335,9 @@ def create_app(
         icon = payload["icon"]
         if icon is not None and icon not in render.ICONS:
             raise HTTPException(
-                422, f"{icon!r} is not an icon: expected one of {', '.join(render.ICONS)}, "
-                     "or null to clear it"
+                422,
+                f"{icon!r} is not an icon: expected one of {', '.join(render.ICONS)}, "
+                "or null to clear it",
             )
         path = person_path(user.login)
         if path is None:
@@ -3436,12 +3432,10 @@ def create_app(
             raise HTTPException(422, "that file is empty")
         if len(data) > MAX_ASSET_BYTES:
             raise HTTPException(
-                413, f"that image is {len(data) // 1024} KB; the limit is "
-                     f"{MAX_ASSET_BYTES // 1024} KB"
+                413,
+                f"that image is {len(data) // 1024} KB; the limit is {MAX_ASSET_BYTES // 1024} KB",
             )
-        path, fresh = await _write_or_refuse(
-            store.put_asset, data, IMAGE_TYPES[kind], user.login
-        )
+        path, fresh = await _write_or_refuse(store.put_asset, data, IMAGE_TYPES[kind], user.login)
         # The sha goes back to the uploader as well as out to everybody else. The
         # shell's banner suppresses news of a commit the tab made itself, and it
         # can only do that if the request that made it hands the sha back — an
@@ -3449,9 +3443,7 @@ def create_app(
         commit = store.head()
         if fresh:
             await announce(commit, [])
-        return JSONResponse(
-            {"path": path, "url": f"/{path}", "fresh": fresh, "commit": commit}
-        )
+        return JSONResponse({"path": path, "url": f"/{path}", "fresh": fresh, "commit": commit})
 
     @app.get("/static/{name}")
     def vendored(name: str) -> Response:
@@ -3517,8 +3509,9 @@ def create_app(
         data = await request.body()
         if len(data) > MAX_ASSET_BYTES:
             raise HTTPException(
-                413, f"that drawing is {len(data) // 1024} KB; the limit is "
-                     f"{MAX_ASSET_BYTES // 1024} KB"
+                413,
+                f"that drawing is {len(data) // 1024} KB; the limit is "
+                f"{MAX_ASSET_BYTES // 1024} KB",
             )
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise HTTPException(422, "that is not a PNG")
@@ -3595,9 +3588,7 @@ def create_app(
             return _result(written, base)
         commit = store.head()
         await announce(commit, [])
-        return JSONResponse(
-            {"id": drawing_id, "path": path, "etag": blob, "commit": commit}
-        )
+        return JSONResponse({"id": drawing_id, "path": path, "etag": blob, "commit": commit})
 
     @app.post("/api/record")
     async def create(request: Request) -> JSONResponse:
@@ -3827,9 +3818,7 @@ def create_app(
             for connection in list(room.members):
                 if (outbox := outboxes.get(connection)) is not None:
                     outbox.offer(
-                        json.dumps(
-                            {"t": "who", "people": room.people(), "where": room.where()}
-                        )
+                        json.dumps({"t": "who", "people": room.people(), "where": room.where()})
                     )
 
     def _body_at(commit: str, path: str) -> str:

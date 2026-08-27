@@ -61,34 +61,35 @@ def written(client: TestClient, title: str, base: str, body: str = "", **fields)
     """A note through the one door every record uses now."""
     response = client.post(
         "/api/record",
-        json={"base_commit": base, "body": body,
-              "fields": {"kind": "note", "title": title, **fields}},
+        json={
+            "base_commit": base,
+            "body": body,
+            "fields": {"kind": "note", "title": title, **fields},
+        },
     )
     assert response.status_code == 201, response.text
     return response.json()["id"]
 
 
-def opened_issue(client: TestClient, title: str, base: str, body: str = "",
-                 **fields) -> str:
+def opened_issue(client: TestClient, title: str, base: str, body: str = "", **fields) -> str:
     response = client.post(
         "/api/record",
-        json={"base_commit": base, "body": body,
-              "fields": {"kind": "issue", "title": title, **fields}},
+        json={
+            "base_commit": base,
+            "body": body,
+            "fields": {"kind": "issue", "title": title, **fields},
+        },
     )
     assert response.status_code == 201, response.text
     return response.json()["id"]
 
 
 def promote(client: TestClient, source: str, kind: str, base: str):
-    return client.post(
-        "/api/promote", json={"source": source, "kind": kind, "base_commit": base}
-    )
+    return client.post("/api/promote", json={"source": source, "kind": kind, "base_commit": base})
 
 
 def records(**by_id: str) -> dict[str, Task]:
-    return {
-        i: Task(id=i, kind="task", title=i, status=status) for i, status in by_id.items()
-    }
+    return {i: Task(id=i, kind="task", title=i, status=status) for i, status in by_id.items()}
 
 
 # --------------------------------------------------------------------------- #
@@ -129,11 +130,12 @@ def test_a_promoted_note_does_not_track_what_it_became():
 
 
 def test_dropped_is_a_decision_that_a_link_does_not_reverse():
-    """"We thought about this and we are not doing it" was said by a person.
+    """ "We thought about this and we are not doing it" was said by a person.
     Somebody linking a record to it afterwards does not un-say it."""
     world = records(**{"pitch-aa0001": "shaping"})
-    dropped = Note(id="note-000001", kind="note", title="x", status="dropped",
-                   became=["pitch-aa0001"])
+    dropped = Note(
+        id="note-000001", kind="note", title="x", status="dropped", became=["pitch-aa0001"]
+    )
 
     assert dropped.state(world) == "dropped"
 
@@ -157,14 +159,22 @@ def test_a_note_reads_no_field_that_is_a_commitment():
     page serve every kind — so the boundary moved from the type to the ladder:
     every one of them is unread on this rung, the editors decline to offer what
     is unread, and a hand edit that writes one in is reported, not obeyed."""
-    for field in ("owner", "assignees", "reviewers", "assigned_on", "cycle",
-                  "priority", "prs", "depends_on", "person_weeks"):
+    for field in (
+        "owner",
+        "assignees",
+        "reviewers",
+        "assigned_on",
+        "cycle",
+        "priority",
+        "prs",
+        "depends_on",
+        "person_weeks",
+    ):
         assert field in unread_fields("note"), field
 
     carried = Note(id="note-000001", kind="note", title="x", owner="ann")
     assert any(
-        p.field == "owner" and p.severity == "warning"
-        for p in validate_all([carried], Config())
+        p.field == "owner" and p.severity == "warning" for p in validate_all([carried], Config())
     ), "written in by hand, it is reported beside the record"
 
 
@@ -192,9 +202,7 @@ def test_a_status_that_is_not_one_is_refused_and_says_which_are(
 # --------------------------------------------------------------------------- #
 
 
-def test_writing_a_note_down_asks_for_a_title_and_nothing_else(
-    client: TestClient, repo_path: Path
-):
+def test_writing_a_note_down_asks_for_a_title_and_nothing_else(client: TestClient, repo_path: Path):
     """Somebody is in the middle of thinking. POST /api/note is deleted; the
     generic create stamps its defaults from the per-rung table, so a title is
     still the only thing a person supplies."""
@@ -206,11 +214,13 @@ def test_writing_a_note_down_asks_for_a_title_and_nothing_else(
     assert "status: thinking" in stored
     assert f"written_by: {ANN.login}" in stored
     assert re.search(r"written_on: '\d{4}-\d{2}-\d{2}'", stored)
-    assert client.post(
-        "/api/record",
-        json={"base_commit": git_head(repo_path),
-              "fields": {"kind": "note", "title": "  "}},
-    ).status_code == 422
+    assert (
+        client.post(
+            "/api/record",
+            json={"base_commit": git_head(repo_path), "fields": {"kind": "note", "title": "  "}},
+        ).status_code
+        == 422
+    )
 
 
 def test_a_note_the_server_could_not_read_back_is_never_committed(
@@ -227,9 +237,7 @@ def test_a_note_the_server_could_not_read_back_is_never_committed(
     assert git_head(repo_path) == before
 
 
-def test_the_retired_note_routes_redirect_to_the_shared_ones(
-    client: TestClient, repo_path: Path
-):
+def test_the_retired_note_routes_redirect_to_the_shared_ones(client: TestClient, repo_path: Path):
     note_id = written(client, "x", git_head(repo_path))
 
     # `/notes` is deliberately not in this list any more: it 301ed to `/` for
@@ -256,8 +264,11 @@ def test_a_note_promotes_into_a_record_that_validates(client: TestClient, repo_p
     inventing a commitment nobody made."""
     for kind, directory in (("pitch", "pitches"), ("task", "tasks"), ("project", "projects")):
         note_id = written(
-            client, f"An idea that becomes a {kind}", git_head(repo_path),
-            body="Half a thought.", tags=["grid"],
+            client,
+            f"An idea that becomes a {kind}",
+            git_head(repo_path),
+            body="Half a thought.",
+            tags=["grid"],
         )
         response = promote(client, note_id, kind, git_head(repo_path))
 
@@ -278,7 +289,8 @@ def test_a_note_promotes_into_a_record_that_validates(client: TestClient, repo_p
     assert not unreadable
     promoted = {e.id for e in records_now if e.status == "shaping"}
     blockers = [
-        p for p in validate_all(records_now, config)
+        p
+        for p in validate_all(records_now, config)
         if p.severity == "blocker" and p.record_id in promoted
     ]
     assert promoted and not blockers, blockers
@@ -287,7 +299,7 @@ def test_a_note_promotes_into_a_record_that_validates(client: TestClient, repo_p
 def test_a_promoted_record_says_where_it_came_from_in_its_own_document(
     client: TestClient, repo_path: Path
 ):
-    """"Where did this pitch come from" has to be answerable from the pitch alone.
+    """ "Where did this pitch come from" has to be answerable from the pitch alone.
     Prose and not a field: a `from_note` on `Record` would put a note id into the
     type every view of the plan is built from."""
     note_id = written(client, "Radiation still calls Fortran", git_head(repo_path))
@@ -345,8 +357,9 @@ def test_a_promotion_is_one_commit(client: TestClient, repo_path: Path):
     assert new_id not in file_at(repo_path, before, f"notes/{note_id}.md")
 
 
-def test_the_trail_survives_a_round_trip_through_git(client: TestClient, tmp_path: Path,
-                                                     repo_path: Path):
+def test_the_trail_survives_a_round_trip_through_git(
+    client: TestClient, tmp_path: Path, repo_path: Path
+):
     """The point of a git-backed tracker: clone it, and both ends of the link are
     still there with no index, no server and no cache in the way."""
     note_id = written(client, "An idea worth a bet", git_head(repo_path), body="Confused.")
@@ -382,8 +395,9 @@ def test_an_issue_promotes_into_a_pitch_or_a_task_and_nothing_else(
     project is a container for bets, and "we found something broken" is not a
     milestone.
     """
-    opened = opened_issue(client, "Halo drops a rank", git_head(repo_path),
-                          body="Reproduced on 12 ranks.")
+    opened = opened_issue(
+        client, "Halo drops a rank", git_head(repo_path), body="Reproduced on 12 ranks."
+    )
 
     refused = promote(client, opened, "project", git_head(repo_path))
     assert refused.status_code == 422
@@ -418,8 +432,13 @@ def test_an_issue_promoted_into_a_task_lands_as_a_task_this_plan_can_read_back(
     record `openproj check` refuses is a promote path that puts a blocker in the
     plan by pressing a button, on a protected branch.
     """
-    opened = opened_issue(client, "Halo drops a rank", git_head(repo_path),
-                          body="Reproduced on 12 ranks.", tags=["halo"])
+    opened = opened_issue(
+        client,
+        "Halo drops a rank",
+        git_head(repo_path),
+        body="Reproduced on 12 ranks.",
+        tags=["halo"],
+    )
 
     new_id = promote(client, opened, "task", git_head(repo_path)).json()["id"]
     stored = file_at(repo_path, git_head(repo_path), f"tasks/{new_id}.md")
@@ -440,7 +459,8 @@ def test_an_issue_promoted_into_a_task_lands_as_a_task_this_plan_can_read_back(
     assert made.kind == "task" and made.parent is None
     assert is_bettable(made), "which is the state the model already has a word for"
     assert not [
-        p for p in validate_all(records_now, config)
+        p
+        for p in validate_all(records_now, config)
         if p.severity == "blocker" and p.record_id == new_id
     ]
     # And the trail back, at both ends: the issue names it, and the record says
@@ -488,9 +508,7 @@ def test_the_promote_control_is_not_offered_where_it_cannot_work(
     number and refused every Save."""
     note_id = written(client, "x", git_head(repo_path))
 
-    assert 'id="promote-go"' not in client.get("/new?kind=note").text, (
-        "nothing to promote yet"
-    )
+    assert 'id="promote-go"' not in client.get("/new?kind=note").text, "nothing to promote yet"
     assert 'id="promote-go"' in client.get(f"/detail/{note_id}").text
     # Three kinds on a note and two on an issue, each page offering exactly what
     # `PROMOTABLE` says and in its order — the picker used to be a note-only
@@ -507,7 +525,7 @@ def test_the_promote_control_is_not_offered_where_it_cannot_work(
     assert ["pitch", "task", "project"] == list(PROMOTABLE["note"])
     assert ["pitch", "task"] == list(PROMOTABLE["issue"]), (
         "a project is not on offer from an issue: a milestone is a container for "
-        "bets, and \"we found something broken\" is not one"
+        'bets, and "we found something broken" is not one'
     )
 
     # And never for a reader. Reads are public, so most served page loads are
@@ -519,10 +537,8 @@ def test_the_promote_control_is_not_offered_where_it_cannot_work(
 
     thought = Note(id="note-0cc000", kind="note", title="A thought", status="thinking")
     index = build_index([thought], Config(), date(2026, 8, 17))
-    reader = render_detail(index, ROUTES, only=thought.id,
-                           base_commit="deadbee", may_write=False)
-    writer = render_detail(index, ROUTES, only=thought.id,
-                           base_commit="deadbee", may_write=True)
+    reader = render_detail(index, ROUTES, only=thought.id, base_commit="deadbee", may_write=False)
+    writer = render_detail(index, ROUTES, only=thought.id, base_commit="deadbee", may_write=True)
     assert 'id="promote-go"' not in reader, "a reader was offered a promote they cannot make"
     assert 'id="promote-go"' in writer
 
@@ -568,9 +584,7 @@ def test_the_shipped_demo_carries_notes_that_load(demo_root: Path):
 
     assert notes, "the demo corpus has notes"
     assert not set(notes) & set(index.plan), "and none of them is in the plan"
-    assert not [
-        p for p in index.problems if p.severity == "blocker" and p.record_id in notes
-    ]
+    assert not [p for p in index.problems if p.severity == "blocker" and p.record_id in notes]
     assert {n.state(index.plan) for n in notes.values()} == set(NOTE_STATES), (
         "all three states, because a demo that shows one teaches one"
     )
@@ -612,7 +626,8 @@ def test_a_became_that_opens_nothing_leaves_the_note_thinking_and_says_so(
     assert split.state(by_id) == "promoted", "either target is enough, and one is a project"
 
     said = [
-        p for p in validate_all(records, config)
+        p
+        for p in validate_all(records, config)
         if p.record_id == "note-b14d6a" and p.field == "became"
     ]
     assert [p.severity for p in said] == ["warning"]
@@ -629,9 +644,7 @@ def test_the_static_export_carries_every_note(demo_root: Path, tmp_path: Path):
     from openproj.render import render_static
 
     records_now, config, _ = load_repo(demo_root)
-    written_files = render_static(
-        build_index(records_now, config, date(2026, 8, 17)), tmp_path
-    )
+    written_files = render_static(build_index(records_now, config, date(2026, 8, 17)), tmp_path)
     detail = (tmp_path / "detail.html").read_text(encoding="utf-8")
 
     assert "notes.html" in written_files

@@ -57,17 +57,18 @@ def opened(client: TestClient, title: str, base: str, body: str = "", **fields) 
     """An issue through the one door every record uses now."""
     response = client.post(
         "/api/record",
-        json={"base_commit": base, "body": body,
-              "fields": {"kind": "issue", "title": title, **fields}},
+        json={
+            "base_commit": base,
+            "body": body,
+            "fields": {"kind": "issue", "title": title, **fields},
+        },
     )
     assert response.status_code == 201, response.text
     return response.json()["id"]
 
 
 def records(**by_id: str) -> dict[str, Task]:
-    return {
-        i: Task(id=i, kind="task", title=i, status=status) for i, status in by_id.items()
-    }
+    return {i: Task(id=i, kind="task", title=i, status=status) for i, status in by_id.items()}
 
 
 # --------------------------------------------------------------------------- #
@@ -111,8 +112,9 @@ def test_pitching_an_issue_is_what_closes_it():
     unlinked = Issue(id="issue-000001", kind="issue", title="x")
     picked = Issue(id="issue-000002", kind="issue", title="x", pitched_into=["task-bb0001"])
     finished = Issue(id="issue-000003", kind="issue", title="x", pitched_into=["task-aa0001"])
-    partly = Issue(id="issue-000004", kind="issue", title="x",
-                   pitched_into=["task-aa0001", "task-bb0001"])
+    partly = Issue(
+        id="issue-000004", kind="issue", title="x", pitched_into=["task-aa0001", "task-bb0001"]
+    )
 
     assert unlinked.state(world) == "ready"
     assert picked.state(world) == "in_progress"
@@ -122,8 +124,9 @@ def test_pitching_an_issue_is_what_closes_it():
 
 def test_shelved_is_a_decision_a_link_does_not_reverse():
     world = records(**{"task-aa0001": "done"})
-    wont_fix = Issue(id="issue-000001", kind="issue", title="x", status="shelved",
-                     pitched_into=["task-aa0001"])
+    wont_fix = Issue(
+        id="issue-000001", kind="issue", title="x", status="shelved", pitched_into=["task-aa0001"]
+    )
 
     assert wont_fix.state(world) == "shelved"
 
@@ -145,9 +148,7 @@ def test_a_link_to_something_that_is_gone_leaves_the_stored_state_alone():
 # --------------------------------------------------------------------------- #
 
 
-def test_creating_an_issue_stamps_the_lost_route_defaults(
-    client: TestClient, repo_path: Path
-):
+def test_creating_an_issue_stamps_the_lost_route_defaults(client: TestClient, repo_path: Path):
     """POST /api/issue is deleted. The generic create stamps what it stamped:
     a minted id (never the browser's), the signed-in reporter, the server's
     date, and the opening status."""
@@ -161,9 +162,7 @@ def test_creating_an_issue_stamps_the_lost_route_defaults(
     assert re.search(r"opened_on: '\d{4}-\d{2}-\d{2}'", stored)
 
 
-def test_the_reporter_is_a_default_and_the_date_is_not(
-    client: TestClient, repo_path: Path
-):
+def test_the_reporter_is_a_default_and_the_date_is_not(client: TestClient, repo_path: Path):
     """The session knows who is writing, and that is right almost every time —
     not when somebody files what a colleague mentioned in a corridor, so the
     form can say otherwise. `opened_on` stays the server's: when the record was
@@ -190,9 +189,7 @@ def test_an_issue_still_needs_a_title(client: TestClient, repo_path: Path):
     assert git_head(repo_path) == before, "a refusal writes nothing"
 
 
-def test_a_word_off_the_issue_ladder_is_refused_at_both_doors(
-    client: TestClient, repo_path: Path
-):
+def test_a_word_off_the_issue_ladder_is_refused_at_both_doors(client: TestClient, repo_path: Path):
     """Spec test 4, armed for the rung it was written for: the bespoke gates
     are gone and the generic one must hold the same line, before anything is
     committed."""
@@ -201,8 +198,10 @@ def test_a_word_off_the_issue_ladder_is_refused_at_both_doors(
 
     created = client.post(
         "/api/record",
-        json={"base_commit": before,
-              "fields": {"kind": "issue", "title": "y", "status": "shaping"}},
+        json={
+            "base_commit": before,
+            "fields": {"kind": "issue", "title": "y", "status": "shaping"},
+        },
     )
     saved = client.patch(
         f"/api/record/{issue_id}",
@@ -223,8 +222,7 @@ def test_an_issue_id_is_a_record_id_now(client: TestClient, repo_path: Path):
     assert ID_PATTERN.match(issue_id)
     saved = client.patch(
         f"/api/record/{issue_id}",
-        json={"base_commit": git_head(repo_path), "fields": {"tags": ["halo"]},
-              "body": None},
+        json={"base_commit": git_head(repo_path), "fields": {"tags": ["halo"]}, "body": None},
     )
     assert saved.status_code == 200, saved.text
     assert "- halo" in file_at(repo_path, git_head(repo_path), f"issues/{issue_id}.md")
@@ -245,17 +243,21 @@ def test_a_hand_written_edge_to_an_issue_does_not_500_the_table(
     off the page, which is a plan view."""
     path = tmp_path / "plan.git"
     pygit2.init_repository(str(path), bare=True, initial_head="main")
-    commit_directly(path, {
-        **SEED,
-        "issues/issue-9a9a9a.md": (
-            "---\nid: issue-9a9a9a\ntitle: hand-written blocker\nstatus: ready\n---\n\nx\n"
-        ),
-        "tasks/task-9b9b9b.md": (
-            "---\nid: task-9b9b9b\nkind: task\ntitle: waits on an inbox record\n"
-            "status: ready\nowner: ann\nassignees: [ann]\nreviewers: [bo]\n"
-            "person_weeks: 1\ndepends_on: [issue-9a9a9a]\n---\n\nx\n"
-        ),
-    }, "seed a hand-written edge")
+    commit_directly(
+        path,
+        {
+            **SEED,
+            "issues/issue-9a9a9a.md": (
+                "---\nid: issue-9a9a9a\ntitle: hand-written blocker\nstatus: ready\n---\n\nx\n"
+            ),
+            "tasks/task-9b9b9b.md": (
+                "---\nid: task-9b9b9b\nkind: task\ntitle: waits on an inbox record\n"
+                "status: ready\nowner: ann\nassignees: [ann]\nreviewers: [bo]\n"
+                "person_weeks: 1\ndepends_on: [issue-9a9a9a]\n---\n\nx\n"
+            ),
+        },
+        "seed a hand-written edge",
+    )
     with TestClient(create_app(path, auth="dev", secret=SECRET)) as client:
         table = client.get("/table")
         graph = client.get("/graph")
@@ -282,17 +284,22 @@ def test_deleting_what_a_hand_written_issue_waits_on_edits_the_issue(
     dependent record."""
     path = tmp_path / "plan.git"
     pygit2.init_repository(str(path), bare=True, initial_head="main")
-    commit_directly(path, {
-        **SEED,
-        "issues/issue-8c8c8c.md": (
-            "---\nid: issue-8c8c8c\ntitle: waits by hand\nstatus: ready\n"
-            "depends_on: [task-c00002]\n---\n\nx\n"
-        ),
-    }, "seed a dependent issue")
+    commit_directly(
+        path,
+        {
+            **SEED,
+            "issues/issue-8c8c8c.md": (
+                "---\nid: issue-8c8c8c\ntitle: waits by hand\nstatus: ready\n"
+                "depends_on: [task-c00002]\n---\n\nx\n"
+            ),
+        },
+        "seed a dependent issue",
+    )
     with TestClient(create_app(path, auth="dev", secret=SECRET)) as client:
         client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
         removed = client.request(
-            "DELETE", "/api/record/task-c00002",
+            "DELETE",
+            "/api/record/task-c00002",
             json={"base_commit": git_head(path), "also": ["issue-8c8c8c"]},
         )
 
@@ -306,9 +313,7 @@ def test_deleting_what_a_hand_written_issue_waits_on_edits_the_issue(
 # --------------------------------------------------------------------------- #
 
 
-def test_the_retired_issue_routes_redirect_to_the_shared_ones(
-    client: TestClient, repo_path: Path
-):
+def test_the_retired_issue_routes_redirect_to_the_shared_ones(client: TestClient, repo_path: Path):
     issue_id = opened(client, "x", git_head(repo_path))
 
     # `/issues` is deliberately not in this list any more: it 301ed to `/` for
@@ -323,9 +328,7 @@ def test_the_retired_issue_routes_redirect_to_the_shared_ones(
         assert moved.headers["location"] == new, old
 
 
-def test_an_issue_renders_on_the_shared_record_page(
-    client: TestClient, repo_path: Path
-):
+def test_an_issue_renders_on_the_shared_record_page(client: TestClient, repo_path: Path):
     issue_id = opened(client, "Halo exchange drops a rank", git_head(repo_path))
     page = client.get(f"/detail/{issue_id}").text
 
@@ -352,13 +355,13 @@ def test_the_create_form_offers_an_issue_no_plan_status(client: TestClient):
     record page's own per-kind hill is one save away."""
     page = client.get("/new?kind=issue").text
 
-    status_row = re.search(r'data-kinds="([^"]*)"(?:(?!data-kinds).)*?name="status"',
-                           page, re.S)
+    status_row = re.search(r'data-kinds="([^"]*)"(?:(?!data-kinds).)*?name="status"', page, re.S)
     assert status_row, "the create form must still carry the plan kinds' status row"
     assert "issue" not in status_row.group(1).split()
     assert "note" not in status_row.group(1).split()
-    reported = re.search(r'data-kinds="([^"]*)"(?:(?!data-kinds).)*?id="new-reported_by"',
-                         page, re.S)
+    reported = re.search(
+        r'data-kinds="([^"]*)"(?:(?!data-kinds).)*?id="new-reported_by"', page, re.S
+    )
     assert reported and reported.group(1).split() == ["issue"], (
         "an issue's own field is offered to issues and to nothing else"
     )
@@ -373,8 +376,11 @@ def test_a_derived_state_reads_on_the_page_and_locks_the_control(
     issue_id = opened(client, "x", git_head(repo_path))
     saved = client.patch(
         f"/api/record/{issue_id}",
-        json={"base_commit": git_head(repo_path),
-              "fields": {"pitched_into": ["task-c00001"]}, "body": None},
+        json={
+            "base_commit": git_head(repo_path),
+            "fields": {"pitched_into": ["task-c00001"]},
+            "body": None,
+        },
     )
     assert saved.status_code == 200, saved.text
 
@@ -395,10 +401,7 @@ def test_the_seed_corpus_issues_load_as_records_off_the_plan(demo_root: Path):
 
     assert issues, "the demo corpus has issues"
     assert not set(issues) & set(index.plan), "and none of them is in the plan"
-    assert not [
-        p for p in index.problems
-        if p.severity == "blocker" and p.record_id in issues
-    ]
+    assert not [p for p in index.problems if p.severity == "blocker" and p.record_id in issues]
     assert {r.state(index.plan) for r in issues.values()} <= set(ISSUE_STATUS)
 
 

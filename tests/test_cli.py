@@ -181,7 +181,7 @@ def test_a_plan_that_reaches_the_end_of_the_calendar_still_renders(tmp_path: Pat
     (tmp_path / "tasks" / "task-000001--done.md").write_text(
         "---\nid: task-000001\nkind: task\ntitle: Long done\nstatus: done\n"
         "owner: jackdawrie\nreviewers: [merganserly]\nassigned_on: 9999-12-31\n"
-        "prs: [\"kilnlab/kiln4py#1\"]\nperson_weeks: 1.0\n---\n\nBody.\n",
+        'prs: ["kilnlab/kiln4py#1"]\nperson_weeks: 1.0\n---\n\nBody.\n',
         encoding="utf-8",
     )
     (tmp_path / "cycles" / "0038.md").write_text(
@@ -194,8 +194,15 @@ def test_a_plan_that_reaches_the_end_of_the_calendar_still_renders(tmp_path: Pat
     assert "0 blockers" in capsys.readouterr().out
     assert main(["render", str(tmp_path), str(out)]) == 0
 
-    for name in ("index.html", "table.html", "detail.html", "people.html",
-                 "cycles.html", "graph.html", "timeline.html"):
+    for name in (
+        "index.html",
+        "table.html",
+        "detail.html",
+        "people.html",
+        "cycles.html",
+        "graph.html",
+        "timeline.html",
+    ):
         assert (out / name).is_file(), name
         assert len(read_bytes := (out / name).read_bytes()) > 1000, (name, len(read_bytes))
     # And the one that used to raise is a drawing, not fourteen megabytes of it.
@@ -445,8 +452,10 @@ def test_the_demo_is_drawn_around_the_day_its_own_corpus_calls_today(demo_root: 
     from openproj.model import load_repo
 
     _, config, _ = load_repo(demo_root)
-    said = re.search(r'"Today" for the demo is \*\*(\d{4}-\d{2}-\d{2})\*\*',
-                     (demo_root / "README.md").read_text(encoding="utf-8"))
+    said = re.search(
+        r'"Today" for the demo is \*\*(\d{4}-\d{2}-\d{2})\*\*',
+        (demo_root / "README.md").read_text(encoding="utf-8"),
+    )
 
     assert said, "seed/README.md no longer says which day the demo is written around"
     assert _demo_today(config).isoformat() == said.group(1)
@@ -538,10 +547,17 @@ def test_a_signal_to_the_entrypoint_reaches_the_server(tmp_path: Path):
 
     started = subprocess.Popen(
         [sys.executable, str(Path(__file__).parent.parent / "deploy" / "boot.py")],
-        env={**os.environ, "OPENPROJ_REPO": str(plan), "OPENPROJ_AUTH": "dev",
-             "OPENPROJ_SECRET": "test-secret", "PORT": str(port),
-             "OPENPROJ_REMOTE": ""},
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        env={
+            **os.environ,
+            "OPENPROJ_REPO": str(plan),
+            "OPENPROJ_AUTH": "dev",
+            "OPENPROJ_SECRET": "test-secret",
+            "PORT": str(port),
+            "OPENPROJ_REMOTE": "",
+        },
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
     )
     try:
         deadline = time.monotonic() + 60
@@ -562,7 +578,7 @@ def test_a_signal_to_the_entrypoint_reaches_the_server(tmp_path: Path):
                 "seconds and then SIGKILL, with nothing flushed"
             ) from None
     finally:
-        if started.poll() is None:      # pragma: no cover - only on a failure
+        if started.poll() is None:  # pragma: no cover - only on a failure
             started.kill()
             started.wait(timeout=10)
 
@@ -657,8 +673,15 @@ def test_new_says_a_field_this_kind_does_not_read_is_not_read(plan: Path, capsys
     the person is told before they commit rather than after.
     """
     code = main(
-        ["new", "issue", str(plan), "--title", "Two extrapolations",
-         "--set", "prs=C2SM/icon4py#1359"]
+        [
+            "new",
+            "issue",
+            str(plan),
+            "--title",
+            "Two extrapolations",
+            "--set",
+            "prs=C2SM/icon4py#1359",
+        ]
     )
 
     assert code == 0
@@ -684,8 +707,7 @@ def test_new_refuses_a_field_the_kind_does_not_have(plan: Path, capsys):
     unread by anything, and every reader of that file would believe it meant
     something."""
     code = main(
-        ["new", "issue", str(plan), "--title", "Two extrapolations",
-         "--set", "reportedby=jcanton"]
+        ["new", "issue", str(plan), "--title", "Two extrapolations", "--set", "reportedby=jcanton"]
     )
 
     assert code == 1
@@ -697,10 +719,20 @@ def test_new_owns_the_date_and_defaults_the_author_on_an_inbox_record(plan: Path
     """When a record was made is not an opinion, so the command writes it. Who
     reported it is a default and not a fact — somebody files what a colleague
     mentioned in a corridor — so `--set` may say otherwise."""
-    assert main(
-        ["new", "issue", str(plan), "--title", "Two extrapolations",
-         "--set", "reported_by=jcanton"]
-    ) == 0
+    assert (
+        main(
+            [
+                "new",
+                "issue",
+                str(plan),
+                "--title",
+                "Two extrapolations",
+                "--set",
+                "reported_by=jcanton",
+            ]
+        )
+        == 0
+    )
 
     (only,) = written(plan)
     text = only.read_text(encoding="utf-8")
@@ -711,9 +743,7 @@ def test_new_owns_the_date_and_defaults_the_author_on_an_inbox_record(plan: Path
 def test_new_answers_in_json_for_something_that_is_not_a_person(plan: Path, capsys):
     """An agent has to read the id back to say what it filed, and parsing it out
     of prose is the kind of thing that works until the prose is reworded."""
-    assert main(
-        ["new", "issue", str(plan), "--title", "Two extrapolations", "--json"]
-    ) == 0
+    assert main(["new", "issue", str(plan), "--title", "Two extrapolations", "--json"]) == 0
 
     said = json.loads(capsys.readouterr().out)
     (only,) = written(plan)
@@ -740,8 +770,7 @@ def test_new_can_commit_and_leaves_the_working_tree_clean(plan: Path):
     repo.config["user.name"] = "Jacopo"
     repo.config["user.email"] = "jcanton@example.org"
 
-    assert main(["new", "issue", str(plan), "--title", "Two extrapolations",
-                 "--commit"]) == 0
+    assert main(["new", "issue", str(plan), "--title", "Two extrapolations", "--commit"]) == 0
 
     (only,) = written(plan)
     reopened = pygit2.Repository(str(plan))
@@ -777,9 +806,10 @@ def test_one_set_on_a_list_field_is_a_list_of_one(plan: Path):
     """What somebody types. Without it the answer is a pydantic type error naming
     `list_type`, which is correct and no use at all when the fix is a pair of
     brackets that the shell also wants quoting."""
-    assert main(
-        ["new", "task", str(plan), "--title", "Port it", "--set", "reviewers=merganserly"]
-    ) == 0
+    assert (
+        main(["new", "task", str(plan), "--title", "Port it", "--set", "reviewers=merganserly"])
+        == 0
+    )
 
     (only,) = written(plan)
     assert "reviewers:" in only.read_text(encoding="utf-8")
@@ -788,10 +818,22 @@ def test_one_set_on_a_list_field_is_a_list_of_one(plan: Path):
 
 def test_a_repeated_set_builds_the_list_without_brackets(plan: Path):
     """The other way in, for the caller who would rather not quote YAML at all."""
-    assert main(
-        ["new", "task", str(plan), "--title", "Port it",
-         "--set", "reviewers=merganserly", "--set", "reviewers=jackdawrie"]
-    ) == 0
+    assert (
+        main(
+            [
+                "new",
+                "task",
+                str(plan),
+                "--title",
+                "Port it",
+                "--set",
+                "reviewers=merganserly",
+                "--set",
+                "reviewers=jackdawrie",
+            ]
+        )
+        == 0
+    )
 
     (only,) = written(plan)
     text = only.read_text(encoding="utf-8")
@@ -814,10 +856,20 @@ def test_a_body_file_replaces_the_template(plan: Path):
     through --set is not a thing anybody should do."""
     (plan / "body.md").write_text("## Problem\n\nTwo copies of one routine.\n", encoding="utf-8")
 
-    assert main(
-        ["new", "issue", str(plan), "--title", "Two extrapolations",
-         "--body-file", str(plan / "body.md")]
-    ) == 0
+    assert (
+        main(
+            [
+                "new",
+                "issue",
+                str(plan),
+                "--title",
+                "Two extrapolations",
+                "--body-file",
+                str(plan / "body.md"),
+            ]
+        )
+        == 0
+    )
 
     (only,) = (p for p in written(plan) if p.parent.name == "issues")
     assert "Two copies of one routine." in only.read_text(encoding="utf-8")
@@ -836,9 +888,10 @@ def test_set_wants_a_field_and_a_value(plan: Path, capsys):
 def test_tag_and_set_tags_both_land(plan: Path):
     """`--tag` is documented as sugar for the same field, and sugar that silently
     drops the thing it is sugar for is the worst of both."""
-    assert main(
-        ["new", "issue", str(plan), "--title", "T", "--set", "tags=[dycore]", "--tag", "port"]
-    ) == 0
+    assert (
+        main(["new", "issue", str(plan), "--title", "T", "--set", "tags=[dycore]", "--tag", "port"])
+        == 0
+    )
 
     text = written(plan)[0].read_text(encoding="utf-8")
     assert "- dycore" in text

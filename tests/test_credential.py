@@ -165,9 +165,12 @@ def test_a_half_set_environment_names_the_variable_it_wants(tmp_path: Path, pem:
     assert GitHubApp.missing(
         {"OPENPROJ_INSTALLATION_ID": "154481476", "OPENPROJ_APP_KEY": str(key)}
     ) == ["OPENPROJ_APP_ID"]
-    assert GitHubApp.missing(
-        {"OPENPROJ_APP_ID": "1", "OPENPROJ_INSTALLATION_ID": "2", "OPENPROJ_APP_KEY": str(key)}
-    ) == []
+    assert (
+        GitHubApp.missing(
+            {"OPENPROJ_APP_ID": "1", "OPENPROJ_INSTALLATION_ID": "2", "OPENPROJ_APP_KEY": str(key)}
+        )
+        == []
+    )
 
 
 def test_the_startup_refusal_says_which_variable_is_unset(tmp_path: Path, monkeypatch):
@@ -211,9 +214,7 @@ def test_the_open_pull_requests_are_read_down_to_what_a_completion_needs():
         asked.append(request)
         return httpx.Response(200, json=[_pulls(1403, "Halo exchange"), _pulls(9, "Two")])
 
-    got = open_pull_requests(
-        "C2SM/icon4py", transport=httpx.MockTransport(answer)
-    )
+    got = open_pull_requests("C2SM/icon4py", transport=httpx.MockTransport(answer))
 
     assert got == [
         {"number": 1403, "title": "Halo exchange"},
@@ -221,9 +222,9 @@ def test_the_open_pull_requests_are_read_down_to_what_a_completion_needs():
     ]
     assert len(asked) == 1, "one page, one call"
     query = dict(asked[0].url.params)
-    assert query == {
-        "state": "open", "per_page": "100", "sort": "updated", "direction": "desc"
-    }, query
+    assert query == {"state": "open", "per_page": "100", "sort": "updated", "direction": "desc"}, (
+        query
+    )
     assert asked[0].url.path == "/repos/C2SM/icon4py/pulls"
     assert "authorization" not in asked[0].headers, "asked as somebody with no App"
 
@@ -253,9 +254,7 @@ def test_a_token_the_code_repository_refuses_falls_back_to_asking_anonymously(
         return httpx.Response(200, json=[_pulls(1403, "Halo exchange")])
 
     app = GitHubApp("1", "2", pem, transport=httpx.MockTransport(refuse_then_answer))
-    assert open_pull_requests("C2SM/icon4py", app) == [
-        {"number": 1403, "title": "Halo exchange"}
-    ]
+    assert open_pull_requests("C2SM/icon4py", app) == [{"number": 1403, "title": "Halo exchange"}]
     assert seen == ["Bearer installation-token", None], seen
 
     # The App's own transport is honoured without being handed over a second

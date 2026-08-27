@@ -87,8 +87,9 @@ class Person(threading.Thread):
         self.failed: str | None = None
 
     def note(self, **kwargs) -> None:
-        self.ledger.record(Action(who=self.who, began=round(time.monotonic() - self.zero, 3),
-                                  **kwargs))
+        self.ledger.record(
+            Action(who=self.who, began=round(time.monotonic() - self.zero, 3), **kwargs)
+        )
 
     def run(self) -> None:
         try:
@@ -130,8 +131,14 @@ class Reader(Person):
     # three-route default never touches.
     ALL_PAGES = ("/", "/issues", "/table", "/graph", "/timeline")
 
-    def __init__(self, *args, ids: list[str], think: float = 0.4,
-                 pages: tuple[str, ...] | None = None, **kwargs) -> None:
+    def __init__(
+        self,
+        *args,
+        ids: list[str],
+        think: float = 0.4,
+        pages: tuple[str, ...] | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.ids = ids
         self.think = think
@@ -204,8 +211,16 @@ class FormWriter(Person):
     # is what a person aims at. Falls back to line 1 on a body that has none.
     ANCHOR = "## Rabbit holes"
 
-    def __init__(self, *args, record: str, gap: float = 2.0, gap_max: float | None = None,
-                 stale: bool = False, style: str = "append", **kwargs) -> None:
+    def __init__(
+        self,
+        *args,
+        record: str,
+        gap: float = 2.0,
+        gap_max: float | None = None,
+        stale: bool = False,
+        style: str = "append",
+        **kwargs,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.record = record
         self.gap = gap
@@ -220,7 +235,8 @@ class FormWriter(Person):
         self.sent: list[Sent] = []
         self.held: str | None = None
         self.client = httpx.Client(
-            base_url=self.world.base, timeout=120.0,
+            base_url=self.world.base,
+            timeout=120.0,
             headers={"cookie": harness.cookie_for(self.login)},
         )
 
@@ -261,8 +277,12 @@ class FormWriter(Person):
             status = str(answer.status_code)
         except Exception as error:  # noqa: BLE001
             status = type(error).__name__
-        self.note(kind="GET /detail/<id>", ms=(time.monotonic() - begun) * 1000,
-                  status=status, record=self.record)
+        self.note(
+            kind="GET /detail/<id>",
+            ms=(time.monotonic() - begun) * 1000,
+            status=status,
+            record=self.record,
+        )
 
     def base_commit(self) -> str | None:
         if self.stale and self.held:
@@ -271,13 +291,19 @@ class FormWriter(Person):
         try:
             answer = self.client.get("/api/health")
             head = answer.json().get("head")
-            self.note(kind="GET /api/health", ms=(time.monotonic() - begun) * 1000,
-                      status=str(answer.status_code))
+            self.note(
+                kind="GET /api/health",
+                ms=(time.monotonic() - begun) * 1000,
+                status=str(answer.status_code),
+            )
             self.held = head
             return head
         except Exception as error:  # noqa: BLE001
-            self.note(kind="GET /api/health", ms=(time.monotonic() - begun) * 1000,
-                      status=type(error).__name__)
+            self.note(
+                kind="GET /api/health",
+                ms=(time.monotonic() - begun) * 1000,
+                status=type(error).__name__,
+            )
             return None
 
     def save(self, base: str, source: str, n: int) -> None:
@@ -304,8 +330,15 @@ class FormWriter(Person):
                 outcome, commit = got.get("outcome"), got.get("commit")
         except Exception as error:  # noqa: BLE001
             status = type(error).__name__
-        self.note(kind="PATCH", ms=(time.monotonic() - begun) * 1000, status=status,
-                  outcome=outcome, commit=commit, record=self.record, marker=marker)
+        self.note(
+            kind="PATCH",
+            ms=(time.monotonic() - begun) * 1000,
+            status=status,
+            outcome=outcome,
+            commit=commit,
+            record=self.record,
+            marker=marker,
+        )
         self.sent.append(Sent(self.who, self.record, marker, status, outcome, commit, weeks, base))
 
     def marker(self, n: int) -> str:
@@ -478,8 +511,12 @@ class CoEditor(Person):
         self.member = self.TYPIST(
             self.world.port, self.login, self.record, self.client_id, applies=True
         )
-        self.note(kind="WS join", ms=(time.monotonic() - begun) * 1000, status="joined",
-                  record=self.record)
+        self.note(
+            kind="WS join",
+            ms=(time.monotonic() - begun) * 1000,
+            status="joined",
+            record=self.record,
+        )
         self.result.joined = True
         planting = self.planted()
         if not planting:
@@ -489,9 +526,7 @@ class CoEditor(Person):
             before = self.member.doc.get_state()
             self.member.text.insert(coedit.byte_offset(body, self.plant_at(body)), planting)
             update = self.member.doc.get_update(before)
-        self.member.client.send_json(
-            {"t": "update", "u": base64.b64encode(update).decode()}
-        )
+        self.member.client.send_json({"t": "update", "u": base64.b64encode(update).decode()})
 
     def work(self) -> None:
         assert self.member is not None
@@ -504,8 +539,12 @@ class CoEditor(Person):
                 self.typed += 1
             else:
                 self.result.trouble.append(f"{answer} at {self.typed} typed")
-            self.note(kind="WS keystroke", ms=(time.monotonic() - begun) * 1000,
-                      status=answer, record=self.record)
+            self.note(
+                kind="WS keystroke",
+                ms=(time.monotonic() - begun) * 1000,
+                status=answer,
+                record=self.record,
+            )
             if self.member.gone:
                 self.result.trouble.append(f"socket gone: {self.member.gone}")
                 return
@@ -557,9 +596,15 @@ class CoEditor(Person):
             record=self.record,
             note=answer.get("why"),
         )
-        record = {"t": answer.get("t"), "outcome": answer.get("outcome"),
-                  "commit": answer.get("commit"), "pushed": answer.get("pushed"),
-                  "why": answer.get("why"), "typed_by_then": self.typed, "ms": round(ms, 1)}
+        record = {
+            "t": answer.get("t"),
+            "outcome": answer.get("outcome"),
+            "commit": answer.get("commit"),
+            "pushed": answer.get("pushed"),
+            "why": answer.get("why"),
+            "typed_by_then": self.typed,
+            "ms": round(ms, 1),
+        }
         self.result.saves.append(record)
         return record
 
@@ -581,8 +626,7 @@ def commit_log(plan: Path) -> list[dict]:
 
     git = pygit2.Repository(str(plan))
     return [
-        {"sha": str(one.id)[:10], "author": one.author.name,
-         "subject": one.message.splitlines()[0]}
+        {"sha": str(one.id)[:10], "author": one.author.name, "subject": one.message.splitlines()[0]}
         for one in git.walk(git.references["refs/heads/main"].target)
     ]
 

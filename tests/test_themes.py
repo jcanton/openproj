@@ -94,9 +94,9 @@ def test_the_stylesheet_answers_all_three_states_of_the_switch():
     for family in FAMILIES:
         assert f':root[data-scheme="{family.key}"] {{' in css
         assert f':root[data-scheme="{family.key}"][data-theme="dark"] {{' in css
-        assert (
-            f'  :root[data-scheme="{family.key}"]:not([data-theme="light"]) {{' in css
-        ), f"{family.key} does not follow a dark system"
+        assert f'  :root[data-scheme="{family.key}"]:not([data-theme="light"]) {{' in css, (
+            f"{family.key} does not follow a dark system"
+        )
     # And the derivation is one block for all of them, not one per scheme.
     page = render_table(
         build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD, may_write=True
@@ -172,8 +172,9 @@ def test_every_scheme_is_readable_where_the_page_paints_it(tmp_path: Path):
 
     4.5:1 is AA for body text and is what a chip's word and a node's title are.
     """
-    page = render_table(build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD,
-                        may_write=True)
+    page = render_table(
+        build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD, may_write=True
+    )
     keys = ["", *(family.key for family in FAMILIES)]
     # Both lists interpolated, and the second one used not to be: it was the
     # status ladder retyped as a JavaScript literal in a test file, which is the
@@ -183,12 +184,11 @@ def test_every_scheme_is_readable_where_the_page_paints_it(tmp_path: Path):
     # a rung nobody has ever measured — and it stayed green through the commit
     # that added one, still reporting 190 ratios about five statuses.
     script = (
-        f"const SCHEMES = {keys!r};\n"
-        f"const STATUSES = {list(STATUSES)!r};\n"
-        + _CONTRAST
+        f"const SCHEMES = {keys!r};\nconst STATUSES = {list(STATUSES)!r};\n" + _CONTRAST
     ).replace("'", '"')
-    got = measured_in(chrome(), page, tmp_path / "contrast.html", 1200, script,
-                      height=900, patience=2500)
+    got = measured_in(
+        chrome(), page, tmp_path / "contrast.html", 1200, script, height=900, patience=2500
+    )
 
     # 4.5:1 is AA for body text, which is what a chip's word and a node's title
     # are. Links are held to 3.5 and the floor is argued where it is set
@@ -232,10 +232,12 @@ def test_the_picker_puts_the_scheme_on_the_page_and_takes_it_off_again(tmp_path:
     "default" scheme would be a second copy of the app's own palette, free to
     drift from the one every page without a choice is still drawn in.
     """
-    page = render_table(build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD,
-                        may_write=True)
-    got = measured_in(chrome(), page, tmp_path / "picker.html", 1200, _PICKER,
-                      height=900, patience=2000)
+    page = render_table(
+        build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD, may_write=True
+    )
+    got = measured_in(
+        chrome(), page, tmp_path / "picker.html", 1200, _PICKER, height=900, patience=2000
+    )
 
     assert got["before"] is None, "a page nobody has chosen for arrives with a scheme"
     assert got["offered"][0] == "", "the app's own colours are the first option"
@@ -273,10 +275,12 @@ def test_a_scheme_reaches_the_boxes_people_type_into(tmp_path: Path):
     when the controls were made consistent; the boxes had not, because nothing in
     the default palette made them look wrong.
     """
-    page = render_table(build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD,
-                        may_write=True)
-    got = measured_in(chrome(), page, tmp_path / "boxes.html", 1400, _BOXES,
-                      height=900, patience=1500)
+    page = render_table(
+        build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD, may_write=True
+    )
+    got = measured_in(
+        chrome(), page, tmp_path / "boxes.html", 1400, _BOXES, height=900, patience=1500
+    )
 
     assert got["count"], "no typing boxes on the page at all"
     assert got["bg"] == "rgb(251, 241, 199)", f"the scheme did not apply: {got['bg']}"
@@ -306,11 +310,13 @@ def test_the_drawing_gets_colours_it_can_actually_read(tmp_path: Path):
     page = render_graph(index, ROUTES, base_commit=HEAD).replace(
         "<html", '<html data-scheme="solarized" data-theme="dark"', 1
     )
-    got = measured_in(chrome(), page, tmp_path / "canvas.html", 1500, _CANVAS,
-                      height=900, patience=3500)
+    got = measured_in(
+        chrome(), page, tmp_path / "canvas.html", 1500, _CANVAS, height=900, patience=3500
+    )
 
-    assert all(re.fullmatch(r"rgb\(\d+,\s*\d+,\s*\d+\)", one)
-               for one in got["fills"].values()), got["fills"]
+    assert all(re.fullmatch(r"rgb\(\d+,\s*\d+,\s*\d+\)", one) for one in got["fills"].values()), (
+        got["fills"]
+    )
     assert len(set(got["fills"].values())) == len(got["fills"]), (
         f"the statuses are drawn in {len(set(got['fills'].values()))} colours: {got['fills']}"
     )

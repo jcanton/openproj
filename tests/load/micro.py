@@ -85,8 +85,9 @@ def main(scratch: Path):
         if path.exists():
             shutil.rmtree(path)
     corpus.build(repo, 40, 10, 60, 60)
-    subprocess.run(["git", "clone", "--bare", str(repo), str(remote)], check=True,
-                   capture_output=True)
+    subprocess.run(
+        ["git", "clone", "--bare", str(repo), str(remote)], check=True, capture_output=True
+    )
 
     store = Store(repo)
     try:

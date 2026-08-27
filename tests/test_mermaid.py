@@ -86,7 +86,7 @@ def test_the_text_inside_a_fence_is_escaped_like_any_other_value():
     has shipped five escaping bugs into pages that all looked like this one.
     `Markup(...).format` is the boundary; nothing here builds markup out of it.
     """
-    hostile = '```mermaid\nA --> B</pre><script>alert(1)</script>\n```\n'
+    hostile = "```mermaid\nA --> B</pre><script>alert(1)</script>\n```\n"
     drawn = str(_markdown(hostile, ROUTES))
     assert "<script>" not in drawn
     assert "&lt;/pre&gt;&lt;script&gt;" in drawn
@@ -275,8 +275,9 @@ def serving(app):
     runs it, and there is no browser and no origin in an ASGI shim.
     """
     server = uvicorn.Server(
-        uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error",
-                       timeout_graceful_shutdown=1)
+        uvicorn.Config(
+            app, host="127.0.0.1", port=0, log_level="error", timeout_graceful_shutdown=1
+        )
     )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -412,7 +413,9 @@ def test_a_diagram_does_not_push_the_page_sideways(repo_path: Path, tmp_path: Pa
 
     with serving(create_app(repo_path, auth="dev", secret=SECRET)) as url:
         with browsing._devtools(
-            browsing.chrome(), f"{url}/detail/pitch-aaaaaa", tmp_path,
+            browsing.chrome(),
+            f"{url}/detail/pitch-aaaaaa",
+            tmp_path,
             flags=("--window-size=390,780",),
         ) as (call, said):
             found = None

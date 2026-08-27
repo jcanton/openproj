@@ -79,7 +79,10 @@ def main(where: Path) -> dict:
         # body that is the FILE plus their own line — which is exactly what a tab
         # with no socket sends: its textarea holds what the server rendered.
         status, said = patch(
-            server.port, TASK, "bo", "BO-SAVED-THIS-FROM-THE-FORM\n" + original,
+            server.port,
+            TASK,
+            "bo",
+            "BO-SAVED-THIS-FROM-THE-FORM\n" + original,
             ann.welcome["base"],
         )
         report["a_patch_status"] = status

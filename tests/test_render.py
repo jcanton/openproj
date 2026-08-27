@@ -29,8 +29,18 @@ from openproj.render import (
     render_static,
 )
 
-PAGES = ("index.html", "table.html", "detail.html", "people.html", "cycles.html",
-         "graph.html", "timeline.html", "issues.html", "notes.html", "help.html")
+PAGES = (
+    "index.html",
+    "table.html",
+    "detail.html",
+    "people.html",
+    "cycles.html",
+    "graph.html",
+    "timeline.html",
+    "issues.html",
+    "notes.html",
+    "help.html",
+)
 
 
 @pytest.fixture
@@ -70,7 +80,7 @@ def read(directory: Path, name: str) -> str:
 def _luminance(colour: str) -> float:
     """WCAG relative luminance of a #rrggbb."""
     value = colour.lstrip("#")
-    channels = [int(value[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    channels = [int(value[i : i + 2], 16) / 255 for i in (0, 2, 4)]
     linear = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
     return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
 
@@ -94,13 +104,14 @@ def tokens(page: str) -> dict[str, dict[str, str]]:
         "light": re.search(r"^:root \{(.*?)^\}", style, re.S | re.M).group(1),
         "dark": re.search(r'^:root\[data-theme="dark"\] \{(.*?)^\}', style, re.S | re.M).group(1),
         "dark-by-system": re.search(
-            r'@media \(prefers-color-scheme: dark\) \{\s*'
+            r"@media \(prefers-color-scheme: dark\) \{\s*"
             r':root:not\(\[data-theme="light"\]\) \{(.*?)^  \}',
-            style, re.S | re.M).group(1),
+            style,
+            re.S | re.M,
+        ).group(1),
     }
     return {
-        name: dict(re.findall(r"(--[\w-]+): (#[0-9a-f]{6})", body))
-        for name, body in blocks.items()
+        name: dict(re.findall(r"(--[\w-]+): (#[0-9a-f]{6})", body)) for name, body in blocks.items()
     }
 
 
@@ -155,7 +166,7 @@ def fetches_nothing(body: str, where: str) -> None:
     """
     # Anchors to github.com are fine and wanted — a PR link that resolves is
     # the point. What must never appear is a page FETCHING from the network.
-    assert not re.search(r'<script[^>]+src\s*=', body), where
+    assert not re.search(r"<script[^>]+src\s*=", body), where
     assert not re.search(r'<link[^>]+href\s*=\s*["\']https?://', body), where
     assert not re.search(r'<img[^>]+src\s*=\s*["\']https?://', body), where
     assert "cdn." not in body, where
@@ -213,9 +224,7 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(
     # for them, and each is checked on its own further down.
     FETCHED = {"excalidraw.js", "mermaid.min.js"}
     inlined = sorted(
-        path.name
-        for path in static.iterdir()
-        if path.suffix == ".js" and path.name not in FETCHED
+        path.name for path in static.iterdir() if path.suffix == ".js" and path.name not in FETCHED
     )
     assert len(inlined) == 4, inlined
 
@@ -290,9 +299,7 @@ def test_a_rendered_file_dresses_its_cells_the_way_the_server_does(rendered: Pat
     index = read(rendered, "table.html")
 
     assert "base_commit" not in index, "this is the read-only build"
-    assert "CLAMPED.has(key) ? 'clamp' : ''" in index, (
-        "the clamp is not behind the editor"
-    )
+    assert "CLAMPED.has(key) ? 'clamp' : ''" in index, "the clamp is not behind the editor"
     assert "td.clamp .rest { display: none; }" in index
     for rule in (".chip.st-done", ".chip.kind-pitch", ".sev-row-blocker", ".sev-mark-blocker"):
         assert rule in index, rule
@@ -351,9 +358,7 @@ def test_a_node_carries_everything_the_filters_ask_of_it(seed_index: Index):
     """
     from openproj.render import _elements, _row
 
-    nodes = {
-        e["data"]["id"]: e["data"] for e in _elements(seed_index) if "source" not in e["data"]
-    }
+    nodes = {e["data"]["id"]: e["data"] for e in _elements(seed_index) if "source" not in e["data"]}
 
     for record_id in seed_index.plan:
         for field, value in _row(seed_index, record_id).items():
@@ -498,7 +503,8 @@ def test_the_graph_names_every_colour_it_draws_with(rendered: Path):
     # written first, which is the priority one and holds no status at all.
     legend = re.search(
         r'<ul class="legend" aria-label="What a node\'s colour and mark mean">.*?</ul>',
-        graph, re.S,
+        graph,
+        re.S,
     )
     assert legend, "the status legend is gone"
     legend = legend.group(0)
@@ -557,8 +563,14 @@ def test_the_legend_is_two_rows_and_the_keys_line_up(rendered: Path, tmp_path: P
     """
     from browser import chrome, measured_in
 
-    got = measured_in(chrome(), read(rendered, "graph.html"),
-                      tmp_path / "legend.html", 1400, _LEGEND_GEOMETRY, height=900)
+    got = measured_in(
+        chrome(),
+        read(rendered, "graph.html"),
+        tmp_path / "legend.html",
+        1400,
+        _LEGEND_GEOMETRY,
+        height=900,
+    )
     # Status leads — jcanton, 2026-08-24: "put the status row on top of the
     # priority row, better!" It is the longer of the two now, so the longer row
     # leads and the shorter hangs under its right end, which reads as one block
@@ -605,21 +617,21 @@ def test_the_corner_of_the_graph_holds_the_legend_and_nothing_else(rendered: Pat
     (`test_graph_layout.py`).
     """
     parsed = elements(read(rendered, "graph.html"))
-    keys = next(i for i, el in enumerate(parsed)
-                if el.tag == "div" and el.attrs.get("class") == "keys")
-    legends = next(i for i, el in enumerate(parsed)
-                   if el.tag == "div" and el.attrs.get("class") == "legends")
+    keys = next(
+        i for i, el in enumerate(parsed) if el.tag == "div" and el.attrs.get("class") == "keys"
+    )
+    legends = next(
+        i for i, el in enumerate(parsed) if el.tag == "div" and el.attrs.get("class") == "legends"
+    )
     assert legends == keys + 1, (
-        f"the legend is not the first thing in the corner: keys at {keys}, "
-        f"legends at {legends}"
+        f"the legend is not the first thing in the corner: keys at {keys}, legends at {legends}"
     )
     # The count is in the control bar, which is above the canvas rather than in
     # it — so between the corner box and the canvas there is nothing left.
     canvas = next(i for i, el in enumerate(parsed) if el.attrs.get("id") == "cy")
     summary = next(i for i, el in enumerate(parsed) if el.attrs.get("id") == "summary")
     assert summary < keys, (
-        "the count is still inside the corner box, so the graph says how much is "
-        "on screen twice"
+        "the count is still inside the corner box, so the graph says how much is on screen twice"
     )
     # And every element the script writes by id went with it — the move must not
     # strand `getElementById('shown')`, `('context')` or the blocker link's two
@@ -652,15 +664,27 @@ def test_both_halves_of_the_app_write_a_date_the_same_way(seed_index: Index):
     from openproj.render import render_detail
     from openproj.render.tokens import _read_date
 
-    asked = ["2026-09-01", "2026-12-31", "2027-01-02", "", "—", "not-a-date",
-             "2026-09", "2026-09-01-02"]
+    asked = [
+        "2026-09-01",
+        "2026-12-31",
+        "2027-01-02",
+        "",
+        "—",
+        "not-a-date",
+        "2026-09",
+        "2026-09-01-02",
+    ]
     # A record page rather than the table: `readDate` is the shell's and is on
     # every page, and the table's own script reaches for a box the node shim has
     # no layout for, which would put an unrelated error in the way of this one.
     answer = run_js(
         render_detail(
-            seed_index, ROUTES, base_commit="deadbee",
-            only=sorted(seed_index.plan)[0], may_write=True, signed_in="ann",
+            seed_index,
+            ROUTES,
+            base_commit="deadbee",
+            only=sorted(seed_index.plan)[0],
+            may_write=True,
+            signed_in="ann",
             editor="plain",
         ),
         "(" + json.dumps(asked) + ").map(readDate)",
@@ -668,8 +692,7 @@ def test_both_halves_of_the_app_write_a_date_the_same_way(seed_index: Index):
     )
     assert not answer["errors"], answer["errors"]
     assert answer["value"] == [_read_date(one) for one in asked], (
-        f"the two halves disagree: {answer['value']} against "
-        f"{[_read_date(one) for one in asked]}"
+        f"the two halves disagree: {answer['value']} against {[_read_date(one) for one in asked]}"
     )
     # And it is the format, not merely agreement: two functions that both
     # answered ISO would pass the line above.
@@ -722,9 +745,7 @@ def test_a_node_takes_its_ink_from_the_fill_it_sits_on(rendered: Path):
     assert "const byStatus = suffix => Object.fromEntries(" in graph
 
 
-def test_every_status_a_node_can_hold_reaches_cytoscape_as_a_colour(
-    rendered: Path, tmp_path: Path
-):
+def test_every_status_a_node_can_hold_reaches_cytoscape_as_a_colour(rendered: Path, tmp_path: Path):
     """The graph's three status maps, asked in the browser instead of grepped.
 
     This is the tripwire that was in the wrong medium. It used to assert that the
@@ -744,8 +765,12 @@ def test_every_status_a_node_can_hold_reaches_cytoscape_as_a_colour(
     from browser import chrome, measured_in
 
     got = measured_in(
-        chrome(), read(rendered, "graph.html"), tmp_path / "node-colours.html", 1200,
-        "return {colour: COLOUR(), ink: INK(), line: LINE()};", height=800,
+        chrome(),
+        read(rendered, "graph.html"),
+        tmp_path / "node-colours.html",
+        1200,
+        "return {colour: COLOUR(), ink: INK(), line: LINE()};",
+        height=800,
     )
     missing = [
         f"{which}[{status}] = {maps.get(status)!r}"
@@ -782,7 +807,7 @@ def test_the_timeline_hatches_what_it_is_guessing(rendered: Path, tmp_path: Path
     # The patterns were declared and then referenced by nothing, so the class was
     # the whole of the encoding and the bar looked exactly like a commitment. The
     # legend draws itself from the same patterns, so only the plot is counted.
-    plot = body[body.index("<svg width="):]
+    plot = body[body.index("<svg width=") :]
     # The rung these two bars stand on is whatever a record with nothing typed in
     # it opens at, which is the model's default and not a word to write down here:
     # this test named `shaping` and started failing on the commit that put a rung
@@ -811,11 +836,9 @@ def test_a_hatch_is_drawn_in_the_ink_of_the_bar_it_covers(rendered: Path):
     assert "--hatch" not in body, "one hatch colour cannot serve the whole ladder"
     for status in STATUSES:
         for mark in ("estimated", "unowned"):
-            pattern = re.search(
-                rf'<pattern id="hatch-{mark}-st-{status}".*?</pattern>', body, re.S
-            )
+            pattern = re.search(rf'<pattern id="hatch-{mark}-st-{status}".*?</pattern>', body, re.S)
             assert pattern, (mark, status)
-            assert f"stroke=\"var(--st-{status}-ink)\"" in pattern.group(0), (mark, status)
+            assert f'stroke="var(--st-{status}-ink)"' in pattern.group(0), (mark, status)
             assert (
                 f"rect.mark-{mark}.st-{status} {{ fill: url(#hatch-{mark}-st-{status}); }}"
             ) in body
@@ -829,18 +852,33 @@ def test_the_timeline_orders_its_rows_by_containment(tmp_path: Path):
     from openproj.model import Config, Pitch, Project, Task
 
     project = Project(id="proj-000001", kind="project", title="A project")
-    pitch = Pitch(id="pitch-000001", kind="pitch", title="A pitch", owner="ann",
-                  person_weeks=3.0, parent="proj-000001")
-    task = Task(id="task-000001", kind="task", title="A task", owner="bo",
-                person_weeks=1.0, parent="pitch-000001")
-    other = Task(id="task-000002", kind="task", title="An unparented task", owner="cy",
-                 person_weeks=1.0)
+    pitch = Pitch(
+        id="pitch-000001",
+        kind="pitch",
+        title="A pitch",
+        owner="ann",
+        person_weeks=3.0,
+        parent="proj-000001",
+    )
+    task = Task(
+        id="task-000001",
+        kind="task",
+        title="A task",
+        owner="bo",
+        person_weeks=1.0,
+        parent="pitch-000001",
+    )
+    other = Task(
+        id="task-000002", kind="task", title="An unparented task", owner="cy", person_weeks=1.0
+    )
     index = build_index([task, other, pitch, project], Config(), date(2026, 8, 17))
     out = tmp_path / "tree"
     render_static(index, out)
 
-    rows = re.findall(r'<div class="row" role="listitem" data-id="([^"]+)" data-depth="(\d+)"',
-                      read(out, "timeline.html"))
+    rows = re.findall(
+        r'<div class="row" role="listitem" data-id="([^"]+)" data-depth="(\d+)"',
+        read(out, "timeline.html"),
+    )
 
     assert rows[:3] == [("proj-000001", "0"), ("pitch-000001", "1"), ("task-000001", "2")]
     assert ("task-000002", "0") in rows
@@ -857,10 +895,22 @@ def test_a_child_stays_indented_when_its_parent_is_not_drawn(tmp_path: Path):
     from openproj.model import Config, Pitch, Task
 
     # A shelved pitch has no span at all, so it is never a row.
-    parent = Pitch(id="pitch-000001", kind="pitch", title="Parked", status="shelved",
-                   owner="ann", person_weeks=2.0)
-    child = Task(id="task-000001", kind="task", title="Still live", owner="bo",
-                 person_weeks=1.0, parent="pitch-000001")
+    parent = Pitch(
+        id="pitch-000001",
+        kind="pitch",
+        title="Parked",
+        status="shelved",
+        owner="ann",
+        person_weeks=2.0,
+    )
+    child = Task(
+        id="task-000001",
+        kind="task",
+        title="Still live",
+        owner="bo",
+        person_weeks=1.0,
+        parent="pitch-000001",
+    )
     index = build_index([parent, child], Config(), date(2026, 8, 17))
     out = tmp_path / "orphaned"
     render_static(index, out)
@@ -877,14 +927,12 @@ def test_a_same_day_span_is_still_wide_enough_to_hit(tmp_path: Path):
 
     from openproj.model import Config, Task
 
-    brief = Task(id="task-000001", kind="task", title="A day of it", owner="ann",
-                 person_weeks=0.2)
+    brief = Task(id="task-000001", kind="task", title="A day of it", owner="ann", person_weeks=0.2)
     index = build_index([brief], Config(), date(2026, 8, 17))
     out = tmp_path / "brief"
     render_static(index, out)
 
-    widths = re.findall(r'<rect data-id="[^"]+"[^>]*width="([\d.]+)"',
-                        read(out, "timeline.html"))
+    widths = re.findall(r'<rect data-id="[^"]+"[^>]*width="([\d.]+)"', read(out, "timeline.html"))
 
     assert widths and all(float(width) >= 3 for width in widths)
 
@@ -904,11 +952,9 @@ def test_a_bar_is_exactly_as_wide_as_the_span_the_scheduler_computed(tmp_path: P
     from openproj.model import Config, Task
     from openproj.render import _MIN_BAR_PX, render_timeline
 
-    zoom = 2.0    # a drawn day width, so the arithmetic below is exact
-    slog = Task(id="task-000001", kind="task", title="A long one", owner="ann",
-                person_weeks=8)
-    brief = Task(id="task-000002", kind="task", title="A day of it", owner="bob",
-                 person_weeks=0.2)
+    zoom = 2.0  # a drawn day width, so the arithmetic below is exact
+    slog = Task(id="task-000001", kind="task", title="A long one", owner="ann", person_weeks=8)
+    brief = Task(id="task-000002", kind="task", title="A day of it", owner="bob", person_weeks=0.2)
     index = build_index([slog, brief], Config(), date(2026, 8, 17))
     body = render_timeline(index, zoom=zoom)
 
@@ -916,7 +962,7 @@ def test_a_bar_is_exactly_as_wide_as_the_span_the_scheduler_computed(tmp_path: P
     assert set(drawn) == set(index.spans)
 
     for record_id, span in index.spans.items():
-        days = (span.end - span.start).days + 1        # inclusive of both ends
+        days = (span.end - span.start).days + 1  # inclusive of both ends
         assert float(drawn[record_id]) == max(_MIN_BAR_PX, zoom, days * zoom), record_id
 
     # Said again as two numbers rather than a formula: eight weeks and one day are
@@ -933,7 +979,7 @@ def test_a_bar_is_exactly_as_wide_as_the_span_the_scheduler_computed(tmp_path: P
     # naming what kind of element it is — `span.bar` for the meter, `rect.bar`
     # for a bar, never a bare `.bar` that is both.
     style = re.search(r"<style>(.*?)</style>", body, re.S).group(1)
-    style = re.sub(r"/\*.*?\*/", " ", style, flags=re.S)   # a comment is not a selector
+    style = re.sub(r"/\*.*?\*/", " ", style, flags=re.S)  # a comment is not a selector
     # Split rather than `re.findall(r"([^{}]*)\{", style)`, which is the same
     # answer and took 13.4 of this test's 13.6 seconds. `[^{}]*` runs to the
     # closing `}` of a declaration block, fails the `\{`, and backtracks a
@@ -968,8 +1014,9 @@ def test_a_cycle_gets_a_band_of_its_own_above_the_months(rendered: Path):
     band = int(re.search(r'<line class="band-rule" x1="0" y1="(\d+)"', body).group(1))
     cycle_label = float(re.search(r'<text class="cycle-label"[^>]*y="([\d.]+)"', body).group(1))
     month_label = float(re.search(r'<text class="month-label"[^>]*y="([\d.]+)"', body).group(1))
-    month_rule = float(re.search(r'<line class="month-rule" x1="[\d.]+" y1="([\d.]+)"',
-                                 body).group(1))
+    month_rule = float(
+        re.search(r'<line class="month-rule" x1="[\d.]+" y1="([\d.]+)"', body).group(1)
+    )
 
     assert cycle_label < band < month_label
     assert month_rule == band
@@ -999,8 +1046,9 @@ def test_the_timeline_names_every_colour_it_draws(rendered: Path):
     from openproj.render import STATUS_GLYPH
 
     body = read(rendered, "timeline.html")
-    legend = re.search(r'<ul class="legend" aria-label="What a bar marking means">(.*?)</ul>',
-                       body, re.S).group(1)
+    legend = re.search(
+        r'<ul class="legend" aria-label="What a bar marking means">(.*?)</ul>', body, re.S
+    ).group(1)
 
     # STATUSES and not the five words written out, which is what this said until
     # the ladder grew a sixth rung and this test went on being green about a page
@@ -1106,7 +1154,7 @@ def test_pr_references_become_links_that_resolve(demo_rendered: tuple[Path, Inde
 
 
 def test_every_view_links_to_the_detail_page(rendered: Path):
-    assert 'detail.html#' in read(rendered, "table.html")
+    assert "detail.html#" in read(rendered, "table.html")
     for name in ("graph.html", "timeline.html"):
         assert "detail.html#" in read(rendered, name), name
 
@@ -1182,9 +1230,9 @@ def test_the_people_page_lists_everyone_the_plan_names(rendered: Path, seed_inde
         login
         for record in seed_index.plan.values()
         for field in ("owner", "assignees", "reviewers")
-        for login in (
-            lambda v: v if isinstance(v, list) else [v] if v else []
-        )(getattr(record, field, None))
+        for login in (lambda v: v if isinstance(v, list) else [v] if v else [])(
+            getattr(record, field, None)
+        )
     }
 
     assert named
@@ -1339,7 +1387,8 @@ def test_a_person_over_their_availability_says_so_in_the_group_row(
     body = read(out, "people.html")
     held, plan = index.load(37), index.plans[37]
     over = [
-        who for who in plan.availability
+        who
+        for who in plan.availability
         if held.get(who, 0.0) > plan.capacity(who, index.nominal_availability)
     ]
 
@@ -1367,8 +1416,9 @@ def test_weeks_bet_into_another_cycle_are_counted_beside_this_one(
     assert elsewhere, "the demo bets work into more than one cycle"
     for login, weeks in elsewhere.items():
         group = re.search(rf'<tbody class="person" data-login="{login}">.*?</tr>', body, re.S)
-        assert re.search(rf'\+<span class="num">{weeks:.1f}</span>\s+weeks in other cycles',
-                         group.group(0)), login
+        assert re.search(
+            rf'\+<span class="num">{weeks:.1f}</span>\s+weeks in other cycles', group.group(0)
+        ), login
 
 
 def test_a_cycle_with_no_record_is_weeks_bet_against_no_roster(unrecorded_cycle: Index):
@@ -1621,12 +1671,13 @@ def test_an_empty_timeline_says_which_kind_of_empty_it_is(tmp_path: Path):
 
 
 def test_a_month_names_its_year_only_when_the_year_changes(seed_index: Index):
-    """"Aug 2026" on every tick spends a third of a narrow month restating what
+    """ "Aug 2026" on every tick spends a third of a narrow month restating what
     the tick before it already said."""
     from openproj.render import render_timeline
 
-    labels = re.findall(r'<text class="month-label"[^>]*>([^<]+)</text>',
-                        render_timeline(seed_index))
+    labels = re.findall(
+        r'<text class="month-label"[^>]*>([^<]+)</text>', render_timeline(seed_index)
+    )
 
     assert labels
     assert re.fullmatch(r"[A-Z][a-z]{2} \d{4}", labels[0]), labels[0]
@@ -1699,9 +1750,7 @@ def test_edges_turn_at_right_angles_and_are_drawn_beneath_the_boxes(rendered: Pa
     ours = re.search(r"const cy = cytoscape\(\{.*?\n\}\);", body, re.S)
     assert ours, "the cytoscape call is not where this test thinks it is"
     assert "taxi-direction" in ours.group(0)
-    assert "segment-weights" not in ours.group(0), (
-        "a bend of our own is being placed again"
-    )
+    assert "segment-weights" not in ours.group(0), "a bend of our own is being placed again"
 
 
 def test_the_index_is_grouped_in_the_order_work_moves(tmp_path: Path):
@@ -1733,30 +1782,36 @@ def test_the_index_is_grouped_in_the_order_work_moves(tmp_path: Path):
     files = {
         "projects/proj-f00001.md": (
             "---\nid: proj-f00001\nkind: project\ntitle: Ladder project\n"
-            "status: shaping\n---\n\nx\n"),
+            "status: shaping\n---\n\nx\n"
+        ),
         "pitches/pitch-f00001.md": (
             "---\nid: pitch-f00001\nkind: pitch\ntitle: Ready pitch\n"
             "parent: proj-f00001\nstatus: ready\nowner: ann\nreviewers: [bo]\n"
-            "person_weeks: 1\n---\n\nx\n"),
+            "person_weeks: 1\n---\n\nx\n"
+        ),
         "pitches/pitch-f00002.md": (
             "---\nid: pitch-f00002\nkind: pitch\ntitle: Shelved pitch\n"
-            "parent: proj-f00001\nstatus: shelved\nperson_weeks: 1\n---\n\nx\n"),
+            "parent: proj-f00001\nstatus: shelved\nperson_weeks: 1\n---\n\nx\n"
+        ),
         "tasks/task-f00001.md": (
             "---\nid: task-f00001\nkind: task\ntitle: Done task\n"
             "parent: pitch-f00001\nstatus: done\nowner: ann\nreview_waived: true\n"
-            "person_weeks: 1\n---\n\nx\n"),
+            "person_weeks: 1\n---\n\nx\n"
+        ),
         "notes/note-f00001.md": (
-            "---\nid: note-f00001\nkind: note\ntitle: Live thought\n"
-            "status: thinking\n---\n\nx\n"),
+            "---\nid: note-f00001\nkind: note\ntitle: Live thought\nstatus: thinking\n---\n\nx\n"
+        ),
         "notes/note-f00002.md": (
-            "---\nid: note-f00002\nkind: note\ntitle: Dropped thought\n"
-            "status: dropped\n---\n\nx\n"),
+            "---\nid: note-f00002\nkind: note\ntitle: Dropped thought\nstatus: dropped\n---\n\nx\n"
+        ),
         "notes/note-f00003.md": (
             "---\nid: note-f00003\nkind: note\ntitle: Grown thought\n"
-            "status: thinking\nbecame: [pitch-f00001]\n---\n\nx\n"),
+            "status: thinking\nbecame: [pitch-f00001]\n---\n\nx\n"
+        ),
         "issues/issue-f00001.md": (
             "---\nid: issue-f00001\nkind: issue\ntitle: Picked-up breakage\n"
-            "status: ready\npitched_into: [pitch-f00001]\n---\n\nx\n"),
+            "status: ready\npitched_into: [pitch-f00001]\n---\n\nx\n"
+        ),
     }
     records = [parse_text(text, path) for path, text in files.items()]
     index = build_index(records, Config(known_people=["ann", "bo"]), date(2026, 8, 17))
@@ -1773,9 +1828,7 @@ def test_the_index_is_grouped_in_the_order_work_moves(tmp_path: Path):
     # The whole ladder, derived from the ladder: a rung added later fails here
     # asking for a record that stands on it, instead of silently never being
     # asked about — how the promoted gap survived the first time.
-    assert set(states) == set(_TOC_LADDER), (
-        "this corpus no longer covers every rung of _TOC_LADDER"
-    )
+    assert set(states) == set(_TOC_LADDER), "this corpus no longer covers every rung of _TOC_LADDER"
     assert {"promoted", "in_progress"} & stored == set(), (
         "a stored word reached a derived-only rung, so the two guards below "
         "would pass without state() being asked"
@@ -2196,14 +2249,18 @@ def test_the_people_page_draws_the_control_bar_the_plan_draws(rendered: Path):
     of a record, it is which field their name is in.
     """
     people, index = read(rendered, "people.html"), read(rendered, "table.html")
-    shape = (r'<div id="controls">\s*<div class="searching">\s*'
-             r'<input id="q" type="search" aria-label="([^"]+)" placeholder="\1">')
+    shape = (
+        r'<div id="controls">\s*<div class="searching">\s*'
+        r'<input id="q" type="search" aria-label="([^"]+)" placeholder="\1">'
+    )
 
     for name, page in (("people", people), ("index", index)):
         assert re.search(shape, page), name
 
     assert re.findall(r'<div class="facet" data-field="([^"]+)"', people) == [
-        "role", "kind", "status"
+        "role",
+        "kind",
+        "status",
     ]
     assert 'aria-label="Search person, record, id"' in people
     assert 'aria-label="Search titles, tags, PRs, people"' in index
@@ -2258,9 +2315,7 @@ def test_the_renderer_asks_the_model_rather_than_reaching_into_it():
     source = render_source()
     # Comments dropped: this file explains what it stopped doing, and the point is
     # that nothing executable reaches for the name any more.
-    code = "\n".join(
-        line for line in source.splitlines() if not line.lstrip().startswith("#")
-    )
+    code = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
 
     assert "_status_problems" not in code
     for imported in re.findall(r"^from \.model import (.+)$", code, re.M):
@@ -2380,11 +2435,9 @@ def test_a_status_shape_is_bounded_against_the_page_it_sits_on(rendered: Path):
         for status, (fill, _, line) in wanted.items():
             assert themes[name][f"--st-{status}-line"] == line, (name, status)
             if name == "light":
-                assert contrast(line, page[name]) >= 3.0, (
-                    name, status, contrast(line, page[name]))
+                assert contrast(line, page[name]) >= 3.0, (name, status, contrast(line, page[name]))
             else:
-                assert contrast(fill, page[name]) >= 3.0, (
-                    name, status, contrast(fill, page[name]))
+                assert contrast(fill, page[name]) >= 3.0, (name, status, contrast(fill, page[name]))
             # The border against the shape it borders, in both themes: an edge
             # nobody can see is an edge that is not there.
             assert contrast(line, fill) >= 1.75, (name, status, contrast(line, fill))
@@ -2466,7 +2519,10 @@ def test_a_boundary_and_an_absent_value_are_both_visible(rendered: Path):
         page = themes[name]["--bg"]
         for ground in (page, themes[name]["--surface"], themes[name]["--surface-2"]):
             assert contrast(themes[name]["--line-strong"], ground) >= 3.0, (
-                name, ground, contrast(themes[name]["--line-strong"], ground))
+                name,
+                ground,
+                contrast(themes[name]["--line-strong"], ground),
+            )
         assert contrast(themes[name]["--empty"], page) >= 4.5, name
     # One value, referenced rather than copied: the kind chip's hairline is the
     # same boundary an input has, and a copy is how one of them gets fixed.
@@ -2500,7 +2556,7 @@ def test_a_bar_says_its_status_without_using_colour(rendered: Path):
     glyph goes at its left edge, in the fill's own ink, and moves with the bar
     when a filter closes the rows above it."""
     body = read(rendered, "timeline.html")
-    plot = body[body.index("<svg width="):]
+    plot = body[body.index("<svg width=") :]
     # One anchor per row, so a glyph is checked against the bar it is inside
     # rather than against whichever bar happens to share its x.
     rows = re.findall(
@@ -2517,8 +2573,9 @@ def test_a_bar_says_its_status_without_using_colour(rendered: Path):
         )
         assert bar, row[:120]
         status, x, y, width = bar.group(1), *(float(bar.group(i)) for i in (2, 3, 4))
-        glyph = re.search(r'<text class="bar-glyph (st-\w+)"[^>]*x="([\d.]+)" y="([\d.]+)">(.)<',
-                          row)
+        glyph = re.search(
+            r'<text class="bar-glyph (st-\w+)"[^>]*x="([\d.]+)" y="([\d.]+)">(.)<', row
+        )
         if width < 11:
             assert glyph is None, "a mark wider than its bar spills onto the page"
             continue
@@ -2591,7 +2648,7 @@ def test_a_bar_that_overruns_its_cycle_is_one_of_the_bars_on_the_corpus(rendered
     nothing in the corpus overruns, that test is asking about a bar nobody
     draws, and it would keep passing while the outline was painted out."""
     body = read(rendered, "timeline.html")
-    plot = body[body.index("<svg width="):]
+    plot = body[body.index("<svg width=") :]
 
     # By label, not by id: the fixture rewrites every id, and the failure message
     # is only useful if it names the bar somebody can go and look at.
@@ -2628,7 +2685,9 @@ def test_a_dependency_arrow_can_be_seen_on_the_canvas_it_is_drawn_on(rendered: P
     for name in ("light", "dark"):
         # #cy has no background of its own, so the canvas is the page.
         assert contrast(themes[name][edge], themes[name]["--bg"]) >= 3.0, (
-            name, contrast(themes[name][edge], themes[name]["--bg"]))
+            name,
+            contrast(themes[name][edge], themes[name]["--bg"]),
+        )
 
 
 def test_every_page_can_draw_a_problem_and_a_focus_ring(rendered: Path):
@@ -2758,9 +2817,7 @@ def test_an_empty_field_is_a_dash_and_not_a_word(demo_rendered: tuple[Path, Inde
         assert word not in body, word
 
 
-def test_the_shaping_doc_does_not_repeat_the_heading_it_is_under(
-    rendered: Path, seed_index: Index
-):
+def test_the_shaping_doc_does_not_repeat_the_heading_it_is_under(rendered: Path, seed_index: Index):
     """In git that leading `# Title` is the only thing naming the file, so nearly
     every doc in the corpus opens with it. On the page it lands directly under an
     `<h1>` of the same words at the same weight, which reads as a rendering fault
@@ -2808,9 +2865,7 @@ _WRITTEN = """## Progress
 """
 
 
-def editable_page(
-    index: Index, body: str | None = None, editor: str = ""
-) -> tuple[str, str]:
+def editable_page(index: Index, body: str | None = None, editor: str = "") -> tuple[str, str]:
     """One record's detail page as a writer receives it: the id, and the page.
 
     `base_commit` and `may_write`, which is the combination the static export
@@ -2838,7 +2893,8 @@ def test_a_struck_out_line_and_a_task_list_render_as_what_they_are(seed_index: I
     _, page = editable_page(seed_index, _WRITTEN)
     drawn = elements(page)
     boxes = [
-        e for e in drawn
+        e
+        for e in drawn
         if e.tag == "input" and "task-list-item-checkbox" in e.attrs.get("class", "")
     ]
 
@@ -2848,8 +2904,7 @@ def test_a_struck_out_line_and_a_task_list_render_as_what_they_are(seed_index: I
     # the box below holds the document verbatim, which is the whole reason this
     # is asked of the parsed elements and not of the served bytes.
     items = [
-        e.text for e in drawn
-        if e.tag == "li" and "task-list-item" in e.attrs.get("class", "")
+        e.text for e in drawn if e.tag == "li" and "task-list-item" in e.attrs.get("class", "")
     ]
     assert items == ["shape it", "bet on it"]
     assert "~~" not in " ".join(e.text for e in drawn if e.tag == "p")
@@ -2889,8 +2944,7 @@ def test_a_link_to_a_record_points_at_that_record_s_page(seed_index: Index):
     rule was written over finished HTML once and turned exactly this into a link.
     """
     served = {
-        (e.text, e.attrs.get("href")) for e in elements(preview_html(_LINKED))
-        if e.tag == "a"
+        (e.text, e.attrs.get("href")) for e in elements(preview_html(_LINKED)) if e.tag == "a"
     }
     assert ("Port the transport", "/detail/pitch-000001") in served, served
     # Untouched, every one of them.
@@ -2898,8 +2952,11 @@ def test_a_link_to_a_record_points_at_that_record_s_page(seed_index: Index):
     assert ("a sibling", "./notes.md") in served
     assert ("an anchor", "#top") in served
     assert ("a fragment", "task-abc123#progress") in served
-    assert not [href for _, href in served if href and href.endswith("#progress")
-                and href.startswith("/detail/")], served
+    assert not [
+        href
+        for _, href in served
+        if href and href.endswith("#progress") and href.startswith("/detail/")
+    ], served
     # And the code span is text, not a link.
     assert "not a link" not in {text for text, _ in served}, served
 
@@ -3022,9 +3079,7 @@ def test_a_reader_who_may_not_write_is_sent_no_editor_library(seed_index: Index)
     # than at a reader's, because the assertion that used to be about a control
     # that would lie is now about a control that must not come back.
     for how, page in reader.items():
-        assert 'id="editorswitch"' not in page, (
-            f"a switch between two editors is rendered, {how}"
-        )
+        assert 'id="editorswitch"' not in page, f"a switch between two editors is rendered, {how}"
     # Not merely "no `ace.define`": the same bytes, all three ways. A gate that
     # dropped the library and still changed the page would mean the address was
     # being read for a reader at all, which is the thing being denied.
@@ -3038,9 +3093,7 @@ def test_a_reader_who_may_not_write_is_sent_no_editor_library(seed_index: Index)
     # The controls, both ways round, or the assertions above pass because the
     # parameter never works. A writer who says nothing gets it; a writer who opts
     # out does not.
-    writing = render_detail(
-        seed_index, ROUTES, only=one, base_commit="deadbee", may_write=True
-    )
+    writing = render_detail(seed_index, ROUTES, only=one, base_commit="deadbee", may_write=True)
     assert "ace.define" in writing, (
         "Ace is the default for a writer since 2026-08-20 and this page has none of it"
     )
@@ -3062,9 +3115,9 @@ def test_the_leading_heading_is_matched_on_words_and_not_on_bytes():
 
     assert _drop_repeated_title("# Port  the burner\n\nBody.\n", "Port the burner") == "Body.\n"
     assert _drop_repeated_title("## port the burner ##\n\nBody.\n", "Port the burner") == "Body.\n"
-    assert _drop_repeated_title(
-        "# Port the burner near-IR\n\nB.\n", "Port the burner"
-    ).startswith("#")
+    assert _drop_repeated_title("# Port the burner near-IR\n\nB.\n", "Port the burner").startswith(
+        "#"
+    )
     assert _drop_repeated_title("Plain prose.\n", "Plain prose") == "Plain prose.\n"
 
 
@@ -3119,8 +3172,9 @@ def test_the_header_spans_the_page_and_the_facts_sit_beside_the_document(rendere
     purpose.)"""
     body = read(rendered, "detail.html")
 
-    assert re.search(r"\.panes \{[^}]*width: var\(--measure[^}]*container-type: inline-size",
-                     body, re.S)
+    assert re.search(
+        r"\.panes \{[^}]*width: var\(--measure[^}]*container-type: inline-size", body, re.S
+    )
     assert not re.search(r"article\.record \{[^}]*(width|container-type):", body, re.S)
     assert re.search(r"article\.record \{[^}]*margin: 0 0 3rem", body, re.S)
     assert "@container (min-width: 56rem)" in body
@@ -3238,9 +3292,11 @@ def test_the_cycles_index_lists_every_cycle_the_plan_names(demo_rendered: tuple[
     # copy of this page does link — `test_a_rendered_plan_offers_no_dead_control`
     # is what pins the difference.
     cards = [int(n) for n in re.findall(r"<h2>Cycle (\d+)</h2>", body)]
-    named = set(index.plans) | set(index.cycles) | {
-        e.cycle for e in index.plan.values() if e.cycle is not None
-    }
+    named = (
+        set(index.plans)
+        | set(index.cycles)
+        | {e.cycle for e in index.plan.values() if e.cycle is not None}
+    )
 
     assert set(cards) == named
     assert cards == sorted(cards, reverse=True), "newest first"
@@ -3256,8 +3312,9 @@ def test_a_cycle_card_carries_the_meter_the_cycle_page_draws(
 
     out, index = demo_rendered
     totals = _cycle_totals(index, 37)
-    card = re.search(r'<li class="card[^"]*">\s*<h2>Cycle 37</h2>.*?</li>',
-                     read(out, "cycles.html"), re.S).group(0)
+    card = re.search(
+        r'<li class="card[^"]*">\s*<h2>Cycle 37</h2>.*?</li>', read(out, "cycles.html"), re.S
+    ).group(0)
 
     assert totals["capacity"] > 0 and totals["bet"] > 0
     assert f'<b class="num">{totals["bet"]:.1f}</b>' in card
@@ -3265,8 +3322,9 @@ def test_a_cycle_card_carries_the_meter_the_cycle_page_draws(
     assert f'<span class="bar"><span style="width: {totals["percent"]}%">' in card
     # The bar is the one the cycle page draws, so the two pages cannot disagree
     # about what full looks like.
-    assert ".bar > span { display: block; height: 100%; background: var(--accent); }" in \
-        read(out, "cycles.html")
+    assert ".bar > span { display: block; height: 100%; background: var(--accent); }" in read(
+        out, "cycles.html"
+    )
 
 
 def test_a_cycle_bet_into_by_somebody_off_the_roster_is_not_counted_short(
@@ -3291,15 +3349,11 @@ def test_load_is_charged_where_the_assignees_are(demo_rendered: tuple[Path, Inde
     appetite is a rollup, and charging both counts the same work twice."""
     _, index = demo_rendered
     held = index.load(37)
-    rolled_up = [
-        e for e in index.plan.values() if e.cycle == 37 and index.children.get(e.id)
-    ]
+    rolled_up = [e for e in index.plan.values() if e.cycle == 37 and index.children.get(e.id)]
 
     assert rolled_up, "the corpus has a parent bet into cycle 37"
     for parent in rolled_up:
-        only_parent = index.model_copy(
-            update={"plan": {parent.id: parent}, "children": {}}
-        )
+        only_parent = index.model_copy(update={"plan": {parent.id: parent}, "children": {}})
         assert only_parent.load(37), "the same parent IS charged when it has no children"
     assert held, "and the leaves are charged in the real index"
 
@@ -3313,7 +3367,8 @@ def test_a_size_is_split_evenly_between_the_people_on_it(demo_rendered: tuple[Pa
     # `counts_in` and not `e.cycle == 37`: a task takes its cycle from the pitch
     # it is part of, so the demo's tasks no longer carry one of their own.
     shared = next(
-        e for e in index.plan.values()
+        e
+        for e in index.plan.values()
         if index.counts_in(e, 37) and len(e.assignees) > 1 and not index.children.get(e.id)
     )
     size, _ = size_weeks(shared, Config(default_task_effort=index.default_task_effort))
@@ -3515,8 +3570,10 @@ def test_a_nav_item_that_is_not_a_nav_item_is_refused():
 # that stamp already in the tab. Two runs, because that is two page loads — the
 # thing under test is what one page leaves for the next one, which no single
 # rendered file can show.
-BACK = ("[document.querySelector('a.origin').getAttribute('href'),"
-        " document.querySelector('a.origin').textContent]")
+BACK = (
+    "[document.querySelector('a.origin').getAttribute('href'),"
+    " document.querySelector('a.origin').textContent]"
+)
 ORIGIN = "openproj:origin"
 
 
@@ -3567,8 +3624,9 @@ def test_a_record_page_goes_back_to_the_view_it_was_opened_from(
     """
     from test_injection import run_js
 
-    got = run_js(server_pages["record"], BACK, page=True,
-                 session=stamp("/table?owner=ann", "Table"))
+    got = run_js(
+        server_pages["record"], BACK, page=True, session=stamp("/table?owner=ann", "Table")
+    )
     assert got["value"] == ["/table?owner=ann", "← Table"]
 
 
@@ -3619,14 +3677,20 @@ def test_an_address_smuggled_into_the_stamp_is_not_followed(server_pages: dict[s
     """
     from test_injection import run_js
 
-    for hostile in ("javascript:alert(1)", "//host/x", "/\\host/x",
-                    "https://host/x", "data:text/html,x"):
+    for hostile in (
+        "javascript:alert(1)",
+        "//host/x",
+        "/\\host/x",
+        "https://host/x",
+        "data:text/html,x",
+    ):
         got = run_js(server_pages["record"], BACK, page=True, session=stamp(hostile, "Table"))
         assert got["value"] == ["/", "← all records"], hostile
 
 
 def test_a_browser_that_refuses_its_stores_still_draws_the_page(
-    views: dict[str, str], server_pages: dict[str, str],
+    views: dict[str, str],
+    server_pages: dict[str, str],
 ):
     """`sessionStorage` throws on the property itself, exactly as `localStorage`
     does and for the same reasons — a private window, blocked cookies, a policy.
@@ -3636,8 +3700,9 @@ def test_a_browser_that_refuses_its_stores_still_draws_the_page(
     """
     from test_injection import run_js
 
-    denied = run_js(server_pages["record"], BACK, page=True,
-                    storage="denied", session=stamp("/table", "Table"))
+    denied = run_js(
+        server_pages["record"], BACK, page=True, storage="denied", session=stamp("/table", "Table")
+    )
     assert denied["value"] == ["/", "← all records"]
     assert not [e for e in denied["errors"] if "SecurityError" in e], denied["errors"]
 
@@ -3657,8 +3722,10 @@ def test_every_record_in_the_export_carries_the_link_back(rendered: Path):
     left = run_js(read(rendered, "table.html"), page=True, here=here)["tabbed"]
     assert json.loads(left[ORIGIN]) == {"href": here, "label": "Table"}
 
-    every = ("[...document.querySelectorAll('a.origin')]"
-             ".map(a => a.getAttribute('href') + ' ' + a.textContent)")
+    every = (
+        "[...document.querySelectorAll('a.origin')]"
+        ".map(a => a.getAttribute('href') + ' ' + a.textContent)"
+    )
     got = run_js(read(rendered, "detail.html"), every, page=True, session=left)["value"]
     assert len(got) == read(rendered, "detail.html").count("<article")
     assert set(got) == {f"{here} ← Table"}
@@ -3733,8 +3800,7 @@ def test_the_timeline_lists_beside_the_chart_what_the_chart_draws(rendered: Path
     """
     body = read(rendered, "timeline.html")
     labels = re.search(r'<div class="labels" role="list".*?\n</div>', body, re.S).group(0)
-    rows = re.findall(r'<div class="row" role="listitem" data-id="([^"]+)".*?</div>',
-                      labels, re.S)
+    rows = re.findall(r'<div class="row" role="listitem" data-id="([^"]+)".*?</div>', labels, re.S)
     bars = re.findall(r'<rect data-id="([^"]+)" class="bar', body)
 
     assert bars, "the corpus draws no bars"
@@ -3808,16 +3874,16 @@ def test_only_an_asset_this_tool_stored_is_ever_drawn_as_an_image():
     assert f'<img src="{stored}"' in _body_html(_record(f"![ok]({stored})"))
 
     for source in (
-        "//example.com/a.png",              # scheme-relative: inherits the page's
-        "HTTP://example.com/a.png",         # the same URL, a different string
+        "//example.com/a.png",  # scheme-relative: inherits the page's
+        "HTTP://example.com/a.png",  # the same URL, a different string
         "HtTpS://example.com/a.png",
         "http://example.com/a.png",
-        "\thttp://example.com/a.png",       # leading whitespace a parser forgives
+        "\thttp://example.com/a.png",  # leading whitespace a parser forgives
         "data:image/png;base64,iVBORw0KGgo=",
         "javascript:alert(1)",
-        "../../etc/passwd.png",             # same origin, still not ours
-        "assets/notahash.png",              # our directory, not our naming
-        "assets/0123456789abcdef.svg",      # our naming, a format we do not store
+        "../../etc/passwd.png",  # same origin, still not ours
+        "assets/notahash.png",  # our directory, not our naming
+        "assets/0123456789abcdef.svg",  # our naming, a format we do not store
     ):
         drawn = _body_html(_record(f"![x]({source})"))
         # The invariant is that nothing fetches: no `<img>`, ever. What happens
@@ -3845,10 +3911,10 @@ def test_a_drawing_is_drawn_and_a_lookalike_is_not():
     assert f'<img src="{stored}"' in _body_html(_record(f"![ok]({stored})"))
 
     for source in (
-        "drawings/notadrawing.png",      # our directory, not our naming
-        "drawings/draw-a1b2c3.svg",      # our naming, a format we do not store
-        "drawings/draw-a1b2c.png",       # five hex, not six
-        "drawings/draw-a1b2c3d.png",     # seven
+        "drawings/notadrawing.png",  # our directory, not our naming
+        "drawings/draw-a1b2c3.svg",  # our naming, a format we do not store
+        "drawings/draw-a1b2c.png",  # five hex, not six
+        "drawings/draw-a1b2c3d.png",  # seven
         "drawings/sub/draw-a1b2c3.png",  # our prefix, somebody else's tree
     ):
         drawn = _body_html(_record(f"![x]({source})"))
@@ -3911,7 +3977,7 @@ def test_the_timeline_survives_a_date_at_the_end_of_the_calendar(seed_root: Path
 
     html = render_timeline(_index_reaching_the_end_of_the_calendar(seed_root))
 
-    assert '<svg width=' in html
+    assert "<svg width=" in html
 
 
 def test_a_bar_at_the_end_of_time_does_not_make_a_page_nobody_can_open(seed_root: Path):
@@ -3962,7 +4028,7 @@ def test_a_window_typed_into_the_url_cannot_run_off_the_calendar(seed_index: Ind
         (date(9999, 12, 1), None),
     ):
         html = render_timeline(seed_index, window=window)
-        assert '<svg width=' in html, window
+        assert "<svg width=" in html, window
         assert len(html) < 1_000_000, (window, len(html))
 
 
@@ -4099,13 +4165,14 @@ def test_the_box_each_view_fills_stops_where_the_window_does(
         # also what makes the two lines below mean anything, since a canvas that
         # drew nothing is centred and inside its box.
         assert got["drawnCount"] == len(seed_index.plan), (
-            f"{where}: {got['drawnCount']} nodes drawn for "
-            f"{len(seed_index.plan)} planned records"
+            f"{where}: {got['drawnCount']} nodes drawn for {len(seed_index.plan)} planned records"
         )
         assert not got["offCanvas"], f"{where}: {got['offCanvas']} are outside the canvas"
         fitted = got["fitted"]
-        for axis, (near, far) in (("vertically", ("above", "below")),
-                                  ("horizontally", ("left", "right"))):
+        for axis, (near, far) in (
+            ("vertically", ("above", "below")),
+            ("horizontally", ("left", "right")),
+        ):
             assert abs(fitted[near] - fitted[far]) <= 2, (
                 f"{where}: the plan sits {fitted[near]}px from the {near} edge and "
                 f"{fitted[far]}px from the {far} one, so it is not centred {axis} "
@@ -4191,27 +4258,29 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
     # Nothing between the heading and the box is a bare paragraph or a lone count.
     # Named, because the next thing anybody adds here is the row this is guarding
     # against.
-    assert got["rows"] == {
-        # `div.commitbar` is a row of CONTROLS, which is the thing a sentence was
-        # being asked to stop displacing rather than an instance of it. It moved
-        # above the canvas on 2026-08-20 so that every page keeps the control that
-        # commits it in one place, and it cost the drawing nothing — `--room` went
-        # 595px to 607px at 1400x900, because up here its top margin collapses
-        # with the filter row's and below the canvas it did not.
-        "graph": ["h1.sr-only", "div#controls", "div#commitbar.commitbar"],
-        # The table's `p.editbar` is gone: it held the count and the save receipt
-        # for one day, which is a row of furniture with one sentence at its right
-        # end and nothing at its left.
-        "table": ["h1.sr-only", "div#controls"],
-        # And the timeline's two keys are one row rather than two — status on the
-        # left, marks on the right. Both of the timeline's own rows are inside a
-        # `<details>` now: the count of rows is unchanged and so is what is in
-        # them, because these are `open` at every width above 40rem and this is
-        # measured at 1400. What a phone does with them is
-        # `test_what_a_phone_folds_away_is_open_on_anything_wider`.
-        "timeline": ["h1.sr-only", "div#controls",
-                     "details.windowfold", "details.keyfold"],
-    }[view], got["rows"]
+    assert (
+        got["rows"]
+        == {
+            # `div.commitbar` is a row of CONTROLS, which is the thing a sentence was
+            # being asked to stop displacing rather than an instance of it. It moved
+            # above the canvas on 2026-08-20 so that every page keeps the control that
+            # commits it in one place, and it cost the drawing nothing — `--room` went
+            # 595px to 607px at 1400x900, because up here its top margin collapses
+            # with the filter row's and below the canvas it did not.
+            "graph": ["h1.sr-only", "div#controls", "div#commitbar.commitbar"],
+            # The table's `p.editbar` is gone: it held the count and the save receipt
+            # for one day, which is a row of furniture with one sentence at its right
+            # end and nothing at its left.
+            "table": ["h1.sr-only", "div#controls"],
+            # And the timeline's two keys are one row rather than two — status on the
+            # left, marks on the right. Both of the timeline's own rows are inside a
+            # `<details>` now: the count of rows is unchanged and so is what is in
+            # them, because these are `open` at every width above 40rem and this is
+            # measured at 1400. What a phone does with them is
+            # `test_what_a_phone_folds_away_is_open_on_anything_wider`.
+            "timeline": ["h1.sr-only", "div#controls", "details.windowfold", "details.keyfold"],
+        }[view]
+    ), got["rows"]
 
     # The same three claims on every view, which is what "share the bar" means.
     assert got["aside"], "the view says nothing about itself"
@@ -4288,8 +4357,10 @@ return {
 # flow, which is the state every one of these pages shipped in until this round.
 # (0,1,1) against `.sr-only`'s (0,1,0), so it wins on weight rather than on being
 # written last.
-_HEADING_BACK = ("<style>h1.sr-only { position: static; width: auto; height: auto; "
-                 "margin: .2rem 0 .6rem; clip-path: none; }</style>")
+_HEADING_BACK = (
+    "<style>h1.sr-only { position: static; width: auto; height: auto; "
+    "margin: .2rem 0 .6rem; clip-path: none; }</style>"
+)
 
 
 @pytest.mark.parametrize("view", ("graph", "table", "timeline"))
@@ -4352,8 +4423,10 @@ def test_the_current_nav_item_is_drawn_and_not_merely_resolved(
     # in the list because the shell's rule is, and a nav link on a page a reader
     # has opened before is the case the pair exists for.
     def off(declarations: str) -> str:
-        return ('<style>nav a[aria-current="page"], nav a[aria-current="page"]:visited '
-                f"{{ {declarations} }}</style>")
+        return (
+            '<style>nav a[aria-current="page"], nav a[aria-current="page"]:visited '
+            f"{{ {declarations} }}</style>"
+        )
 
     def shot(name: str, extra: str) -> bytes:
         html = tmp_path / f"nav-{name}.html"
@@ -4578,7 +4651,11 @@ def test_a_reader_who_asked_for_less_motion_gets_none_of_the_motion_there_is(
     )
 
     reduced = measured_in(
-        browser, page, tmp_path / "motion-reduced.html", 1400, _MOTION,
+        browser,
+        page,
+        tmp_path / "motion-reduced.html",
+        1400,
+        _MOTION,
         flags=("--force-prefers-reduced-motion",),
     )
     assert reduced["asked"], "the flag did not reach the media query"
@@ -4619,7 +4696,7 @@ def _outside_the_floor(page: str) -> str:
         if depth == 0 and css[i] == "}":
             break
         i += 1
-    return css[:at] + css[i + 1:]
+    return css[:at] + css[i + 1 :]
 
 
 # The pages that inline `_DETAIL_STYLE`, which is where the app's one animated rule
@@ -4731,6 +4808,7 @@ def test_no_page_uses_one_id_for_more_than_one_element(rendered: Path):
         repeated = {one: n for one, n in parser.seen.items() if n > 1}
         assert not repeated, f"{page} uses one id for several elements: {repeated}"
 
+
 # --------------------------------------------------------------------------- #
 # Where a cycle stops building
 # --------------------------------------------------------------------------- #
@@ -4806,8 +4884,12 @@ def test_the_progress_column_counts_the_bodys_own_checklist():
 
     index = build_index(
         [
-            Task(id="task-000009", kind="task", title="With a list",
-                 body="## Progress\n\n- [x] a\n- [ ] b\n"),
+            Task(
+                id="task-000009",
+                kind="task",
+                title="With a list",
+                body="## Progress\n\n- [x] a\n- [ ] b\n",
+            ),
             Task(id="task-000010", kind="task", title="Without one", body="prose"),
         ],
         Config(),
@@ -4869,8 +4951,13 @@ def test_a_pitch_that_keeps_a_checklist_as_well_as_tasks_is_told_which_one_count
     from openproj.model import Pitch
     from openproj.render import _shaping_hints
 
-    live = Pitch(id="pitch-000001", kind="pitch", title="Q", status="in_progress",
-                 body="## Progress\n\n- [x] a\n- [ ] b\n")
+    live = Pitch(
+        id="pitch-000001",
+        kind="pitch",
+        title="Q",
+        status="in_progress",
+        body="## Progress\n\n- [x] a\n- [ ] b\n",
+    )
     both = _shaping_hints(live, has_tasks=True)
     alone = _shaping_hints(live, has_tasks=False)
 
@@ -4901,8 +4988,7 @@ def test_a_pitch_with_no_appetite_yet_is_not_accused_of_exceeding_it():
     index = build_index(
         [
             Pitch(id="pitch-000001", kind="pitch", title="Q"),
-            Task(id="task-000001", kind="task", title="T", parent="pitch-000001",
-                 person_weeks=3.0),
+            Task(id="task-000001", kind="task", title="T", parent="pitch-000001", person_weeks=3.0),
         ],
         Config(),
         date(2026, 8, 17),
@@ -4910,7 +4996,8 @@ def test_a_pitch_with_no_appetite_yet_is_not_accused_of_exceeding_it():
     from openproj.render import STATIC
 
     row = next(
-        r for r in _fact_rows(index, index.plan["pitch-000001"], STATIC)
+        r
+        for r in _fact_rows(index, index.plan["pitch-000001"], STATIC)
         if r["label"].startswith("Appetite")
     )
 
@@ -5022,9 +5109,7 @@ def with_icons(root: Path, chosen: dict[str, str]) -> Index:
 
     records, config, unreadable = load_repo(root)
     people = [Person(login=login, icon=icon) for login, icon in chosen.items()]
-    return build_index(
-        records, config.with_people(people), date(2026, 8, 17), unreadable
-    )
+    return build_index(records, config.with_people(people), date(2026, 8, 17), unreadable)
 
 
 def someone(index: Index) -> str:
@@ -5153,8 +5238,9 @@ def test_every_icon_is_a_row_in_the_picker_with_its_name_beside_it(seed_root: Pa
         def handle_starttag(self, tag, attrs):
             got = dict(attrs)
             if got.get("role") == "option":
-                self.rows.append({"id": got.get("id"), "icon": got.get("data-icon"),
-                                  "svg": 0, "name": ""})
+                self.rows.append(
+                    {"id": got.get("id"), "icon": got.get("data-icon"), "svg": 0, "name": ""}
+                )
                 self.depth = 1
             elif self.depth:
                 self.depth += 1
@@ -5322,7 +5408,8 @@ def phone_pages(seed_index: Index) -> dict[str, str]:
         "people": render_people(seed_index, STATIC),
         "cycle": render_cycle(seed_index, 37, ROUTES, base_commit="deadbee"),
         "record": render_detail(
-            seed_index, ROUTES, only=next(iter(seed_index.plan)), base_commit="deadbee"),
+            seed_index, ROUTES, only=next(iter(seed_index.plan)), base_commit="deadbee"
+        ),
     }
 
 
@@ -5387,7 +5474,7 @@ def on_a_phone(phone_pages: dict[str, str], tmp_path: Path) -> dict[str, dict]:
 
 
 def test_a_phone_lays_every_read_surface_out_at_the_width_it_says_it_has(
-    on_a_phone: dict[str, dict]
+    on_a_phone: dict[str, dict],
 ):
     """The harness's own premise, asserted before anything is asked of it.
 
@@ -5430,9 +5517,7 @@ def test_no_read_surface_scrolls_sideways_on_a_phone(on_a_phone: dict[str, dict]
         )
 
 
-def test_nothing_a_phone_can_focus_is_small_enough_to_zoom_the_page(
-    on_a_phone: dict[str, dict]
-):
+def test_nothing_a_phone_can_focus_is_small_enough_to_zoom_the_page(on_a_phone: dict[str, dict]):
     """Focus a control whose text is under 16px on iOS and Safari scales the whole
     page up to read it — and does not scale back when the control blurs.
 
@@ -5556,7 +5641,7 @@ def views_on_a_phone(views: dict[str, str], tmp_path: Path) -> dict[str, dict]:
 
 
 def test_a_phone_gives_the_drawing_more_of_the_window_than_the_furniture(
-    views_on_a_phone: dict[str, dict]
+    views_on_a_phone: dict[str, dict],
 ):
     """The control bar is eleven filter fields, and at a 390px viewport they wrap
     to six rows: 188px, on all three views, before a word of the plan.
@@ -5582,9 +5667,7 @@ def test_a_phone_gives_the_drawing_more_of_the_window_than_the_furniture(
         )
 
 
-def test_what_a_phone_folds_away_is_open_on_anything_wider(
-    views: dict[str, str], tmp_path: Path
-):
+def test_what_a_phone_folds_away_is_open_on_anything_wider(views: dict[str, str], tmp_path: Path):
     """The folds are `<details open>` closed by the script, and only below 40rem.
 
     Both halves matter and only one of them is about phones. A fold that stayed
@@ -5623,9 +5706,7 @@ def test_what_a_phone_folds_away_is_open_on_anything_wider(
         )
 
 
-def test_a_folded_filter_bar_says_how_many_fields_are_set(
-    views: dict[str, str], tmp_path: Path
-):
+def test_a_folded_filter_bar_says_how_many_fields_are_set(views: dict[str, str], tmp_path: Path):
     """A closed bar over a filtered view is a page lying about what it shows.
 
     This is the whole risk of the fold and the only thing that makes it safe: the
@@ -5640,7 +5721,10 @@ def test_a_folded_filter_bar_says_how_many_fields_are_set(
     from browser import chrome, measured_on_a_phone
 
     got = measured_on_a_phone(
-        browser := chrome(), views, tmp_path / "set", _THE_FOLD,
+        browser := chrome(),
+        views,
+        tmp_path / "set",
+        _THE_FOLD,
         query="?status=ready&status=in_progress&kind=task",
     )
     for view, one in got.items():
@@ -5650,9 +5734,7 @@ def test_a_folded_filter_bar_says_how_many_fields_are_set(
 
     clean = measured_on_a_phone(browser, views, tmp_path / "unset", _THE_FOLD)
     for view, one in clean.items():
-        assert one["said"] == "", (
-            f"{view} says {one['said']!r} over a bar with nothing set"
-        )
+        assert one["said"] == "", f"{view} says {one['said']!r} over a bar with nothing set"
 
 
 # The frozen pair, and what it leaves to scroll into. Asked of the table at two
@@ -5707,8 +5789,7 @@ def test_what_the_table_freezes_leaves_something_to_scroll_into(
     browser = chrome()
     one = {"table": views["table"]}
     phone = measured_on_a_phone(browser, one, tmp_path / "frozen-390", _FROZEN)["table"]
-    laptop = measured_on_a_phone(
-        browser, one, tmp_path / "frozen-900", _FROZEN, width=900)["table"]
+    laptop = measured_on_a_phone(browser, one, tmp_path / "frozen-900", _FROZEN, width=900)["table"]
 
     for got in (phone, laptop):
         assert got["frozen"] <= got["box"] * 2 / 3, (
@@ -5758,9 +5839,7 @@ return {
 """
 
 
-def test_the_nav_on_a_phone_is_links_and_nothing_else(
-    phone_pages: dict[str, str], tmp_path: Path
-):
+def test_the_nav_on_a_phone_is_links_and_nothing_else(phone_pages: dict[str, str], tmp_path: Path):
     """jcanton, 2026-08-26: "I'd move the sign-in and theme and light/dark pickers
     to the footer, or an overflow hamburger menu in the nav: currently they occupy
     one extra row".
@@ -5784,8 +5863,7 @@ def test_the_nav_on_a_phone_is_links_and_nothing_else(
 
     browser = chrome()
     narrow = measured_on_a_phone(browser, phone_pages, tmp_path / "stowed", _THE_CHROME)
-    wide = measured_on_a_phone(
-        browser, phone_pages, tmp_path / "unstowed", _THE_CHROME, width=900)
+    wide = measured_on_a_phone(browser, phone_pages, tmp_path / "unstowed", _THE_CHROME, width=900)
 
     for page, got in narrow.items():
         assert got["cornerIn"] == "build", (
@@ -5839,6 +5917,7 @@ def test_a_table_with_no_fit_of_its_own_scrolls_rather_than_wraps(
             )
     assert seen >= 4, f"only {seen} unfitted tables were measured, and there are four"
 
+
 # **Which pointer the reader has, said at launch.** The wash is inside
 # `@media (hover: hover)`, and what headless Chrome answers there depends on the
 # host: this laptop reports `hover` and CI's Linux reports `none`. So a test that
@@ -5865,7 +5944,10 @@ _A_TOUCHSCREEN = (
 
 
 def _hovered(
-    browser: str, page: str, where: Path, selector: str,
+    browser: str,
+    page: str,
+    where: Path,
+    selector: str,
     flags: tuple[str, ...] = _A_MOUSE,
 ) -> dict:
     """Lay a page out, put the real pointer on a row of `selector`, and report.
@@ -5893,7 +5975,9 @@ def _hovered(
     shutil.rmtree(profile, ignore_errors=True)
     with _devtools(browser, where.as_uri(), profile, flags) as (call, _said):
         time.sleep(2.0)
-        at = _evaluated(call, f"""(() => {{
+        at = _evaluated(
+            call,
+            f"""(() => {{
           const table = document.querySelector({json.dumps(selector)});
           if (!table) return null;
           const rows = [...table.querySelectorAll('tbody tr')]
@@ -5903,11 +5987,14 @@ def _hovered(
           row.scrollIntoView({{block: 'center'}});
           const box = row.getBoundingClientRect();
           return [Math.round(box.left + box.width / 2), Math.round(box.top + box.height / 2)];
-        }})()""")
+        }})()""",
+        )
         assert at, f"{selector} drew no rows to point at"
         call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": at[0], "y": at[1]})
         time.sleep(0.3)
-        return _evaluated(call, f"""(() => {{
+        return _evaluated(
+            call,
+            f"""(() => {{
           const row = [...document.querySelectorAll({json.dumps(selector)} + ' tbody tr')]
             .find(r => r.matches(':hover'));
           if (!row) return {{hovered: false}};
@@ -5919,7 +6006,8 @@ def _hovered(
             washed: cells.filter(c => wash(c) !== 'none').length,
             grounds: [...new Set(cells.map(c => getComputedStyle(c).backgroundColor))],
           }};
-        }})()""")
+        }})()""",
+        )
 
 
 # Every table in the app, and the page that draws it. Five, which is the whole
@@ -5985,8 +6073,9 @@ def test_a_touch_screen_gets_no_wash_at_all(rendered: Path, tmp_path: Path):
     """
     from browser import chrome
 
-    got = _hovered(chrome(), read(rendered, "table.html"), tmp_path / "touch.html",
-                   "#rows", _A_TOUCHSCREEN)
+    got = _hovered(
+        chrome(), read(rendered, "table.html"), tmp_path / "touch.html", "#rows", _A_TOUCHSCREEN
+    )
 
     # The tap still sets `:hover` — that is exactly the browser behaviour this
     # guards against — so the row IS hovered and simply takes no wash.
@@ -6030,11 +6119,14 @@ def test_the_wash_does_not_take_away_the_ground_it_is_drawn_over(
 
     where = tmp_path / "grounds.html"
     where.write_text(views["table"])
-    with _devtools(
-        chrome(), where.as_uri(), tmp_path / "grounds-profile", _A_MOUSE
-    ) as (call, _said):
+    with _devtools(chrome(), where.as_uri(), tmp_path / "grounds-profile", _A_MOUSE) as (
+        call,
+        _said,
+    ):
         time.sleep(2.0)
-        before = _evaluated(call, """(() => {
+        before = _evaluated(
+            call,
+            """(() => {
           const rows = [...document.querySelectorAll('#rows tbody tr')]
             .filter(r => r.getClientRects().length);
           const row = rows[Math.min(2, rows.length - 1)];
@@ -6042,14 +6134,20 @@ def test_the_wash_does_not_take_away_the_ground_it_is_drawn_over(
           row.dataset.probe = '1';
           return [...row.children].filter(c => c.getClientRects().length)
             .map(c => getComputedStyle(c).backgroundColor);
-        })()""")
-        at = _evaluated(call, """(() => {
+        })()""",
+        )
+        at = _evaluated(
+            call,
+            """(() => {
           const box = document.querySelector('#rows tr[data-probe]').getBoundingClientRect();
           return [Math.round(box.left + box.width / 2), Math.round(box.top + box.height / 2)];
-        })()""")
+        })()""",
+        )
         call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": at[0], "y": at[1]})
         time.sleep(0.3)
-        during = _evaluated(call, """(() => {
+        during = _evaluated(
+            call,
+            """(() => {
           const row = document.querySelector('#rows tr[data-probe]');
           if (!row.matches(':hover')) return null;
           return [...row.children].filter(c => c.getClientRects().length).map(c => ({
@@ -6057,15 +6155,14 @@ def test_the_wash_does_not_take_away_the_ground_it_is_drawn_over(
             wash: getComputedStyle(c).backgroundImage !== 'none',
             under: c.matches(':hover'),
           }));
-        })()""")
+        })()""",
+        )
 
     assert during is not None, "the pointer did not land on the row it measured"
     assert all(cell["wash"] for cell in during), (
         f"only {sum(cell['wash'] for cell in during)} of {len(during)} cells took the wash"
     )
-    elsewhere = [
-        (was, cell) for was, cell in zip(before, during, strict=True) if not cell["under"]
-    ]
+    elsewhere = [(was, cell) for was, cell in zip(before, during, strict=True) if not cell["under"]]
     assert [cell["ground"] for _, cell in elsewhere] == [was for was, _ in elsewhere], (
         "the wash took away a ground it was drawn over: "
         f"{json.dumps(before)} became {json.dumps([c['ground'] for c in during])}"
@@ -6075,9 +6172,7 @@ def test_the_wash_does_not_take_away_the_ground_it_is_drawn_over(
     )
     # And the frozen columns are still opaque, or the table scrolls visibly under
     # them. A fully transparent ground on either is the defect this guards.
-    assert "rgba(0, 0, 0, 0)" not in before[:2], (
-        f"the frozen pair is not opaque: {before[:2]}"
-    )
+    assert "rgba(0, 0, 0, 0)" not in before[:2], f"the frozen pair is not opaque: {before[:2]}"
 
 
 def test_the_betting_table_says_what_a_bet_is_being_made_against(
@@ -6098,8 +6193,9 @@ def test_the_betting_table_says_what_a_bet_is_being_made_against(
     # is how the first draft of this test failed against a page that was right.
     head = re.search(r'<table id="bets".*?</thead>', page, re.S)
     assert head, "the betting table has no header row"
-    columns = [name.strip() for name in
-               re.findall(r'class="sorter">([^<]*)</button>', head.group(0))]
+    columns = [
+        name.strip() for name in re.findall(r'class="sorter">([^<]*)</button>', head.group(0))
+    ]
     assert "priority" in columns, columns
     assert columns.index("status") < columns.index("priority") < columns.index("appetite"), (
         f"priority is not between what a record IS and what it is worth: {columns}"
@@ -6109,9 +6205,7 @@ def test_the_betting_table_says_what_a_bet_is_being_made_against(
         assert f'value="{value}"' in page, f"the picker cannot choose {value}"
 
 
-def test_the_betting_tables_closed_sets_are_chosen_and_never_typed(
-    server_pages: dict[str, str]
-):
+def test_the_betting_tables_closed_sets_are_chosen_and_never_typed(server_pages: dict[str, str]):
     """Status and priority are ladders with six and five rungs. Free text over a
     closed set is how `in progres` gets written into the corpus, and the corpus is
     a protected branch — `_reject_bad_status` would refuse it at the door now, but
@@ -6125,7 +6219,8 @@ def test_the_betting_tables_closed_sets_are_chosen_and_never_typed(
     """
     page = server_pages["cycle"]
     for field, ladder, glyphs in (
-        ("status", STATUSES, STATUS_GLYPH), ("priority", PRIORITIES, PRIORITY_GLYPH)
+        ("status", STATUSES, STATUS_GLYPH),
+        ("priority", PRIORITIES, PRIORITY_GLYPH),
     ):
         picker = re.search(
             rf'<select class="pick[^"]*" data-field="{field}".*?</select>', page, re.S

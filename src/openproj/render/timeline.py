@@ -97,7 +97,7 @@ def _containment_rows(index: Index, drawn: set[str]) -> list[tuple[str, int]]:
         """When a subtree starts, so a parent sorts with the work inside it."""
         if record_id in when:
             return when[record_id]
-        if record_id in seen:               # a parent cycle in the files, not a tree
+        if record_id in seen:  # a parent cycle in the files, not a tree
             return date.max
         seen = seen | {record_id}
         span = index.spans.get(record_id)
@@ -156,17 +156,32 @@ def _timeline(
         # it is decides what to do next. Nothing here is about the filters, so
         # neither copy offers to clear them.
         blank = (
-            {"headline": "This plan has no records yet.",
-             "detail": "Nothing has been pitched, shaped or scheduled."}
+            {
+                "headline": "This plan has no records yet.",
+                "detail": "Nothing has been pitched, shaped or scheduled.",
+            }
             if not total
-            else {"headline": "Nothing in this plan has dates.",
-                  "detail": "Every record is done, shelved, or waiting on something "
-                            "that has not been scheduled."}
+            else {
+                "headline": "Nothing in this plan has dates.",
+                "detail": "Every record is done, shelved, or waiting on something "
+                "that has not been scheduled.",
+            }
         )
         return {
-            "bars": [], "cycles": [], "months": [], "today_x": None, "header": _HEADER_PX,
-            "band": _BAND_PX, "width": _LEFT_PX, "height": _ROW_PX, "origin": None,
-            "last": None, "zoom": "", "rows": {}, "total": total, "offscreen": total,
+            "bars": [],
+            "cycles": [],
+            "months": [],
+            "today_x": None,
+            "header": _HEADER_PX,
+            "band": _BAND_PX,
+            "width": _LEFT_PX,
+            "height": _ROW_PX,
+            "origin": None,
+            "last": None,
+            "zoom": "",
+            "rows": {},
+            "total": total,
+            "offscreen": total,
             "blank": blank,
         }
 
@@ -174,7 +189,7 @@ def _timeline(
     ends = [s.end for s in drawn.values()] + [w[1] for w in index.cycles.values()]
     origin, last = min(*starts, index.today), max(*ends, index.today)
     origin, last = window[0] or origin, window[1] or last
-    if last <= origin:                      # a backwards window would invert every bar
+    if last <= origin:  # a backwards window would invert every bar
         # `days_after`, because `from` is a query parameter: `?from=9999-12-31`
         # is a link anybody can send and it walked one day off the calendar,
         # which was a 500 on `/timeline` with nothing committed at all.
@@ -291,9 +306,7 @@ def _timeline(
                 # is shaded: work is not meant to land there, and an unmarked
                 # fortnight at the end of every cycle reads as more building time.
                 "cool_x": x(builds_until) if builds_until < closes else None,
-                "cool_width": round(
-                    max(0.0, x(min(closes, last), 1) - x(builds_until)), 1
-                ),
+                "cool_width": round(max(0.0, x(min(closes, last), 1) - x(builds_until)), 1),
             }
         )
     return {
@@ -320,7 +333,9 @@ def _timeline(
         "blank": {
             "headline": "No record matches these filters.",
             "detail": "Every bar is filtered out by the controls above.",
-        } if bars else {
+        }
+        if bars
+        else {
             "headline": "Nothing is scheduled in this window.",
             "detail": "Every dated record in this plan falls outside it.",
         },
@@ -998,9 +1013,7 @@ def render_timeline(
         glyph_dy=_GLYPH_DY,
         facets=_facets_html(
             index.facets,
-            aside=_fragment(
-                _TIMELINE_HINT, t=timeline, windowed=bool(window[0] or window[1])
-            ),
+            aside=_fragment(_TIMELINE_HINT, t=timeline, windowed=bool(window[0] or window[1])),
             titles=_titles(index),
             # The bars this window holds, not the plan: a timeline saying
             # "37 of 37" over eleven bars is a number about a different page.
@@ -1011,6 +1024,4 @@ def render_timeline(
         # the whole plan: a bar that is not on this window cannot be filtered onto it.
         bars={"rows": timeline["rows"], "human": HUMAN},
     )
-    return _page(
-        "openproj — timeline", body, _timeline_css(), links, "timeline", index.unreadable
-    )
+    return _page("openproj — timeline", body, _timeline_css(), links, "timeline", index.unreadable)

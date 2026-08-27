@@ -61,17 +61,20 @@ def _chosen(slots: dict[str, str]) -> dict[str, str]:
     darkest = contrast(slots[ink], slots["base00"])
 
     quieter = [
-        slot for slot in ("base04", "base03", "base05", "base06")
+        slot
+        for slot in ("base04", "base03", "base05", "base06")
         if _MUTED_FLOOR <= contrast(slots[slot], slots["base00"]) < darkest
     ]
     # The quietest of the ones that are still legible: a secondary ink that
     # matches the primary is a hierarchy with one level in it.
-    muted = min(quieter, key=lambda slot: contrast(slots[slot], slots["base00"]),
-                default="base04")
+    muted = min(quieter, key=lambda slot: contrast(slots[slot], slots["base00"]), default="base04")
 
     link = next(
-        (slot for slot in ("base0D", "base0C", "base0E", "base0B", "base08")
-         if contrast(slots[slot], slots["base00"]) >= _LINK_FLOOR),
+        (
+            slot
+            for slot in ("base0D", "base0C", "base0E", "base0B", "base08")
+            if contrast(slots[slot], slots["base00"]) >= _LINK_FLOOR
+        ),
         "base0D",
     )
     return {"fg": ink, "muted": muted, "accent": link}
@@ -97,9 +100,7 @@ def _scheme_css() -> str:
     blocks = []
     for family in FAMILIES:
         light, dark = _slot_css(family.light), _slot_css(family.dark)
-        blocks.append(
-            f':root[data-scheme="{family.key}"] {{\n  color-scheme: light;\n{light}\n}}'
-        )
+        blocks.append(f':root[data-scheme="{family.key}"] {{\n  color-scheme: light;\n{light}\n}}')
         blocks.append(
             "@media (prefers-color-scheme: dark) {\n"
             f'  :root[data-scheme="{family.key}"]:not([data-theme="light"]) {{\n'
@@ -653,7 +654,8 @@ article.record.view-view .markbar { display: none; }
 """
 
 
-_DETAIL_STYLE = """
+_DETAIL_STYLE = (
+    """
 /* No `#commitbar` here. The bar sticks to the top on this page because the SHELL
    says every commit bar does — one rule for every page that draws one — and an
    id override in this sheet was the wrong shape for it twice over: it beat the
@@ -1357,4 +1359,6 @@ button.kindchip[hidden] { display: none; }
 .record.editing #promote { display: none; }
 #promote select { font: inherit; font-size: 13px; }
 #promote .hint { margin: 0; }
-""" + _EDITING_STYLE
+"""
+    + _EDITING_STYLE
+)

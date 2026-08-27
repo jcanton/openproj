@@ -68,7 +68,8 @@ async def reader(client, base, deadline, tally, page="/"):
             tally.hit(f"GET {page}", (time.monotonic() - begun) * 1000, f"read {r.status_code}")
         except Exception as error:  # noqa: BLE001
             tally.hit(
-                f"GET {page}", (time.monotonic() - begun) * 1000,
+                f"GET {page}",
+                (time.monotonic() - begun) * 1000,
                 f"read {type(error).__name__}",
             )
         await asyncio.sleep(0.2)
@@ -151,8 +152,7 @@ async def main():
                 jobs += [stream(client, base, deadline) for _ in range(writers)]
         elif scenario == "same":
             jobs += [
-                writer(client, base, deadline, tally, ids[0], gap, stale)
-                for _ in range(writers)
+                writer(client, base, deadline, tally, ids[0], gap, stale) for _ in range(writers)
             ]
             jobs += [reader(client, base, deadline, tally) for _ in range(readers)]
         else:

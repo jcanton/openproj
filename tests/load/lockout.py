@@ -232,9 +232,7 @@ def cell(room_where: str, write_where: str, keep: bool) -> dict:
 
             final = blob_at_head(repo, path)
             typed_markers = [
-                f"[round{attempt}-{index}]"
-                for attempt in range(SAVE_ROUNDS)
-                for index in range(3)
+                f"[round{attempt}-{index}]" for attempt in range(SAVE_ROUNDS) for index in range(3)
             ]
             result["markers_typed"] = len(typed_markers)
             result["markers_in_git"] = sum(1 for m in typed_markers if m in final)

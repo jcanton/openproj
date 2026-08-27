@@ -50,9 +50,7 @@ def main(where: Path) -> dict:
             time.sleep(0.05)
         report["room_bytes"] = len(ann.body().encode("utf-8"))
         report["over_the_ceiling_by"] = report["room_bytes"] - MAX_BODY_BYTES
-        report["any_frame_refused_while_growing"] = [
-            f["t"] for f in ann.told if f["t"] == "reload"
-        ]
+        report["any_frame_refused_while_growing"] = [f["t"] for f in ann.told if f["t"] == "reload"]
 
         ann.told.clear()
         ann.save()
@@ -67,9 +65,7 @@ def main(where: Path) -> dict:
         deadline = time.monotonic() + 45
         while time.monotonic() < deadline and not [f for f in ann.told if f["t"] == "refused"]:
             time.sleep(0.5)
-        report["quiet_window_also_refuses"] = bool(
-            [f for f in ann.told if f["t"] == "refused"]
-        )
+        report["quiet_window_also_refuses"] = bool([f for f in ann.told if f["t"] == "refused"])
         report["commits_at_end"] = len(commits(repo)) - 1
         report["git_bytes"] = len(stored_body(repo, PATH).encode("utf-8"))
         report["unpersisted_bytes"] = report["room_bytes"] - report["git_bytes"]

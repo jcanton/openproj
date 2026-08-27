@@ -221,9 +221,7 @@ class GitHubApp:
         an installation token; the token itself goes in the password."""
         import pygit2
 
-        return pygit2.RemoteCallbacks(
-            credentials=pygit2.UserPass("x-access-token", self.token())
-        )
+        return pygit2.RemoteCallbacks(credentials=pygit2.UserPass("x-access-token", self.token()))
 
 
 def open_pull_requests(

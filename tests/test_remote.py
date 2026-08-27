@@ -438,9 +438,7 @@ def test_a_write_that_has_returned_is_in_the_backlog_the_pusher_lands(
     assert len(history(remote_path)) == WRITERS + 1  # the seed, plus one per writer
 
 
-def test_every_commit_the_remote_receives_has_exactly_one_parent(
-    store: Store, remote_path: Path
-):
+def test_every_commit_the_remote_receives_has_exactly_one_parent(store: Store, remote_path: Path):
     """Fast-forward only. The plan repository is branch-protected against
     force-push and deletion (§13), which is free precisely because this store
     never needs anything else — a merge commit appearing here means it started
@@ -638,8 +636,9 @@ def test_a_write_while_unreachable_still_lands_on_the_one_before_it(
         )
         second = store.write(
             path=OTHER,
-            content=record(id="task-c00002", title="Downgrade numpy", owner="bo",
-                status="in_progress"),
+            content=record(
+                id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"
+            ),
             base_commit=store.head(),
             author="bo",
             message="task-c00002: status todo -> wip",
@@ -762,8 +761,9 @@ def diverged(store: Store, repo_path: Path, remote_path: Path) -> tuple[str, str
     with unplugged(remote_path):
         ours = store.write(
             path=OTHER,
-            content=record(id="task-c00002", title="Downgrade numpy", owner="bo",
-                status="in_progress"),
+            content=record(
+                id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"
+            ),
             base_commit=base,
             author="bo",
             message="task-c00002: status todo -> wip",
@@ -870,8 +870,13 @@ def test_a_save_talks_to_the_remote_never_and_the_pusher_once(tmp_path):
     try:
         store = Store(working, remote=str(upstream))
         said.clear()
-        store.write("tasks/task-a00001.md", "---\nid: task-a00001\ntitle: x\n---\n",
-                    store.head(), "ann", "one save")
+        store.write(
+            "tasks/task-a00001.md",
+            "---\nid: task-a00001\ntitle: x\n---\n",
+            store.head(),
+            "ann",
+            "one save",
+        )
         assert said == [], f"the save itself held a conversation: {said}"
         assert store.sync().state == "landed"
         assert said == ["push"], f"the pusher's quiet day held: {said}"
@@ -899,15 +904,19 @@ def test_a_push_rejected_by_a_moved_remote_is_recovered_in_one_pass(tmp_path):
     yours = Store(theirs, remote=str(upstream))
 
     # Somebody else lands a commit on a different file first.
-    yours.write("tasks/task-b00002.md", "---\nid: task-b00002\n---\n",
-                yours.head(), "bo", "theirs")
+    yours.write("tasks/task-b00002.md", "---\nid: task-b00002\n---\n", yours.head(), "bo", "theirs")
     assert yours.sync().state == "landed"
 
     # Ours is now behind, and its tracking ref does not know it. The write
     # lands locally all the same; the pusher's push is refused, and ONE
     # recovery replays it on top of theirs.
-    written = mine.write("tasks/task-a00001.md", "---\nid: task-a00001\ntitle: mine\n---\n",
-                         mine.head(), "ann", "ours")
+    written = mine.write(
+        "tasks/task-a00001.md",
+        "---\nid: task-a00001\ntitle: mine\n---\n",
+        mine.head(),
+        "ann",
+        "ours",
+    )
     assert written.commit, "the write did not land"
     assert written.pushed is False
     assert mine.sync().state == "landed"
@@ -953,8 +962,13 @@ def test_an_upload_reaches_the_remote_like_every_other_commit(tmp_path):
     assert name in landed.paths(landed.head()), "the upload never left the container"
 
     # And the store is not wedged: a save afterwards still lands.
-    written = store.write("tasks/task-a00001.md", "---\nid: task-a00001\ntitle: after\n---\n",
-                          store.head(), "ann", "a save after an upload")
+    written = store.write(
+        "tasks/task-a00001.md",
+        "---\nid: task-a00001\ntitle: after\n---\n",
+        store.head(),
+        "ann",
+        "a save after an upload",
+    )
     assert written.commit is not None
     assert store.sync().state == "landed"
     for one in (store, landed):
@@ -992,12 +1006,16 @@ def test_a_write_that_loses_the_race_runs_again_and_lands(tmp_path):
     mine, yours = Store(ours, remote=str(upstream)), Store(theirs, remote=str(upstream))
 
     # They land a commit on a different file. We know nothing about it: no fetch.
-    yours.write("tasks/task-b00002.md", "---\nid: task-b00002\n---\n",
-                yours.head(), "bo", "theirs")
+    yours.write("tasks/task-b00002.md", "---\nid: task-b00002\n---\n", yours.head(), "bo", "theirs")
     assert yours.sync().state == "landed"
 
-    written = mine.write("tasks/task-a00001.md", "---\nid: task-a00001\ntitle: mine\n---\n",
-                         mine.head(), "ann", "ours")
+    written = mine.write(
+        "tasks/task-a00001.md",
+        "---\nid: task-a00001\ntitle: mine\n---\n",
+        mine.head(),
+        "ann",
+        "ours",
+    )
 
     assert written.commit, "the write did not land"
     assert written.outcome == "committed", written.outcome  # the base was locally current
@@ -1092,8 +1110,13 @@ def test_nothing_says_pushed_before_the_remote_actually_holds_the_commit(tmp_pat
     store = Store(ours, remote=str(upstream))
 
     for n in range(3):
-        written = store.write("tasks/task-a00001.md", f"---\nid: task-a00001\ntitle: {n}\n---\n",
-                              store.head(), "ann", f"edit {n}")
+        written = store.write(
+            "tasks/task-a00001.md",
+            f"---\nid: task-a00001\ntitle: {n}\n---\n",
+            store.head(),
+            "ann",
+            f"edit {n}",
+        )
         assert written.pushed is False, f"edit {n} claimed a remote that holds nothing"
         assert store.condition().unpushed == 1, f"edit {n} is at risk and uncounted"
         landed = Store(upstream)
@@ -1131,8 +1154,7 @@ def test_the_pusher_lands_the_commits_a_save_did_not_wait_for(
     )
     second = store.write(
         path=OTHER,
-        content=record(id="task-c00002", title="Downgrade numpy", owner="bo",
-            status="in_progress"),
+        content=record(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
         base_commit=store.head(),
         author="bo",
         message="task-c00002: status todo -> wip",
@@ -1378,8 +1400,7 @@ def test_a_force_pushed_remote_is_a_fork_and_nothing_is_replayed_onto_it(
 
     ours = store.write(
         path=OTHER,
-        content=record(id="task-c00002", title="Downgrade numpy", owner="bo",
-            status="in_progress"),
+        content=record(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
         base_commit=store.head(),
         author="bo",
         message="task-c00002: status todo -> wip",
@@ -1489,8 +1510,7 @@ def test_a_write_on_a_forked_store_is_refused_and_still_pokes_the_pusher(
     remote.references["refs/heads/main"].set_target(rewritten)
     ours = store.write(
         path=OTHER,
-        content=record(id="task-c00002", title="Downgrade numpy", owner="bo",
-            status="in_progress"),
+        content=record(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
         base_commit=store.head(),
         author="bo",
         message="task-c00002: status todo -> wip",
@@ -1626,8 +1646,7 @@ def test_a_conflict_in_the_middle_of_a_batch_parks_alone_and_the_rest_land(
     """
     first = store.write(
         path=OTHER,
-        content=record(id="task-c00002", title="Downgrade numpy", owner="bo",
-            status="in_progress"),
+        content=record(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
         base_commit=store.head(),
         author="bo",
         message="task-c00002: status todo -> wip",
@@ -1670,7 +1689,10 @@ def test_a_conflict_in_the_middle_of_a_batch_parks_alone_and_the_rest_land(
     # replay exactly as it survived the push (invariant 4).
     assert [len(commit.parents) for commit in history(remote_path)] == [1, 1, 1, 0]
     assert [commit.author.name for commit in history(remote_path)] == [
-        "dee", "bo", "a human", "a human",
+        "dee",
+        "bo",
+        "a human",
+        "a human",
     ]
 
 
@@ -1686,15 +1708,12 @@ def test_a_commit_made_during_the_recovery_is_parked_at_the_swap_not_dropped(
     """
     backlog = store.write(
         path=OTHER,
-        content=record(id="task-c00002", title="Downgrade numpy", owner="bo",
-            status="in_progress"),
+        content=record(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
         base_commit=store.head(),
         author="bo",
         message="task-c00002: status todo -> wip",
     )
-    pushed_from_a_terminal(
-        remote_path, {PATH: record(owner="bo")}, "task-c00001: owner ann -> bo"
-    )
+    pushed_from_a_terminal(remote_path, {PATH: record(owner="bo")}, "task-c00001: owner ann -> bo")
 
     straggler: dict = {}
     real_land = Store._land
@@ -2014,9 +2033,7 @@ def test_a_store_with_no_remote_polls_without_a_network(local_only: Store):
     assert local_only.head() == before
 
 
-def test_the_pusher_notices_a_hand_push_with_no_save_to_wake_it(
-    store: Store, remote_path: Path
-):
+def test_the_pusher_notices_a_hand_push_with_no_save_to_wake_it(store: Store, remote_path: Path):
     """The end-to-end property, and the one the production incident is about: a
     commit arrives on the remote and NOBODY touches the server."""
     pusher = Pusher(store, idle=0.05)
