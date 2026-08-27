@@ -64,7 +64,7 @@ EDITABLE: dict[str, str] = {
     "depends_on": "list",
     "prs": "list",
     "cycle": "number",
-    "assigned_on": "date",
+    "start_date": "date",
     # The inbox-only fields, after everything above: they were not in the order
     # jcanton gave because no planned kind reads them, and trailing the shared
     # fields keeps his order intact on every kind rather than threading gaps
@@ -424,7 +424,7 @@ LABELS = {
     "assignees": "Assignees",
     "reviewers": "Reviewers",
     "review_waived": "Review waived",
-    "assigned_on": "Assigned on",
+    "start_date": "Start date",
     "priority": "Priority",
     "cycle": "Cycle",
     "parent": "Parent",

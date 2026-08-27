@@ -31,7 +31,7 @@ check that fits it:
   `reviewers`, `depends_on`) or insert a line into the body. Every accepted
   marker must survive to the tip, and `verify.form_changes` judges them.
 * **latest** lanes are last-writer-wins scalars (`title`, `owner`,
-  `person_weeks`, `assigned_on`, `priority`, `review_waived`, `status`). Only one
+  `person_weeks`, `start_date`, `priority`, `review_waived`, `status`). Only one
   writer ever touches each, so the final value must equal that writer's last
   ACCEPTED value — checked here, in `latest_values`, because nothing in
   `verify.py` can express it.
@@ -98,7 +98,7 @@ LANES: tuple[tuple[str, str], ...] = (
     ("title", "latest"),
     ("owner", "latest"),
     ("person_weeks", "latest"),
-    ("assigned_on", "latest"),
+    ("start_date", "latest"),
     ("priority", "latest"),
     ("review_waived", "latest"),
     ("status", "latest"),
@@ -220,7 +220,7 @@ class SameRecordWriter(users.FormWriter):
             return marker.lower()
         if field == "person_weeks":
             return round(1.0 + n / 100.0, 2)
-        if field == "assigned_on":
+        if field == "start_date":
             return (date(2026, 1, 1) + timedelta(days=n % 300)).isoformat()
         if field == "priority":
             return PRIORITIES[n % len(PRIORITIES)]

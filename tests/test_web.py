@@ -116,7 +116,7 @@ id: task-c00001
 parent: pitch-b20000
 owner: ann                 # ann has the upstream contacts
 reviewers: [bo, cy]
-assigned_on: 2026-07-06
+start_date: 2026-07-06
 priority: medium
 tags: [gpu, verification]
 prs: []
@@ -141,7 +141,7 @@ SEED = {
         "status: in_progress\n"
         "owner: ann\n"
         "reviewers: [bo]\n"
-        "assigned_on: 2026-07-01\n"
+        "start_date: 2026-07-01\n"
         "priority: high\n"
         "---\n"
         "\nThe standalone driver, on more than one rank.\n"
@@ -2544,9 +2544,9 @@ def test_a_cycle_field_the_record_cannot_hold_is_refused_not_raised(
         ("owner", ["a", "b"]),
         ("title", {"a": 1}),
         ("title", 5),
-        ("assigned_on", ""),
-        ("assigned_on", "six"),
-        ("assigned_on", 7),
+        ("start_date", ""),
+        ("start_date", "six"),
+        ("start_date", 7),
         ("tags", [None]),
         ("tags", [{"a": 1}]),
         ("parent", 3),
@@ -2584,10 +2584,10 @@ def test_a_record_the_server_could_not_read_back_is_never_committed(
 def test_a_field_the_record_can_hold_is_still_written(client: TestClient, repo_path: Path):
     """The other half: the check must refuse what cannot be read back and nothing
     else. A date, a list of tags and a title all still save."""
-    saved = save(client, TASK, {"title": "A title", "assigned_on": "2026-09-01", "tags": ["gpu"]})
+    saved = save(client, TASK, {"title": "A title", "start_date": "2026-09-01", "tags": ["gpu"]})
 
     assert saved.status_code == 200, saved.text
-    assert index_of(client)["plan"][TASK]["assigned_on"] == "2026-09-01"
+    assert index_of(client)["plan"][TASK]["start_date"] == "2026-09-01"
 
 
 def test_a_date_the_record_can_hold_is_written_in_the_spelling_the_corpus_uses(
@@ -2664,8 +2664,8 @@ def test_a_carried_item_cannot_be_re_stamped_from_the_cycle_page(
     silently forgives the slip — at exactly the moment the slip is happening."""
     # On the pitch, because that is where a bet is made: the task under it is
     # part of that bet and takes the cycle from it.
-    save(client, PITCH, {"cycle": 36, "status": "in_progress", "assigned_on": "2026-07-01"})
-    save(client, TASK, {"status": "in_progress", "assigned_on": "2026-07-01"})
+    save(client, PITCH, {"cycle": 36, "status": "in_progress", "start_date": "2026-07-01"})
+    save(client, TASK, {"status": "in_progress", "start_date": "2026-07-01"})
     client.put(
         "/api/cycle/40",
         json={
@@ -3542,7 +3542,7 @@ def test_a_cycle_record_longer_than_the_calendar_leaves_every_page_readable(
 
 
 def test_a_done_date_at_the_end_of_the_calendar_leaves_a_timeline_you_can_open(client: TestClient):
-    """`31/12/9999` into the detail page's "Assigned on": committed, and
+    """`31/12/9999` into the detail page's "Start date": committed, and
     `/timeline` answered 500 for good.
 
     Worse than the cycle above in one way — `openproj check` reported "0
@@ -3557,7 +3557,7 @@ def test_a_done_date_at_the_end_of_the_calendar_leaves_a_timeline_you_can_open(c
     base = head(client)
 
     saved = client.patch(
-        f"/api/record/{DONE}", json={"base_commit": base, "fields": {"assigned_on": "9999-12-31"}}
+        f"/api/record/{DONE}", json={"base_commit": base, "fields": {"start_date": "9999-12-31"}}
     )
     assert saved.status_code == 200, saved.text
 
@@ -3749,7 +3749,7 @@ def test_a_preview_of_something_that_is_not_text_still_answers(client: TestClien
     (
         ({"title": 12345}, "title"),
         ({"title": ["a", "b"]}, "title"),
-        ({"assigned_on": "not-a-date"}, "assigned_on"),
+        ({"start_date": "not-a-date"}, "start_date"),
         ({"reviewers": [1, 2]}, "reviewers"),
         ({"tags": [None]}, "tags"),
         ({"created_schema_version": "two"}, "created_schema_version"),

@@ -3060,7 +3060,7 @@ def _new_rows() -> list[dict]:
             # jcanton, 2026-08-26, reversing it: "assigned date default to empty
             # would be better than default=today".
             #
-            # The argument was answering the wrong risk. `assigned_on` is the one
+            # The argument was answering the wrong risk. `start_date` is the one
             # date the whole schedule is derived FROM, and a record created today
             # is very often work that starts next cycle or work somebody is
             # writing down so as not to lose it. Prefilling today does not stop
@@ -3071,9 +3071,9 @@ def _new_rows() -> list[dict]:
             #
             # Empty is not silent. `validate_all` already asks for this field at
             # `in_progress` and nowhere else — "work in progress needs the date it
-            # was assigned" — so a record that never gets one is fine until it
-            # starts, and then says so beside itself.
-            assigned_on=None,
+            # started" — so a record that never gets one is fine until it starts,
+            # and then says so beside itself.
+            start_date=None,
         )
         # One form on the page, so one prefix. The detail page's is the record's
         # id, because that page can hold sixteen of them at once.

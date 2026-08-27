@@ -163,7 +163,7 @@ def test_a_note_reads_no_field_that_is_a_commitment():
         "owner",
         "assignees",
         "reviewers",
-        "assigned_on",
+        "start_date",
         "cycle",
         "priority",
         "prs",

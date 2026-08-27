@@ -42,7 +42,7 @@ NEEDS_OWNER = "a ready record needs an owner"
 NEEDS_REVIEWER = "a ready record needs a reviewer, or review waived"
 NEEDS_EFFORT = "a ready task needs an appetite"
 NEEDS_APPETITE = "a ready pitch needs an appetite"
-NEEDS_ASSIGNED_ON = "work in progress needs the date it was assigned"
+NEEDS_START_DATE = "work in progress needs the date it started"
 RETIRED_SHAPED_BY = (
     "shaped_by is no longer read: owner records who shaped a pitch and holds it — "
     "move the name there and delete this key"
@@ -129,7 +129,7 @@ def project(**overrides: object) -> Project:
         "owner": "jackdawrie",
         "assignees": ["jackdawrie"],
         "reviewers": ["merganserly"],
-        "assigned_on": date(2026, 8, 3),
+        "start_date": date(2026, 8, 3),
     }
     return Project(**(fields | overrides))
 
@@ -273,10 +273,10 @@ def test_a_retired_key_on_a_shelved_record_stays_unreported():
     assert check(parse_text(text, f"pitches/{PITCH_ID}.md")) == []
 
 
-def test_a_wip_record_needs_assigned_on():
-    for record in (task(status="in_progress", assigned_on=None), project(assigned_on=None)):
+def test_a_wip_record_needs_a_start_date():
+    for record in (task(status="in_progress", start_date=None), project(start_date=None)):
         problem = only(check(record), record.id)
-        assert summary(problem) == ("blocker", "assigned_on", NEEDS_ASSIGNED_ON, 1)
+        assert summary(problem) == ("blocker", "start_date", NEEDS_START_DATE, 1)
 
 
 def test_a_wip_record_needs_a_reviewer_who_is_not_its_owner():
@@ -284,7 +284,7 @@ def test_a_wip_record_needs_a_reviewer_who_is_not_its_owner():
     somebody else before work may be in progress."""
     wip = task(
         status="in_progress",
-        assigned_on=date(2026, 8, 3),
+        start_date=date(2026, 8, 3),
         owner="jackdawrie",
         reviewers=["jackdawrie"],
     )
@@ -308,7 +308,7 @@ def test_review_waived_satisfies_both_the_todo_and_the_wip_reviewer_gates():
     todo = task(reviewers=[], review_waived=True)
     wip = task(
         status="in_progress",
-        assigned_on=date(2026, 8, 3),
+        start_date=date(2026, 8, 3),
         owner="jackdawrie",
         reviewers=["jackdawrie"],
         review_waived=True,
@@ -584,8 +584,8 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         ("warning", "task-5c1d84", "assignees", NEEDS_SOMEBODY_READY, 2),
         ("warning", "task-5f062b", "assignees", NEEDS_SOMEBODY_READY, 2),
         # wip without a start date
-        ("blocker", "proj-7e57a0", "assigned_on", NEEDS_ASSIGNED_ON, 1),
-        ("blocker", "pitch-48ea9e", "assigned_on", NEEDS_ASSIGNED_ON, 1),
+        ("blocker", "proj-7e57a0", "start_date", NEEDS_START_DATE, 1),
+        ("blocker", "pitch-48ea9e", "start_date", NEEDS_START_DATE, 1),
         # wip with an empty reviewer list and nothing underneath carrying one.
         # `pitch-5e7b1c` was here too and is not any more: its own list is empty,
         # but its tasks name ibisbillie, mudlarkish and accentor9, and a pitch whose
@@ -847,7 +847,7 @@ def test_no_message_names_a_field_the_way_the_file_spells_it():
     loop_a, loop_b, SHELVED_ID = "task-f00001", "task-f00002", "task-f00003"
     records = [
         pitch(status="ready", owner=None, reviewers=[], person_weeks=None),
-        task(status="in_progress", assigned_on=None, reviewers=["jackdawrie"], owner="jackdawrie"),
+        task(status="in_progress", start_date=None, reviewers=["jackdawrie"], owner="jackdawrie"),
         project(status="ready", owner=None, reviewers=[]),
         Task(
             id=OTHER_TASK_ID,
@@ -943,7 +943,7 @@ def test_in_progress_wants_somebody_other_than_the_owner_from_underneath_too():
     reviewing, which is the thing that rule is about."""
     problem = only(
         check(
-            pitch(reviewers=[], status="in_progress", assigned_on=date(2026, 8, 3)),
+            pitch(reviewers=[], status="in_progress", start_date=date(2026, 8, 3)),
             task(reviewers=["jackdawrie"], owner="jackdawrie"),
         ),
         PITCH_ID,
@@ -1013,7 +1013,7 @@ def test_work_in_progress_needs_somebody_on_it():
         check(
             task(
                 status="in_progress",
-                assigned_on=date(2026, 8, 3),
+                start_date=date(2026, 8, 3),
                 assignees=[],
                 created_schema_version=2,
             )
@@ -1053,7 +1053,7 @@ def test_nothing_is_asked_of_a_record_nobody_has_looked_at():
         "assignees": [],
         "reviewers": [],
         "person_weeks": None,
-        "assigned_on": None,
+        "start_date": None,
         "prs": [],
     }
     # The control: the same record one rung up really does collect a handful, so

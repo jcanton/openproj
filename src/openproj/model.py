@@ -209,7 +209,7 @@ def readable[T](paths: Iterable[str], load: Callable[[str], T]) -> tuple[list[T]
     the guard that was already here.
 
     Fifteen files proved it: no `---` at all, a flow sequence that never closes,
-    a tab where YAML wants spaces, `effort_weeks: three`, `assigned_on: next
+    a tab where YAML wants spaces, `effort_weeks: three`, `start_date: next
     tuesday`, a frontmatter written as a list, a cycle numbered `forty-one`, a
     config file that is half a line. Every one of them answered 500 on `/`,
     `/graph`, `/timeline`, `/people`, `/cycles`, `/detail`, `/new` and
@@ -898,7 +898,14 @@ class Record(BaseModel):
     reviewers: list[str] = []
     review_waived: bool = False
 
-    assigned_on: date | None = None
+    # The one date anybody types, and the whole schedule is derived from it.
+    # It was `assigned_on` until 2026-08-27 — a name borrowed from an HR event,
+    # for a field that has only ever meant the day the work began, feeding a
+    # column already called Start. `_SIZE_FIELD`'s one-field-one-word cleanup is
+    # the precedent, and the old key is named in `_RETIRED` rather than quietly
+    # read: a file still saying `assigned_on:` parses clean and would otherwise
+    # lose its date in silence.
+    start_date: date | None = None
     # Named rather than numbered: "priority 2" means nothing to a reader, and a
     # number invites arithmetic on something that is only an ordering. A plain
     # string for the same reason as `status` — see above.
@@ -1336,7 +1343,7 @@ _WORK_FIELDS = (
     "assignees",
     "reviewers",
     "review_waived",
-    "assigned_on",
+    "start_date",
     "cycle",
     "priority",
     "prs",
@@ -2528,8 +2535,8 @@ def _status_problems(
         # No shaped_by gate any more: a pitch's owner IS who shaped it, and the
         # owner rule above already asks every ready record for one.
     elif record.status == "in_progress":
-        if record.assigned_on is None:
-            yield "blocker", "assigned_on", "work in progress needs the date it was assigned", 1
+        if record.start_date is None:
+            yield "blocker", "start_date", "work in progress needs the date it started", 1
         if not record.assignees:
             yield "blocker", "assignees", "work in progress needs somebody on it", 2
         if not record.review_waived and not (set(reviews) - {record.owner}):
@@ -2869,9 +2876,19 @@ _PROMOTION_LINKS = {"pitched_into": "pitched into", "became": "became"}
 # `shaped_by` retired 2026-08-24 — jcanton: owner, shaped_by, assignees and
 # reviewers was one hat too many, so `owner` on a pitch is who shaped it and
 # holds it.
+#
+# `assigned_on` retired 2026-08-27 into `start_date`, and it is here for a
+# sharper reason than the tidiness of the name: a date is the value being
+# stranded. A file that still says `assigned_on:` parses clean, keeps the dead
+# key for ever and loses the one date the whole schedule is derived from, so
+# every record in it snaps to today's floor with nothing on any page to say
+# why. That is not backwards compatibility — the field is gone — but the file
+# is told so.
 _RETIRED = {
     "shaped_by": "owner records who shaped a pitch and holds it — "
     "move the name there and delete this key",
+    "assigned_on": "start_date records when the work began — "
+    "move the date there and delete this key",
 }
 
 
@@ -2933,10 +2950,13 @@ def _problems_for(
                 yield "warning", field, f"{what}, so its {field} is not read", 1
 
     # Any kind, because a retired key is in nobody's `model_fields` and so lands
-    # in `_unread` wherever it is written. Stamped 5, the version that retired
-    # `shaped_by` — moot for severity, since a warning is what is yielded and
-    # grandfathering only ever demotes, but a Problem's version should still say
-    # which vocabulary it belongs to.
+    # in `_unread` wherever it is written. Stamped 5 for the whole map — the
+    # version that retired `shaped_by`, and the one `assigned_on` retires under
+    # too. Splitting the loop to give each key a number of its own would buy
+    # nothing anybody reads: a warning is what is yielded, grandfathering only
+    # ever demotes, and there is no severity below a warning to demote one to.
+    # The version is still carried, because what it says is which vocabulary a
+    # Problem belongs to.
     for field, where in _RETIRED.items():
         if field in record._unread:
             yield "warning", field, f"{field} is no longer read: {where}", 5

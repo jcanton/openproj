@@ -55,7 +55,7 @@ _TABLE_DERIVED = tuple(_TABLE_WHY)
 #
 # The reason it was not is in `_TABLE_WHY`, where both used to sit: `size` is the
 # pitch's appetite *or* the task's effort *or* the default when neither is set,
-# and `start` is `assigned_on` after the scheduler has moved it for the
+# and `start` is `start_date` after the scheduler has moved it for the
 # dependencies and for what the people on it are already doing. Both cells are
 # forecasts, and typing over a forecast is how a plan stops being believed.
 #
@@ -68,16 +68,16 @@ _TABLE_DERIVED = tuple(_TABLE_WHY)
 #
 # A kind that reads neither field is still refused, and by the mechanism that
 # already existed rather than a new one: `reads()` asks `unread_fields`, which
-# puts `person_weeks` on any rung that is not `sized` and `assigned_on` on any
+# puts `person_weeks` on any rung that is not `sized` and `start_date` on any
 # rung that does not schedule. A product's size cell has never been editable and
 # still is not.
-_COLUMN_FIELD = {"size": "person_weeks", "start": "assigned_on"}
+_COLUMN_FIELD = {"size": "person_weeks", "start": "start_date"}
 
 # What the tooltip adds on those two, because "double-click to edit appetite" on
 # a cell reading `2 wk` does not explain why the box opens empty.
 _TABLE_SHOWS = {
     "size": "Shows the appetite, the task effort, or the default when neither is set.",
-    "start": "Shows the scheduled start. Editing sets assigned_on, the earliest it may begin.",
+    "start": "Shows the scheduled start. Editing sets start_date, the earliest it may begin.",
 }
 
 # What this view can be done to, said once, beside the search box. Three gestures
@@ -265,7 +265,7 @@ _TABLE = """
     box that appeared, and nothing more. -#}
 <div id="row-conflict" role="status" aria-live="polite" hidden></div>
 {#- What the status about to be saved demands and the row has not got. A panel
-    and not a column: `assigned_on` beside `start` and `end` is a third date on a
+    and not a column: `start_date` beside `start` and `end` is a third date on a
     row that already carries two derived ones, and the question is only ever
     asked at the moment the status moves. -#}
 <div id="askfor" hidden></div>
@@ -387,7 +387,7 @@ const WHY = {{ why|tojson }};
 
 // The two columns whose cell shows one thing and edits another — `size` shows the
 // scheduler's number and writes `person_weeks`, `start` shows the scheduled day
-// and writes `assigned_on`. Everything below asks `fieldOf(key)` rather than
+// and writes `start_date`. Everything below asks `fieldOf(key)` rather than
 // using the column name as a field name, which is what they were the same thing
 // for every other column.
 const COLUMN_FIELD = {{ fields|tojson }};
@@ -1243,7 +1243,7 @@ function missingFor(row, status) {
 // Fields a span is computed from. Editing one of these from the table changes
 // `start` and `end`, which are columns nothing in the browser can work out — so
 // the rows are re-read from the server rather than patched in place.
-const DERIVES_DATES = new Set(['assigned_on', 'person_weeks', 'cycle']);
+const DERIVES_DATES = new Set(['start_date', 'person_weeks', 'cycle']);
 
 // Today, in the reader's own timezone. `toISOString` is UTC, so on a laptop east
 // of Greenwich in the evening it offers tomorrow — which is a date somebody
@@ -1263,7 +1263,7 @@ function askFor(cell, status, fields) {
   const named = fields.map(field => {
     const label = FIELD_LABELS[field] || field;
     const type = EDITABLE[field] === 'date' ? 'date' : 'text';
-    const value = field === 'assigned_on' ? today() : '';
+    const value = field === 'start_date' ? today() : '';
     // `data-type` and `data-suggest` are what `openEditor` writes on the box it
     // builds, for the same widget: `data-type` is not decoration — the widget
     // reads `dataset.type === 'list'` to complete the last comma-separated
@@ -1788,7 +1788,7 @@ function draftRowHtml() {
     // `size` — so it agrees with the box that then opens. The placeholder is
     // inside a cell of a column fitted to its own contents, and putting the
     // field's name there made `size` read `appetite` and `start` read
-    // `assigned on`: both wider than their columns, both wrapping, and the draft
+    // `start date`: both wider than their columns, both wrapping, and the draft
     // row went from 30px to 50px — a row twice the height of every other row,
     // which `test_the_draft_rows_marks_are_drawn` measures and caught.
     const named = (FIELD_LABELS[field || key] || field || key).toLowerCase();
@@ -4078,7 +4078,7 @@ def _new_row_fields() -> dict[str, dict[str, str]]:
     is asked of the same two places rather than written down a third time:
     `EDITABLE` says which fields a person owns at all, and `model_fields` says
     which of them this kind has. A project has no `person_weeks`, so it gets no
-    box under Appetite; `assigned_on` would be here if the table had a column
+    box under Appetite; `start_date` would be here if the table had a column
     for it, and the day it does this map grows the entry on its own.
 
     A column missing from a kind's map is a column that kind cannot be typed into

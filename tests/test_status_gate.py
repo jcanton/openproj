@@ -1,6 +1,6 @@
 """Moving a row to a status that demands something it has not got.
 
-`in_progress` requires `assigned_on`. The table does not carry that column — it
+`in_progress` requires `start_date`. The table does not carry that column — it
 already draws two derived dates, and a third that somebody types beside them is
 the kind of thing a reader has to be told apart — so changing the status from the
 table used to be a refusal naming a field the table does not show, with the way
@@ -28,7 +28,7 @@ HEAD = "0123456789abcdef0123456789abcdef01234567"
 
 
 # A corpus of three, hand-built rather than the demo's: every record in `seed/`
-# carries an `assigned_on`, which is what a plan somebody has been keeping looks
+# carries a `start_date`, which is what a plan somebody has been keeping looks
 # like — and the whole question here is about a record that does not. The third
 # has nobody on it at all, so the question it opens has the two people lists in
 # it and not only the date.
@@ -59,7 +59,7 @@ def index() -> Index:
             assignees=["ann"],
             reviewers=["bo"],
             person_weeks=2,
-            assigned_on=date(2026, 8, 10),
+            start_date=date(2026, 8, 10),
         ),
         Task(
             id=BARE,
@@ -114,14 +114,14 @@ def test_a_status_that_needs_a_date_asks_for_it(index: Index, page: str, tmp_pat
 
     assert got["asked"]["shown"], "the status was changed and nothing was asked"
     assert got["asked"]["wrote"] == 0, "it wrote first and asked afterwards"
-    assert got["asked"]["fields"] == ["assigned_on"]
+    assert got["asked"]["fields"] == ["start_date"]
     assert got["asked"]["type"] == "date"
     assert got["asked"]["prefilled"], "the date was not prefilled"
 
     assert [call["url"] for call in got["wrote"]] == [f"/api/record/{record_id}"]
     sent = got["wrote"][0]["body"]["fields"]
     assert sent["status"] == "in_progress"
-    assert sent["assigned_on"] == got["asked"]["prefilled"], (
+    assert sent["start_date"] == got["asked"]["prefilled"], (
         "the answer and the status went in two different commits"
     )
 
@@ -195,7 +195,7 @@ def test_the_gate_the_table_asks_from_is_the_gate_the_server_enforces(page: str)
         }
     # Per kind, because a row is one kind: merged, the map demands `person_weeks`
     # of a project at `ready`, and a project has no such field.
-    assert "in_progress" in payload["required"]["task"]["assigned_on"]
+    assert "in_progress" in payload["required"]["task"]["start_date"]
     assert "person_weeks" not in payload["required"]["project"]
     # And the foot of the ladder demands nothing, on the page as well as in the
     # gate. `thinking` is where a record opens, so this is the map every row
@@ -275,7 +275,7 @@ def test_the_question_offers_the_suggestions_a_cell_editor_offers(
         height=900,
     )
 
-    assert got["opened"]["fields"] == ["assignees", "reviewers", "assigned_on"]
+    assert got["opened"]["fields"] == ["assignees", "reviewers", "start_date"]
     assert got["opened"]["role"] == "combobox"
     assert got["opened"]["type"] == "list"
     assert got["opened"]["expanded"] == "true"

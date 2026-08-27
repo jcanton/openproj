@@ -148,7 +148,7 @@ def corpus(text: str) -> dict[str, str]:
         f"assignees: ['{quoted}']\n"
         f"reviewers: ['{quoted}']\n"
         f"cycle: 41\n"
-        f"assigned_on: 2026-08-17\n"
+        f"start_date: 2026-08-17\n"
         f"tags: ['{quoted}']\n"
         f"prs: ['{quoted}']\n"
     )

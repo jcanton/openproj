@@ -485,7 +485,7 @@ def test_the_missing_required_fields_predicate_reads_the_problems():
             assignees=["alice"],
             reviewers=["bob"],
             status="in_progress",
-            assigned_on=TODAY,
+            start_date=TODAY,
         ),
         a_pitch(
             "pitch-b00001",
@@ -707,7 +707,7 @@ def test_a_pitchs_dependency_is_inherited_by_its_tasks(seed_index: Index):
     produced them, in `test_schedule.py`.
     """
     assert seed_index.plan["task-7c8e40"].depends_on == []
-    assert seed_index.plan["task-7c8e40"].assigned_on is None
+    assert seed_index.plan["task-7c8e40"].start_date is None
     assert seed_index.plan["pitch-7b3e94"].depends_on == ["pitch-6f2d18"]
 
     ends = seed_index.spans["pitch-6f2d18"].end
@@ -931,7 +931,7 @@ def test_work_bet_in_an_earlier_cycle_and_still_running_counts_against_this_one(
             person_weeks=3.0,
             cycle=36,
             status="in_progress",
-            assigned_on=date(2026, 8, 3),
+            start_date=date(2026, 8, 3),
         ),
     ]
     index = build_index(records, _two_cycles(), TODAY)
@@ -949,7 +949,7 @@ def test_work_finished_in_the_earlier_cycle_is_not_carried_into_this_one():
             cycle=36,
             status="done",
             prs=["kilnlab/kiln4py#1"],
-            assigned_on=date(2026, 7, 1),
+            start_date=date(2026, 7, 1),
         ),
     ]
     index = build_index(records, _two_cycles(), TODAY)
@@ -968,7 +968,7 @@ def test_an_undated_cycle_counts_only_what_was_bet_into_it_by_name():
             person_weeks=3.0,
             cycle=36,
             status="in_progress",
-            assigned_on=date(2026, 8, 3),
+            start_date=date(2026, 8, 3),
         ),
     ]
     index = build_index(records, _two_cycles(), TODAY)
@@ -985,7 +985,7 @@ def test_a_carried_parent_charges_nothing_because_its_children_already_did():
             person_weeks=4.0,
             cycle=36,
             status="in_progress",
-            assigned_on=date(2026, 8, 3),
+            start_date=date(2026, 8, 3),
         ),
         a_task(
             "task-c00001",
@@ -994,13 +994,13 @@ def test_a_carried_parent_charges_nothing_because_its_children_already_did():
             person_weeks=1.0,
             cycle=36,
             status="in_progress",
-            assigned_on=date(2026, 8, 3),
+            start_date=date(2026, 8, 3),
         ),
     ]
     index = build_index(records, _two_cycles(), TODAY)
 
     # Charged to 36, which is the cycle the work is actually in: it is in
-    # progress and was assigned on 3 August, so it runs 08-03 to 08-07, inside
+    # progress and started on 3 August, so it runs 08-03 to 08-07, inside
     # 36's window. It used to charge 37 only because the floor at `today` pushed
     # every live span forward into the next cycle — an artefact, not a carry.
     assert index.load(36) == {"ann": 1.0}
@@ -1160,7 +1160,7 @@ def test_a_task_under_a_pitch_is_counted_in_the_cycle_its_pitch_was_bet_into():
             cycle=36,
             person_weeks=4.0,
             status="in_progress",
-            assigned_on=date(2026, 7, 1),
+            start_date=date(2026, 7, 1),
         ),
         a_task(
             "task-c00001",
@@ -1168,7 +1168,7 @@ def test_a_task_under_a_pitch_is_counted_in_the_cycle_its_pitch_was_bet_into():
             owner="ann",
             person_weeks=2.0,
             status="in_progress",
-            assigned_on=date(2026, 7, 1),
+            start_date=date(2026, 7, 1),
         ),
     ]
     index = build_index(records, _two_cycles(), TODAY)
@@ -1187,7 +1187,7 @@ def test_a_ready_task_carried_into_this_cycle_is_counted_by_its_dates():
             cycle=36,
             person_weeks=4.0,
             status="in_progress",
-            assigned_on=date(2026, 7, 1),
+            start_date=date(2026, 7, 1),
         ),
         a_task("task-c00001", parent="pitch-b00001", owner="ann", person_weeks=2.0, status="ready"),
     ]

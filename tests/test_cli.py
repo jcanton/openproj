@@ -102,8 +102,8 @@ def test_schedule_accepts_an_explicit_today(seed_root: Path, capsys):
     payload = json.loads(capsys.readouterr().out)
 
     assert payload["today"] == "2026-08-17"
-    # 08-13 and not the 08-17 asked for: the task is in progress and was assigned
-    # on the 13th, so it starts when it started. `--today` still moves everything
+    # 08-13 and not the 08-17 asked for: the task is in progress and its start
+    # date is the 13th, so it starts when it started. `--today` still moves everything
     # that has not begun, which is what this test is about.
     assert payload["spans"]["task-53a9f0"]["start"] == "2026-08-13"
 
@@ -180,7 +180,7 @@ def test_a_plan_that_reaches_the_end_of_the_calendar_still_renders(tmp_path: Pat
         (tmp_path / directory).mkdir()
     (tmp_path / "tasks" / "task-000001--done.md").write_text(
         "---\nid: task-000001\nkind: task\ntitle: Long done\nstatus: done\n"
-        "owner: jackdawrie\nreviewers: [merganserly]\nassigned_on: 9999-12-31\n"
+        "owner: jackdawrie\nreviewers: [merganserly]\nstart_date: 9999-12-31\n"
         'prs: ["kilnlab/kiln4py#1"]\nperson_weeks: 1.0\n---\n\nBody.\n',
         encoding="utf-8",
     )

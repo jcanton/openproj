@@ -117,7 +117,7 @@ def test_the_body_textarea_holds_what_is_stored(page: str, client: TestClient):
 
 def test_the_editable_fields_are_the_ones_a_person_owns(page: str):
     named = controls(page)
-    for field in ("title", "status", "owner", "reviewers", "assigned_on", "priority", "body"):
+    for field in ("title", "status", "owner", "reviewers", "start_date", "priority", "body"):
         assert field in named, field
 
 
@@ -483,9 +483,9 @@ def test_resetting_an_edit_nobody_made_is_refused_rather_than_silent(page: str, 
 
 def test_the_status_a_row_is_set_to_says_what_it_will_be_refused_without(page: str):
     """The rules were a dict in `render.py` and nowhere on screen. Marked live,
-    because moving a task to in_progress is the moment `assigned_on` starts
+    because moving a task to in_progress is the moment `start_date` starts
     mattering — and the moment nobody is looking at the validator."""
-    assert 'data-required-at="in_progress"' in control(page, "assigned_on")
+    assert 'data-required-at="in_progress"' in control(page, "start_date")
     assert 'data-required-at="ready in_progress"' in control(page, "reviewers")
     assert "function markRequired(form)" in page
     assert "form.addEventListener('change', () => markRequired(form));" in page
@@ -513,7 +513,7 @@ def test_a_date_box_is_the_only_copy_of_the_day_it_holds(page: str):
     `test_both_halves_of_the_app_write_a_date_the_same_way` drives it against
     `_read_date` whether or not anything on a page calls it today.
     """
-    assert 'type="date"' in control(page, "assigned_on")
+    assert 'type="date"' in control(page, "start_date")
     assert "insertAdjacentElement('afterend', echo)" not in page
     assert "'iso field' : 'iso'" not in page
     # And no stylesheet still dresses a span nothing inserts.

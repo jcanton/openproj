@@ -350,7 +350,7 @@ def _month_ticks(origin: date, last: date, x) -> list[dict]:
 
     December 9999 has no month after it, and building one raised ValueError —
     twelve lines after the `x()` helper that was fixed for this exact failure.
-    `assigned_on: 9999-12-31` on a done record, typed into the detail page,
+    `start_date: 9999-12-31` on a done record, typed into the detail page,
     committed and then answered 500 on `/timeline` for good, with `openproj
     check` reporting nothing wrong and `openproj render` writing no files at
     all, so neither tool you would reach for could tell you why. The walk stops

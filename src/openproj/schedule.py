@@ -1,4 +1,4 @@
-"""Derive a timeline from sizes, dependencies and assignment dates.
+"""Derive a timeline from sizes, dependencies and start dates.
 
 Nobody types a start or an end date. A `Span` is inclusive — `end` is the last
 working day the item occupies — so anything following it starts on the next
@@ -70,7 +70,7 @@ def _next_working_day(day: date, config: Config) -> date:
 
     This walk and `_first_working_day`'s stop at `date.max` rather than stepping
     past it. `_place` calls this on a blocker's last day, and a `done` record
-    carries whatever `assigned_on` says — so `assigned_on: 9999-12-31`, typed
+    carries whatever `start_date` says — so `start_date: 9999-12-31`, typed
     into the detail page, walked one day off the end of the calendar and
     answered 500 on every page that reads the index. Saturating is the same
     answer `working_days_after` already gives, and `_place` asks about the
@@ -377,10 +377,8 @@ def schedule(
     # Completed work is a historical marker, never a forecast, and never a claim
     # on anyone's future capacity.
     for record in live.values():
-        if record.status == "done" and record.assigned_on is not None:
-            spans[record.id] = Span(
-                start=record.assigned_on, end=record.assigned_on, historical=True
-            )
+        if record.status == "done" and record.start_date is not None:
+            spans[record.id] = Span(start=record.start_date, end=record.start_date, historical=True)
 
     active = {i: e for i, e in live.items() if e.status != "done"}
     stalled = _unschedulable(active)
@@ -478,7 +476,8 @@ def _place(
         if target in spans and spans[target].end >= blocker_ready:
             blocker_id, blocker_ready = target, _next_working_day(spans[target].end, config)
 
-    # Work in progress started when it was assigned, and today does not move it.
+    # Work in progress started on the day its `start_date` names, and today
+    # does not move it.
     #
     # The floor is `today`, and it exists so a plan never draws work starting in
     # the past — which is right for a bet nobody has picked up and wrong for one
@@ -493,8 +492,8 @@ def _place(
     # rule rather than the plan. An in-progress item whose blocker is unfinished
     # is a real and visible state — `_ordering` and the problems list are where
     # that gets said.
-    begun = record.status == "in_progress" and record.assigned_on is not None
-    ready = record.assigned_on if begun else max(floor, record.assigned_on or floor, blocker_ready)
+    begun = record.status == "in_progress" and record.start_date is not None
+    ready = record.start_date if begun else max(floor, record.start_date or floor, blocker_ready)
     start = _first_working_day(ready, config)
     busy_worker, busy_until = None, None
     while True:

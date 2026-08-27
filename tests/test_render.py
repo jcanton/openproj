@@ -269,7 +269,7 @@ def test_the_table_carries_the_whole_plan_and_its_derived_dates(rendered: Path, 
     )
     assert set(payload["rows"]) == set(seed_index.plan)
     scheduled = payload["rows"]["task-53a9f0"]
-    # Its own `assigned_on`, because it is in progress: work under way started
+    # Its own `start_date`, because it is in progress: work under way started
     # when it started, and the floor at today applies to what has not begun.
     assert scheduled["start"] == "2026-08-13"
     assert scheduled["derived"] is True
@@ -3949,7 +3949,7 @@ def test_the_deck_still_inlines_a_picture_after_the_prefix_moved():
 def _index_reaching_the_end_of_the_calendar(seed_root: Path) -> Index:
     """The seed corpus with one `done` task dated at the end of the calendar.
 
-    A `done` span is whatever `assigned_on` says and no rule refuses a date, so
+    A `done` span is whatever `start_date` says and no rule refuses a date, so
     this is what one keystroke too many in the detail page's date box leaves in
     the repository — permanently, on a protected branch.
     """
@@ -3959,7 +3959,7 @@ def _index_reaching_the_end_of_the_calendar(seed_root: Path) -> Index:
     # `/timeline` broke.
     marked = [e for e in records if e.id == "task-3e07b2"]
     assert marked, "the fixture corpus no longer holds the record this test edits"
-    marked[0].assigned_on = date.max
+    marked[0].start_date = date.max
     return build_index(records, config, date(2026, 8, 17))
 
 
@@ -6262,7 +6262,7 @@ def test_the_create_form_opens_with_no_date_in_the_box(server_pages: dict[str, s
     default=today".
 
     It was today, on the argument that a date field which starts empty is a date
-    field somebody leaves empty. That was answering the wrong risk. `assigned_on`
+    field somebody leaves empty. That was answering the wrong risk. `start_date`
     is the one date the whole schedule is derived FROM, and a record created
     today is very often work that starts next cycle, or work somebody is writing
     down so as not to lose it. Prefilling today does not stop anybody leaving it
@@ -6275,8 +6275,8 @@ def test_the_create_form_opens_with_no_date_in_the_box(server_pages: dict[str, s
     then says so beside itself — which is why the box still carries
     `data-required-at`.
     """
-    box = re.search(r'<input[^>]*id="new-assigned_on"[^>]*>', server_pages["new"])
-    assert box, "the create form has no assigned-on box"
+    box = re.search(r'<input[^>]*id="new-start_date"[^>]*>', server_pages["new"])
+    assert box, "the create form has no start-date box"
     assert 'value=""' in box.group(0), (
         f"the create form opens with a date already in it: {box.group(0)}"
     )

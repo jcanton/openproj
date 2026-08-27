@@ -163,7 +163,7 @@ def test_step2_a_dependency_cycle_leaves_its_members_and_descendants_unscheduled
 
 
 def test_step3_done_work_is_a_historical_point_marker_or_no_span_at_all():
-    dated = task("aaa001", status="done", assigned_on=date(2026, 7, 1))
+    dated = task("aaa001", status="done", start_date=date(2026, 7, 1))
     spans, _ = run([dated, task("aaa002", status="done")])
     july = date(2026, 7, 1)
     assert spans["task-aaa001"] == Span(start=july, end=july, historical=True)
@@ -208,18 +208,18 @@ def test_step5_a_cycle_closed_by_a_containment_edge_does_not_raise():
     assert {"pitch-bbb001", "task-aaa001"} <= set(spans)
 
 
-def test_step6_a_past_assignment_date_does_not_pull_work_into_the_past():
-    """ready is max(today, assigned_on, blockers) — not `assigned_on or today`,
-    which would schedule an item that was assigned last week into last week."""
-    spans, _ = run([task("aaa001", assigned_on=date(2026, 8, 13), size=2.0)])
+def test_step6_a_past_start_date_does_not_pull_work_into_the_past():
+    """ready is max(today, start_date, blockers) — not `start_date or today`,
+    which would schedule an item whose start date was last week into last week."""
+    spans, _ = run([task("aaa001", start_date=date(2026, 8, 13), size=2.0)])
     assert spans["task-aaa001"] == Span(start=MONDAY, end=date(2026, 8, 28))
 
 
-def test_step6_a_leaf_waits_for_today_its_assignment_date_and_its_blockers():
+def test_step6_a_leaf_waits_for_today_its_start_date_and_its_blockers():
     records = [
         task("aaa001"),
         task("aaa002", owner="bo", depends_on=["task-aaa001"]),
-        task("aaa003", owner="cy", assigned_on=date(2026, 9, 1)),
+        task("aaa003", owner="cy", start_date=date(2026, 9, 1)),
     ]
     spans, _ = run(records)
     assert spans["task-aaa002"].start == date(2026, 8, 24)  # the working day after Friday's end
@@ -369,7 +369,7 @@ def test_regression_a_task_and_a_pitch_of_the_same_size_take_the_same_time():
 
 
 def test_regression_done_work_neither_occupies_the_future_nor_consumes_capacity():
-    finished = task("aaa001", status="done", assigned_on=date(2026, 7, 1), size=4.0)
+    finished = task("aaa001", status="done", start_date=date(2026, 7, 1), size=4.0)
     records = [finished, task("aaa002")]
     spans, _ = run(records)
     assert spans["task-aaa001"].end == date(2026, 7, 1)
@@ -450,7 +450,7 @@ def dags(draw: st.DrawFn) -> list[Record]:
                 person_weeks=draw(st.sampled_from([None, 0.1, 0.5, 1.0, 2.0])),
                 priority=draw(st.sampled_from(["high", "medium", "low"])),
                 parent=PARENT_ID if draw(st.booleans()) else None,
-                assigned_on=draw(st.sampled_from([None, MONDAY, MONDAY + timedelta(days=10)])),
+                start_date=draw(st.sampled_from([None, MONDAY, MONDAY + timedelta(days=10)])),
                 depends_on=[f"task-{d:06x}" for d in deps],
             )
         )
@@ -533,10 +533,10 @@ GOLDEN_TODAY = date(2026, 8, 17)
 #   task-53a9f0  size 2.0, one worker  -> 2 elapsed weeks, 08-17 .. 08-28
 #   pitch-48ea9e size 2.0, two workers -> 1 elapsed week,  08-17 .. 08-21
 # Three of these moved when work already in progress stopped being floored at
-# today. `task-53a9f0` is `in_progress` and assigned 2026-08-13, four days before
+# today. `task-53a9f0` is `in_progress` and starts 2026-08-13, four days before
 # GOLDEN_TODAY, so it now starts on the day it actually started; `pitch-5e7b1c`
 # is its parent and rolls up to it; `pitch-1b3f9a` is `ready` with no
-# `assigned_on` and moves earlier only because a worker comes free sooner. Each
+# `start_date` and moves earlier only because a worker comes free sooner. Each
 # was re-derived by hand against the new rule, not copied out of a failure.
 #
 # The seven hearth-island keys were added 2026-08-23. Every one of the eleven
@@ -597,12 +597,12 @@ GOLDEN_SPANS = {
 #   task-6a5c02  size 1.5; workers dedup to [redpollard, chiffchaffy] (redpoll is
 #                owner AND assignee and counts once); cycle 37 rates 0.5 + 0.25
 #                = 0.75; 1.5 / 0.75 = 2.0 weeks = 10 working days. No blockers.
-#                `in_progress` with an `assigned_on`, so `begun`: starts on
+#                `in_progress` with a `start_date`, so `begun`: starts on
 #                2026-08-17 and today does not move it.
 #                08-17,18,19,20,21,24,25,26,27,28          -> 08-17 .. 08-28
 #
 #   task-6b7d31  size 0.5; one worker [redpollard] at 0.5; 0.5 / 0.5 = 1.0 week
-#                = 5 working days. `begun`, assigned 2026-08-13 — FOUR DAYS
+#                = 5 working days. `begun`, starting 2026-08-13 — FOUR DAYS
 #                BEFORE GOLDEN_TODAY, so the floor does not apply.
 #                08-13,14,17,18,19                          -> 08-13 .. 08-19
 #                redpollard is already booked 08-17..08-28 by task-6a5c02 and
@@ -614,7 +614,7 @@ GOLDEN_SPANS = {
 #   task-7c8e40  size 1.0; one worker [Whimbrelson] at 0.5 (cycle 38, read
 #                although the span lands in September — the rate belongs to the
 #                bet, not to the calendar); 1.0 / 0.5 = 2.0 weeks = 10 days.
-#                It has NO `depends_on` and NO `assigned_on`. Its start comes
+#                It has NO `depends_on` and NO `start_date`. Its start comes
 #                entirely from `pitch-7b3e94`'s `depends_on: [pitch-6f2d18]`,
 #                INHERITED through `blockers_of`'s ancestor loop: pitch-6f2d18
 #                ends 08-28, next working day 08-31.
@@ -628,7 +628,7 @@ GOLDEN_SPANS = {
 #                in `live`, not in `spans`, and skipped by the `target in spans`
 #                guard — it contributes NOTHING, which is the whole of the
 #                `off_plan_deps` claim; and pitch-6f2d18, which loses at 08-28.
-#                Then `assigned_on: 2026-12-21` beats all of it: start 12-21.
+#                Then `start_date: 2026-12-21` beats all of it: start 12-21.
 #                Twenty working days stepping over 12-24, 12-25, 12-31 and
 #                01-01 (12-26 is a Saturday and costs nothing):
 #                  12-21,22,23 | 12-28,29,30 | 01-04,05,06,07,08 |
@@ -650,7 +650,7 @@ GOLDEN_SPANS = {
 # parent product absent from `live` and hands back the project, whose own
 # `cycle` is null.
 
-# Every done record in the corpus has a null assigned_on, and the shelved one is
+# Every done record in the corpus has a null start_date, and the shelved one is
 # out of the graph, so none of them appear on the timeline at all. The hearth
 # island adds nothing here: none of its records is `done`, and its two PRODUCTS
 # never enter `live` at all, because `RUNG["product"].schedules` is False. This
@@ -795,9 +795,9 @@ def test_a_record_too_large_for_the_calendar_is_unscheduled_and_says_why():
 
 
 def test_a_done_date_at_the_end_of_the_calendar_costs_its_dependent_and_nothing_else():
-    """A `done` span is whatever `assigned_on` says, and no rule refuses a date.
+    """A `done` span is whatever `start_date` says, and no rule refuses a date.
 
-    `assigned_on: 9999-12-31` typed into the detail page committed, and then
+    `start_date: 9999-12-31` typed into the detail page committed, and then
     `_next_working_day` — walking from the blocker's last day to the day after
     it — stepped one day off the calendar and raised OverflowError out of
     `build_index`. Every page that reads the index answered 500 to every reader,
@@ -810,7 +810,7 @@ def test_a_done_date_at_the_end_of_the_calendar_costs_its_dependent_and_nothing_
     """
     spans, explanations = run(
         [
-            task("aaa001", status="done", assigned_on=date.max, prs=["o/r#1"]),
+            task("aaa001", status="done", start_date=date.max, prs=["o/r#1"]),
             task("aaa002", owner="bo", depends_on=["task-aaa001"]),
             task("aaa003", owner="cy"),
         ]
@@ -831,7 +831,7 @@ def test_a_worker_booked_to_the_end_of_the_calendar_does_not_spin():
     started = time.monotonic()
     spans, explanations = run(
         [
-            task("aaa001", status="done", assigned_on=date.max, prs=["o/r#1"]),
+            task("aaa001", status="done", start_date=date.max, prs=["o/r#1"]),
             task("aaa002", depends_on=["task-aaa001"]),
             task("aaa003"),  # same owner as aaa002, so it queues behind it
         ]
@@ -974,8 +974,8 @@ def test_work_in_progress_starts_when_it_started_and_not_today():
     after the review meeting that closed the cycle, while the two `done` ones sat
     correctly back in July.
     """
-    began = task("aaa001", status="in_progress", assigned_on=date(2026, 6, 22))
-    waiting = task("aaa002", owner="bo", status="ready", assigned_on=date(2026, 6, 22))
+    began = task("aaa001", status="in_progress", start_date=date(2026, 6, 22))
+    waiting = task("aaa002", owner="bo", status="ready", start_date=date(2026, 6, 22))
     spans, _ = schedule([began, waiting], CONFIG, date(2026, 8, 17))
 
     assert spans["task-aaa001"].start == date(2026, 6, 22)
@@ -997,8 +997,8 @@ def test_two_things_one_person_is_already_doing_are_drawn_at_once():
     moving a date that has already happened.
     """
     both = [
-        task("aaa001", status="in_progress", assigned_on=date(2026, 6, 22)),
-        task("aaa002", status="in_progress", assigned_on=date(2026, 6, 22)),
+        task("aaa001", status="in_progress", start_date=date(2026, 6, 22)),
+        task("aaa002", status="in_progress", start_date=date(2026, 6, 22)),
     ]
     spans, _ = schedule(both, CONFIG, date(2026, 8, 17))
 

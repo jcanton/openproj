@@ -80,11 +80,11 @@ BREAKAGES = [
         "---\nid: nonsense\ntitle: A file nobody typed a kind into\n---\n",
     ),
     (
-        "an assigned_on that is a phrase",
+        "a start_date that is a phrase",
         "tasks/task-d00004.md",
         "---\nid: task-d00004\nkind: task\ntitle: A date somebody typed\n"
         "status: ready\nowner: ann\nreviewers: [bo]\nperson_weeks: 1\n"
-        "assigned_on: next tuesday\n---\n",
+        "start_date: next tuesday\n---\n",
     ),
     (
         "a size that is a word",

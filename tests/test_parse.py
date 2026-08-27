@@ -47,7 +47,7 @@ def test_parse_dispatches_to_the_subclass_named_by_kind(seed_root: Path):
     assert type(project) is Project
     assert type(task) is Task
     assert task.person_weeks == 2
-    assert task.assigned_on == date(2026, 8, 13)
+    assert task.start_date == date(2026, 8, 13)
 
 
 def test_the_markdown_body_survives_parsing(seed_root: Path):
@@ -70,13 +70,13 @@ def test_parse_tolerates_explicit_nulls_where_a_default_belongs():
     the same as the field being absent."""
     record = parse_text(
         "---\nid: task-abc123\nkind: task\ntitle: null\nreviewers: null\n"
-        "status: null\nassigned_on: null\n---\n",
+        "status: null\nstart_date: null\n---\n",
         "nulls.md",
     )
     assert record.title == ""
     assert record.reviewers == []
     assert record.status == "thinking"
-    assert record.assigned_on is None
+    assert record.start_date is None
 
 
 def test_parse_falls_back_to_the_id_prefix_when_kind_is_missing():

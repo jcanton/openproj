@@ -114,7 +114,7 @@ from openproj.web import SESSION_COOKIE, create_app
 # scheduler's arithmetic and there is nothing to type into.
 DERIVED = {"end", "blocked_by", "progress"}
 # And the two that show a derived value and edit the field beneath it — `size`
-# writes `person_weeks`, `start` writes `assigned_on`. They are not editable
+# writes `person_weeks`, `start` writes `start_date`. They are not editable
 # under their own names, which is why they still have to be named here.
 SHOWS_DERIVED = {"size", "start"}
 
@@ -318,7 +318,7 @@ def test_the_two_columns_that_show_one_thing_and_edit_another_say_which(page: st
 
     body = script(page)
     shipped = json.loads(re.search(r"const COLUMN_FIELD = (\{.*?\});", body).group(1))
-    assert shipped == _COLUMN_FIELD == {"size": "person_weeks", "start": "assigned_on"}
+    assert shipped == _COLUMN_FIELD == {"size": "person_weeks", "start": "start_date"}
     # Asked of the FIELD and not the column, which is what makes a product's size
     # cell refuse without a rule of its own: `unread_fields` already says a rung
     # that is not sized does not read `person_weeks`.
@@ -553,7 +553,7 @@ def test_the_status_gate_is_written_on_the_controls_themselves(new_page: str):
         ("owner", "ready"),
         ("reviewers", "ready in_progress"),
         ("person_weeks", "ready"),
-        ("assigned_on", "in_progress"),
+        ("start_date", "in_progress"),
         ("prs", "done"),
     ):
         assert f'data-required-at="{gates}"' in control(new_page, field), field
@@ -2185,7 +2185,7 @@ def test_the_form_says_which_fields_the_chosen_status_demands(new_page: str):
         facts,
     )
 
-    assert {"Owner", "Reviewers", "Assigned on", "PRs"} <= set(m.strip() for m in marked)
+    assert {"Owner", "Reviewers", "Start date", "PRs"} <= set(m.strip() for m in marked)
     assert "Tags" not in marked, "a field no status demands carries no mark"
     # Only in the form, and only for the status in force: the mark is toggled, and
     # a mark that could not be taken off would be an asterisk beside every field.
@@ -2589,7 +2589,7 @@ def test_a_problem_marks_the_row_and_the_cell_that_caused_it(page: str):
     """The reason a row is a problem lived in a native `title` on the `<tr>`, and
     a table is not a thing anybody hovers to find out.
 
-    A field the table has no column for — `assigned_on`, `person_weeks` — still
+    A field the table has no column for — `start_date`, `person_weeks` — still
     has to be findable, so its complaint falls to the id cell. A glyph on a
     column nobody can see is a row that says something is wrong and will not say
     what.
@@ -3301,8 +3301,8 @@ def test_the_popup_a_cell_opens_hangs_off_the_body_and_not_off_the_cell(page: st
 def test_the_editor_opens_on_the_written_value_and_not_the_forecast(page: str):
     """**The safety property the whole column-to-field map exists for.**
 
-    The pitch in this corpus has `person_weeks: 3` and no `assigned_on`; the
-    project has `assigned_on: 2026-07-01` and no size of its own. So the pitch's
+    The pitch in this corpus has `person_weeks: 3` and no `start_date`; the
+    project has `start_date: 2026-07-01` and no size of its own. So the pitch's
     start cell SHOWS a date the scheduler worked out and the field under it is
     empty — and if the editor opened on what the cell was showing, a
     double-click and an Enter would write the forecast into the file as though
@@ -3343,11 +3343,11 @@ def test_the_editor_opens_on_the_written_value_and_not_the_forecast(page: str):
     assert "edit" in got["pitchSize"]["cls"], got["pitchSize"]
     assert got["pitchSize"]["field"] == "person_weeks"
     assert "edit" in got["pitchStart"]["cls"], got["pitchStart"]
-    assert got["pitchStart"]["field"] == "assigned_on"
+    assert got["pitchStart"]["field"] == "start_date"
 
     # The cell shows the forecast.
     assert got["pitchStart"]["text"], "the start cell drew nothing at all"
-    # The box opens on the field, which is empty: this pitch has no assigned_on.
+    # The box opens on the field, which is empty: this pitch has no start_date.
     assert got["pitchStartBox"] == "", (
         f"the editor opened on the forecast {got['pitchStartBox']!r}; typing Enter "
         "would have written the scheduler's own guess into the file"
@@ -3364,7 +3364,7 @@ def test_the_editor_opens_on_the_written_value_and_not_the_forecast(page: str):
     # And the tooltip says what the cell is showing before it says how to change
     # it, so an empty box does not read as a bug.
     assert "Shows the appetite" in got["pitchSize"]["tip"], got["pitchSize"]["tip"]
-    assert "Editing sets assigned_on" in got["pitchStart"]["tip"], got["pitchStart"]["tip"]
+    assert "Editing sets start_date" in got["pitchStart"]["tip"], got["pitchStart"]["tip"]
 
 
 def test_every_control_on_the_create_form_has_a_name(new_page: str):
@@ -3526,9 +3526,9 @@ def test_the_new_row_offers_the_fields_that_kind_has_and_no_others():
     assert "size" not in fields["project"], "a project has no size of its own"
     # The two columns that show a derived value and write the one underneath it.
     # `start` joined `size` here on 2026-08-27: it shows the scheduled day and
-    # writes `assigned_on`, the earliest the work may begin, which is a field a
+    # writes `start_date`, the earliest the work may begin, which is a field a
     # person owns on every kind the scheduler dates.
-    assert fields["task"]["start"] == "assigned_on"
+    assert fields["task"]["start"] == "start_date"
     assert "start" not in fields["product"], "a product is never scheduled"
     for kind, columns in fields.items():
         assert "id" not in columns, f"the server mints the id, not the browser ({kind})"
@@ -3548,7 +3548,7 @@ def test_the_row_says_which_columns_it_cannot_be_typed_into_and_why(page: str):
     explains itself without this line changing.
 
     `end` and not `start`, which is what this asked before 2026-08-27. `start`
-    stopped being one of these the day the column began writing `assigned_on`;
+    stopped being one of these the day the column began writing `start_date`;
     `end` is the one that is genuinely nobody's to type, because there is no
     field under it at all.
     """
@@ -4872,7 +4872,7 @@ def test_a_row_that_names_no_reviewer_shows_the_ones_under_it(tmp_path: Path):
             owner="ann",
             reviewers=[],
             person_weeks=4,
-            assigned_on=date(2026, 8, 10),
+            start_date=date(2026, 8, 10),
         ),
         Task(
             id="task-000001",
@@ -4883,7 +4883,7 @@ def test_a_row_that_names_no_reviewer_shows_the_ones_under_it(tmp_path: Path):
             owner="ann",
             reviewers=["bo"],
             person_weeks=2,
-            assigned_on=date(2026, 8, 10),
+            start_date=date(2026, 8, 10),
         ),
         Task(
             id="task-000002",
@@ -4894,7 +4894,7 @@ def test_a_row_that_names_no_reviewer_shows_the_ones_under_it(tmp_path: Path):
             owner="bo",
             reviewers=["cy"],
             person_weeks=2,
-            assigned_on=date(2026, 8, 10),
+            start_date=date(2026, 8, 10),
         ),
     ]
     page = render_table(build_index(records, Config(), date(2026, 8, 17)))

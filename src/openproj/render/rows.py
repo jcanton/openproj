@@ -161,8 +161,8 @@ def _row(index: Index, record_id: str) -> dict:
         # page. They are here because the gate names them: a status the table can
         # set demands them, and a row has to be able to answer whether it already
         # holds one — `size` is the appetite *or the default*, so it cannot
-        # answer for `person_weeks`, and `assigned_on` is on no row at all.
-        "assigned_on": record.assigned_on.isoformat() if record.assigned_on else None,
+        # answer for `person_weeks`, and `start_date` is on no row at all.
+        "start_date": record.start_date.isoformat() if record.start_date else None,
         "person_weeks": getattr(record, "person_weeks", None),
         # Not a column, but the control bar offers it: a dropdown whose value the
         # client cannot see is a filter that changes the URL and does nothing.

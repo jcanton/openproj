@@ -47,11 +47,11 @@ from openproj.web import create_app
 
 ORDINARY = (
     "---\nid: task-e00001\nkind: task\ntitle: An ordinary task\n"
-    "status: ready\nperson_weeks: 1\nassigned_on: 2026-09-01\n---\n\nBody.\n"
+    "status: ready\nperson_weeks: 1\nstart_date: 2026-09-01\n---\n\nBody.\n"
 )
 HAND_EDITED = (
     "---\nid: task-e00002\nkind: task\ntitle: A size somebody typed into a file\n"
-    "status: ready\nperson_weeks: {size}\nassigned_on: 2026-09-01\n---\n\nBody.\n"
+    "status: ready\nperson_weeks: {size}\nstart_date: 2026-09-01\n---\n\nBody.\n"
 )
 
 # The three spellings YAML has for a number that is not one. `.nan` matters as
