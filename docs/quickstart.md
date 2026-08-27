@@ -98,14 +98,52 @@ warn instead.
 ## Editing it in git
 
 Both directions are first class. The files are ordinary markdown, a save from the browser is one
-commit, and a commit you push by hand is read on the next request. A save only rewrites the fields
-whose values changed, so comments, key order and list style survive it. From a clone, with no service
-running:
+commit, and a commit you push by hand is picked up within a minute of somebody using the service. A
+save only rewrites the fields whose values changed, so comments, key order and list style survive it.
+From a clone, with no service running:
 
 ```bash
 openproj check .        # every rule, exits non-zero only on blockers
 openproj schedule .     # the derived dates, one line per record, with the reason
 openproj render . out/  # the pages as static files
+```
+
+## Writing a record from a terminal
+
+`openproj new` is the other door into the plan, and the one to use when there is no browser — a
+script, a CI job, an agent working in the codebase the plan is about.
+
+```bash
+openproj new issue . --title "Quadratic extrapolation lives in two places" \
+    --tag dycore --as jcanton --commit
+```
+
+It mints the id, files the record in its kind's directory, starts the body from that kind's shaping
+template, and stamps the day and the schema version the repository is on. Then it holds the record to
+every rule `check` holds it to, *before* anything reaches the disk: a blocker means nothing is
+written at all, so there is never a bad file to `rm` your way out of. A warning is printed and the
+record is written anyway, which is the case this exists for:
+
+```
+warning: issue-b71a56: prs: an issue is never scheduled, so its prs is not read
+```
+
+`prs` is a real field on the model, so nothing refuses it — it is simply never read on a record that
+is never scheduled, and that is the kind of thing you cannot see by copying the record next door. The
+six things `new` does not ask you for are the six that somebody copying gets wrong: the id, the
+directory, the body template, the opening status, the date, and the schema version.
+
+`--set field=value` writes any other field, repeatably, with the value read as YAML — `--set
+person_weeks=1.5` is a number, `--set review_waived=true` is a boolean, and a field that holds a list
+takes one `--set` per entry. `--body-file` replaces the template and `-` reads the body from stdin.
+`--json` prints the id and the path, for a caller that is not a person. Without `--commit` it writes
+the file and prints the git commands; with it, the next command is `git push` and nothing else.
+
+Nothing has to be installed first:
+
+```bash
+uvx openproj new issue . --title "…"                              # from PyPI
+uvx --from git+https://github.com/jcanton/openproj openproj new …  # straight from this repository
 ```
 
 🤖 Written by an agent on behalf of @jcanton
