@@ -7,6 +7,7 @@ code decides whether a bad record reaches the repository.
 import contextlib
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -910,3 +911,29 @@ def test_commit_from_a_plan_nested_in_another_repository_writes_nothing(tmp_path
     assert code == 1
     assert list(inside.rglob("*.md")) == []
     assert "not the root of one" in capsys.readouterr().out
+
+
+def test_every_command_is_named_in_the_help_summary():
+    """`openproj --help` opens with the module docstring's first line, so a
+    command missing from it is a command a person reading the help does not know
+    exists.
+
+    `new` was missing for exactly as long as it took to run the published package
+    once and read the output. Writing this test then found `serve` missing too,
+    and had been since it was added — a list of commands maintained by hand beside
+    a list maintained by argparse is two lists, and the hand-written one is the
+    one that goes stale without anything failing.
+    """
+    from openproj.cli import _parser
+
+    parser = _parser()
+    commands = next(
+        action for action in parser._actions if action.dest == "command" and action.choices
+    )
+
+    missing = [
+        name
+        for name in commands.choices
+        if not re.search(rf"\b{re.escape(name)}\b", parser.description)
+    ]
+    assert not missing, f"not in `openproj --help`: {', '.join(missing)}"
