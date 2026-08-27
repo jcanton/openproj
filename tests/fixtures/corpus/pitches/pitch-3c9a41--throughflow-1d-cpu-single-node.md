@@ -9,7 +9,7 @@ reviewers: []          # REQUIRED from schema_version 1; not in source
 person_weeks: 4.0
 assignees:
   - yellowhammer7
-assigned_on: null      # was fabricated during migration; unknown
+start_date: null      # was fabricated during migration; unknown
 cycle: 28
 priority: high
 depends_on: []

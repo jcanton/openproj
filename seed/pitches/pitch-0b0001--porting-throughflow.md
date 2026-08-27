@@ -8,7 +8,7 @@ owner: jackdawrie
 assignees: [jackdawrie, yellowhammer7]
 reviewers: [hoopoegrove, mudlarkish]
 review_waived: false
-assigned_on: 2026-06-22
+start_date: 2026-06-22
 cycle: 36
 priority: high
 depends_on: []

@@ -8,7 +8,7 @@ owner: nightjarelli
 assignees: [nightjarelli, Dunnocksen]
 reviewers: [Oxpeckerly, hoopoegrove]
 review_waived: false
-assigned_on: 2026-02-02
+start_date: 2026-02-02
 priority: high
 depends_on: []
 tags: [griddle, transport, least-squares, interpolation, drum]

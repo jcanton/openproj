@@ -9,7 +9,7 @@ reviewers: []          # REQUIRED from schema_version 1; not in source
 person_weeks: null
 assignees:
   - yellowhammer7
-assigned_on: null
+start_date: null
 cycle: 28
 priority: medium
 depends_on:

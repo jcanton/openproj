@@ -8,7 +8,7 @@ owner: jackdawrie
 assignees: [jackdawrie, hornbillow, hoopoegrove]
 reviewers: [hoopoegrove, hornbillow]
 review_waived: false
-assigned_on: 2026-06-22
+start_date: 2026-06-22
 priority: high
 depends_on: []
 tags: [whole-roast, drum, coupled-validation, bed-physics, milestone]

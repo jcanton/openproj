@@ -8,7 +8,7 @@ owner: firecresta
 assignees: [firecresta, siskinbury]
 reviewers: [jackdawrie, hoopoegrove]
 review_waived: false
-assigned_on: 2026-06-22
+start_date: 2026-06-22
 priority: high
 depends_on: []
 tags: [hearth, scan-operator, backend, dsl, milestone]

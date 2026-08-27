@@ -8,7 +8,7 @@ owner: siskinbury
 assignees: [siskinbury]
 reviewers: [firecresta, avocetline]
 review_waived: false
-assigned_on: 2026-08-17
+start_date: 2026-08-17
 priority: high
 depends_on: [task-0f1001]
 tags: [hearth, scan-operator, benchmark, gpu]

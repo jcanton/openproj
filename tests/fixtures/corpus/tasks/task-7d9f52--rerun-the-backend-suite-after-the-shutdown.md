@@ -8,7 +8,7 @@ owner: stonechatty
 assignees: [stonechatty]
 reviewers: [Whimbrelson]
 review_waived: false
-assigned_on: 2026-12-21
+start_date: 2026-12-21
 priority: medium
 depends_on: [task-7c8e40, issue-9f2b48]
 tags: [hearth, backend, validation]

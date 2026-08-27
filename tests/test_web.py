@@ -127,9 +127,7 @@ It is not visible in the tapdeck reference data.
 """
 
 SEED = {
-    "config/defaults.yaml": (
-        "schema_version: 2\nnominal_availability: 1.0\ndefault_task_effort: 0.5\n"
-    ),
+    "config/defaults.yaml": "schema_version: 2\nnominal_availability: 1.0\n",
     # Present so that a server which fails to read it is caught. It was not, and
     # the roster check was off in the browser for as long as this file was absent.
     "config/people.yaml": "known_people: [ann, bo, cy]\n",

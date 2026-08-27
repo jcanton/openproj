@@ -8,7 +8,7 @@ owner: hoopoegrove
 assignees: [hoopoegrove, kittiwaker]
 reviewers: [jackdawrie, turnstonegru]
 review_waived: false
-assigned_on: 2026-08-17
+start_date: 2026-08-17
 cycle: 37
 priority: high
 depends_on: [pitch-0a0001]

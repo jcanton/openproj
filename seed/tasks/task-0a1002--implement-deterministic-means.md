@@ -8,7 +8,7 @@ owner: sanderlingly
 assignees: [sanderlingly]
 reviewers: [merganserly, eveningtern]
 review_waived: false
-assigned_on: 2026-08-17
+start_date: 2026-08-17
 priority: medium
 depends_on: []
 tags: [kiln4py, distributed, reductions, numpy, bitwise-reproducibility]

@@ -8,7 +8,7 @@ owner: kittiwaker
 assignees: [kittiwaker]
 reviewers: [hoopoegrove, turnstonegru]
 review_waived: false
-assigned_on: 2026-08-17
+start_date: 2026-08-17
 priority: high
 depends_on: []
 tags: [radiation, near-infrared, two-stream, hearth]

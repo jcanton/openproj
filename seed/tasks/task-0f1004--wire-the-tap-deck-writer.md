@@ -8,7 +8,7 @@ owner: Ptarmigant
 assignees: [Ptarmigant]
 reviewers: [firecresta]
 review_waived: false
-assigned_on: 2026-08-17
+start_date: 2026-08-17
 priority: medium
 depends_on: [task-0f1003]
 tags: [tapdeck, hearth, writer]

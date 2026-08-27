@@ -8,7 +8,7 @@ owner: Whimbrelson
 assignees: [Whimbrelson, stonechatty]
 reviewers: [redpollard]
 review_waived: false
-assigned_on: null
+start_date: null
 cycle: 38
 priority: medium
 depends_on: [pitch-6f2d18]

@@ -37,5 +37,5 @@ prose ("there is a test and it is wrong") without ever having a word for.
 `task-7d9f52` lists this issue in its `depends_on`. That edge points from a scheduled record at
 something the scheduler never dates, which is legal and is the only such edge in this corpus: the
 suite cannot honestly be rerun until the comparison is pinned, and saying so is worth more than
-the date the edge cannot supply. The task's start comes from its own `assigned_on` and from
+the date the edge cannot supply. The task's start comes from its own `start_date` and from
 `task-7c8e40`; this issue contributes nothing to it but the sentence.

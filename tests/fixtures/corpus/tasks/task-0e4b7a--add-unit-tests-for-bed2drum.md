@@ -7,7 +7,7 @@ status: ready
 owner: nightjarelli
 reviewers: [hornbillow]
 assignees: []
-assigned_on: null
+start_date: null
 cycle: null
 priority: low
 depends_on: []
@@ -30,7 +30,7 @@ in test coverage. It carries a name, a priority of Low, and one line of note:
 document and status are all blank on it. A blank status cell means nobody has picked it up.
 
 That is why this record looks the way it does: `status: ready` because nothing said otherwise,
-empty `assignees`, empty `depends_on`, empty `prs`, and `assigned_on: null`. Nothing here was
+empty `assignees`, empty `depends_on`, empty `prs`, and `start_date: null`. Nothing here was
 inferred from a neighbouring entry — the board groups by subsystem, and topical adjacency is not
 a dependency.
 

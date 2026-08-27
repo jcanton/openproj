@@ -8,7 +8,7 @@ owner: yellowhammer7
 assignees: [yellowhammer7]
 reviewers: [kittiwaker, hoopoegrove]
 review_waived: false
-assigned_on: 2026-08-17
+start_date: 2026-08-17
 priority: medium
 depends_on: [task-0e1001]
 tags: [radiation, far-infrared, no-scatter-solver, emission-source, hearth]

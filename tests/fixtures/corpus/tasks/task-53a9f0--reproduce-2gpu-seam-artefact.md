@@ -8,7 +8,7 @@ owner: merganserly
 reviewers: [jackdawrie]
 person_weeks: 2
 assignees: []
-assigned_on: 2026-08-13
+start_date: 2026-08-13
 cycle: 36
 priority: medium
 depends_on: []

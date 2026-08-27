@@ -8,7 +8,7 @@ owner: yellowhammer7
 assignees: [yellowhammer7, jackdawrie]
 reviewers: [jackdawrie, hoopoegrove]
 review_waived: false
-assigned_on: 2026-07-13
+start_date: 2026-07-13
 priority: high
 depends_on: [task-0b1001]
 tags: [airflow, throughflow, surface, chaff, hearth, verification]

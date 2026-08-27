@@ -8,7 +8,7 @@ owner: jackdawrie
 assignees: [jackdawrie, nightjarelli]
 reviewers: [merganserly, ibisbillie]
 review_waived: false
-assigned_on: 2026-06-29
+start_date: 2026-06-29
 priority: high
 depends_on: []
 tags: [kiln4py, standalone-driver, distributed, ci, gpu]

@@ -10,7 +10,7 @@ person_weeks: null
 assignees:
   - nightjarelli
   - Dunnocksen
-assigned_on: null
+start_date: null
 cycle: 34
 priority: high
 depends_on: []

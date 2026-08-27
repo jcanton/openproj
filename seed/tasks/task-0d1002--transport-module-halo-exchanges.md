@@ -8,7 +8,7 @@ owner: Oxpeckerly
 assignees: [Oxpeckerly, nightjarelli]
 reviewers: [nightjarelli, hoopoegrove]
 review_waived: false
-assigned_on: 2026-06-29
+start_date: 2026-06-29
 priority: high
 depends_on: [task-0d1001]
 tags: [griddle, transport, halo-exchange, mpi, kiln4py]

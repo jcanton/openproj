@@ -8,7 +8,7 @@ owner: firecresta
 assignees: [firecresta]
 reviewers: [siskinbury, jackdawrie]
 review_waived: false
-assigned_on: 2026-08-17
+start_date: 2026-08-17
 priority: very_high
 depends_on: []
 tags: [hearth, scan-operator, gpu, lowering]
