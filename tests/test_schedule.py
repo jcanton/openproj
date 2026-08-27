@@ -609,6 +609,35 @@ def test_work_that_starts_today_needs_no_explanation():
     assert "task-aaa001" not in explanations
 
 
+def test_a_stated_start_the_floor_overrode_is_the_one_case_that_needs_a_sentence():
+    """`if start <= floor: return None` was the whole of this branch, and it is
+    exactly where a reader needs a sentence most: the record says 2026-08-10 in
+    its frontmatter, the page says 2026-08-17 under a column labelled "Start
+    date", and nothing between the two said why. Nothing is holding this up — no
+    blocker, no busy worker — so the two fields that name those stay empty and the
+    sentence names the calendar instead.
+    """
+    _, explanations = run([task("aaa001", status="ready", start_date=date(2026, 8, 10))])
+
+    assert explanations["task-aaa001"] == Explanation(
+        record_id="task-aaa001",
+        text="Starts on 2026-08-17: the 2026-08-10 you set has passed and work has not begun.",
+    )
+
+
+def test_a_start_date_a_record_is_already_working_to_is_not_explained_away():
+    """The same date on a record that says the work began is not overridden at
+    all — `_place` takes it as the start — so there is nothing to explain, and a
+    sentence saying it "has passed and work has not begun" would contradict the
+    status two rows above it on the same page."""
+    began = [task("aaa001", status="in_progress", start_date=date(2026, 8, 10))]
+
+    spans, explanations = run(began)
+
+    assert spans["task-aaa001"].start == date(2026, 8, 10)
+    assert "task-aaa001" not in explanations
+
+
 # --------------------------------------------------------------------------- #
 # Properties
 # --------------------------------------------------------------------------- #

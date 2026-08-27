@@ -234,7 +234,12 @@ def test_problems_come_from_validate_all():
     index = build_index(records, CONFIG, TODAY)
     spans, _ = schedule(records, CONFIG, TODAY)
 
-    assert index.problems == validate_all(records, CONFIG, spans)
+    # `TODAY` on both sides. One rule compares a date against the day the plan is
+    # drawn around — a start date that has gone by with the work not begun — so
+    # asking the index about one day and the validator about another is a
+    # comparison of two different questions that would agree until the pinned day
+    # and the real one fell on opposite sides of a corpus date.
+    assert index.problems == validate_all(records, CONFIG, spans, TODAY)
     assert index.problems, "the pitch has no owner, so the family cannot validate clean"
 
 
@@ -885,7 +890,9 @@ def test_the_seed_index_carries_the_scheduler_and_validator_output(seed_root: Pa
 
     assert index.spans == spans
     assert index.explanations == explanations
-    assert index.problems == validate_all(records, config, spans)
+    # `TODAY` for the reason `test_problems_come_from_validate_all` gives: the
+    # problem set is a function of the day the plan is drawn around now.
+    assert index.problems == validate_all(records, config, spans, TODAY)
 
 
 def test_searching_the_seed_corpus_finds_the_task_by_its_title(seed_index: Index):

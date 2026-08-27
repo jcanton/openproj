@@ -136,8 +136,13 @@ def project(**overrides: object) -> Project:
     return Project(**(fields | overrides))
 
 
-def check(*records: Record, config: Config | None = None) -> list[Problem]:
-    return validate_all(list(records), config or Config())
+def check(
+    *records: Record, config: Config | None = None, today: date | None = None
+) -> list[Problem]:
+    """`today` only where a test is about a date. Everywhere else it is left to
+    `validate_all`'s own default, which is the real one — the fixtures below carry
+    no start dates, so nothing else in this file floats with the clock."""
+    return validate_all(list(records), config or Config(), None, today)
 
 
 # A Monday, so a span's arithmetic is readable in the tests that assert on it:
@@ -160,7 +165,12 @@ def rolled_up(*records: Record, config: Config | None = None) -> list[Problem]:
     """
     settings = config or Config()
     spans, _ = schedule(list(records), settings, PLAN_TODAY)
-    return validate_all(list(records), settings, spans)
+    # The same day for both halves. The scheduler's floor and the validator's
+    # "this date has gone by" are one day by definition, and a helper that pinned
+    # one and let the other read the clock would lay a span out from a Monday in
+    # August and then judge its dates against whatever day the suite happens to
+    # run on.
+    return validate_all(list(records), settings, spans, PLAN_TODAY)
 
 
 def only(problems: list[Problem], record_id: str, field: str | None = None) -> Problem:
@@ -302,6 +312,71 @@ def test_a_wip_record_needs_a_start_date():
     for record in (task(status="in_progress", start_date=None), project(start_date=None)):
         problem = only(check(record), record.id)
         assert summary(problem) == ("blocker", "start_date", NEEDS_START_DATE, 1)
+
+
+def test_a_start_date_that_has_drifted_into_the_past_is_a_warning():
+    """The half of the rule no door can catch.
+
+    A date typed as future becomes past by the passage of time, with nobody
+    editing anything, so no refusal at any write path ever fires on it. The
+    scheduler has been discarding it since it was written — the start is
+    `max(floor, start_date, blocker_ready)` — and until this rule the ledger said
+    nothing at all about a record whose file and whose Start column disagree.
+
+    A warning and not a blocker precisely because nobody did it. There is no edit
+    to refuse and no moment at which anybody could have been told.
+    """
+    for status in ("thinking", "shaping", "ready"):
+        stale = task(status=status, start_date=date(2026, 8, 17))
+        assert summary(only(check(stale, today=date(2026, 8, 28)), TASK_ID, "start_date")) == (
+            "warning",
+            "start_date",
+            "the start date 2026-08-17 has passed and the work has not begun, so this is "
+            "scheduled from today instead: move the date, or say the work has started",
+            5,
+        ), status
+
+
+def test_a_start_date_still_to_come_is_what_the_field_is_for():
+    """The boundary is today, and today itself is not past. A date in the future
+    is an ordinary plan — somebody says when they will pick this up — and a rule
+    that nagged about the day it was typed would fire on every record written
+    before lunch."""
+    for stated in (date(2026, 8, 28), date(2026, 9, 30)):
+        soon = task(start_date=stated)
+        assert [p for p in check(soon, today=date(2026, 8, 28)) if p.field == "start_date"] == []
+
+
+def test_a_start_date_in_the_past_is_expected_once_the_work_has_begun():
+    """Scoped to status, and it has to be. At `in_progress` a date that has gone
+    by is not merely allowed, it is the correct value and the gate above demands
+    the field — "I started this on Monday and it is now Wednesday" is the ordinary
+    case. At `done` it is the whole span. Unscoped, this rule would nag about
+    every record that is actually being worked on."""
+    began = date(2026, 8, 17)
+    for record in (
+        task(status="in_progress", start_date=began),
+        task(status="done", start_date=began, prs=["https://github.com/c2sm/x/pull/1"]),
+    ):
+        assert [
+            p for p in check(record, today=date(2026, 8, 28)) if p.field == "start_date"
+        ] == [], record.status
+
+
+def test_a_start_date_on_a_rung_that_is_never_scheduled_is_not_judged_twice():
+    """An issue reads no dates at all, and `unread_fields` already says so beside
+    the record. A second sentence about the same key — one saying the date is not
+    read, one saying it has passed — is this validator arguing with itself about a
+    field nothing derives anything from."""
+    text = (
+        "---\nid: issue-9f2b48\nkind: issue\ntitle: I\nstatus: ready\n"
+        "start_date: 2026-08-17\n---\n\nb\n"
+    )
+    issue = parse_text(text, "issues/issue-9f2b48.md")
+    said = [summary(p) for p in check(issue, today=date(2026, 8, 28)) if p.field == "start_date"]
+    assert said == [
+        ("warning", "start_date", "an issue is never scheduled, so its start_date is not read", 1)
+    ]
 
 
 def test_a_wip_record_needs_a_size():
@@ -829,7 +904,13 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
     inherits = (
         "the bet is on the pitch, so this task takes its cycle from {}; the number here is ignored"
     )
-    assert summaries(validate_all(records, config, spans)) == {
+    # `PLAN_TODAY` here too, and now it is load-bearing rather than tidy: one rule
+    # compares a stated start date against the day the plan is judged around, and
+    # this corpus holds a ready task dated 2026-12-21. Left to read the clock,
+    # this frozen set would acquire an entry on the day that date goes by — a
+    # snapshot that changes with nobody editing anything, which is the one thing a
+    # snapshot may not do.
+    assert summaries(validate_all(records, config, spans, PLAN_TODAY)) == {
         # Nine records at ready or in_progress with nobody assigned, which is the
         # argument for that rule made against real files: an owner answers for a
         # bet and assignees are who is doing it, and the scheduler prices a record

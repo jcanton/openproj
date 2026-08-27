@@ -43,6 +43,7 @@ from .model import (
     cycle_of,
     days_after,
     size_weeks,
+    start_date_has_passed,
     within_the_calendar,
     workers_on,
 )
@@ -622,7 +623,7 @@ def schedule(
             continue
 
         workers = workers_on(record)
-        placed = _place(record, duration, workers, booked, spans, floor, config, live)
+        placed = _place(record, duration, workers, booked, spans, floor, today, config, live)
         if placed is None:
             # Unscheduled, exactly as a dependency cycle is: the scheduler has no
             # answer, and saying so is better than inventing one. Clamping the end
@@ -681,6 +682,7 @@ def _place(
     booked: dict[str, list[tuple[date, date]]],
     spans: dict[str, Span],
     floor: date,
+    today: date,
     config: Config,
     by_id: dict[str, Record],
 ) -> tuple[Span, Explanation | None] | None:
@@ -692,6 +694,11 @@ def _place(
     then the walks below stepped off the calendar and raised. Asked against the
     start each time round the loop it is also what terminates the loop, since
     `start` only ever moves forward.
+
+    `today` and `floor` are both here and they are different facts. The floor is
+    the first WORKING day at or after today and is what a start is held to; today
+    is the day the plan is drawn around, and it is the only honest thing to ask
+    "has this date passed" against. Only `_explain` reads it.
     """
     blocker_id, blocker_ready = None, floor
     # Its own blockers and its ancestors': a dependency written on the pitch is
@@ -746,7 +753,22 @@ def _place(
         start = _next_working_day(busy_until, config)
 
     return Span(start=start, end=end), _explain(
-        record.id, start, floor, blocker_id, blocker_ready, busy_worker, busy_until, spans
+        record.id,
+        start,
+        floor,
+        blocker_id,
+        blocker_ready,
+        busy_worker,
+        busy_until,
+        spans,
+        # The date the floor is about to throw away, asked of the validator's own
+        # predicate rather than of `record.start_date < floor` written out here.
+        # The two are not the same question on a Saturday — the floor is the first
+        # WORKING day, so a bare comparison against it calls a date that is still
+        # today "passed" — and this sentence and the warning in `validate_all`
+        # must be true of exactly the same records, or the page explains something
+        # the check does not mention and vice versa.
+        record.start_date if start_date_has_passed(record, today) else None,
     )
 
 
@@ -759,13 +781,32 @@ def _explain(
     busy_worker: str | None,
     busy_until: date | None,
     spans: dict[str, Span],
+    passed: date | None,
 ) -> Explanation | None:
     """Name the constraint that actually decided the start date.
 
     Work that begins today is not delayed by anything and needs no sentence; the
     first *unexplained* surprising date is when people stop trusting the timeline.
+
+    `passed` is the exception to that, and it is the one case a reader most needs
+    a sentence for. A stated date that has gone by is discarded for the floor —
+    `start` above is `max(floor, start_date, blocker_ready)` — so the record shows
+    a start nobody typed, under a column labelled "Start date", with the date they
+    DID type sitting in the frontmatter two rows above. This branch returned None
+    there, which is silence at precisely the point where the page contradicts the
+    file.
     """
     if start <= floor:
+        if passed is not None:
+            return Explanation(
+                record_id=record_id,
+                # No `blocker_id` and no `worker_busy_until`: nothing is holding
+                # this up. The constraint is the calendar, and the two fields
+                # beside `text` name the two things that are not it.
+                text=(
+                    f"Starts on {start}: the {passed} you set has passed and work has not begun."
+                ),
+            )
         return None
     if busy_until is not None and busy_until >= blocker_ready:
         return Explanation(

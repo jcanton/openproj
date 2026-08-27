@@ -2542,6 +2542,53 @@ def _appetite_problem(record: Record, sentence: str) -> Iterator[tuple[str, str 
         yield "blocker", field, sentence, 1
 
 
+# The statuses at which the work has not begun, read off the ladder rather than
+# written out as three words. `STATUS_ORDER` is the ladder and `in_progress` is
+# where work starts, so everything before it is a forecast; a rung added at the
+# foot — which is exactly what putting `thinking` in front of `shaping` was —
+# joins this set on the commit that adds it, and a hand-written triple would not
+# have. `shelved` falls on the far side by construction, being last: parked work
+# is exempt from every rule anyway (`_parked`), and a date on it is a record of
+# work that was picked up and put down rather than a forecast that has rotted.
+_BEFORE_WORK_BEGINS = STATUS_ORDER[: STATUS_ORDER.index("in_progress")]
+
+
+def start_date_has_passed(record: Record, today: date) -> bool:
+    """Whether this record states a start date that has passed with nothing begun.
+
+    **One function, two callers, and that is the whole reason it is a function.**
+    `web.py` refuses a date TYPED into the past at the door, with a 422; this
+    module warns about one that DRIFTED there, because a date typed as future
+    becomes past by the passage of time with nobody editing anything, and no
+    refusal at any door will ever fire on that. Two situations, two severities and
+    two sentences — but one question, asked once. This repository has been bitten
+    three times by one fact with two implementations (the search blob, the
+    `(none)` sentinel, and `appetite_weeks` reading as three different numbers
+    across three pages), and a second copy of this one would disagree with the
+    first at exactly the boundary that matters, which is whether `in_progress` is
+    inside the rule or outside it.
+
+    **Scoped to status, and it has to be, or a legitimate edit becomes
+    impossible.** At `in_progress` a start date in the past is not merely allowed,
+    it is the correct value and the gate above demands the field: "I started this
+    on Monday and it is now Wednesday" is the ordinary case. Unscoped, a blanket
+    refusal would force somebody to change the status first and backfill the date
+    second — the wrong order, and the one everybody would get wrong. At `done` the
+    date is the whole span.
+
+    A kind the scheduler never sees is outside it too, for the reason
+    `_status_problems` opens with: a rung that reads no dates has no work state to
+    gate, and `unread_fields` already says beside the record that its start date
+    is not read there. A second sentence about the same key would be this file
+    arguing with itself.
+    """
+    if record.start_date is None or record.status not in _BEFORE_WORK_BEGINS:
+        return False
+    if record.kind in RUNG and not RUNG[record.kind].schedules:
+        return False
+    return record.start_date < today
+
+
 def _status_problems(
     record: Record, reviewers: list[str] | None = None
 ) -> Iterator[tuple[str, str | None, str, int]]:
@@ -2990,6 +3037,7 @@ def _problems_for(
     parent_cycles: set[str],
     dep_cycles: set[str],
     spans: Mapping[str, Span] | None,
+    today: date,
 ) -> Iterator[tuple[str, str | None, str, int]]:
     """Yield (severity_before_grandfathering, field, message, rule_version)."""
     if not record.title.strip():
@@ -3091,6 +3139,28 @@ def _problems_for(
     yield from _status_problems(
         record, list(dict.fromkeys([*record.reviewers, *reviewers_under(record.id, children)]))
     )
+    # The drift half of `start_date_has_passed`; the door holds the other half.
+    # A warning and not a blocker, and the difference is not severity for its own
+    # sake: nobody did this. The date was in the future when it was typed and the
+    # calendar moved under it, so there is no edit to refuse and no moment at
+    # which anybody could have been told. What the reader gets instead is the
+    # sentence the schedule is already acting on — `_place` discards the stated
+    # date for the floor, and `_explain` says so on the record's own page.
+    #
+    # Stamped 5, the vocabulary this whole change belongs to, on the same
+    # reasoning `_RETIRED` gives above: a warning is what is yielded,
+    # grandfathering only ever demotes, and there is no severity below a warning
+    # to demote one to. The version still says which vocabulary the Problem is
+    # from.
+    if start_date_has_passed(record, today):
+        yield (
+            "warning",
+            "start_date",
+            f"the start date {record.start_date} has passed and the work has not begun, "
+            "so this is scheduled from today instead: move the date, or say the work "
+            "has started",
+            5,
+        )
     yield from _people_problems(record, config)
 
 
@@ -3259,7 +3329,10 @@ def _parked(record: Record) -> bool:
 
 
 def validate_all(
-    records: list[Record], config: Config, spans: Mapping[str, Span] | None = None
+    records: list[Record],
+    config: Config,
+    spans: Mapping[str, Span] | None = None,
+    today: date | None = None,
 ) -> list[Problem]:
     """Check every record against every rule it is old enough to be held to.
 
@@ -3277,7 +3350,17 @@ def validate_all(
     a rollup is a fact about the plan the record is joining rather than about the
     record, so scheduling the whole corpus on each keystroke would buy an answer
     that is not to the question being asked.
+
+    `today` is the day the plan is judged around, threaded the way `spans` is
+    threaded and for the same reason: an index drawn around a pinned day — the
+    demo corpus is written around one — must not be told a different day by a
+    rule inside it. It defaults rather than switching its rule off, which is where
+    it parts company with `spans`: what day it is always has an honest answer,
+    where a schedule the caller did not run does not, and a date rule that goes
+    quiet when nobody passes an argument is the "0 blockers, 0 warnings on a plan
+    that answers 500" failure with a different cause.
     """
+    today = today or date.today()
     by_id = {record.id: record for record in records}
     parent_cycles = _cyclic_members({e.id: [e.parent] if e.parent else [] for e in records})
     dep_cycles = _cyclic_members({e.id: list(e.depends_on) for e in records})
@@ -3291,7 +3374,7 @@ def validate_all(
         if _parked(record):
             continue
         for severity, field, message, rule_version in _problems_for(
-            record, config, by_id, children, parent_cycles, dep_cycles, spans
+            record, config, by_id, children, parent_cycles, dep_cycles, spans, today
         ):
             grandfathered = rule_version > record.created_schema_version
             problems.append(

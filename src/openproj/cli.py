@@ -440,9 +440,15 @@ def _check(repo: Path) -> int:
     # silent about exactly the thing the web view warns on, and "the diagnostic
     # tool says the plan is clean" is the failure this repository has already had
     # once, on a plan that answered 500 on every page.
-    spans, _ = schedule(records, config, date.today())
+    # One reading of the clock for both, and not two. The scheduler's floor and
+    # the validator's "this date has passed" are the same day by definition, and
+    # a command that asked twice would answer with two different days for the
+    # length of one midnight — reporting a start date as passed while the span
+    # beside it was laid out from the day before.
+    today = date.today()
+    spans, _ = schedule(records, config, today)
     problems = sorted(
-        validate_all(records, config, spans),
+        validate_all(records, config, spans, today),
         key=lambda p: (p.severity, p.record_id, p.field or ""),
     )
     for problem in problems:

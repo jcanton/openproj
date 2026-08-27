@@ -106,6 +106,7 @@ from .model import (
     record_paths_in,
     shaping_document,
     split_front_matter,
+    start_date_has_passed,
     unknown_fields,
     unread_fields,
     validate_all,
@@ -1091,6 +1092,69 @@ def _reject_bad_status(kind: str, fields: dict) -> None:
         )
 
 
+def _reject_a_start_date_that_has_passed(candidate: Record, today: date) -> None:
+    """A start date typed into the past, before it is a file.
+
+    The other half of `start_date_has_passed`, and the reason it is a function
+    with two callers rather than two `if`s: the validator warns about a date that
+    DRIFTED into the past — nobody edited anything, the calendar moved — and this
+    refuses one somebody is typing there right now. Same question, and the
+    severities differ because the situations do. There is somebody at a keyboard
+    here who can be told and can fix it in the same second; there is nobody at all
+    on the drift path.
+
+    It takes the CANDIDATE rather than the payload, alone among the `_reject_*`
+    family, and it has to: the rule is about two fields at once, and a PATCH
+    carries only the ones that moved. `{"status": "ready"}` sent to a record that
+    already holds a date, and `{"start_date": "2020-01-01"}` sent to one that is
+    already ready, are both this refusal — and neither is visible in `fields`.
+    The parsed candidate is the one place both values are true at the same time,
+    which is why this is called after `parse_text` rather than beside its siblings
+    above.
+    """
+    if not start_date_has_passed(candidate, today):
+        return
+    raise HTTPException(
+        422,
+        f"start_date: {candidate.start_date} has already passed, and this record says "
+        f"the work has not begun. Pick a date from {today} on, or set the status to "
+        "in_progress if it started then.",
+    )
+
+
+def _reject_undeclared_fields(fields: dict, known: tuple[str, ...], what: str) -> None:
+    """A key no model declares, refused rather than committed and forgotten.
+
+    Both write doors kept every key the payload carried and handed the lot to
+    `patch_text`, which writes whatever it is given: an undeclared name landed in
+    the frontmatter with a 200, was read back into `record._unread`, re-emitted
+    verbatim by `serialise` for ever, and read by nothing. The case that makes it
+    urgent rather than untidy is a rename — a tab left open across the deploy that
+    retired `assigned_on` PATCHes `assigned_on`, is told it saved, and commits a
+    dead key carrying the one date the whole schedule is derived from, on a
+    protected branch where the commit cannot be taken back out.
+
+    An allowlist, and derived from `model_fields` rather than written down here,
+    which is the same argument `_named` makes about the commit message it builds
+    from these names: a list of fields kept by hand is a list that goes stale on
+    the commit that adds a field, and the models are the only place that cannot.
+
+    The union of every rung's fields, deliberately, and not this record's own kind.
+    Whether a PITCH may carry `person_weeks` is a question the validator already
+    answers beside the record — "a project carries no appetite" — and answering it
+    here as well would make the API door stricter than the hand-written file it
+    has to stay equal to, which is the argument `_reject_bad_status` makes above
+    for a status a kind does not read. What is refused here is a name that means
+    nothing to any record at all.
+    """
+    unknown = sorted(set(fields) - set(known))
+    if unknown:
+        raise HTTPException(
+            422,
+            f"{what} has no field called {unknown[0]!r}; it holds {', '.join(known)}",
+        )
+
+
 async def _sent(request: Request) -> dict:
     """The JSON object a request carried, or a refusal that says so.
 
@@ -1191,16 +1255,23 @@ def _named(fields: dict, known: tuple[str, ...]) -> str:
     parser reads it, `git shortlog --group=trailer:co-authored-by` counts Mallory
     for it, and GitHub puts their avatar on the commit. This branch is what makes
     `Co-authored-by:` the record of who wrote a document, so a forgeable one is
-    worse than none. Measured on the record PATCH and the cycle PUT, which are
-    both on `main` today; the issue and note routes happened to be closed already
-    because their own gates refuse a field name no model declares.
+    worse than none. Measured on the record PATCH and the cycle PUT, which were
+    the two routes that kept a field name no model declares; the issue and note
+    routes were closed already, because their own gates refused one. Both now
+    stand behind `_reject_undeclared_fields`, so the sentence that used to be
+    true of two routes is true of all of them.
 
     An allowlist and not an escape. Stripping newlines would leave the next
     person to work out which characters git's trailer parser accepts, and there
     is no denylist of those that is ever finished — where the model's own field
-    names are Python identifiers and cannot spell a trailer at all. Anything else
-    the payload carried is counted rather than quoted, because a save that wrote
-    something this cannot name is still a save that wrote something.
+    names are Python identifiers and cannot spell a trailer at all.
+
+    `others` is therefore unreachable from those doors now and is kept anyway. It
+    is the second guard on the same invariant and the cheap one: this function
+    signs a line in a commit, the door in front of it is a different function, and
+    a route added later that forgets the door must still not be able to put a key
+    off the wire into a commit message. A save that wrote something this cannot
+    name is still a save that wrote something, and the count says so.
 
     In the model's declaration order, which is fixed here, and deliberately not
     in the order the payload arrived: the sender must not choose even the order
@@ -2723,6 +2794,9 @@ def create_app(
             )
 
         fields = {k: v for k, v in _fields_in(payload).items() if k != "id"}
+        # Before anything asks what a value is: a key no record declares has no
+        # type to be wrong. It used to be written through to the file.
+        _reject_undeclared_fields(fields, RECORD_FIELDS, "a record")
         _reject_bad_types(fields)
         # `parse_text` below deliberately takes any word — a file that arrived
         # in git with one must still load — so without this the PATCH door
@@ -2761,6 +2835,7 @@ def create_app(
         loop = loop_made(candidate, index_now()[1].records.values())
         if loop:
             raise HTTPException(409, loop)
+        _reject_a_start_date_that_has_passed(candidate, today or date.today())
         written = await _write_or_refuse(
             store.write,
             path=path,
@@ -3070,6 +3145,10 @@ def create_app(
         fields = {k: v for k, v in _fields_in(payload).items() if k != "id"}
         if not fields:
             raise HTTPException(422, "no fields to write")
+        # The same door as the save beside it, and a worse blast radius: one
+        # undeclared key here is a dead line committed into every file in the
+        # selection, in one commit, on a protected branch.
+        _reject_undeclared_fields(fields, RECORD_FIELDS, "a record")
         _reject_bad_types(fields)
 
         _, index = index_now()
@@ -3114,6 +3193,13 @@ def create_app(
             loop = loop_made(candidate, after.values())
             if loop:
                 raise HTTPException(409, loop)
+            # Per candidate, because the answer is per record: one date and one
+            # status set over a selection lands on records that are at different
+            # rungs, and the whole point of the rule is that `in_progress` is the
+            # one where the date is right. The batch is one commit, so a refusal
+            # about any of them refuses all of them — which is the same shape the
+            # bulk status edit already has when it cannot mark something done.
+            _reject_a_start_date_that_has_passed(candidate, today or date.today())
 
         written = await _write_or_refuse(
             store.write_all,
@@ -3231,6 +3317,10 @@ def create_app(
         original = store.read(base, path) or "---\n---\n"
         fields = _fields_in(payload)
         fields["cycle"] = number
+        # The other door `_named` measured and found open. A cycle's frontmatter
+        # takes an undeclared key exactly as a record's does, and the file it goes
+        # into is the one every date on every page is derived from.
+        _reject_undeclared_fields(fields, CYCLE_FIELDS, "a cycle")
         _reject_bad_cycle(fields)
 
         content = _patched(original, fields, body, path)
@@ -3645,6 +3735,12 @@ def create_app(
             raise HTTPException(
                 422, f"that would not read back as a record: {why_it_will_not_read(error)}"
             ) from None
+        # The same refusal the save route makes, on the other door, and it cannot
+        # be left to the list below: what `validate_all` says about a stated date
+        # that has passed is a WARNING — nobody typed it, the calendar moved — and
+        # this filters to blockers. Somebody typing it into a create form is the
+        # other half of that rule and the half a person can act on.
+        _reject_a_start_date_that_has_passed(candidate, today or date.today())
         problems = [
             p
             # A file already in the plan that will not parse is not this record's
@@ -3983,7 +4079,11 @@ def create_app(
             # The same gate the PATCH route stands behind, and for the same
             # reason: a record that will not read back takes every page down for
             # everybody, on a branch where the commit cannot be force-pushed away.
-            parse_text(content, room.path)
+            # The candidate is kept rather than dropped now that a second gate
+            # reads it — the closed writable surface is only closed if every way
+            # in is, and the room is the third one.
+            candidate = parse_text(content, room.path)
+            _reject_a_start_date_that_has_passed(candidate, today or date.today())
 
             message = f"{room.record_id}: {_named(fields, RECORD_FIELDS) or 'body'}"
             if others:
@@ -4355,6 +4455,12 @@ def create_app(
                     fields = dict(fields) if isinstance(fields, dict) else {}
                     fields.pop("id", None)
                     try:
+                        # Here rather than only in `_commit_room`, which stands
+                        # behind this and would refuse the same key: this is where
+                        # the refusal reaches the person who typed it, as a
+                        # sentence in their own room, instead of arriving as a
+                        # failed commit with nothing said about which key.
+                        _reject_undeclared_fields(fields, RECORD_FIELDS, "a record")
                         _reject_bad_types(fields)
                         # The room writes through the same gate as PATCH — the
                         # comment on `writer` above says exactly that — so the

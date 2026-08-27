@@ -5171,7 +5171,10 @@ def test_the_number_the_page_prints_in_tasks_is_the_number_check_warns_on():
         index = build_index(records, Config(), date(2026, 8, 17))
         said = [
             p
-            for p in validate_all(records, Config(), index.spans)
+            # The same day the index was built around: one rule reads it, and a
+            # page and a check drawn around two different days is the disagreement
+            # this test exists to rule out.
+            for p in validate_all(records, Config(), index.spans, date(2026, 8, 17))
             if p.record_id == "pitch-000001" and p.field == "person_weeks"
         ]
         row = next(

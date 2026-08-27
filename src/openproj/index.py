@@ -694,7 +694,11 @@ def build_index(
         # pitch's tasks fit is a comparison between two numbers the scheduler
         # computed, and `model.py` cannot reach the scheduler to compute them.
         # `schedule` ran above, so this costs nothing beyond passing the dict.
-        problems=validate_all(parsed, config, spans),
+        # `today` for the same reason, and it is not `date.today()`'s business to
+        # answer here: this index may be drawn around a pinned day — `openproj
+        # demo` pins one — and a rule that asked the clock instead would report a
+        # start date as passed on a plan whose whole calendar says otherwise.
+        problems=validate_all(parsed, config, spans, today),
         unreadable=list(unreadable),
         facets={field: _ordered(field, values) for field, values in facets.items()}
         | {"predicate": sorted(COMPUTED_PREDICATES)},

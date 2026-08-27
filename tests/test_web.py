@@ -1298,41 +1298,54 @@ def test_a_field_name_cannot_write_its_own_commit_trailer(client: TestClient, re
 
     All four write paths, because the expression was the same expression in all
     four and a fix in one is a fix that drifts.
+
+    **Both doors answer 422 now, where they used to answer 200 with the field
+    dropped from the message.** The record PATCH and the cycle PUT are the two
+    routes `_named` measured as open, and they are open no longer: an undeclared
+    key is refused before anything is patched, so this name never reaches a
+    commit message because it never reaches a commit. The counting inside
+    `_named` is asserted below rather than through a route, because there is no
+    longer a route that can reach it — and it is kept for the reason the second
+    half of this test says.
     """
     before = git_head(repo_path)
     record = client.patch(
         f"/api/record/{TASK}",
         json={"base_commit": before, "fields": {FORGED: "hi"}, "body": None},
     )
-    assert record.status_code == 200, record.text
-    assert trailers_of(repo_path, record.json()["commit"]) == {}, (
-        "a field name off the wire wrote a Co-authored-by: trailer git reads"
-    )
+    assert record.status_code == 422, record.text
 
     cycle = client.put(
         "/api/cycle/41",
         json={
-            "base_commit": head(client),
+            "base_commit": before,
             "fields": {FORGED: "hi", "starts_on": "2026-09-01", "reviews_on": "2026-10-01"},
         },
     )
-    assert cycle.status_code == 200, cycle.text
-    assert trailers_of(repo_path, cycle.json()["commit"]) == {}
+    assert cycle.status_code == 422, cycle.text
+    assert git_head(repo_path) == before, "a refusal writes nothing"
 
 
 def test_a_commit_message_still_names_the_fields_a_save_moved(client: TestClient, repo_path: Path):
     """The allowlist has to leave the log readable, or it has bought safety with
     the thing the log is for. A name the schema declares is said; anything else
     is counted, because a save that wrote something this cannot name is still a
-    save that wrote something."""
+    save that wrote something.
+
+    The counting half is asked of `_named` directly, and that is not the test
+    reaching under the route for convenience: the door in front of it refuses an
+    undeclared key outright, so there is no request that can put one here any
+    more. It is the inner of two guards on one invariant — this function signs a
+    line in a commit, the door is a different function, and a route added later
+    that forgets the door must still not be able to quote a key off the wire.
+    """
+    from openproj.web import RECORD_FIELDS, _named
+
     moved = save(client, TASK, {"priority": "high", "owner": "bo"}).json()["commit"]
     assert commit_at(repo_path, moved).message == f"{TASK}: owner, priority"
 
-    both = client.patch(
-        f"/api/record/{TASK}",
-        json={"base_commit": head(client), "fields": {"status": "in_progress", FORGED: "x"}},
-    )
-    assert commit_at(repo_path, both.json()["commit"]).message == f"{TASK}: status, 1 more"
+    assert _named({"status": "in_progress", FORGED: "x"}, RECORD_FIELDS) == "status, 1 more"
+    assert _named({FORGED: "x"}, RECORD_FIELDS) == "1 unnamed field"
 
 
 def test_the_author_can_never_be_supplied_by_the_client(client: TestClient, repo_path: Path):
@@ -1708,6 +1721,112 @@ def test_a_status_nobody_defined_is_refused_at_both_doors(client: TestClient, re
     assert saved.status_code == 422
     assert "status" in saved.json()["detail"]
     assert "'banana'" in saved.json()["detail"]
+
+    assert git_head(repo_path) == base, "a refusal writes nothing"
+
+
+def test_a_start_date_typed_into_the_past_is_refused_before_work_has_begun(
+    client: TestClient, repo_path: Path
+):
+    """Under the name `assigned_on` a date that had gone by was tolerable; under
+    "Start date" it is a lie. The scheduler discards it — the start is
+    `max(floor, start_date, blocker_ready)` — so you type last Monday on a ready
+    pitch, the Start column answers today, and the file and the page disagree
+    with a 200 in between.
+
+    Both doors, because a closed writable surface is only closed if every way in
+    is: the create form can type the same date into the same field.
+    """
+    base = git_head(repo_path)
+
+    saved = save(client, PITCH, {"start_date": "2026-07-01"})
+    assert saved.status_code == 422, saved.text
+    assert "start_date" in saved.json()["detail"]
+    assert "2026-07-01" in saved.json()["detail"]
+    # The remedy is named, and it is the one that is usually right: the date is
+    # not wrong so much as the status is behind it.
+    assert "in_progress" in saved.json()["detail"]
+
+    made = create(client, {**VALID_TASK, "start_date": "2026-07-01"})
+    assert made.status_code == 422, made.text
+
+    assert git_head(repo_path) == base, "a refusal writes nothing"
+
+
+def test_a_start_date_in_the_past_is_what_a_record_of_work_in_progress_is_for(
+    client: TestClient,
+):
+    """The rule is scoped to status and it has to be, or a legitimate edit becomes
+    impossible. "I started this on Monday and it is now Wednesday" is the ordinary
+    case, and the `in_progress` gate already demands the field — so an unscoped
+    refusal would force somebody to change the status first and backfill the date
+    second, which is the wrong order and the one everybody would get wrong.
+    """
+    saved = save(client, TASK, {"start_date": "2026-06-01"})
+
+    assert saved.status_code == 200, saved.text
+
+
+def test_the_past_date_refusal_reads_the_record_and_not_only_the_payload(
+    client: TestClient, repo_path: Path
+):
+    """The one case a check written against `fields` cannot see.
+
+    A PATCH carries only what moved. Sending this record back to `ready` names no
+    date at all — and the date it has held since it was seeded, 2026-07-06, has
+    gone by. Read off the payload the refusal never fires and the plan acquires
+    exactly the state the rule exists to prevent; read off the parsed candidate,
+    which is the only place the new status and the old date are true at the same
+    time, it does.
+    """
+    base = git_head(repo_path)
+
+    refused = save(client, TASK, {"status": "ready"})
+
+    assert refused.status_code == 422, refused.text
+    assert "2026-07-06" in refused.json()["detail"]
+    assert git_head(repo_path) == base, "a refusal writes nothing"
+
+
+def test_a_field_no_record_declares_is_refused_at_every_write_door(
+    client: TestClient, repo_path: Path
+):
+    """`fields` was kept whole but for `id`, and `patch_text` writes what it is
+    handed. So an undeclared key committed with a 200, landed in `record._unread`,
+    was re-emitted verbatim by `serialise` for ever and was read by nothing.
+
+    `assigned_on` is the name that makes it urgent rather than untidy: a tab left
+    open across the deploy that retired it PATCHes `assigned_on`, is told it
+    saved, and commits a dead key holding the one date the whole schedule is
+    derived from — on a protected branch, where the commit cannot be taken back
+    out.
+
+    Three doors and one helper. The bulk write is the worst of them, because one
+    unnamed key there is a dead line in every file in the selection in a single
+    commit; the cycle PUT writes the file every date on every page is derived
+    from.
+    """
+    base = git_head(repo_path)
+
+    saved = save(client, TASK, {"assigned_on": "2026-07-06"})
+    assert saved.status_code == 422, saved.text
+    assert "assigned_on" in saved.json()["detail"]
+    # And it says what a record does hold, so the answer is one somebody can act
+    # on rather than one they have to go and look up.
+    assert "start_date" in saved.json()["detail"]
+
+    bulk = save_many(client, [TASK, OTHER], {"assigned_on": "2026-07-06"})
+    assert bulk.status_code == 422, bulk.text
+
+    cycle = client.put(
+        "/api/cycle/41",
+        json={
+            "base_commit": base,
+            "fields": {"starts_on": "2026-09-01", "reviews_on": "2026-10-01", "notes": "hi"},
+        },
+    )
+    assert cycle.status_code == 422, cycle.text
+    assert "notes" in cycle.json()["detail"]
 
     assert git_head(repo_path) == base, "a refusal writes nothing"
 
@@ -2432,7 +2551,14 @@ def test_the_server_reads_the_same_config_the_cli_does(repo_path: Path):
 
 def test_a_cycle_is_created_and_then_updated_in_place(client: TestClient, repo_path: Path):
     """PUT, not PATCH: a roster is written in one sitting, and a name that is
-    missing means somebody was taken off rather than left alone."""
+    missing means somebody was taken off rather than left alone.
+
+    `cooldown_weeks` went out of this payload and the three like it below. It is
+    a `Config` field and never a cycle's, left over from when a cycle stored
+    lengths rather than two dates; no page has sent it since, and the door now
+    refuses a key no model declares — which is the whole point of the door, met
+    by a test that was quietly writing a dead number into git.
+    """
     base = git_head(repo_path)
     made = client.put(
         "/api/cycle/37",
@@ -2441,7 +2567,6 @@ def test_a_cycle_is_created_and_then_updated_in_place(client: TestClient, repo_p
             "fields": {
                 "starts_on": "2026-08-17",
                 "build_weeks": 4,
-                "cooldown_weeks": 2,
                 "availability": {"ann": 0.5, "bo": 1.0},
             },
             "body": "## Goal\n\nShip it.\n",
@@ -2616,7 +2741,7 @@ def test_a_cycle_record_reaches_the_pages_it_is_for(client: TestClient, repo_pat
         "/api/cycle/41",
         json={
             "base_commit": base,
-            "fields": {"starts_on": "2026-11-02", "build_weeks": 4, "cooldown_weeks": 2},
+            "fields": {"starts_on": "2026-11-02", "build_weeks": 4},
             "body": None,
         },
     )
@@ -2640,7 +2765,6 @@ def test_the_cycle_page_shows_load_against_capacity(client: TestClient, repo_pat
             "fields": {
                 "starts_on": "2026-08-17",
                 "build_weeks": 4,
-                "cooldown_weeks": 2,
                 "availability": {"ann": 0.25},
             },
             "body": None,
@@ -2883,7 +3007,6 @@ def test_the_proposal_ignores_a_cycle_that_only_a_record_mentions(
             "fields": {
                 "starts_on": "2027-01-04",
                 "build_weeks": 4,
-                "cooldown_weeks": 2,
                 "availability": {"ann": 1.0},
             },
             "body": None,
@@ -4180,16 +4303,23 @@ def test_a_commit_message_names_only_fields_this_server_knows(client: TestClient
     An allowlist and not an escape. Stripping newlines would leave the next
     person to work out which characters git's trailer parser accepts, and there
     is no denylist of those that is ever finished — where a model's own field
-    names are Python identifiers and cannot spell a trailer at all. What the
-    payload carried beyond them is counted, because a save that wrote something
-    this cannot name is still a save that wrote something.
+    names are Python identifiers and cannot spell a trailer at all.
+
+    The save is refused outright now rather than committed with the name
+    counted: the door in front of this asks the models whether a record has a
+    field by that name before anything is patched. The claim asserted is
+    unchanged and it is asked of git's own parser rather than of a regex written
+    here — over the WHOLE log and not only the last commit, because the point is
+    that no commit in this repository carries a trailer nobody wrote.
     """
     import subprocess
 
     forged = "title\n\nCo-authored-by: Mallory <mallory@users.noreply.github.com>\n\nx"
     answer = save(client, TASK, {forged: "y", "priority": "high"})
-    assert answer.status_code == 200
+    assert answer.status_code == 422, answer.text
 
+    named = save(client, TASK, {"priority": "high"})
+    assert named.status_code == 200, named.text
     message = subprocess.run(
         ["git", "--git-dir", str(repo_path), "log", "-1", "--format=%B"],
         capture_output=True,
@@ -4198,7 +4328,7 @@ def test_a_commit_message_names_only_fields_this_server_knows(client: TestClient
     ).stdout
     assert "Co-authored-by" not in message
     assert "Mallory" not in message
-    assert "priority" in message and "1 more" in message
+    assert "priority" in message
 
     counted = subprocess.run(
         ["git", "--git-dir", str(repo_path), "log", "--format=%(trailers:key=Co-authored-by)"],
