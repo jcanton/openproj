@@ -163,8 +163,8 @@ check records cannot, because the path *is* the id and there is no `<id>--<slug>
 ambiguity: the route mints, `put_drawing` refuses over an occupied path under the lock,
 the route re-mints, up to eight times, then 500s. Not theatre — `token_hex(3)` is
 16,777,216 values, and by the birthday bound a corpus of 1,000 drawings already carries
-roughly a 3% chance that some pair collides. `docs/data-model.md:32`'s "never collide"
-is true of a simultaneous pair and not of a growing corpus.
+roughly a 3% chance that some pair collides. The "never collide" this tool claims for
+a minted id is true of a simultaneous pair and not of a growing corpus.
 
 **No slug half, ever**, and the argument is not YAGNI. Records need `_path_for`
 (`web.py:1275-1307`) because humans rename record files in git and the slug drifts.
@@ -290,9 +290,9 @@ construction.
 added to prevent (`cli.py:163-167`). The consequence is that **the demo corpus ships no
 drawings**, or `openproj demo` renders a body naming a file that is not there.
 
-`docs/data-model.md:79-84` — the paragraph headed "A plan directory is flat" enumerates
-eight directories, and `drawings/` is named beside them as a ninth, also flat, for a
-reason of its own.
+`data-model.md`'s "A plan directory is flat" enumerates eight directories. `drawings/`
+is a ninth and also flat, for a reason of its own, and `AGENTS.md` is where that and
+the silent-broken-image consequence are written down.
 
 ## The editor side
 

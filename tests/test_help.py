@@ -345,7 +345,14 @@ def test_the_contents_folds_on_a_narrow_screen_and_sticks_on_a_wide_one(
     assert wide["open"] is True
     assert wide["summary"] == "none", "nothing to fold beside a column of its own"
     assert wide["top"][1] <= 16, f"the contents did not stick: {wide['top']}"
-    assert wide["scrollable"], "the contents is taller than the window and must scroll"
+
+    # Measured on a short window rather than on the 900 above, because WHETHER the
+    # contents overflows is a fact about how many headings the documents happen to
+    # carry, and it stopped overflowing at 900 the day they were cut back. What has
+    # to hold is the rule and not the accident: a contents taller than its window
+    # scrolls inside itself instead of being cut off by the `max-height` pinning it.
+    short = measured_in(browser, page, tmp_path / "short.html", 1280, script, 400)
+    assert short["scrollable"], "a contents taller than the window must scroll"
 
     narrow = measured_in(browser, page, tmp_path / "narrow.html", 390, script, 780)
     assert narrow["open"] is False, "the contents did not fold"

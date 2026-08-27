@@ -317,6 +317,53 @@ asserted it on, and Chrome painted nothing — an outset `box-shadow` on a cell 
 is not a dimmer line, it is no line. The Gantt drew every bar 140px wide for a whole round. If a
 claim is about pixels, look at the pixels.
 
+## Decided against, and not to be re-opened
+
+These lived in `docs/` until the documentation was cut back to what a reader of a plan needs. They
+are here because the reason is the whole value: without it each one gets proposed again.
+
+**Asked for at the tailoring pass, 2026-08-16, and declined.** `postponed` as a bet outcome —
+leaving a pitch `ready` says the same thing, and it produced a better idea instead, the notes box on
+the cycle page. Appetite in cycle units — appetite is person-week effort and the assignees divide
+it; "full cycle" on the team's own sheet is staffing shorthand, not a second unit. A roster grouped
+by institution — if institutions turn out to matter, the answer is separate plans and separate
+deployments, not a grouping column. An availability field that admits uncertainty — better a lie
+that forces a good estimate than a field that accepts `some time > 0`. A `buggy` status — work that
+is wrong does not get merged; it goes back to `in_progress` or is shelved.
+
+**Never built.** Notification infrastructure is its own project, and Slack exists. User-defined
+custom fields mean editing the model and running a migration — the honest cost of a field every page
+has to know about. A PR-based editing workflow is what git already is, and the premise of this tool
+is that a pull request is the wrong default for a plan. Time tracking, burndown charts and
+per-project permissions were out of scope in the first requirements list and nobody has asked since;
+no argument was ever recorded for them, and each would need a second source of truth before there
+could be one. Inline comments and resolved threads on a record would be the first piece of plan
+state that is not a file — a second store, a second permission model and a second notification path
+— while the review channel this team already uses is the pull request, which every pitch names in
+`prs:`. Real-time co-editing was on this list until `coedit.py`, excluded on the grounds that
+compare-and-swap *is* the design, and that argument still holds for everything except the body of
+one document two people are writing at once.
+
+**The six status marks stay characters and are not small hills.** The reason used to be that the
+same marks go inside `<option>` elements and an option is a string; that stopped being true when
+status left the native `<select>` and became the hill, so what is left is the drawing itself. Mocked
+against the real stylesheet at 26×11, `shelved` reads as a ball floating inside the hill instead of
+resting on the ground under it, and `ready` and `shaping` are two dots a few pixels apart, in the
+one column already under width pressure.
+
+**A mistyped drawing path in a body is a silent broken image, and nothing here was built to notice.**
+`drawings/` is flat and holds no records — one PNG per drawing, named by its id — and unlike
+`assets/` it is mutable, rewritten in place by `Store.put_drawing`. It is invisible to the record
+model by construction rather than by omission: `record_paths_in` drops every non-`.md` path before
+the question is ever put to it, `_plan_files` only ever globs `*.md`, and `SEARCH_FIELDS` reads
+record fields and never a blob. So there is no banner and no `openproj check` line for a bad path.
+`seed/` ships no drawings either, because `cli.py`'s `_seed_files` filters to `.md` and `.yaml`.
+
+**Names, and not line numbers, in every document here.** Three of the five references one paragraph
+of `data-model.md` carried were already wrong within a fortnight — `_plan_files` had moved from 1611
+to 1593 and `_seed_files` from 163 to 151 — and a stale line number is worse than none, because it
+sends the reader to a line that says something else with every appearance of being the right one.
+
 ## How to test here
 
 - **Test the behaviour in the medium where it happens.** If the claim is about pixels, the test has

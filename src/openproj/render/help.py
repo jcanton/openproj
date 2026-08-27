@@ -5,7 +5,7 @@ it sits only in the repo as .md files" — one landing page, with an internal ta
 of contents on the left pointing at the other docs.
 
 **One page and not one route per document**, which is what was asked for and is
-also the right shape: six routes would be six nav items or a second level of
+also the right shape: a route each would be a nav item each or a second level of
 navigation to build, and the thing somebody does with documentation is search it.
 One page means the browser's own find works across the whole of it, and a link to
 any heading in any document is a fragment on one URL.
@@ -39,10 +39,10 @@ class Doc(NamedTuple):
     `key` is the fragment and the prefix every heading inside the document is
     given, so `#quickstart-the-three-things` names one heading in one document on
     a page carrying several. `label` is what the contents calls it and is written
-    here rather than taken from the file's own `# ` heading, because some of them
-    name themselves after the thing they describe rather than after what reading
-    them gets you — `README.md` opens `# openproj`, which as an entry in a list of
-    documents about openproj says nothing at all.
+    here rather than taken from the file's own `# ` heading, because a file is free
+    to name itself after the thing it describes rather than after what reading it
+    gets you, and an entry in a list of documents about openproj that says
+    "openproj" says nothing at all.
     """
 
     key: str
@@ -50,9 +50,17 @@ class Doc(NamedTuple):
     path: str
 
 
-# Reading order, and it is the order somebody new should meet them in: what the
-# thing is, then how to use it, then the practice it encodes, then the model, then
-# how it is built.
+# Reading order, and it is the order somebody new should meet them in: how to use
+# it, then the practice it encodes, then the model, then how it is built.
+#
+# **`README.md` was on this page and was taken off**, 2026-08-27, and not because
+# it was wrong: it is the repository's front door, and half of it — what the thing
+# is for, how to install it, what the licence is — is addressed to somebody who
+# has just found the code and has no plan in front of them. A reader who is
+# already signed into the app has answered every one of those questions by
+# arriving. It stays the first thing on GitHub and stays copied into the image,
+# because `_docs_root` finds the documentation BY it (`vendor.py`); it is simply
+# not drawn.
 #
 # `AGENTS.md` is deliberately absent. It is written for whoever is changing this
 # code and its whole content is invariants, failure modes and how to find the bug
@@ -74,7 +82,6 @@ class Doc(NamedTuple):
 # make it pass is to loosen the two tripwires that would notice a real CDN link.
 # Prose about the rule tripping the rule is not a reason to weaken the rule.
 DOCS: tuple[Doc, ...] = (
-    Doc("overview", "Overview", "README.md"),
     Doc("quickstart", "Quickstart", "docs/quickstart.md"),
     Doc("shape-up", "Shape Up, as this team practises it", "docs/shape-up.md"),
     Doc("data-model", "The data model", "docs/data-model.md"),
@@ -112,8 +119,8 @@ def _without_title(text: str) -> str:
     The page draws `doc.label` as the section's heading, so the file's first line
     would land directly under an `<h2>` saying nearly the same words — the
     rendering fault `_drop_repeated_title` exists to prevent on a record page.
-    Unconditional here where that one compares, because these six files are known
-    and every one of them opens by naming itself; a file that does not simply
+    Unconditional here where that one compares, because the files in `DOCS` are
+    known and every one of them opens by naming itself; a file that does not simply
     keeps its first section, which is what the regex not matching already means.
     """
     match = _LEADING_HEADING.match(text)
@@ -164,7 +171,7 @@ _HELP = """
     <h2>{{ doc.label }}</h2>
     {%- if doc.why %}
     {#- Empty must not look like broken. A section that drew nothing at all is a
-        page that has quietly lost a sixth of itself and looks completely
+        page that has quietly lost one of its documents and looks completely
         normal — the same failure `Unreadable` was written for, so it says the
         same two things: which file, and why. -#}
     <p class="unread"><code>{{ doc.path }}</code> could not be read: {{ doc.why }}</p>
@@ -221,7 +228,7 @@ _HELP_STYLE = """
              gap: 0 2rem; }
 /* A measure, and it is the one place in this app that wants one. Every other
    page is a table, a graph or a form — dense, and read by scanning — and this one
-   is six documents of prose read line by line. At 1280px the second track came
+   is documents of prose read line by line. At 1280px the second track came
    out 952px wide, which is about 150 characters a line and roughly twice what
    anybody reads comfortably; a record's own shaping document has never been
    wider than the record page's column. `max-width` on the inner block and not a
@@ -256,7 +263,7 @@ _HELP_STYLE = """
 .tocin { list-style: none; margin: .1rem 0 0; padding: 0; font-size: 13px; }
 /* The document's `##` renders as an `<h3>` (see `_heading_ids`), so `lv3` is a
    top-level section of a document and every deeper level indents from it. Written
-   as a step per level rather than one rule per level: the six documents use three
+   as a step per level rather than one rule per level: the documents use three
    between them today and a fourth must not be an unindented row. */
 .tocin li { padding-left: calc((var(--lv, 3) - 3) * .7rem); }
 .tocin li.lv3 { --lv: 3; }
@@ -344,9 +351,9 @@ def render_help(index: Index, links: Links = STATIC) -> str:
     try:
         root: Path | None = _docs_root()
     except RuntimeError:
-        # Not a re-raise and not a log line: `_read_doc` turns this into six
-        # sections each naming the file it wanted, which is the same page a
-        # single missing document produces. One failure mode drawn one way.
+        # Not a re-raise and not a log line: `_read_doc` turns this into one
+        # section per document, each naming the file it wanted, which is the same
+        # page a single missing document produces. One failure mode drawn one way.
         root = None
     drawn = []
     for doc in DOCS:
