@@ -49,11 +49,21 @@ class Pusher:
         backoff: float = 1.0,
         ceiling: float = 60.0,
         grace: float = 5.0,
+        idle: float = 60.0,
     ) -> None:
         self._store = store
         self._deliver = deliver
         self._backoff = backoff
         self._ceiling = ceiling
+        # How long a quiet wait lasts before this thread asks the remote whether
+        # anybody else moved it. Sixty seconds is a number chosen against Cloud
+        # Run rather than against GitHub: CPU is allocated only while a request
+        # is in flight, so the timer does not fire on the interval — it fires on
+        # the first request after the interval has elapsed in billed time. The
+        # cost is therefore one fetch per active minute, never one per wall-clock
+        # minute on an instance nobody is using, and the freshness a reader
+        # actually observes is "at most a minute of somebody's browsing stale".
+        self._idle = idle
         # How long the shutdown drain may keep trying. Cloud Run allows ~10s
         # between SIGTERM and SIGKILL; this stays under it so the store's own
         # close — releasing the flock — still happens inside the window.
@@ -105,11 +115,31 @@ class Pusher:
     def _run(self) -> None:
         wait = self._backoff
         while True:
-            self._store.dirty.wait()
+            # A return with the flag still false is the POLL, and it is the whole
+            # of what a bare `wait()` could not do: a commit pushed to the plan by
+            # hand moves the remote and pokes nothing here, so a thread that only
+            # ever woke on a local commit served its boot-time clone for as long
+            # as the instance lived. See `Store.catch_up`.
+            poked = self._store.dirty.wait(timeout=self._idle)
             if self._closing.is_set():
                 break
-            self._store.dirty.clear()
-            outcome = self._pass()
+            if poked:
+                # Cleared only when it was actually set. A timeout returns with
+                # the flag false, and a commit landing in the window between that
+                # return and this line would be cleared here without ever having
+                # been served — a save that goes to GitHub only when the NEXT one
+                # does, which is the failure the pusher exists to not have.
+                self._store.dirty.clear()
+            elif self._forked:
+                # Nothing a round trip can learn. Only a person moving the remote
+                # ends a fork, and `_pass` is explicit that no backoff loop may
+                # hammer one waiting for that — a timer that polled through a
+                # fork would be exactly the loop it refused to be. A poke still
+                # runs a full pass, whose guard fetches and answers "diverged"
+                # before anything is replayed, so a healed remote is noticed the
+                # next time anybody saves.
+                continue
+            outcome = self._pass(polling=not poked)
             if outcome is None or outcome.state != "unreachable":
                 wait = self._backoff
                 continue
@@ -123,8 +153,13 @@ class Pusher:
             self._store.dirty.set()
         self._drain()
 
-    def _pass(self) -> SyncOutcome | None:
-        """One attempt to land the backlog.
+    def _pass(self, *, polling: bool = False) -> SyncOutcome | None:
+        """One attempt to land the backlog, or — on the timer — to pick up a push.
+
+        The two differ by one fetch and by nothing else: `catch_up()` is `sync()`
+        with a fetch in front of it, so the outcome, the fork bookkeeping and the
+        announcement below are the same code for both, and a poll that lands
+        somebody else's commit is announced exactly like a save that lands ours.
 
         While the store is forked this still runs `sync()` on a poke: the
         recovery's own guard fetches, sees the remote still missing the
@@ -135,7 +170,7 @@ class Pusher:
         no backoff loop hammers a remote that only a person can fix.
         """
         try:
-            outcome = self._store.sync()
+            outcome = self._store.catch_up() if polling else self._store.sync()
         except Exception:
             # This thread is the only thing that ever lands a commit, so it
             # must outlive anything a pass can throw — a credential that

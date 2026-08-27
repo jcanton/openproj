@@ -1193,6 +1193,55 @@ class Store:
             raise
         return True
 
+    def catch_up(self) -> SyncOutcome:
+        """The poll: ask the remote whether it moved, and fold in whatever it grew.
+
+        `sync()`'s counterpart, and the answer to the one question `sync()`
+        deliberately never asks. `sync()` asks "is there anything of OURS to
+        send", and answers it from the tracking ref alone when the answer is no —
+        no round trip, which is right, and which is exactly how a server nobody
+        saves on comes to serve its boot-time clone forever. Nothing on the read
+        path fetches, so the tracking ref stays where the clone left it, `level`
+        is true against a stale ref, and every route into the remote agrees there
+        is nothing to do. Measured in production on 2026-08-27: a commit pushed
+        from a terminal was on GitHub and the live `/api/health` still named its
+        parent hours later, with `/detail/<the new record>` answering 404 the
+        whole time. `docs/quickstart.md` has promised the opposite since the
+        first draft.
+
+        So this fetches FIRST and then asks the ordinary question. Everything
+        after the fetch is `sync()` unchanged — the fast-forward, the replay, the
+        force-push guard, the parking and the answer — because a poll that finds
+        a moved remote and a save that races one are the same situation reached
+        through two doors, and that recovery is much too hard to have twice.
+
+        It costs more than the cheapest possible poll and is written this way
+        anyway: when the remote HAS moved, `sync()` sends a push it already knows
+        will be rejected and fetches a second time on the way into `_recover`.
+        Three round trips instead of one, paid once per commit somebody else
+        makes rather than once per tick — against a second reconciliation path
+        that would have to be right about force-pushes, stranded branches and
+        stragglers on its own. The trade is not close.
+
+        NOT `Store.fetch()`, which runs on `self._repo`: this is called from the
+        pusher's thread and that handle belongs to the writers. A fresh
+        `pygit2.Repository` per cross-thread reader is this file's own pattern,
+        and the refs a fetch moves are on disk, where the shared handle reads
+        them anyway.
+        """
+        if not self._remote:
+            return SyncOutcome(landed=None, remapped={}, parked=[], state="idle")
+        repo = pygit2.Repository(str(self._path))
+        try:
+            repo.remotes[_ORIGIN].fetch(callbacks=self._callbacks())
+        except Exception:
+            # The remote is away, and this is the whole of what went wrong — no
+            # backlog was touched and nothing was rewound. Reported with the word
+            # the push path already uses for the same condition, so a caller's
+            # backoff stays one branch rather than two.
+            return SyncOutcome(landed=None, remapped={}, parked=[], state="unreachable")
+        return self.sync()
+
     def sync(self) -> SyncOutcome:
         """The background pusher's one entry point: land local main on the remote.
 

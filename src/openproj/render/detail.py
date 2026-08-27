@@ -3089,7 +3089,7 @@ def _new_rows() -> list[dict]:
                 # order. `thinking` now sits on that ladder too and is refused on
                 # an issue for its own reason (see `ISSUE_STATUS`), so this stays
                 # a per-rung question and not a per-word one. A fresh inbox
-                # record's opening status is the server's stamp (`web.opens_at`,
+                # record's opening status is the writer's stamp (`model.opens_at`,
                 # which is the model's own default), and the record page's own
                 # per-kind hill is one save away.
                 continue

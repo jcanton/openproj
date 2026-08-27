@@ -45,24 +45,41 @@ def test_the_ladder_is_the_only_place_the_kinds_are_written_down():
     So this asserts the derivation rather than the values: any map that disagrees
     with the ladder is a sixth copy.
     """
-    from openproj import render, web
+    from openproj import model, render, web
     from openproj.model import _ID_PREFIXES, _MODELS, _PREFIX_FOR_KIND
 
     assert KIND_NAMES == tuple(rung.name for rung in KINDS)
     assert _MODELS == {rung.name: rung.model for rung in KINDS}
     assert _ID_PREFIXES == {rung.prefix: rung.name for rung in KINDS}
-    assert _PREFIX_FOR_KIND == {rung.name: rung.prefix for rung in KINDS}
     assert PARENT_KINDS == {rung.name: rung.under for rung in KINDS}
-    assert web.DIRECTORY == {rung.name: rung.directory for rung in KINDS}
     assert render.PREFIX == {rung.name: rung.prefix for rung in KINDS}
     assert render.KINDS == KIND_NAMES
     assert render._KIND_MODELS == {rung.name: rung.model for rung in KINDS}
-    # The write path's two, which this test did not name when it was written —
-    # and which were therefore still spelled out by hand. `POST /api/record` with
+
+    # The write path's three, and the strongest form this test can take of them.
+    #
+    # They were spelled out by hand in `web.py` — `POST /api/record` with
     # `kind: product` raised KeyError twice over and answered 500 on the only
-    # route that can create one, on a branch whose whole subject was the ladder.
-    assert web.MODELS == {rung.name: rung.model for rung in KINDS}
-    assert web.PREFIX == {rung.name: rung.prefix for rung in KINDS}
+    # route that can create one, on a branch whose whole subject was the ladder —
+    # then derived there, and they now live in `model.py` where the ladder does,
+    # because `openproj new` needs the same three and cannot import them from
+    # `web.py` without putting FastAPI on the import path of `openproj check`.
+    #
+    # `is`, not `==`, and that is the point: every assertion above can only say a
+    # copy AGREES with the ladder today, which is exactly what a stale copy does
+    # until the morning it does not. These say there is no copy. `web.DIRECTORY`
+    # having drifted from `model.DIRECTORY` is not a thing that can happen,
+    # rather than a thing this test would have to catch.
+    assert model.PREFIX == {rung.name: rung.prefix for rung in KINDS}
+    assert model.DIRECTORY == {rung.name: rung.directory for rung in KINDS}
+    assert model.MODELS == {rung.name: rung.model for rung in KINDS}
+    assert _PREFIX_FOR_KIND is model.PREFIX
+    assert web.DIRECTORY is model.DIRECTORY
+    # And `web` no longer names the other two at all: minting a record goes
+    # through `model.mint_id` and `model.opening_fields`, so the route that used
+    # to reach for `MODELS` and `PREFIX` has nothing to reach for.
+    assert not hasattr(web, "MODELS")
+    assert not hasattr(web, "PREFIX")
     # Every field of every kind, so a rung that declares one is writable through
     # the API on the commit that adds it.
     for rung in KINDS:

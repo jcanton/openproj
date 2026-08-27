@@ -92,6 +92,22 @@ the build is a rule that gets reverted rather than adopted, so only a blocker is
 merge on. All three take a plan repository as their first argument; `schedule` and `render` also
 take `--today`, because half of what they print depends on which day it is.
 
+## From anywhere, with nothing installed
+
+Every command above also runs straight out of the published package, which is the form to reach for
+from a script, a CI job, or a coding agent working in the codebase a plan is about:
+
+```bash
+uvx openproj new issue . --title "Quadratic extrapolation lives in two places" --as jcanton
+uvx --from git+https://github.com/jcanton/openproj openproj check .   # unreleased main
+```
+
+`new` is the write path for somebody without a browser. It mints the id, files the record under its
+kind's directory, starts the body from that kind's template, stamps the date and the schema version
+the repository is on — and holds the record to every rule `check` holds it to before anything reaches
+the disk, so a record that would fail the gate never becomes a file. `docs/quickstart.md` has the
+flags and the reasoning.
+
 ## Where to read next
 
 | | |
