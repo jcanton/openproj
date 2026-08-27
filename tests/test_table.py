@@ -552,7 +552,10 @@ def test_the_status_gate_is_written_on_the_controls_themselves(new_page: str):
     for field, gates in (
         ("owner", "ready"),
         ("reviewers", "ready in_progress"),
-        ("person_weeks", "ready"),
+        # Both rungs, like the reviewer above it: work that is running has to be
+        # sized, because with no default appetite an unsized record in flight is
+        # scheduled nowhere and charged to nobody.
+        ("person_weeks", "ready in_progress"),
         ("start_date", "in_progress"),
         ("prs", "done"),
     ):

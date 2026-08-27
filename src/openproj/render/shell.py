@@ -924,7 +924,9 @@ body:has([data-fills]) { padding-bottom: 1rem; }
            letter-spacing: .04em; }
 #card dd { margin: 0; }
 #card .num { font-variant-numeric: tabular-nums; }
-#card .guess { color: var(--muted); font-style: italic; }
+/* `#card .guess` was here, and it dressed the one word this card can no longer
+   say: "(assumed)", beside an appetite the tool had invented. There is no
+   invented appetite any more, so there is no rule for one. */
 #card .card-why { margin: .35rem 0 0; color: var(--muted); font-style: italic; }
 /* The shaping document. Capped and scrollable rather than as long as it is: a
    900-word pitch drawn in full covers the table it was opened from, and the card
@@ -2129,14 +2131,18 @@ function cardHtml(row, extra) {
   // them that way — `_people_on` dedupes — and a box that says "ann, ann" is a
   // box nobody trusts the rest of.
   const others = (row.assignees || []).filter(who => who && who !== row.owner);
+  // `row.weeks` is the timeline's rounded copy and `row.size` the table's, and
+  // the two used to be able to disagree: the timeline's was the invented default
+  // for an unsized record and the table's was null for the same one, so the same
+  // card said "0.5 weeks" over one page and nothing over the other. Both are the
+  // stated appetite now, so the coalesce is only about which page built the row.
   const size = row.weeks ?? row.size;
   const facts = [
     ['Owner', row.owner ? esc(row.owner) : CARD_DASH],
     ...(others.length ? [['With', esc(others.join(', '))]] : []),
     ...(row.cycle ? [['Cycle', esc(String(row.cycle))]] : []),
     ...(size == null ? [] : [['Appetite', esc(String(size))
-      + (Number(size) === 1 ? ' week' : ' weeks')
-      + (row.estimated ? ' <span class="guess">(assumed)</span>' : '')]]),
+      + (Number(size) === 1 ? ' week' : ' weeks')]]),
     // The count the table's column gave up, with the bar it draws there — the
     // card is where a number that is read rather than scanned belongs, and it is
     // beside what the number was counted from.

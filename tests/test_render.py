@@ -781,45 +781,60 @@ def test_every_status_a_node_can_hold_reaches_cytoscape_as_a_colour(rendered: Pa
     assert not missing, missing
 
 
-def test_the_timeline_hatches_what_it_is_guessing(rendered: Path, tmp_path: Path):
-    """An estimated or unowned span is a forecast, not a commitment. If the two
-    look alike, a guess gets read as a promise.
+def test_the_timeline_hatches_what_it_cannot_promise(rendered: Path, tmp_path: Path):
+    """Work that is over and work nobody is on are not forecasts like the rest of
+    the bars, and if all three look alike a record of the past reads as a promise
+    about the future.
 
-    Built from a constructed index rather than the seed: every seed record now
-    states a size, so the corpus no longer exercises the defaulted path at all.
+    The first of those marks used to be `estimated`, "the length of this bar came
+    from a default appetite". There is no default and therefore no such bar, so
+    the channel went to `historical`, which every done record's span has carried
+    since it was written and nothing drew.
+
+    Built from a constructed index rather than the seed, because a corpus where
+    every record is sized and owned exercises neither mark.
     """
     from datetime import date
 
     from openproj.model import Config, Task
 
-    assert 'id="hatch-estimated-st-ready"' in read(rendered, "timeline.html")
+    assert 'id="hatch-historical-st-done"' in read(rendered, "timeline.html")
     assert 'id="hatch-unowned-st-ready"' in read(rendered, "timeline.html")
 
-    guessed = Task(id="task-000001", kind="task", title="No size given", owner="ann")
+    finished = Task(
+        id="task-000001",
+        kind="task",
+        title="Already done",
+        status="done",
+        owner="ann",
+        person_weeks=1.0,
+        start_date=date(2026, 8, 3),
+        prs=["kilnlab/kiln4py#1"],
+    )
     nobodys = Task(id="task-000002", kind="task", title="Nobody owns this", person_weeks=1.0)
-    index = build_index([guessed, nobodys], Config(), date(2026, 8, 17))
+    index = build_index([finished, nobodys], Config(), date(2026, 8, 17))
     out = tmp_path / "guesses"
     render_static(index, out)
     body = read(out, "timeline.html")
 
-    assert 'data-id="task-000001" class="bar estimated' in body
+    assert 'data-id="task-000001" class="bar historical' in body
     assert 'data-id="task-000002" class="bar unowned' in body
     # The patterns were declared and then referenced by nothing, so the class was
     # the whole of the encoding and the bar looked exactly like a commitment. The
     # legend draws itself from the same patterns, so only the plot is counted.
     plot = body[body.index("<svg width=") :]
-    # The rung these two bars stand on is whatever a record with nothing typed in
-    # it opens at, which is the model's default and not a word to write down here:
-    # this test named `shaping` and started failing on the commit that put a rung
-    # below it, about a hatch that was drawing perfectly well. The subject is the
-    # hatch, so the status is asked of the record rather than asserted.
-    opens = guessed.status
-    assert plot.count(f'class="mark mark-estimated st-{opens}"') == 1
+    # The rung the unowned bar stands on is whatever a record with nothing typed
+    # in it opens at, which is the model's default and not a word to write down
+    # here: this test named `shaping` and started failing on the commit that put a
+    # rung below it, about a hatch that was drawing perfectly well. The subject is
+    # the hatch, so the status is asked of the record rather than asserted.
+    opens = nobodys.status
+    assert plot.count('class="mark mark-historical st-done"') == 1
     assert plot.count(f'class="mark mark-unowned st-{opens}"') == 1
-    assert f"rect.mark-estimated.st-{opens} {{ fill: url(#hatch-estimated-st-{opens}); }}" in body
+    assert "rect.mark-historical.st-done { fill: url(#hatch-historical-st-done); }" in body
     assert f"rect.mark-unowned.st-{opens} {{ fill: url(#hatch-unowned-st-{opens}); }}" in body
     # The outline channel says one thing only, and it is not this one.
-    assert "rect.estimated { stroke" not in body
+    assert "rect.historical { stroke" not in body
 
 
 def test_a_hatch_is_drawn_in_the_ink_of_the_bar_it_covers(rendered: Path):
@@ -835,7 +850,7 @@ def test_a_hatch_is_drawn_in_the_ink_of_the_bar_it_covers(rendered: Path):
 
     assert "--hatch" not in body, "one hatch colour cannot serve the whole ladder"
     for status in STATUSES:
-        for mark in ("estimated", "unowned"):
+        for mark in ("historical", "unowned"):
             pattern = re.search(rf'<pattern id="hatch-{mark}-st-{status}".*?</pattern>', body, re.S)
             assert pattern, (mark, status)
             assert f'stroke="var(--st-{status}-ink)"' in pattern.group(0), (mark, status)
@@ -1057,7 +1072,7 @@ def test_the_timeline_names_every_colour_it_draws(rendered: Path):
     for status in STATUSES:
         assert f'<span class="swatch st-{status}" aria-hidden="true">' in body, status
         assert STATUS_GLYPH[status] in body, status
-    assert "appetite assumed" in legend
+    assert "already happened" in legend
     assert "nobody on it" in legend
     assert "overruns its cycle" in legend
     assert "today" in legend
@@ -1419,6 +1434,57 @@ def test_weeks_bet_into_another_cycle_are_counted_beside_this_one(
         assert re.search(
             rf'\+<span class="num">{weeks:.1f}</span>\s+weeks in other cycles', group.group(0)
         ), login
+
+
+def test_the_pages_that_add_weeks_up_say_how_many_they_could_not_count():
+    """A smaller number with no explanation is the defect this prevents.
+
+    Shaping work carries no appetite by design, and `counts_in` says it is still
+    what somebody's next weeks are spent on — so it used to be charged half a
+    week apiece out of a config default. Charging nothing is right; a cycle total
+    that quietly drops with no reason on the page is not, so both pages carry the
+    count of what the weeks leave out beside the weeks themselves.
+    """
+    from openproj.model import Config, Cycle, Pitch
+    from openproj.render import ROUTES, render_cycle, render_people
+
+    plan = Cycle(
+        cycle=37,
+        starts_on=date(2026, 8, 17),
+        reviews_on=date(2026, 9, 14),
+        availability={"ann": 1.0},
+    )
+    config = Config(
+        cycles={37: (date(2026, 8, 17), date(2026, 10, 9))},
+        plans={37: plan},
+        known_people=["ann"],
+    )
+    records = [
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Bet and sized",
+            status="ready",
+            owner="ann",
+            cycle=37,
+            person_weeks=3.0,
+        ),
+        *[
+            Pitch(id=f"pitch-00000{n}", kind="pitch", title="Shaping", owner="ann", cycle=37)
+            for n in (2, 3)
+        ],
+    ]
+    index = build_index(records, config, date(2026, 8, 24))
+
+    cycle = render_cycle(index, 37, ROUTES)
+    assert "3.0 wk" in cycle, "the weeks somebody actually stated"
+    assert "2 not sized" in cycle
+
+    people = render_people(index)
+    assert "2 not sized" in people
+    # And not the sentence that was true only while the default invented weeks
+    # for the two unsized bets: they are on ann's plate, whatever their appetite.
+    assert "nothing bet in cycle" not in people
 
 
 def test_a_cycle_with_no_record_is_weeks_bet_against_no_roster(unrecorded_cycle: Index):
@@ -3361,7 +3427,7 @@ def test_load_is_charged_where_the_assignees_are(demo_rendered: tuple[Path, Inde
 def test_a_size_is_split_evenly_between_the_people_on_it(demo_rendered: tuple[Path, Index]):
     """Even split, decided 2026-08-16: one number to maintain instead of one per
     person per task."""
-    from openproj.model import Config, size_weeks
+    from openproj.model import size_weeks
 
     _, index = demo_rendered
     # `counts_in` and not `e.cycle == 37`: a task takes its cycle from the pitch
@@ -3371,7 +3437,7 @@ def test_a_size_is_split_evenly_between_the_people_on_it(demo_rendered: tuple[Pa
         for e in index.plan.values()
         if index.counts_in(e, 37) and len(e.assignees) > 1 and not index.children.get(e.id)
     )
-    size, _ = size_weeks(shared, Config(default_task_effort=index.default_task_effort))
+    size = size_weeks(shared)
     held = index.load(37)
     people = list(dict.fromkeys(([shared.owner] if shared.owner else []) + shared.assignees))
 
@@ -3820,24 +3886,36 @@ def test_the_timeline_lists_beside_the_chart_what_the_chart_draws(rendered: Path
 
 
 def test_the_hatching_says_in_words_what_it_says_in_texture(demo_rendered: tuple[Path, Index]):
-    """An assumed appetite, work nobody is on and a bet that overruns its cycle
-    are a texture and a stroke over a bar, and neither reaches anybody who is not
+    """Work that is over, work nobody is on and a bet that overruns its cycle are
+    a texture and a stroke over a bar, and neither reaches anybody who is not
     looking at the plot."""
     from openproj.model import Config, Task
     from openproj.render import _MARK_WORDS, _timeline
 
-    # A task with no effort and nobody on it: both marks at once, which the
-    # shipped corpora do not happen to contain.
-    bare = build_index(
-        [Task(id="task-000009", kind="task", title="Nobody has this", status="ready")],
-        Config(),
-        date(2026, 8, 17),
+    # One bar per mark, and they cannot be the same bar: a done record's span is
+    # built on the historical branch, which books nobody and never asks who is on
+    # it. The shipped corpora happen to carry neither, so both are built here.
+    nobodys = Task(
+        id="task-000009", kind="task", title="Nobody has this", status="ready", person_weeks=1.0
     )
-    guessed = _timeline(bare)["bars"][0]
+    finished = Task(
+        id="task-000008",
+        kind="task",
+        title="Over and done with",
+        status="done",
+        owner="ann",
+        person_weeks=1.0,
+        start_date=date(2026, 8, 3),
+        prs=["kilnlab/kiln4py#1"],
+    )
+    marked = build_index([nobodys, finished], Config(), date(2026, 8, 17))
+    bars = {bar["id"]: bar for bar in _timeline(marked)["bars"]}
 
-    assert guessed["marks"] == ["estimated", "unowned"]
-    for mark in guessed["marks"]:
-        assert _MARK_WORDS[mark] in guessed["reads"].lower(), mark
+    assert bars["task-000009"]["marks"] == ["unowned"]
+    assert bars["task-000008"]["marks"] == ["historical"]
+    for bar in bars.values():
+        for mark in bar["marks"]:
+            assert _MARK_WORDS[mark] in bar["reads"].lower(), mark
 
     # And the outline that means a bet does not fit the cycle it was made in.
     _, index = demo_rendered
@@ -4919,10 +4997,33 @@ def test_a_pitch_draws_its_tasks_as_the_progress_it_has_made(rendered: Path, see
     panels = re.findall(r'<section class="progress read">.*?</section>', page, re.S)
 
     assert panels, "the corpus has pitches with tasks under them"
-    # Ticked from status, both ways round somewhere on the page: the corpus holds
-    # finished tasks and unfinished ones under the same pitches.
-    assert any("☑" in panel for panel in panels)
     assert any("☐" in panel for panel in panels)
+    # The ticked half is asked of a pitch built here rather than of the corpus.
+    # Only a child with weeks is in the fraction at all now that no default
+    # invents them, and every done record in the corpus is unsized — so the tick
+    # would be a claim about which files happen to carry `person_weeks`, which is
+    # the corpus accident this test has already been caught by twice below.
+    from openproj.model import Config, Pitch, Task
+    from openproj.render import render_detail
+
+    finished = build_index(
+        [
+            Pitch(id="pitch-000001", kind="pitch", title="A bet", person_weeks=2.0),
+            Task(
+                id="task-000001",
+                kind="task",
+                title="Over and done with",
+                parent="pitch-000001",
+                status="done",
+                person_weeks=2.0,
+                prs=["kilnlab/kiln4py#1"],
+            ),
+        ],
+        Config(),
+        date(2026, 8, 17),
+    )
+    ticked = render_detail(finished, only="pitch-000001")
+    assert "☑" in re.search(r'<section class="progress read">.*?</section>', ticked, re.S).group(0)
     # And every line is a link to the CHILD it counts, whatever rung that child is
     # on, which is the other half of moving this out of the prose. This asked for
     # `task-[0-9a-f]{6}` and passed on a corpus accident: nothing but a pitch could

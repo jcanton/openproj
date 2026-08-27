@@ -9,7 +9,7 @@ from markupsafe import Markup, escape
 
 from ..index import Index, _people_on, cascade_of
 from ..model import KINDS as KIND_LADDER
-from ..model import NOTE_STATES, RUNG, Config, Record, checklist, sections, size_weeks
+from ..model import NOTE_STATES, RUNG, Record, checklist, sections, size_weeks
 from ..vendor import _ace, _yjs
 from .controls import _REQUIRED_JS, _combobox_html, _control_html
 from .editor import (
@@ -1244,8 +1244,11 @@ _DETAIL = """
             <span class="box" aria-hidden="true">{{ '☑' if item.done else '☐' }}</span>
             <a href="{{ links.record }}{{ item.id }}">{{ item.title }}</a>
             <span class="chip {{ item.status_class }}">{{ item.status|human }}</span>
-            <span class="tally">{{ item.size }} wk{% if item.people %}
-              · {{ item.people }}{% endif %}</span>
+            {#- Both halves are optional and the separator belongs to neither:
+                a container carries no appetite of its own, and a task nobody has
+                assigned carries no names. -#}
+            <span class="tally">{% if item.size %}{{ item.size }} wk{% endif -%}
+              {%- if item.size and item.people %} · {% endif %}{{ item.people }}</span>
           </li>
           {% endfor %}
         </ul>
@@ -2901,11 +2904,10 @@ def _progress_view(index: Index, record: Record) -> dict | None:
     counted = index.progress.get(record.id)
     if counted is None or not counted.of:
         return None
-    config = Config(default_task_effort=index.default_task_effort)
     items = []
     for child_id in counted.of:
         child = index.plan[child_id]
-        size, defaulted = size_weeks(child, config)
+        size = size_weeks(child)
         items.append(
             {
                 "id": child_id,
@@ -2913,7 +2915,17 @@ def _progress_view(index: Index, record: Record) -> dict | None:
                 "done": child.status == "done",
                 "status": child.status,
                 "status_class": _status_class(child.status),
-                "size": f"{size:g}" + ("*" if defaulted else ""),
+                # Every line here is a child `_weighed` (`index.py`) actually
+                # counted — `counted.of` names them — so an unsized task is not
+                # in this list at all. A container is: it was weighed by what is
+                # under it and carries no size of its own, and it used to print
+                # the default with an asterisk on it, half a week nobody had
+                # written standing where a five-week project's weight belonged.
+                # Blank, and the template drops the whole clause: the panel is
+                # about how far along the tasks are, and a project's weight is
+                # the sum of what is under it rather than anything to print
+                # here.
+                "size": "" if size is None else f"{size:g}",
                 "people": ", ".join(_people_on(child)),
             }
         )

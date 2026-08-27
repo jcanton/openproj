@@ -125,7 +125,7 @@ class Progress(BaseModel):
 
 
 def _weighed(
-    kid: Record, config: Config, rolled: Callable[[str], Progress | None]
+    kid: Record, rolled: Callable[[str], Progress | None]
 ) -> tuple[float, float] | None:
     """One child's (done, total) weeks, or None when it carries no weeks at all.
 
@@ -135,13 +135,16 @@ def _weighed(
     the mismatch `_rollup_problems` exists to report rather than to hide. A
     container carries no appetite, so its total is what is under it.
 
-    `size_weeks` says in its own docstring that a container "has no size of its
-    own" and then returns `config.default_task_effort` anyway, because that
-    fallback was written for an unsized TASK. Nothing noticed until a product
-    existed, because `Rung.under` lets nothing but a product nest a container —
-    and then a product holding a project worth five weeks reported `0/0.5 wk`
-    with a meter reading "0 per cent of this bet is done", on a denominator
-    nobody typed.
+    **A sized rung nobody has sized weighs nothing, and is left out of the
+    fraction rather than counted at zero.** `size_weeks` used to answer
+    `config.default_task_effort` for it — a fallback written for an unsized task,
+    and applied to a container as readily, so a product holding a project worth
+    five weeks reported `0/0.5 wk` under a meter reading "0 per cent of this bet
+    is done", on a denominator nobody typed. Now that the answer is None, the
+    same `return None` an empty container already takes is the honest one: a
+    denominator this record cannot contribute to is a denominator it stays out
+    of, and `Progress.of` names who was counted so the panel that lists them
+    cannot list a record the fraction does not include.
 
     **The done half rolls up.** A child that is `done` counts for the whole of
     it — that is the only completion this model stores, and `Progress` says so.
@@ -163,7 +166,10 @@ def _weighed(
     """
     below = rolled(kid.id)
     if RUNG[kid.kind].sized:
-        total = size_weeks(kid, config)[0]
+        stated = size_weeks(kid)
+        if stated is None:
+            return None
+        total = stated
     elif below is not None and below.unit == "weeks":
         total = below.total
     else:
@@ -178,7 +184,6 @@ def _weighed(
 def _progress_of(
     record: Record,
     children: list[Record],
-    config: Config,
     rolled: Callable[[str], Progress | None],
 ) -> Progress | None:
     """A container's progress from what is under it, a leaf's from its own
@@ -186,7 +191,7 @@ def _progress_of(
     caller, because a container's weight is not known until its descendants are.
     """
     if children:
-        weighed = [(kid, _weighed(kid, config, rolled)) for kid in children]
+        weighed = [(kid, _weighed(kid, rolled)) for kid in children]
         counted = [(kid, half) for kid, half in weighed if half is not None]
         if counted:
             return Progress(
@@ -195,9 +200,14 @@ def _progress_of(
                 unit="weeks",
                 of=[kid.id for kid, _ in counted],
             )
-        # Every child is a container with nothing under it. There is no honest
-        # fraction here, so there is none — the same answer a leaf with no
-        # checklist gives, and for the same reason.
+        # Nothing under here weighs anything: every child is a container with
+        # nothing under it, or a sized rung nobody has sized. There is no honest
+        # fraction either way, so there is none — the same answer a leaf with no
+        # checklist gives, and for the same reason. A pitch whose tasks are all
+        # unsized therefore draws no progress panel at all, where it used to draw
+        # one over a denominator made entirely of the default: `2/2 wk` on four
+        # tasks nobody had estimated, which is a measurement of nothing presented
+        # as a measurement of the bet.
         return None
     ticked, items = checklist(record.body)
     return Progress(done=ticked, total=items, unit="items") if items else None
@@ -248,7 +258,9 @@ class Index(BaseModel):
     cycles: dict[int, tuple[date, date]]
     plans: dict[int, Cycle]
     today: date
-    default_task_effort: float
+    # `default_task_effort` was carried here too, for the four renderers that
+    # rebuilt a one-field `Config` out of it to ask `size_weeks` a question it no
+    # longer answers. Nothing computes with it, so nothing carries it.
     nominal_availability: float = 1.0
     # Carried for the same reason the windows are: the timeline has to draw where
     # a cycle stops building, and it is handed no Config to ask.
@@ -363,18 +375,59 @@ class Index(BaseModel):
         Nothing in the plan records how much of a bet is done — the checklist in
         its body is a hint, not a measurement — and an invented percentage is a
         worse answer than a known overcount that a person can see and argue with.
+
+        Work nobody has sized charges nobody, and `unsized_in` is how a page says
+        so — read them together or the number is smaller than it was last week
+        for a reason nothing on the screen gives.
+        """
+        return self._charged(cycle)[0]
+
+    def unsized_in(self, cycle: int) -> dict[str, list[str]]:
+        """Ids counted against this cycle that state no size, by the person they
+        are on the hook for.
+
+        The other half of `load`. `thinking` and `shaping` work is legitimately
+        unsized — a bet nobody has shaped yet has no appetite, and the validator
+        deliberately does not demand one — but `counts_in` says all of it is what
+        somebody's next weeks are spent on, so it used to be charged half a week
+        each and quietly held up a total. With the default gone the total is the
+        weeks somebody actually stated, which is smaller and correct, and a
+        smaller number arriving with no explanation is exactly the defect this
+        pairing prevents.
+
+        Keyed by person rather than counted, because the two callers want
+        different arithmetic over the same walk: a person's own figure names the
+        records on their own hook, and a cycle's names the distinct records
+        behind every figure on the page — a record with two assignees is one
+        unsized bet on the cycle card and one on each of their rows.
+        """
+        return self._charged(cycle)[1]
+
+    def _charged(self, cycle: int) -> tuple[dict[str, float], dict[str, list[str]]]:
+        """One walk, both answers: the weeks charged and the records that could
+        not be.
+
+        Two methods over one loop rather than two loops, because the three gates
+        that decide whether a record is charged at all — `counts_in`, having
+        somebody on it, and not being a rollup of its own children — are what a
+        second walk would get subtly wrong, and a person's load disagreeing with
+        the count of what is missing from it is worse than either number alone.
         """
         held: dict[str, float] = {}
+        unsized: dict[str, list[str]] = {}
         for record in self.plan.values():
             if not self.counts_in(record, cycle):
                 continue
             people = _people_on(record)
             if not people or self.children.get(record.id):
                 continue
-            size, _ = size_weeks(record, Config(default_task_effort=self.default_task_effort))
+            size = size_weeks(record)
             for who in people:
-                held[who] = held.get(who, 0.0) + size / len(people)
-        return held
+                if size is None:
+                    unsized.setdefault(who, []).append(record.id)
+                else:
+                    held[who] = held.get(who, 0.0) + size / len(people)
+        return held, {who: sorted(ids) for who, ids in unsized.items()}
 
     def carried_into(self, cycle: int) -> list[str]:
         """Ids counted against this cycle that were bet in an earlier one."""
@@ -619,7 +672,7 @@ def build_index(
         # already a containment problem, and counting it into a pitch's progress
         # would let the bad file move a number on the table.
         kids = [plan[k] for k in children[record_id] if k in plan and plan[k].status != "shelved"]
-        rolling[record_id] = _progress_of(plan[record_id], kids, config, _rolled)
+        rolling[record_id] = _progress_of(plan[record_id], kids, _rolled)
         return rolling[record_id]
 
     # Facets, progress and deferred scope are PLAN facts: an unplanned kind in a
@@ -659,7 +712,6 @@ def build_index(
         repositories=config.repositories,
         icons={login: person.icon for login, person in config.people.items() if person.icon},
         today=today,
-        default_task_effort=config.default_task_effort,
         holidays=config.holidays,
         progress=progress,
         for_later=for_later,

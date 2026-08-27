@@ -194,25 +194,28 @@ def test_ancestors_of_an_unknown_id_is_empty():
     assert ancestors("task-ffffff", {}) == []
 
 
-def test_size_weeks_defaults_when_no_size_is_stated():
-    config = Config()
-    assert size_weeks(Task(id="task-abc123", kind="task", title="T"), config) == (0.5, True)
-    assert size_weeks(Pitch(id="pitch-abc123", kind="pitch", title="P"), config) == (0.5, True)
-    assert size_weeks(Project(id="proj-abc123", kind="project", title="J"), config) == (0.5, True)
+def test_size_weeks_is_none_when_no_size_is_stated():
+    """There is no default appetite, and a container never had one to default.
+
+    The old answer was `(0.5, True)` for all three of these — a number and a flag
+    saying it was invented — and the flag was dropped by three of its callers.
+    """
+    assert size_weeks(Task(id="task-abc123", kind="task", title="T")) is None
+    assert size_weeks(Pitch(id="pitch-abc123", kind="pitch", title="P")) is None
+    assert size_weeks(Project(id="proj-abc123", kind="project", title="J")) is None
 
 
 def test_size_weeks_reads_appetite_on_a_pitch_and_effort_on_a_task():
-    config = Config()
     pitch = Pitch(id="pitch-abc123", kind="pitch", title="P", person_weeks=3.0)
     task = Task(id="task-abc123", kind="task", title="T", person_weeks=3.0)
-    assert size_weeks(pitch, config) == (3.0, False)
-    assert size_weeks(task, config) == (3.0, False)
+    assert size_weeks(pitch) == 3.0
+    assert size_weeks(task) == 3.0
 
 
 def test_size_weeks_keeps_a_stated_zero():
-    """Zero is a size somebody chose; only absence may be defaulted."""
+    """Zero is a size somebody chose, and `if not size` would lose it."""
     task = Task(id="task-abc123", kind="task", title="T", person_weeks=0)
-    assert size_weeks(task, Config()) == (0.0, False)
+    assert size_weeks(task) == 0.0
 
 
 def test_load_repo_loads_the_whole_seed_corpus(seed_root: Path):

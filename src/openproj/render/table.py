@@ -35,8 +35,9 @@ from .tokens import (
 
 # Columns the table shows that are computed rather than owned, each with what the
 # cell answers when somebody tries to edit it. `size` is the least obvious: it
-# shows person_weeks *or an assumed default*, so a control on it would let
-# somebody commit the assumption without meaning to.
+# shows the appetite of the record itself, and on a pitch it is the bet rather
+# than what the tasks under it come to — two numbers one cell cannot hold, and an
+# editor opened on the wrong one writes the wrong one.
 #
 # The names and the sentences are one map because they were two: the script
 # carried its own literal list of four, so a fifth derived column would have kept
@@ -53,18 +54,16 @@ _TABLE_DERIVED = tuple(_TABLE_WHY)
 # it. jcanton, 2026-08-27: "the appetite is not an editable field in the /table
 # (dunno why) make it editable in /table please. start date as well".
 #
-# The reason it was not is in `_TABLE_WHY`, where both used to sit: `size` is the
-# pitch's appetite *or* the task's effort *or* the default when neither is set,
-# and `start` is `start_date` after the scheduler has moved it for the
-# dependencies and for what the people on it are already doing. Both cells are
-# forecasts, and typing over a forecast is how a plan stops being believed.
+# The reason it was not is in `_TABLE_WHY`, where both used to sit: `size` on a
+# pitch with tasks is the bet and not what those tasks come to, and `start` is
+# `start_date` after the scheduler has moved it for the dependencies and for what
+# the people on it are already doing. Both cells are forecasts, and typing over a
+# forecast is how a plan stops being believed.
 #
 # What makes them editable is that the editor opens on the WRITTEN field and
-# never on the number in the cell. Double-clicking a size cell showing `2 wk`
-# that nobody chose opens an empty box, because `person_weeks` is empty — so
-# there is no assumption to commit by accident, which is the same rule the draft
-# row has followed since it was written (`_editable_for`). Type into it and the
-# cell goes back to being the scheduler's on the next draw.
+# never on the number in the cell, which is the same rule the draft row has
+# followed since it was written (`_editable_for`). Type into it and the cell goes
+# back to being the scheduler's on the next draw.
 #
 # A kind that reads neither field is still refused, and by the mechanism that
 # already existed rather than a new one: `reads()` asks `unread_fields`, which
@@ -74,9 +73,9 @@ _TABLE_DERIVED = tuple(_TABLE_WHY)
 _COLUMN_FIELD = {"size": "person_weeks", "start": "start_date"}
 
 # What the tooltip adds on those two, because "double-click to edit appetite" on
-# a cell reading `2 wk` does not explain why the box opens empty.
+# a cell reading `2 wk` does not explain what the number in it is.
 _TABLE_SHOWS = {
-    "size": "Shows the appetite, the task effort, or the default when neither is set.",
+    "size": "Shows the appetite this record was bet at. Blank means nobody has sized it.",
     "start": "Shows the scheduled start. Editing sets start_date, the earliest it may begin.",
 }
 
@@ -4086,12 +4085,11 @@ def _new_row_fields() -> dict[str, dict[str, str]]:
     server's, `start` is the scheduler's, and Appetite is a thing a project does
     not have. The row draws each of them differently and says which it is.
 
-    `size` is the one column that is not simply its own field. It *shows*
-    person_weeks or an assumed default, which is why no stored row lets it be
-    typed into (`_TABLE_WHY`) — but a row that does not exist yet has no assumed
-    value standing in for a decision, so there is nothing here to commit by
-    accident. Typing 3 into it writes `person_weeks: 3`, and the cell goes back
-    to being the scheduler's the moment the row is a record.
+    `size` is the one column that is not simply its own field, which is why no
+    stored row lets it be typed into (`_TABLE_WHY`) — but a row that does not
+    exist yet has nothing derived standing in its cell, so there is nothing here
+    to commit by accident. Typing 3 into it writes `person_weeks: 3`, and the
+    cell goes back to being the scheduler's the moment the row is a record.
     """
     per_kind: dict[str, dict[str, str]] = {}
     # Planned rungs only: the table is a plan view, and its draft row offers

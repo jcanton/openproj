@@ -57,7 +57,15 @@ _LABEL_CHARS = 40
 # What the hatching over a bar means, in the words the legend uses for it. The
 # hatch is a texture and the outline is a stroke, so neither reaches a reader who
 # is not looking at the plot — the row beside it has to say them.
-_MARK_WORDS = {"estimated": "appetite assumed", "unowned": "nobody on it"}
+#
+# `estimated` held the first of these and said "appetite assumed", about a bar
+# whose length came from the default appetite. With no default there is no such
+# bar, and a legend key explaining a mark nobody will ever see is worse than no
+# key at all. The hatch goes to `historical` instead, which is set on every done
+# record's span and was read by nothing: a recorded past and a forecast are the
+# two things on this chart that most need telling apart, and until now they drew
+# with the identical bar.
+_MARK_WORDS = {"historical": "already happened", "unowned": "nobody on it"}
 # Per level of containment. Enough to read as a step at 11px, small enough that a
 # task three deep still has most of the 250px label column to write its name in.
 _INDENT_PX = 12
@@ -217,7 +225,6 @@ def _timeline(
         # is added in days instead of by naming a date that cannot exist.
         return round(((day - origin).days + plus_days) * day_px, 1)
 
-    config = Config(default_task_effort=index.default_task_effort)
     bars, rows = [], {}
     for row, (record_id, depth) in enumerate(_containment_rows(index, set(drawn))):
         span = drawn[record_id]
@@ -225,10 +232,11 @@ def _timeline(
         record = index.plan[record_id]
         # Hatched, not outlined: the outline says "overruns its cycle", and one
         # channel carrying three different facts is a channel that says none of
-        # them. A guess and a commitment have to be told apart at a glance. The
-        # hatch is a second rect over the bar, so the class on the bar stays a
-        # statement about the span rather than an instruction about paint.
-        marks = [name for name in ("estimated", "unowned") if getattr(span, name)]
+        # them. What happened and what is forecast to happen have to be told
+        # apart at a glance. The hatch is a second rect over the bar, so the
+        # class on the bar stays a statement about the span rather than an
+        # instruction about paint.
+        marks = [name for name in ("historical", "unowned") if getattr(span, name)]
         classes = ["bar", *marks]
         if span.overruns_cycle_weeks:
             classes.append("late")
@@ -275,11 +283,20 @@ def _timeline(
                 "glyph": STATUS_GLYPH.get(record.status, "") if width >= _GLYPH_MIN_PX else "",
             }
         )
-        size, _ = size_weeks(record, config)
+        size = size_weeks(record)
         # The table's own row, so the shared `matches()` reads the same fields on
         # this page as on the other two, plus the two things only a bar wants to
         # say: what it is holding, and why it starts when it does.
-        rows[record_id] = _row(index, record_id) | {"weeks": round(size, 2), "tip": why}
+        #
+        # None where nobody has sized it, and not a number: the flag that used to
+        # travel beside this one saying "invented" is gone with the default that
+        # fed it, and the card in `shell.py` reads `row.weeks ?? row.size`, so a
+        # number here is a number that page will present as an appetite somebody
+        # chose. A bar with no size on it is a bar that came from its children.
+        rows[record_id] = _row(index, record_id) | {
+            "weeks": None if size is None else round(size, 2),
+            "tip": why,
+        }
     cycles = []
     config = Config(cooldown_weeks=index.cooldown_weeks, plans=index.plans)
     for number, (opens, closes) in sorted(index.cycles.items()):
@@ -424,9 +441,9 @@ _TIMELINE = """
     right end — jcanton, 2026-08-25: "the timeline can then have its legend on one
     line only: left-aligned for status and right aligned the others". They are two
     questions, which is why they stay two labelled lists: what state is this in,
-    and how much of this bar is a guess. Every swatch is drawn from the same token
-    or the same pattern the plot uses — including the glyph, which is the half of
-    the status channel that is not colour.
+    and how much of this bar can be believed. Every swatch is drawn from the same
+    token or the same pattern the plot uses — including the glyph, which is the
+    half of the status channel that is not colour.
 
     `.keyrow` is the shell's and already meant "first item left, last item
     right"; the count it used to push right is in the control bar now with the
@@ -457,10 +474,13 @@ _TIMELINE = """
   {% endfor %}
 </ul>
 <ul class="legend" aria-label="What a bar marking means">
+  {#- Drawn on a `done` bar, because that is the only status this mark can ever
+      appear on — a swatch in the ready fill would be a key to a bar the chart
+      cannot draw. -#}
   <li><svg class="swatch" viewBox="0 0 20 11" aria-hidden="true"
-      ><rect class="bar st-ready" x=".5" y=".5" width="19" height="10"/><rect
-        class="mark mark-estimated st-ready" x=".5" y=".5" width="19"
-        height="10"/></svg>appetite assumed</li>
+      ><rect class="bar st-done" x=".5" y=".5" width="19" height="10"/><rect
+        class="mark mark-historical st-done" x=".5" y=".5" width="19"
+        height="10"/></svg>already happened</li>
   <li><svg class="swatch" viewBox="0 0 20 11" aria-hidden="true"
       ><rect class="bar st-ready" x=".5" y=".5" width="19" height="10"/><rect
         class="mark mark-unowned st-ready" x=".5" y=".5" width="19"
@@ -505,7 +525,7 @@ _TIMELINE = """
       which is the token that already means "what reads on this". -#}
   <defs>
     {% for status in statuses %}
-    <pattern id="hatch-estimated-st-{{ status }}" width="6" height="6"
+    <pattern id="hatch-historical-st-{{ status }}" width="6" height="6"
              patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
       <line x1="0" y1="0" x2="0" y2="6" stroke="var(--st-{{ status }}-ink)"
             stroke-opacity=".55" stroke-width="3"/>
@@ -906,7 +926,7 @@ svg { display: block; }
 .today { stroke: var(--danger); stroke-width: 1.5; }
 .today-label { font-size: 10px; fill: var(--danger); font-weight: 600; }
 rect.bar { rx: 3; }
-/* An assumed appetite and work nobody is on are hatched, not outlined: the
+/* Work that is over and work nobody is on are hatched, not outlined: the
    outline says "overruns its cycle", and one channel carrying three facts says
    none of them. Drawn as a second rect over the bar so the status colour stays
    underneath, and transparent to the pointer so the bar is still what you hover. */
@@ -952,7 +972,7 @@ def _status_paint_css() -> str:
     Twenty-five rules — a fill, a border, a glyph ink and two hatch references
     for each status — so it is written by a loop. Spelled out by hand, the one
     that goes missing is a hatch, and a missing hatch does not look broken: it
-    looks like a bar that has stopped being a guess.
+    looks like a bar that is a forecast rather than a record of what happened.
 
     The overrun outline is written here too, at the end, and not with the rest of
     the timeline's rules. It has to beat the per-status stroke below and the two
@@ -972,7 +992,7 @@ def _status_paint_css() -> str:
     rules += [f"text.bar-glyph.st-{s} {{ fill: var(--st-{s}-ink); }}" for s in STATUSES]
     rules += [
         f"rect.mark-{mark}.st-{s} {{ fill: url(#hatch-{mark}-st-{s}); }}"
-        for mark in ("estimated", "unowned")
+        for mark in ("historical", "unowned")
         for s in STATUSES
     ]
     # Overruns its cycle. It was the only stroke on the chart and 1.5px was

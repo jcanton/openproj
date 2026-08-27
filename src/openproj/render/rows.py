@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..index import Index, _product_of, _project_of, predicates_of
-from ..model import RUNG, Config, size_weeks, unread_fields
+from ..model import RUNG, size_weeks, unread_fields
 
 
 def _reviewers_under(index: Index, record_id: str) -> list[str]:
@@ -35,7 +35,7 @@ def _reviewers_under(index: Index, record_id: str) -> list[str]:
 def _row(index: Index, record_id: str) -> dict:
     record = index.plan[record_id]
     span = index.spans.get(record_id)
-    size, defaulted = size_weeks(record, Config(default_task_effort=index.default_task_effort))
+    size = size_weeks(record)
     counted = index.progress.get(record_id)
     # What this rung does not read is not on its row. The model defaults `status`
     # to `shaping` and `priority` to `medium` for every record, so a product —
@@ -83,13 +83,18 @@ def _row(index: Index, record_id: str) -> dict:
         "review_waived": read("review_waived", record.review_waived),
         "priority": read("priority", record.priority),
         "cycle": read("cycle", record.cycle),
-        "size": None if defaulted else size,
+        # The size somebody stated, and None where nobody has. It used to be
+        # `None if defaulted else size` — the same value, reached by throwing
+        # away an invented half-week the line above had just made up, and the
+        # hover card in `shell.py` read `row.weeks ?? row.size` so the timeline's
+        # copy of this row showed 0.5 for a bet nobody had sized while the
+        # table's showed nothing. One question, one answer, on every page.
+        "size": size,
         "start": span.start.isoformat() if span else None,
         "end": span.end.isoformat() if span else None,
         # Every date on this page was computed. Saying so in the payload keeps the
         # column able to style itself differently from anything a human typed.
         "derived": span is not None,
-        "estimated": bool(span and span.estimated),
         "unowned": bool(span and span.unowned),
         "overruns": span.overruns_cycle_weeks if span else None,
         # What is still in the way, not what was ever in the way — jcanton,
@@ -160,8 +165,12 @@ def _row(index: Index, record_id: str) -> dict:
         # Two fields that are not columns and are not drawn anywhere on this
         # page. They are here because the gate names them: a status the table can
         # set demands them, and a row has to be able to answer whether it already
-        # holds one — `size` is the appetite *or the default*, so it cannot
-        # answer for `person_weeks`, and `start_date` is on no row at all.
+        # holds one. `start_date` is on no row at all, and `person_weeks` is
+        # answered under its own name because that is the name the gate's message
+        # carries — `size` above holds the same number now that there is no
+        # default standing in for it, but the field a blocker names and the
+        # column a page draws are two vocabularies, and the row answers in both
+        # rather than making the script translate between them.
         "start_date": record.start_date.isoformat() if record.start_date else None,
         "person_weeks": getattr(record, "person_weeks", None),
         # Not a column, but the control bar offers it: a dropdown whose value the

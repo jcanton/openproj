@@ -43,7 +43,6 @@ TODAY = date(2026, 8, 13)
 CONFIG = Config(
     schema_version=2,
     nominal_availability=1.0,
-    default_task_effort=0.5,
     cycles={36: (date(2026, 6, 22), date(2026, 8, 14))},
 )
 
@@ -957,6 +956,48 @@ def test_work_finished_in_the_earlier_cycle_is_not_carried_into_this_one():
     assert index.carried_into(37) == []
 
 
+def test_work_nobody_has_sized_charges_nobody_and_is_counted_where_it_went():
+    """The half of `load` that used to be invisible because it was invented.
+
+    Shaping work carries no appetite by design — the validator asks for one at
+    `ready` and never before — and `counts_in` says it is still what somebody's
+    next weeks are spent on, so each of these used to be charged the default half
+    a week. Charging nothing is the right answer and a smaller total with no
+    explanation is not, so the records that could not be counted are counted
+    themselves, per person, and the pages draw the pair.
+    """
+    records = [
+        a_task("task-c00001", owner="ann", person_weeks=2.0, cycle=37, status="ready"),
+        a_pitch("pitch-b00001", owner="ann", cycle=37, status="shaping"),
+        # Two names on one unsized bet: one record on the cycle's count, and one
+        # on each of their rows.
+        a_pitch("pitch-b00002", owner="ann", assignees=["bo"], cycle=37, status="shaping"),
+    ]
+    index = build_index(records, _two_cycles(), TODAY)
+
+    assert index.load(37) == {"ann": 2.0}
+    assert index.unsized_in(37) == {
+        "ann": ["pitch-b00001", "pitch-b00002"],
+        "bo": ["pitch-b00002"],
+    }
+    # The same three gates on both answers, which is why they are one walk: a
+    # cycle nobody has bet this into counts none of it either way.
+    assert index.load(36) == {} and index.unsized_in(36) == {}
+
+
+def test_a_pitch_with_children_is_no_more_unsized_than_it_is_charged():
+    """A rollup charges nothing because its children do, and for exactly the same
+    reason it cannot be missing from the total: it was never in it."""
+    records = [
+        a_pitch("pitch-b00001", owner="ann", cycle=37, status="shaping"),
+        a_task("task-c00001", parent="pitch-b00001", owner="ann", cycle=37, status="shaping"),
+    ]
+    index = build_index(records, _two_cycles(), TODAY)
+
+    assert index.load(37) == {}
+    assert index.unsized_in(37) == {"ann": ["task-c00001"]}
+
+
 def test_an_undated_cycle_counts_only_what_was_bet_into_it_by_name():
     """A number nobody has given a window to is a hypothetical. Letting it absorb
     every running item would put the whole plan's load on the page for a cycle
@@ -1036,7 +1077,7 @@ def test_a_pitch_is_as_far_along_as_its_tasks_weighted_by_their_sizes():
 
 
 def test_a_container_is_weighed_by_what_is_under_it_and_not_by_half_a_week():
-    """`size_weeks` says a container "has no size of its own" and then returns
+    """`size_weeks` said a container "has no size of its own" and then returned
     `config.default_task_effort` anyway, because that fallback was written for an
     unsized TASK. Nothing noticed until a product existed: `Rung.under` lets
     nothing but a product nest a container, so a container could not be somebody's
@@ -1044,7 +1085,8 @@ def test_a_container_is_weighed_by_what_is_under_it_and_not_by_half_a_week():
 
     The moment one could, a product holding a project worth five weeks reported
     `0/0.5 wk` on the record page, under a meter reading "0 per cent of this bet
-    is done" — a denominator nobody typed.
+    is done" — a denominator nobody typed. The fallback is gone and this is the
+    test that keeps the answer: what a container weighs is what is under it.
     """
     records = [
         a_product("prod-a00001"),

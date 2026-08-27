@@ -31,7 +31,6 @@ MONDAY = date(2026, 8, 17)
 
 CONFIG = Config(
     nominal_availability=1.0,
-    default_task_effort=0.5,
     holidays=[],
     cycles={36: (date(2026, 6, 22), date(2026, 8, 14)), 37: (date(2026, 8, 17), date(2026, 10, 9))},
 )
@@ -181,9 +180,44 @@ def test_step4_duration_is_the_stated_size_at_nominal_availability():
     assert spans["task-aaa001"] == Span(start=MONDAY, end=date(2026, 8, 28))
 
 
-def test_step4_a_missing_size_falls_back_to_the_default_and_is_marked_estimated():
-    spans, _ = run([task("aaa001", size=None)])
-    assert spans["task-aaa001"] == Span(start=MONDAY, end=date(2026, 8, 19), estimated=True)
+def test_step4_a_record_nobody_has_sized_gets_no_span_at_all():
+    """Not a span marked as a guess, and not an `unscheduled` one either.
+
+    It used to be the first: half a week nobody had typed, placed, booked against
+    its worker and drawn as a bar with `estimated=True` on it — a flag three of
+    its readers dropped. An `unscheduled` span would be the second, and that is
+    `start=end=today`: the table would draw Start and End of today, styled
+    `derived` exactly like a real forecast and sorting to the top of a
+    Start-ascending sort, while the timeline left the record out. No span is the
+    answer a childless project already gives, and every view already copes.
+    """
+    spans, explanations = run([task("aaa001", size=None), task("aaa002", size=2.0)])
+    assert "task-aaa001" not in spans
+    assert "task-aaa001" not in explanations
+    # And it books nothing: the sized task starts on the floor rather than after
+    # a week of somebody else's invented work.
+    assert spans["task-aaa002"] == Span(start=MONDAY, end=date(2026, 8, 28))
+
+
+def test_step4_an_unsized_child_leaves_its_parent_the_dates_of_the_rest():
+    """A floor span would be worse than none, and this is where it would show.
+
+    The rollup is `min(child.start)`/`max(child.end)` with no `unscheduled` in
+    its constructor, so one unsized child at `start=end=today` would pin the
+    pitch's start to today and measure its overrun against a fabricated end,
+    with nothing on the parent row marking it.
+    """
+    records = [
+        pitch("bbb001"),
+        task("aaa001", parent="pitch-bbb001", size=None),
+        task("aaa002", parent="pitch-bbb001", size=2.0, depends_on=["task-aaa003"]),
+        task("aaa003", size=1.0, owner="di"),
+    ]
+    spans, _ = run(records)
+    assert "task-aaa001" not in spans
+    assert spans["pitch-bbb001"] == spans["task-aaa002"].model_copy(
+        update={"overruns_cycle_weeks": spans["pitch-bbb001"].overruns_cycle_weeks}
+    )
 
 
 def test_step5_ordering_is_by_priority_then_id():
@@ -468,8 +502,19 @@ def workers_of(record: Record) -> list[str]:
 def test_property_no_dependent_ever_starts_before_its_blocker_has_finished(records: list[Record]):
     spans, _ = run(records)
     for record in records:
+        # Every leaf the generator sizes is placed, and every leaf it does not is
+        # absent — asserted rather than worked around, because the loop below has
+        # to skip the absent ones and a skip that is never checked is a property
+        # that quietly stops testing anything.
+        if record.kind == "task":
+            assert (record.person_weeks is not None) == (record.id in spans)
         for blocker in record.depends_on:
-            assert spans[record.id].start > spans[blocker].end
+            # A blocker with no span holds nothing back: `_place` skips a target
+            # that is not in `spans`, which is the branch a childless project has
+            # always taken and is now also the one an unsized record takes. The
+            # claim is about the pairs the scheduler placed.
+            if record.id in spans and blocker in spans:
+                assert spans[record.id].start > spans[blocker].end
 
 
 @settings(deadline=None)
@@ -480,7 +525,7 @@ def test_property_a_worker_never_holds_two_overlapping_spans(records: list[Recor
         booked = sorted(
             (spans[e.id].start, spans[e.id].end)
             for e in records
-            if e.kind == "task" and worker in workers_of(e)
+            if e.kind == "task" and worker in workers_of(e) and e.id in spans
         )
         assert all(a[1] < b[0] for a, b in zip(booked, booked[1:], strict=False))
 
@@ -706,7 +751,7 @@ def test_the_seed_corpus_golden_overruns_and_flags(seed_root: Path):
     assert not GOLDEN_ABSENT & spans.keys()
     overruns = {i: s.overruns_cycle_weeks for i, s in spans.items() if s.overruns_cycle_weeks}
     assert overruns == pytest.approx(GOLDEN_OVERRUNS)
-    assert not [s for s in spans.values() if s.estimated or s.unowned]
+    assert not [s for s in spans.values() if s.unowned]
     assert not [s for s in spans.values() if s.unscheduled or s.historical]
 
 

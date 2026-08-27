@@ -16,7 +16,6 @@ schema_version: 4
 # PERSON-weeks (D-C4), so the people on a bet divide it, each at their own rate;
 # per-cycle figures override this one.
 nominal_availability: 1.0
-default_task_effort: 0.5    # weeks assumed when a record states no size
 # Of each cycle's window, how much is cool-down rather than build. An overrun is
 # measured against the end of build: cool-down is for the mess afterwards, so
 # work that lands in it did not fit its box.

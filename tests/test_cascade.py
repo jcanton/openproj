@@ -596,7 +596,7 @@ def test_an_overrunning_bar_still_reads_as_overrunning(index: Index):
     overrun = plot + [el("rect", "bar late st-ready")]
     # The hatch is a second rect over the bar, same geometry. A stroke on it would
     # be drawn after the bar's and straight down the middle of the outline.
-    hatch = plot + [el("rect", "mark mark-estimated st-ready")]
+    hatch = plot + [el("rect", "mark mark-historical st-ready")]
 
     assert sheet.value(ordinary, "stroke") == "var(--st-ready-line)", says(
         sheet, ordinary, "stroke"

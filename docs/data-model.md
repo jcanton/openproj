@@ -112,8 +112,12 @@ flowchart LR
 ## Sizes, dependencies, requiredness
 
 A size is `person_weeks` on a pitch and on a task, and the people on it divide it, each at their own
-availability. A pitch with tasks takes its dates and its capacity from them, which makes its own
-appetite the **bet**: what the room agreed to spend, kept as written. Where the tasks add up to more,
+availability. **There is no default.** A record nobody has sized is not scheduled, weighs nothing in
+its parent's progress and charges nobody's capacity, and every page that adds weeks up says how many
+records it could not count — a number the tool invented is a number that arrives everywhere looking
+like one somebody estimated. Shaping and thinking work is unsized by definition and stays that way;
+`ready` and `in_progress` both demand a size. A pitch with tasks takes its dates and its capacity
+from them, which makes its own appetite the **bet**: what the room agreed to spend, kept as written. Where the tasks add up to more,
 the page says so and `openproj check` warns; nothing refuses the save, and neither a pitch nor a
 cycle over its capacity is ever a CI failure.
 
@@ -154,8 +158,8 @@ accusing. Everything under a pitch takes the pitch's, and a project therefore ha
 filename and is not a field**: nothing points at a person, so a second copy would only give the two
 halves of the app something to disagree about.
 
-**`Config`** — `config/*.yaml`: `schema_version`, `nominal_availability`, `default_task_effort`,
-`cooldown_weeks`, `holidays`, the cycle windows, and `known_people`, the **roster**. Empty means the
+**`Config`** — `config/*.yaml`: `schema_version`, `nominal_availability`, `cooldown_weeks`,
+`holidays`, the cycle windows, and `known_people`, the **roster**. Empty means the
 check is off; when it does name people, somebody who is not on it is a warning and never a blocker.
 
 **`Problem` and `Unreadable`** — a `Problem` is keyed by record id, so every page hangs it on that

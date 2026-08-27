@@ -16,6 +16,11 @@ that looks plausible and is wrong:
 * Only leaves consume a worker's capacity. A parent's span is a rollup of work its
   children already booked; booking the parent too double-books its owner.
 
+A size is the one input with no substitute. There is no default appetite, so a
+record nobody has sized is not scheduled at all — no span, exactly as a childless
+project gets none — rather than scheduled at some assumed length and marked as a
+guess. `schedule` says at length why a floor span would have been worse.
+
 The scheduler never raises. A cycle, a contradictory record or a cycle number
 nobody has dated costs you those records, never the whole page.
 """
@@ -47,8 +52,13 @@ _WORKING_DAYS_PER_WEEK = 5
 class Span(BaseModel):
     start: date
     end: date
-    estimated: bool = False
     unowned: bool = False
+    # Work that is over: these dates are a record of what happened rather than a
+    # forecast of what will. It is what the timeline hatches now — see the
+    # `_MARK_WORDS` in `render/timeline.py`, and `estimated`, which used to have
+    # that channel and no longer exists. That flag meant "the appetite behind
+    # these dates was invented", and with no default appetite left to invent one
+    # there is no such span: an unsized record gets no span at all.
     historical: bool = False
     unscheduled: bool = False
     overruns_cycle_weeks: float | None = None
@@ -139,8 +149,8 @@ def working_days_after(start: date, weeks: float, config: Config) -> date:
     return day
 
 
-def _duration_weeks(record: Record, config: Config, by_id: dict[str, Record]) -> tuple[float, bool]:
-    """Elapsed weeks, and whether the size was defaulted rather than stated.
+def _duration_weeks(record: Record, config: Config, by_id: dict[str, Record]) -> float | None:
+    """Elapsed weeks, or None for a record nobody has sized.
 
     A size is PERSON-weeks — the work one person would need — so the people on it
     divide it, each at their own availability (D-C4, 2026-08-16; this supersedes
@@ -154,10 +164,18 @@ def _duration_weeks(record: Record, config: Config, by_id: dict[str, Record]) ->
 
     Nobody assigned is one notional person at nominal availability. Zero would be
     a division by zero, and infinity is not a useful forecast for unowned work.
+
+    None where the record states no size, because the arithmetic below has
+    nothing to divide. It used to divide half a week nobody had typed and hand
+    back a second value saying so, which is a duration in every respect that
+    matters — it was placed, it booked its workers, it drew a bar — with a flag
+    beside it asking every reader to remember that it was fiction.
     """
-    size, defaulted = size_weeks(record, config)
+    size = size_weeks(record)
+    if size is None:
+        return None
     rates = [_availability_of(who, record, config, by_id) for who in _workers(record)]
-    return size / (sum(rates) or config.nominal_availability or 1.0), defaulted
+    return size / (sum(rates) or config.nominal_availability or 1.0)
 
 
 def _availability_of(who: str, record: Record, config: Config, by_id: dict[str, Record]) -> float:
@@ -395,7 +413,6 @@ def schedule(
             spans[record_id] = Span(
                 start=min(k.start for k in kids),
                 end=max(k.end for k in kids),
-                estimated=any(k.estimated for k in kids),
                 overruns_cycle_weeks=_overrun(record, max(k.end for k in kids), config, live),
             )
             continue
@@ -408,7 +425,29 @@ def schedule(
         if record.kind == "project":
             continue
 
-        duration, estimated = _duration_weeks(record, config, live)
+        duration = _duration_weeks(record, config, live)
+        # And a record nobody has sized leaves by the same door, for the same
+        # reason: there is no honest answer, so there is none.
+        #
+        # **Not an `unscheduled` span, which is what it looks like it should be.**
+        # `unscheduled` is not a "no answer" state — it is `start=end=today`, and
+        # exactly one place in `src/` reads the flag, the timeline's `drawn`
+        # filter. Nothing else does: the rows payload does not carry it, the
+        # detail page prints its dates regardless, the cycle page prints them. So
+        # an unsized task would read Start and End of today in the table, styled
+        # `derived` exactly like a real forecast, with the End tooltip still
+        # claiming it was derived from the start and the appetite, sorting to the
+        # top of a Start-ascending sort — and be simply absent from the timeline.
+        # Two pages, two answers, and the table is the one people use.
+        #
+        # A floor span is worse than none upwards, too: the parent rollup above
+        # takes `min(child.start)` and `max(child.end)` with no `unscheduled` in
+        # its constructor, so one unsized child would pin a pitch's start to
+        # today, the pitch's overrun would be measured against that fabricated
+        # end, and nothing on the parent row would mark it.
+        if duration is None:
+            continue
+
         workers = _workers(record)
         placed = _place(record, duration, workers, booked, spans, floor, config, live)
         if placed is None:
@@ -426,7 +465,6 @@ def schedule(
                 start=floor,
                 end=floor,
                 unscheduled=True,
-                estimated=estimated,
                 unowned=not workers,
             )
             explanations[record_id] = Explanation(
@@ -437,7 +475,6 @@ def schedule(
         span, explanation = placed
         spans[record_id] = span.model_copy(
             update={
-                "estimated": estimated,
                 "unowned": not workers,
                 "overruns_cycle_weeks": _overrun(record, span.end, config, live),
             }

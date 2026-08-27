@@ -43,6 +43,7 @@ NEEDS_REVIEWER = "a ready record needs a reviewer, or review waived"
 NEEDS_EFFORT = "a ready task needs an appetite"
 NEEDS_APPETITE = "a ready pitch needs an appetite"
 NEEDS_START_DATE = "work in progress needs the date it started"
+NEEDS_SIZE_WIP = "work in progress needs an appetite"
 RETIRED_SHAPED_BY = (
     "shaped_by is no longer read: owner records who shaped a pitch and holds it — "
     "move the name there and delete this key"
@@ -277,6 +278,36 @@ def test_a_wip_record_needs_a_start_date():
     for record in (task(status="in_progress", start_date=None), project(start_date=None)):
         problem = only(check(record), record.id)
         assert summary(problem) == ("blocker", "start_date", NEEDS_START_DATE, 1)
+
+
+def test_a_wip_record_needs_a_size():
+    """The gate stopped at `ready`, and `in_progress` is reachable without ever
+    passing through it — so an unsized record could be running, and three in
+    icon4py-plan were. With no default appetite behind it, such a record is not
+    scheduled, weighs nothing in its pitch's progress and charges nobody's
+    capacity: it is work that is happening and that the plan cannot account for.
+
+    A container is asked for nothing, because it has nothing to be asked for:
+    `project()` is in progress and holds no `person_weeks` field at all.
+    """
+    started = {"status": "in_progress", "start_date": date(2026, 8, 3), "person_weeks": None}
+    for record, record_id in ((task(**started), TASK_ID), (pitch(**started), PITCH_ID)):
+        assert summary(only(check(record), record_id, "person_weeks")) == (
+            "blocker",
+            "person_weeks",
+            NEEDS_SIZE_WIP,
+            1,
+        )
+    assert [p for p in check(project()) if p.field == "person_weeks"] == []
+
+
+def test_a_shaping_record_is_left_unsized_on_purpose():
+    """The gate deliberately does not reach down the ladder. A bet nobody has
+    shaped has no appetite yet, and demanding one is demanding a guess — which is
+    the whole thing this change took out of the scheduler."""
+    for status in ("thinking", "shaping"):
+        unsized = pitch(status=status, person_weeks=None)
+        assert [p for p in check(unsized) if p.field == "person_weeks"] == [], status
 
 
 def test_a_wip_record_needs_a_reviewer_who_is_not_its_owner():
@@ -796,8 +827,13 @@ def test_a_stale_vocabulary_still_schedules_and_renders():
 
     from openproj.index import build_index
 
+    # Sized, because the claim is about the two stale WORDS and nothing else: a
+    # record with no appetite gets no span whatever its status says, so leaving
+    # `person_weeks` out would have this test passing or failing on a rule it is
+    # not about.
     stale = parse_text(
-        "---\nid: task-aaa111\nkind: task\ntitle: T\nstatus: wip\npriority: 1\n---\n\nB.\n",
+        "---\nid: task-aaa111\nkind: task\ntitle: T\nstatus: wip\npriority: 1\n"
+        "person_weeks: 1\n---\n\nB.\n",
         "tasks/task-aaa111.md",
     )
     index = build_index([stale], Config(), date(2026, 8, 17))

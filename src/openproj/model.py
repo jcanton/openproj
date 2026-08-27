@@ -488,7 +488,12 @@ class Config(BaseModel):
 
     schema_version: int = 1
     nominal_availability: float = 1.0
-    default_task_effort: float = 0.5
+    # `default_task_effort` was here, and it was the one setting that answered a
+    # question nobody had asked the plan: how long an unsized record should be
+    # treated as taking. `size_weeks` says why it went. A plan whose
+    # `config/defaults.yaml` still carries the key loads exactly as before —
+    # `read_config` keeps only the keys `Config` declares — so the removal costs
+    # a stale line in a file and nothing else.
     # Shape Up's cool-down is not build time, so a bet that lands in it did not
     # fit its box. The overrun is measured against the end of BUILD, and this is
     # how many weeks of the window are not build.
@@ -1770,17 +1775,27 @@ def ancestors(record_id: str, by_id: dict[str, Record]) -> list[str]:
     return chain
 
 
-def size_weeks(record: Record, config: Config) -> tuple[float, bool]:
-    """Weeks of work, and whether that number had to be invented.
+def size_weeks(record: Record) -> float | None:
+    """Weeks of work somebody stated, or None where nobody has stated any.
 
     One field on a pitch and a task, and none on a project — a container has no
     size of its own. Read here rather than reached for directly, so the scheduler,
     the index and the pages cannot disagree about what a missing one means.
+
+    **There is no default appetite, and None is what stands where it stood.** An
+    absent size used to come back as `config.default_task_effort` — half a week
+    nobody had typed — with a second return value saying the number was invented;
+    and a flag is only as good as the callers that read it. Three dropped it on
+    the floor, so the invented half-week was summed into a cycle's bet, charged
+    against a person's capacity and turned into a bar on the timeline, each of
+    those places presenting it exactly as it presents a number somebody
+    estimated. The setting is gone rather than defaulted to zero, because zero is
+    a size and this is the absence of one: a caller has to decide what it does
+    about a record nobody has sized, and it cannot decide that if this function
+    keeps answering on its behalf.
     """
     stated = getattr(record, "person_weeks", None)
-    if stated is not None:
-        return float(stated), False
-    return config.default_task_effort, True
+    return None if stated is None else float(stated)
 
 
 # --------------------------------------------------------------------------- #
@@ -2473,6 +2488,36 @@ def reviewers_under(record_id: str, children: dict[str, list[Record]]) -> list[s
     return list(dict.fromkeys(found))
 
 
+def _appetite_problem(
+    record: Record, sentence: str
+) -> Iterator[tuple[str, str | None, str, int]]:
+    """The size gate, in the words of the status asking for it.
+
+    Two statuses demand an appetite and both ask the same three questions — does
+    this rung carry a size field, is it empty, and which field is it called —
+    so they ask them in one place. Written out twice, the copy that would rot is
+    the field lookup: `_SIZE_FIELD` is what keeps `person_weeks` from being named
+    in a message, and a second hand-written `getattr(record, "person_weeks")`
+    would be a gate that silently stops firing for a rung added later.
+
+    A container yields nothing rather than a blocker it could never satisfy: a
+    project has no size of its own, which is `size_weeks`' first sentence, and
+    `_SIZE_FIELD` is where that is written down.
+
+    Stamped 1, the version the `ready` gate already carries, because this is that
+    rule reaching one rung further and not a new demand. Grandfathering it under
+    a newer version would demote it to a warning for every record in the corpus
+    — which is every record it was written for, since the unsized-and-running
+    state is one that existing plans are already in.
+    """
+    field = _SIZE_FIELD.get(record.kind)
+    if field is not None and getattr(record, field) is None:
+        # One field and one word now. It was `appetite_weeks` on a pitch and
+        # `effort_weeks` on a task — one quantity under two names, which
+        # `size_weeks` had to paper over on every read.
+        yield "blocker", field, sentence, 1
+
+
 def _status_problems(
     record: Record, reviewers: list[str] | None = None
 ) -> Iterator[tuple[str, str | None, str, int]]:
@@ -2526,17 +2571,22 @@ def _status_problems(
             yield "blocker", "assignees", "a ready record needs somebody on it", 2
         if not (record.review_waived or reviews):
             yield "blocker", "reviewers", "a ready record needs a reviewer, or review waived", 1
-        field = _SIZE_FIELD.get(record.kind)
-        if field is not None and getattr(record, field) is None:
-            # One field and one word now. It was `appetite_weeks` on a pitch and
-            # `effort_weeks` on a task — one quantity under two names, which
-            # `size_weeks` had to paper over on every read.
-            yield "blocker", field, f"a ready {record.kind} needs an appetite", 1
+        yield from _appetite_problem(record, f"a ready {record.kind} needs an appetite")
         # No shaped_by gate any more: a pitch's owner IS who shaped it, and the
         # owner rule above already asks every ready record for one.
     elif record.status == "in_progress":
         if record.start_date is None:
             yield "blocker", "start_date", "work in progress needs the date it started", 1
+        # And it needs a size, for the same reason `ready` does and one more.
+        # The gate used to stop at `ready`, so a record could be sized-checked on
+        # the way in, have its appetite deleted, and go on running with none —
+        # and reaching `in_progress` without ever passing `ready` is the ordinary
+        # path rather than a rung somebody skipped, which is why icon4py-plan has
+        # three of these. With no default standing behind them, an unsized record
+        # in flight now has no span, no bar, no weight in its pitch's rollup and
+        # no claim on anybody's capacity: it is work that is happening and that
+        # the plan cannot account for at all.
+        yield from _appetite_problem(record, "work in progress needs an appetite")
         if not record.assignees:
             yield "blocker", "assignees", "work in progress needs somebody on it", 2
         if not record.review_waived and not (set(reviews) - {record.owner}):
@@ -2767,7 +2817,7 @@ def _bet_problems(
 
 
 def _rollup_problems(
-    record: Record, children: dict[str, list[Record]], config: Config
+    record: Record, children: dict[str, list[Record]]
 ) -> Iterator[tuple[str, str | None, str, int]]:
     """Children that add up to more than the bet they sit inside.
 
@@ -2780,23 +2830,26 @@ def _rollup_problems(
     are decisions for a person. Only stated sizes are compared, on both sides of
     the comparison. That sentence was true of the parent and false of the
     children for a while: the guard below returns for an unsized bet, but every
-    unsized child was summed at `config.default_task_effort` — so a warning that
-    tells somebody to cut scope quoted a total partly made of a number nobody
-    typed, and the sentence presented it as what "its tasks add up to".
+    unsized child was summed at the old `config.default_task_effort` — so a
+    warning that tells somebody to cut scope quoted a total partly made of a
+    number nobody typed, and the sentence presented it as what "its tasks add up
+    to". The default is gone, so this function no longer has to sort typed
+    numbers out of invented ones: `size_weeks` answers None and the filter below
+    is the whole of it.
     """
     kids = children.get(record.id, [])
-    stated, defaulted = size_weeks(record, config)
-    if not kids or defaulted:
+    stated = size_weeks(record)
+    if not kids or stated is None:
         return
     # The sized ones only. A sized child overrunning the appetite is a statement
     # somebody actually made — those numbers were typed, and the unsized
     # siblings can only add to the total, never bring it back under — so firing
-    # on the sized sum alone is both honest and conservative. Counting the
-    # defaults in is the opposite: it invents an overrun (four unsized tasks
-    # under a one-week pitch would read as two weeks nobody proposed), and the
-    # golden corpus already carries the shape — pitch-3c9a41's four tasks are
-    # all unsized, so its old total of 2.0 was invented wholesale and only
-    # stayed quiet because the bet happened to be bigger.
+    # on the sized sum alone is both honest and conservative. Counting an unsized
+    # child at some assumed weight is the opposite: it invents an overrun (four
+    # unsized tasks under a one-week pitch would read as two weeks nobody
+    # proposed), and the golden corpus already carries the shape — pitch-3c9a41's
+    # four tasks are all unsized, so its old total of 2.0 was invented wholesale
+    # and only stayed quiet because the bet happened to be bigger.
     #
     # A container CAN reach `kids` today: the map above keys on `parent` alone,
     # with no kind check, so a hand-committed `parent: pitch-x` on a project
@@ -2804,27 +2857,26 @@ def _rollup_problems(
     # problem, not an impossibility, because it governs validation and never the
     # map. What keeps a mis-filed container out of the sum is this filter
     # itself: only a pitch and a task carry `person_weeks`, so `size_weeks` on a
-    # container always answers (default, True) and it is left out as unsized
-    # rather than priced at the invented default `_weighed` (`index.py`)
-    # documents. Under the old sum it WAS priced in, at 0.5 weeks nobody typed.
-    sized = [kid for kid in kids if not size_weeks(kid, config)[1]]
-    total = sum(size_weeks(kid, config)[0] for kid in sized)
+    # container answers None and it is left out as unsized rather than priced at
+    # a number nobody typed.
+    sizes = [size for size in (size_weeks(kid) for kid in kids) if size is not None]
+    total = sum(sizes)
     if total <= stated:
         return
-    if len(sized) == len(kids):
+    if len(sizes) == len(kids):
         message = (
             f"its {len(kids)} tasks add up to {total:g} weeks, more than the "
             f"{stated:g} it was bet at — cut scope, or re-bet it"
         )
     else:
         # The message counts what was counted. "Its 8 tasks add up to 4 weeks"
-        # over five sized ones and three defaults is the defect this function
-        # had; saying the sized count, and that the rest can only push the total
-        # higher, is the same warning built out of typed numbers alone.
-        left = len(kids) - len(sized)
-        many = len(sized) != 1
+        # over five sized ones and three that nobody had sized is the defect this
+        # function had; saying the sized count, and that the rest can only push
+        # the total higher, is the same warning built out of typed numbers alone.
+        left = len(kids) - len(sizes)
+        many = len(sizes) != 1
         message = (
-            f"its {len(sized)} sized task{'s' if many else ''} alone "
+            f"its {len(sizes)} sized task{'s' if many else ''} alone "
             f"{'add' if many else 'adds'} up to {total:g} weeks, more than the "
             f"{stated:g} it was bet at, and the {left} without a size can only "
             "add to that — cut scope, or re-bet it"
@@ -2973,7 +3025,7 @@ def _problems_for(
     if record.id not in parent_cycles:
         yield from _containment_problems(record, by_id)
         yield from _bet_problems(record, by_id)
-        yield from _rollup_problems(record, children, config)
+        yield from _rollup_problems(record, children)
 
     if record.cycle is not None and record.cycle not in config.cycles:
         # `_overrun` looks the window up with `.get`, so a number nobody has dated

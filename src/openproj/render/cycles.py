@@ -130,7 +130,12 @@ _CYCLE = """
         <input class="field rate" data-login="{{ row.login }}" value="{{ row.rate }}"
                aria-label="{{ row.login }} availability" autocomplete="off"></td>
     <td class="derived capacity">{{ '%.1f'|format(row.capacity) }} wk</td>
-    <td class="derived">{{ '%.1f'|format(row.held) }} wk</td>
+    {#- The bet, and what is missing from it. A record with nobody's estimate on
+        it charges nobody, so this number is smaller than the work on this
+        person's plate — and a smaller number with no explanation beside it is
+        read as less work rather than as less knowledge. -#}
+    <td class="derived">{{ '%.1f'|format(row.held) }} wk{% if row.unsized %}
+      <span class="unsized">· {{ row.unsized }} not sized</span>{% endif %}</td>
     <td><span class="bar"><span style="width: {{ row.percent }}%"></span></span></td>
     <td class="derived">{{ on(row.until) }}</td>
   </tr>
@@ -257,7 +262,7 @@ _CYCLE = """
     <td><input class="live" data-field="{{ row.size_field }}" data-type="number"
                aria-label="{{ row.title }} appetite in weeks"
                autocomplete="off" value="{{ row.size }}"
-               placeholder="{{ row.size_hint }}"></td>
+               placeholder="not sized"></td>
     <td><input class="live wide" data-field="assignees" data-type="list"
                aria-label="{{ row.title }} assignees"
                data-suggest="people" autocomplete="off" value="{{ row.assignees }}"></td>
@@ -983,6 +988,10 @@ table.load th, table.load td {
 table.load th { color: var(--muted); font-weight: 400; font-size: 11px;
                 text-transform: uppercase; letter-spacing: .04em; }
 tr.over td { color: var(--danger); }
+/* What the bet beside it does not count. Muted rather than warning-coloured: an
+   unshaped bet with no appetite is the ordinary state of a cycle's early weeks
+   and not a fault, and `tr.over td` above already owns the red in this table. */
+.unsized { color: var(--muted); }
 input.rate { width: 4rem; }
 #bets input.live { font: inherit; font-size: 13px; width: 5rem;
                    background: var(--surface); color: inherit;
@@ -1104,13 +1113,20 @@ _CYCLES = """
       {{ on(c.builds_until) }}{% elif c.starts_on %}{{ on(c.starts_on) }} → {{ on(c.ends_on) }}
       {% else %}no dates{% endif %}
       · {{ c.people }} {{ 'person' if c.people == 1 else 'people' }}</p>
+    {#- The count of what the weeks leave out, on both readings of the card.
+        Neither number moves when somebody shapes one of those records and gives
+        it an appetite — the weeks go up and the count goes down — which is the
+        pair a room needs in front of it, rather than a total that grows for
+        reasons the page never mentioned. -#}
     {% if c.recorded %}
     <p class="bet"><b class="num">{{ '%.1f'|format(c.bet) }}</b> of
-      <b class="num">{{ '%.1f'|format(c.capacity) }}</b> weeks bet</p>
+      <b class="num">{{ '%.1f'|format(c.capacity) }}</b> weeks bet{% if c.unsized %}
+      <span class="unsized">· {{ c.unsized }} not sized</span>{% endif %}</p>
     <span class="bar"><span style="width: {{ c.percent }}%"></span></span>
     {% else %}
     <p class="bet"><b class="num">{{ '%.1f'|format(c.bet) }}</b> weeks bet against
-      no roster</p>
+      no roster{% if c.unsized %}
+      <span class="unsized">· {{ c.unsized }} not sized</span>{% endif %}</p>
     <p class="hint note">No record yet, so there is no capacity to bet against.</p>
     {% endif %}
   </li>
@@ -1322,8 +1338,17 @@ _PEOPLE = """
         {%- elif person.held %}
         <span class="load"><b class="num held">{{ '%.1f'|format(person.held) }}</b>
           weeks bet against no roster</span>
-        {%- elif load.cycle is not none %}
+        {%- elif load.cycle is not none and not person.unsized %}
         <span class="load none">nothing bet in cycle {{ load.cycle }}</span>
+        {%- endif %}
+        {#- What the weeks beside it do not count. Its own item rather than a
+            clause inside the load span, because it has to sit beside all four of
+            those branches — including the last, which is why that one now asks:
+            "nothing bet" is false about somebody holding three records nobody
+            has put an appetite on, and it was the sentence they got the moment
+            the default stopped inventing weeks for them. -#}
+        {%- if person.unsized %}
+        <span class="unsized">{{ person.unsized }} not sized</span>
         {%- endif %}
         {%- if person.elsewhere %}
         <span class="elsewhere">+<span class="num">{{ '%.1f'|format(person.elsewhere) }}</span>
@@ -1630,6 +1655,10 @@ tbody.person + tbody.person > tr.group > th { border-top: .7rem solid var(--bg);
 /* The number that says the person is over, in the colour that says so. The bar
    beside it turns with the row through the shell's `.over` rule. */
 tr.group.over .load b.held { color: var(--danger); }
+/* Muted, and deliberately not the warning colour beside it: an unshaped bet
+   carries no appetite by design, and `.load.stranger` below is about somebody
+   being bet work in a cycle they are not in, which is a fault. */
+.unsized { color: var(--muted); font-size: 12px; }
 .load.stranger { color: var(--warn); }
 .load.stranger b { color: var(--warn); }
 .elsewhere { color: var(--muted); font-size: 12px; }
@@ -1797,6 +1826,13 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
     """
     plan = index.plans.get(number)
     held = index.load(number)
+    # What is NOT in `held`, per person. Shaping and thinking work is legitimately
+    # unsized — the validator asks nobody to guess an appetite for a bet nobody
+    # has shaped — and `counts_in` says it is still what somebody's next weeks are
+    # spent on, so it used to be charged the default half a week each. Now it is
+    # charged nothing, and a person's bet is that much smaller than it was; the
+    # count beside it is what stops that being a number that quietly shrank.
+    unsized = index.unsized_in(number)
     nominal = index.nominal_availability
     window = index.cycles.get(number)
     # A cycle with no record has a page too, because the index links to every
@@ -1845,13 +1881,17 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
                 "percent": min(100, round(100 * held.get(login, 0.0) / capacity))
                 if capacity
                 else 0,
+                "unsized": len(unsized.get(login, [])),
                 "until": max(mine).isoformat() if mine else "—",
             }
         )
 
     # Bet into this cycle and not on its roster. Dropping them silently would
-    # hide load from the one page that exists to add load up.
-    strangers = sorted(set(held) - set(listed), key=str.lower)
+    # hide load from the one page that exists to add load up — which is why the
+    # unsized names are in here too: somebody whose whole cycle is unsized work
+    # holds no weeks at all, and reading this off `held` alone would take them
+    # off the page for the same reason the number went down.
+    strangers = sorted((set(held) | set(unsized)) - set(listed), key=str.lower)
 
     # Work bet earlier and still running. It keeps its own cycle number (D-C1), so
     # it is not "in" this cycle by the stamp — but it is being done with this
@@ -1881,7 +1921,7 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         # and ticking any of them stamped a second cycle onto one decision.
         if record.status not in order or not is_bettable(record):
             continue
-        size, defaulted = size_weeks(record, Config(default_task_effort=index.default_task_effort))
+        size = size_weeks(record)
         candidates.append(
             {
                 "id": record_id,
@@ -1893,9 +1933,15 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
                 # what matters most against a fixed appetite, and the one number
                 # that says what matters was on every other view but this one.
                 "priority": record.priority,
-                "size": "" if defaulted else f"{size:g}",
+                "size": "" if size is None else f"{size:g}",
                 "size_field": "person_weeks",
-                "size_hint": f"{size:g} assumed" if defaulted else "",
+                # `size_hint` was here and filled the empty box with the default
+                # this row would have been charged at — "0.5 assumed", a number
+                # somebody could read off a betting table as though the room had
+                # said it. An empty box now means nobody has bet a size, which is
+                # the one thing a betting table is for settling, so the
+                # placeholder says that in the template and needs no value from
+                # here.
                 "assignees": ", ".join(record.assignees),
                 "reviewers": ", ".join(record.reviewers),
                 "cycle": record.cycle if record.cycle is not None else "—",
@@ -1997,10 +2043,18 @@ def _cycle_totals(index: Index, number: int) -> dict:
     somebody the roster does not name. Summing only the roster's rows made a
     cycle look emptier the more of it was bet by people nobody had added — which
     is the direction the number must never be wrong in.
+
+    `unsized` is that same direction guarded a second time. Work nobody has put
+    an appetite on charges nothing, so the sum is only over what the plan
+    actually knows the weight of, and the count says how many records the sum
+    could not include. Distinct records, not the per-person entries behind them:
+    one bet with two assignees is one thing nobody has sized, and it is on each
+    of their rows on the cycle page for the same reason.
     """
     plan = index.plans.get(number)
     window = index.cycles.get(number)
     bet = sum(index.load(number).values())
+    unsized = {one for ids in index.unsized_in(number).values() for one in ids}
     capacity = (
         sum(plan.capacity(who, index.nominal_availability) for who in plan.availability)
         if plan
@@ -2016,6 +2070,7 @@ def _cycle_totals(index: Index, number: int) -> dict:
         "ends_on": plan.ends_on.isoformat() if plan else (window[1].isoformat() if window else ""),
         "people": len(plan.availability) if plan else 0,
         "bet": bet,
+        "unsized": len(unsized),
         "capacity": capacity,
         "percent": min(100, round(100 * bet / capacity)) if capacity else 0,
         "over": bool(capacity) and bet > capacity,
@@ -2107,6 +2162,14 @@ def _person_load(index: Index, logins: list[str]) -> dict:
     number = _current_cycle(index)
     plan = index.plans.get(number) if number is not None else None
     here = index.load(number) if number is not None else {}
+    # Records this cycle charges nobody for, because nobody has sized them. The
+    # cycle they are in is the only one counted, exactly as the weeks are: a
+    # count drawn from every cycle at once beside a figure drawn from one would
+    # be two answers to one question. Weeks bet elsewhere are summed below and
+    # get no such count — that line is a hint that somebody is busier than this
+    # page says, and a second qualification on a number that is already a
+    # qualification is a line nobody finishes reading.
+    missing = index.unsized_in(number) if number is not None else {}
     elsewhere: dict[str, float] = {}
     for other in _cycle_numbers(index) - {number}:
         for login, weeks in index.load(other).items():
@@ -2123,6 +2186,7 @@ def _person_load(index: Index, logins: list[str]) -> dict:
         capacity = plan.capacity(login, index.nominal_availability) if rostered else 0.0
         people[login] = {
             "held": held,
+            "unsized": len(missing.get(login, [])),
             "capacity": capacity,
             "over": bool(capacity) and held > capacity,
             "percent": min(100, round(100 * held / capacity)) if capacity else 0,

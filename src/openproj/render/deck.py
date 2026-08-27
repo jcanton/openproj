@@ -10,7 +10,6 @@ from markupsafe import Markup
 
 from ..index import Index, _people_on
 from ..model import (
-    Config,
     Record,
     Slide,
     bet_of,
@@ -96,7 +95,7 @@ _ARTICLE = """
     {% if s.priority %}<span class="chip pri {{ s.priority_class }}"><span class="chipmark"
         aria-hidden="true">{{ s.priority_glyph }}</span><span
         class="chipword">{{ s.priority|human }}</span></span>{% endif %}
-    <span class="tally">{{ s.size }} wk</span>
+    {% if s.size %}<span class="tally">{{ s.size }} wk</span>{% endif %}
     {% if s.people %}<span class="tally">{{ s.people }}</span>{% endif %}
     {% if s.text %}<span class="tally">{{ s.text }}
       <span class="meter" role="img"
@@ -1465,7 +1464,7 @@ def slides_of(index: Index, record: Record, links: Links, assets: dict[str, str]
     disagree — which is the whole reason this tool exists.
     """
     counted = index.progress.get(record.id)
-    size, defaulted = size_weeks(record, Config(default_task_effort=index.default_task_effort))
+    size = size_weeks(record)
     bet = bet_of(record, index.plan)
     slide, chosen = _resolved(record)
     body, note = _review(record, slide, chosen, links, assets)
@@ -1491,7 +1490,13 @@ def slides_of(index: Index, record: Record, links: Links, assets: dict[str, str]
         "priority_class": _priority_class(record.priority),
         "priority_glyph": PRIORITY_GLYPH.get(str(record.priority), ""),
         "people": ", ".join(_people_on(record)),
-        "size": f"{size:g}" + ("*" if defaulted else ""),
+        # Blank where nobody has sized it, and the slide leaves the whole tally
+        # out. The `*` that used to hang off this number meant "this is the
+        # default, not a bet" — an asterisk with no footnote on a slide projected
+        # in a review, explaining itself to nobody in the room. There is no
+        # default to disclaim now: either somebody bet a number or the slide is
+        # quiet about it.
+        "size": "" if size is None else f"{size:g}",
         # `counted.text` and `counted.fraction`, not a division written here: the
         # panel on the detail page and the meter in the table read the same two,
         # and a third arithmetic is a third answer.
