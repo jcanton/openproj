@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import re
 from collections.abc import Callable, Iterable, Sequence
+from functools import lru_cache
 
 from markdown_it import MarkdownIt
 from markdown_it.renderer import RendererHTML
@@ -13,9 +14,14 @@ from markdown_it.token import Token
 from markupsafe import Markup
 from mdit_py_plugins.attrs import attrs_plugin
 from mdit_py_plugins.tasklists import tasklists_plugin
+from pygments import highlight
+from pygments.lexer import Lexer
+from pygments.lexers import get_lexer_by_name
+from pygments.util import ClassNotFound
 
 from ..model import ID_PATTERN, Record, without_comments
 from .shell import ROUTES, STATIC, Links
+from .styles import CODE_FORMATTER
 
 # Commonmark, plus the two things people were already typing and getting back as
 # punctuation. `~~dropped~~` rendered as four literal tildes and `- [ ] a task`
@@ -62,8 +68,59 @@ def _with_unit(value: str) -> str:
     return value + "%" if value.isdigit() else value
 
 
+@lru_cache(maxsize=64)
+def _lexer_for(language: str) -> Lexer | None:
+    """The lexer for an info string's first word, or None if there is not one.
+
+    **No guessing.** Pygments will happily analyse an unlabelled block and return
+    its best guess, and a shell session mis-guessed as Perl is a fence coloured
+    confidently and wrongly — worse than the plain one it replaced, because the
+    colours read as information. A fence says what it is or it stays ink.
+
+    Cached because the alternative is a lexer built per fence per render, and the
+    Help page alone draws a dozen; `get_lexer_by_name` walks Pygments' whole
+    registry of aliases on a miss.
+    """
+    try:
+        return get_lexer_by_name(language, stripnl=False)
+    except ClassNotFound:
+        return None
+
+
+def _highlighted(code: str, language: str, attrs: str) -> str:
+    """A fence's contents as Pygments spans, or "" to leave it as plain text.
+
+    **Wired as markdown-it's `highlight` option and not as another render rule**,
+    which was the first shape and was wrong in a way nothing on the Help page
+    would have shown: a rule that builds its own `<pre><code>` drops the token's
+    attributes, and `data-startline` is one of them. That attribute is how the
+    record page scrolls the preview to the line you are writing (`detail.py`,
+    `[data-startline]`), so hand-building the tag would have silently desynced
+    the preview at every code block in a shaping document. Returning the inner
+    HTML and letting markdown-it write the tag keeps the attributes, the language
+    class and the escaping rules all in one place — theirs.
+
+    **Highlighted on the server, and this is the trade the mermaid bundle lost.**
+    A highlighter in the browser is another megabyte fetched onto a page held to
+    `default-src 'none'`; Pygments runs here and what reaches the reader is spans
+    and a stylesheet. Unlike the diagram above it therefore works identically in
+    the static export, which has no server to ask.
+
+    **No guessing**, which is why an unlabelled fence returns "". Pygments will
+    analyse an unlabelled block and return its best guess, and a shell session
+    mis-guessed as Perl is a fence coloured confidently and wrongly — worse than
+    the plain one it replaced, because the colours read as information.
+
+    The empty string and not the escaped code: markdown-it falls back to its own
+    escaping when `highlight` gives it nothing, so declining here is one branch
+    and not a second copy of an escaper.
+    """
+    lexer = _lexer_for(language) if language else None
+    return highlight(code, lexer, CODE_FORMATTER) if lexer is not None else ""
+
+
 _MD = (
-    MarkdownIt("commonmark", {"html": False})
+    MarkdownIt("commonmark", {"html": False, "highlight": _highlighted})
     .enable(["table", "strikethrough"])
     .use(tasklists_plugin)
     # `![The driver](assets/0123….png){width=60%}` — jcanton, 2026-08-25, asking
@@ -113,7 +170,10 @@ def _pr_link(ref: str) -> Markup:
 # travelling inside a deck. `web.py`'s `IMAGE_TYPES` answers a different question
 # — what may be uploaded — and is deliberately not this.
 _ASSET_MEDIA = {
-    ".png": "image/png", ".jpg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
 }
 # Written as a repository-relative path so the markdown reads the same in git, on
 # GitHub and in the tool; only the prefix in front of it changes.
@@ -341,12 +401,13 @@ def _fence(
         # `<svg>` and stamps `data-processed`, which is what the stylesheet reads
         # to stop drawing it as a code block.
         return str(Markup('<pre class="mermaid">{}</pre>\n').format(token.content))
+    # Everything else, highlighted or not, is markdown-it's own fence renderer —
+    # which is what calls `_highlighted` below through the `highlight` option, and
+    # what keeps the `data-startline` on the tag.
     return RendererHTML.fence(self, tokens, idx, options, env)
 
 
-def _link(
-    self: RendererHTML, tokens: Sequence[Token], idx: int, options: object, env: dict
-) -> str:
+def _link(self: RendererHTML, tokens: Sequence[Token], idx: int, options: object, env: dict) -> str:
     """A link whose target is a record id points at that record's page.
 
     jcanton, 2026-08-25: "I'd like to have links to other records in the body of
@@ -419,8 +480,7 @@ def _heading_text(inline: Token) -> str:
     between them are every leaf a heading in these documents has.
     """
     return "".join(
-        child.content for child in (inline.children or [])
-        if child.type in ("text", "code_inline")
+        child.content for child in (inline.children or []) if child.type in ("text", "code_inline")
     ).strip()
 
 
@@ -560,9 +620,7 @@ def _drop_repeated_title(body: str, title: str) -> str:
 
 
 def _body_html(record: Record, links: Links = STATIC) -> Markup:
-    return _markdown(
-        without_comments(_drop_repeated_title(record.body, record.title)), links
-    )
+    return _markdown(without_comments(_drop_repeated_title(record.body, record.title)), links)
 
 
 def _inlined_assets(bodies: Iterable[str], read: Callable[[str], bytes | None]) -> dict[str, str]:

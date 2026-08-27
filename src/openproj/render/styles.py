@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pygments.formatters import HtmlFormatter
+from pygments.token import STANDARD_TYPES, Token
+
 from ..themes import FAMILIES, contrast
 
 # Which hue each status wears. The one place taste enters the derivation: the
@@ -61,20 +64,192 @@ def _chosen(slots: dict[str, str]) -> dict[str, str]:
     darkest = contrast(slots[ink], slots["base00"])
 
     quieter = [
-        slot for slot in ("base04", "base03", "base05", "base06")
+        slot
+        for slot in ("base04", "base03", "base05", "base06")
         if _MUTED_FLOOR <= contrast(slots[slot], slots["base00"]) < darkest
     ]
     # The quietest of the ones that are still legible: a secondary ink that
     # matches the primary is a hierarchy with one level in it.
-    muted = min(quieter, key=lambda slot: contrast(slots[slot], slots["base00"]),
-                default="base04")
+    muted = min(quieter, key=lambda slot: contrast(slots[slot], slots["base00"]), default="base04")
 
     link = next(
-        (slot for slot in ("base0D", "base0C", "base0E", "base0B", "base08")
-         if contrast(slots[slot], slots["base00"]) >= _LINK_FLOOR),
+        (
+            slot
+            for slot in ("base0D", "base0C", "base0E", "base0B", "base08")
+            if contrast(slots[slot], slots["base00"]) >= _LINK_FLOOR
+        ),
         "base0D",
     )
     return {"fg": ink, "muted": muted, "accent": link}
+
+
+# Which base16 hue each syntax role wears. The eight hues were CHOSEN as syntax
+# colours — base08 red, base09 orange, base0A yellow, base0B green, base0C cyan,
+# base0D blue, base0E magenta — so a scheme picked for the app's chrome is
+# already one somebody tuned for exactly this, and the roles map straight onto
+# them with no second table to keep.
+#
+# `comment` and `operator` are NOT here and take `--muted` and `--fg` instead.
+# They are the two that appear on nearly every line, and a fence where the
+# punctuation is coloured is a fence where nothing is.
+_CODE_HUES = {
+    "keyword": "base0E",
+    "type": "base0A",
+    "function": "base0D",
+    "name": "base08",
+    "number": "base09",
+    "string": "base0B",
+    "escape": "base0C",
+    "error": "base08",
+}
+
+# AA, against the ground a fence is actually drawn on — `--surface-2`, which
+# under a scheme is base01 and not base00. Code is small text and there is a lot
+# of it, so this is the one place that does not get the link's relaxed 3.5.
+_CODE_FLOOR = 4.5
+
+
+def _mixed(one: str, two: str, weight: float) -> str:
+    """`one` moved `weight` of the way toward `two`, as `#rrggbb`."""
+    channels = (
+        round(int(one[at : at + 2], 16) * (1 - weight) + int(two[at : at + 2], 16) * weight)
+        for at in (1, 3, 5)
+    )
+    return "#" + "".join(f"{value:02x}" for value in channels)
+
+
+def _readable(hue: str, ground: str, ink: str) -> str:
+    """The hue, darkened toward the ink until it clears AA on that ground.
+
+    **The nominal mapping alone does not work, and this was measured rather than
+    guessed**: base08–base0E straight onto `--surface-2`, over the nine families
+    in both polarities, put 95 of 144 combinations below 4.5 — Default light's
+    yellow at 1.25, Silk's blue at 1.79, Tomorrow's orange at 1.90. A terminal
+    palette's hues are chosen against a terminal's background and most of these
+    families have a light polarity with a near-white one.
+
+    So the hue is kept and its lightness is not, which is `_chosen`'s argument
+    applied to eight more values: the identity of the colour is what carries the
+    meaning — a keyword stays recognisably magenta, a string green — and how dark
+    it has to be to be read is the page's business rather than the scheme's.
+
+    Mixing toward the INK and not toward black: on a dark palette the ink is
+    nearly white, so the same function lightens a hue that is too dark to read
+    there. One rule for both polarities, and the caller passes the ink it already
+    measured.
+
+    Twentieths, because a finer step buys a hundredth of a contrast point and a
+    coarser one throws away hue nobody needed to lose.
+
+    What it costs, said out loud: two adjacent hues darkened far enough can meet.
+    PaperColor light is the one case in eighteen palettes — its orange and its
+    yellow both land on `#694b33`, so a number and a type are the same brown
+    there. Adjacent hues converging under darkening is what darkening does, and
+    the alternative is a per-role nudge that would make each of these eight a
+    value somebody tuned rather than a value the scheme decided.
+    """
+    if contrast(hue, ground) >= _CODE_FLOOR:
+        return hue
+    for step in range(1, 21):
+        blended = _mixed(hue, ink, step / 20)
+        if contrast(blended, ground) >= _CODE_FLOOR:
+            return blended
+    return ink
+
+
+# Which of those ten each branch of Pygments' token tree takes. A branch and not
+# a leaf: `Token.Literal.String` covers the fourteen kinds of string literal
+# without any of them being written down here, because `_code_css` walks a token
+# up to its nearest named ancestor. That is what keeps this list at fourteen
+# entries against the eighty short class names Pygments actually emits, and it is
+# why a token type added in a future Pygments release is coloured rather than
+# left as unstyled ink.
+_CODE_COLOURS = {
+    Token.Comment: "comment",
+    Token.Keyword: "keyword",
+    Token.Keyword.Type: "type",
+    Token.Name.Builtin: "function",
+    Token.Name.Function: "function",
+    Token.Name.Class: "type",
+    Token.Name.Decorator: "type",
+    # The module in `from x import y`, and the one this list was missing:
+    # `test_every_class_the_highlighter_emits_is_either_coloured_or_known_ink`
+    # rendered a real import and found `hl-nn` reaching the page as ink.
+    Token.Name.Namespace: "type",
+    Token.Name.Constant: "number",
+    Token.Literal.String: "string",
+    Token.Literal.String.Escape: "escape",
+    Token.Literal.String.Interpol: "escape",
+    Token.Literal.Number: "number",
+    Token.Operator: "operator",
+    Token.Punctuation: "operator",
+    Token.Error: "error",
+    # `Token.Name` itself is deliberately absent: a bare identifier is the code's
+    # own ink, and a page where every variable is coloured is a page where the
+    # colour has stopped meaning anything. These three are the ones that are not
+    # identifiers — a YAML key, an HTML tag, a shell variable.
+    Token.Name.Tag: "name",
+    Token.Name.Attribute: "name",
+    Token.Name.Variable: "name",
+    # A fence holding a diff, which is a normal thing for a design record to
+    # carry. Red and green rather than the ink they would otherwise take.
+    Token.Generic.Deleted: "name",
+    Token.Generic.Inserted: "string",
+    Token.Generic.Heading: "function",
+}
+
+
+def _code_css(prefix: str = "hl-") -> str:
+    """The highlighter's stylesheet, generated from Pygments' own token table.
+
+    **Not a hand-written list of `.hl-k`, `.hl-s2`, `.hl-nf`.** Pygments emits
+    eighty short class names and adds to them between releases; a list here would
+    be a second copy of that table, correct on the day it was typed and quietly
+    missing a token type after every upgrade — and a token nobody styled is not a
+    visible bug, it is one word in a fence drawn in the body ink, which is what
+    an unhighlighted fence looks like anyway.
+
+    So every entry in `STANDARD_TYPES` is walked up to its nearest ancestor in
+    `_CODE_COLOURS` and takes that colour. `Token` itself is in neither, which is
+    the fall-through: plain text inside a fence is the page's own ink and needs
+    no rule at all.
+
+    Selectors are grouped by colour rather than written one to a line, because
+    this block is inlined into every page that can draw a body and eighty rules
+    of one declaration each is a page heavier for no reader's benefit.
+    """
+    grouped: dict[str, list[str]] = {}
+    for token, short in STANDARD_TYPES.items():
+        if not short:
+            continue
+        node = token
+        while node is not None:
+            if node in _CODE_COLOURS:
+                grouped.setdefault(_CODE_COLOURS[node], []).append(f".{prefix}{short}")
+                break
+            node = node.parent
+    return "\n".join(
+        f"{', '.join(sorted(selectors))} {{ color: var(--code-{role}); }}"
+        for role, selectors in grouped.items()
+    )
+
+
+# `nowrap`, so Pygments hands back the spans and nothing else: the `<pre><code>`
+# around them stays markdown-it's, which is what keeps the `data-startline` the
+# preview's scroll sync reads. `classprefix`, because Pygments' own names are one
+# and two letters — `k`, `s2`, `nf`, `o`, `p` — and a stylesheet inlined into
+# every page that draws a body has no business claiming `.p` and `.o`.
+#
+# **A token this file does not colour still gets a span**, and that is Pygments'
+# shape rather than a choice: the formatter wraps anything with a short class
+# name, so a bash fence carries an `hl-w` around every run of spaces and a Python
+# one an `hl-n` around every identifier. Both are inert — `_code_css` emits no
+# rule for either. A `Style` whose `styles` names only the tokens above was tried
+# to suppress them and does not: `HtmlFormatter` builds its class map from
+# `STANDARD_TYPES` and not from the style it was handed. The markup is a few
+# hundred bytes on a page with fences on it, and the alternative is reaching into
+# a private attribute of the formatter.
+CODE_FORMATTER = HtmlFormatter(nowrap=True, classprefix="hl-")
 
 
 def _slot_css(palette) -> str:
@@ -83,6 +258,18 @@ def _slot_css(palette) -> str:
     lines = [f"  --{slot}: {value};" for slot, value in slots.items()]
     for token, slot in _chosen(slots).items():
         lines.append(f"  --{token}: var(--{slot});")
+    # The code palette, derived here for the reason `_readable` records. Written
+    # into each family's own block rather than once against `[data-scheme]`, so a
+    # scheme is one block a reader can check and not a value assembled from two
+    # places.
+    picks = _chosen(slots)
+    ink, ground = slots[picks["fg"]], slots["base01"]
+    lines.append(f"  --code-comment: var(--{picks['muted']});")
+    lines.append(f"  --code-operator: var(--{picks['fg']});")
+    lines.extend(
+        f"  --code-{role}: {_readable(slots[slot], ground, ink)};"
+        for role, slot in _CODE_HUES.items()
+    )
     return "\n".join(lines)
 
 
@@ -97,9 +284,7 @@ def _scheme_css() -> str:
     blocks = []
     for family in FAMILIES:
         light, dark = _slot_css(family.light), _slot_css(family.dark)
-        blocks.append(
-            f':root[data-scheme="{family.key}"] {{\n  color-scheme: light;\n{light}\n}}'
-        )
+        blocks.append(f':root[data-scheme="{family.key}"] {{\n  color-scheme: light;\n{light}\n}}')
         blocks.append(
             "@media (prefers-color-scheme: dark) {\n"
             f'  :root[data-scheme="{family.key}"]:not([data-theme="light"]) {{\n'
@@ -653,7 +838,8 @@ article.record.view-view .markbar { display: none; }
 """
 
 
-_DETAIL_STYLE = """
+_DETAIL_STYLE = (
+    """
 /* No `#commitbar` here. The bar sticks to the top on this page because the SHELL
    says every commit bar does — one rule for every page that draws one — and an
    id override in this sheet was the wrong shape for it twice over: it beat the
@@ -1357,4 +1543,12 @@ button.kindchip[hidden] { display: none; }
 .record.editing #promote { display: none; }
 #promote select { font: inherit; font-size: 13px; }
 #promote .hint { margin: 0; }
-""" + _EDITING_STYLE
+"""
+    + _EDITING_STYLE
+    # The highlighter's colours, in the sheet every page that can draw a BODY
+    # already inlines — the record page, the create form, the cycle pages, the
+    # deck and Help — and in none of the ones that cannot. It is not in the
+    # shell for that reason: the graph, the timeline and the table have no fence
+    # on them and no reader of those pages should carry the rules for one.
+    + _code_css()
+)

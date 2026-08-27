@@ -27,15 +27,15 @@ uv run python tests/load/probe_emoji.py             # concurrent splices around 
 
 ## What works
 
-| Claim | Evidence |
-|---|---|
-| Fan-out is not the bottleneck. | 15 typists, 5 chars/s, one room, 90 s: **2.15 CPU-seconds**, 2.4% of one core. 6,133 frames per member. Propagation p50 1.5 ms, p99 4.5 ms. `probe_fanout.py` |
-| Seats do not leak, including on abrupt disconnects. | 60 departures over 6 rounds, half RST with `SO_LINGER 0` and half polite: roster peaks at 11 and settles to exactly the one survivor, `leaked: []`, RSS flat at 80.6 MB. The fix is in the socket handler's `finally` (`web.py:2963`), which uvicorn runs however the socket ends. `probe_seats.py` |
-| A reconnection through the five-minute teardown loses nothing *for a tab that comes back*. | Reset the socket, type into the document while there is none, reconnect: seed matched, no `reload`, the room still held the pre-drop text, and the offline text reached everybody else once the returning tab sent its state-vector diff. `probe_seats.py` |
-| The deterministic seed really does prevent the doubling the module docstring warns about. | Two independent instances built rooms for one record at one commit and produced **the same seed sha**. That is what lets a bounced client be welcomed rather than merged into itself twice. `probe_twoinstances.py` |
-| Concurrent splices around astral characters are safe on the server. | Two sockets splicing either side of `👍` and either side of `—` at the same moment: converged, emoji intact, no U+FFFD, no lone surrogate, and git holds the exact characters. `probe_emoji.py` |
-| A SIGTERM rescues every OCCUPIED room. | 20 rooms, all pending, one SIGTERM: **20 of 20 committed**, in 0.26 s. `probe_shutdown.py` |
-| Git integrity survives two instances. | Instance A's commit landed and pushed; instance B's push lost the race, rewound, re-merged, and refused honestly with the line-overlap report. No corruption, no conflict markers. `probe_twoinstances.py` |
+| Claim                                                                                      | Evidence                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fan-out is not the bottleneck.                                                             | 15 typists, 5 chars/s, one room, 90 s: **2.15 CPU-seconds**, 2.4% of one core. 6,133 frames per member. Propagation p50 1.5 ms, p99 4.5 ms. `probe_fanout.py`                                                                                                                                       |
+| Seats do not leak, including on abrupt disconnects.                                        | 60 departures over 6 rounds, half RST with `SO_LINGER 0` and half polite: roster peaks at 11 and settles to exactly the one survivor, `leaked: []`, RSS flat at 80.6 MB. The fix is in the socket handler's `finally` (`web.py:2963`), which uvicorn runs however the socket ends. `probe_seats.py` |
+| A reconnection through the five-minute teardown loses nothing *for a tab that comes back*. | Reset the socket, type into the document while there is none, reconnect: seed matched, no `reload`, the room still held the pre-drop text, and the offline text reached everybody else once the returning tab sent its state-vector diff. `probe_seats.py`                                          |
+| The deterministic seed really does prevent the doubling the module docstring warns about.  | Two independent instances built rooms for one record at one commit and produced **the same seed sha**. That is what lets a bounced client be welcomed rather than merged into itself twice. `probe_twoinstances.py`                                                                                 |
+| Concurrent splices around astral characters are safe on the server.                        | Two sockets splicing either side of `👍` and either side of `—` at the same moment: converged, emoji intact, no U+FFFD, no lone surrogate, and git holds the exact characters. `probe_emoji.py`                                                                                                     |
+| A SIGTERM rescues every OCCUPIED room.                                                     | 20 rooms, all pending, one SIGTERM: **20 of 20 committed**, in 0.26 s. `probe_shutdown.py`                                                                                                                                                                                                          |
+| Git integrity survives two instances.                                                      | Instance A's commit landed and pushed; instance B's push lost the race, rewound, re-merged, and refused honestly with the line-overlap report. No corruption, no conflict markers. `probe_twoinstances.py`                                                                                          |
 
 ## What does not
 
@@ -87,12 +87,12 @@ d_git_has_ann              false           it never reaches git
 
 Three things make this worse than an ordinary conflict:
 
-* **The person who pressed Save saw a 200.** Only the room hears the refusal.
-* **A reload does not clear it.** The join-time absorb is gated on
+- **The person who pressed Save saw a 200.** Only the room hears the refusal.
+- **A reload does not clear it.** The join-time absorb is gated on
   `not room.pending()` (`web.py:2767`), which is false for exactly the room that
   is stuck; the rejoining socket is welcomed with the **stale base** and a body
   git does not have.
-* **`room.base` never moves on a refusal**, so the same losing three-way merge
+- **`room.base` never moves on a refusal**, so the same losing three-way merge
   is retried every twenty seconds until everybody leaves.
 
 ### 4. A warm, empty, pending room is covered by nothing
@@ -145,12 +145,12 @@ the loop.
 Measured with `/api/health` as a stopwatch from outside the loop
 (`probe_writecost.py`, idle floor 3.0-3.6 ms):
 
-| condition | loop held, mean | worst |
-|---|---|---|
-| no remote | 8.6 ms | 17.2 ms |
-| `file://` remote | 20.0 ms | 32.6 ms |
-| every write has to merge | 21.9 ms | 34.3 ms |
-| the same on a 210 kB body | 23.1 ms | 41.6 ms |
+| condition                 | loop held, mean | worst   |
+| ------------------------- | --------------- | ------- |
+| no remote                 | 8.6 ms          | 17.2 ms |
+| `file://` remote          | 20.0 ms         | 32.6 ms |
+| every write has to merge  | 21.9 ms         | 34.3 ms |
+| the same on a 210 kB body | 23.1 ms         | 41.6 ms |
 
 And a by-product worth writing down: `_to_room({"t": "saving"})` only *queues*
 the frame, and the task that drains queues needs the loop the write is holding.

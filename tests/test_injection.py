@@ -83,15 +83,24 @@ OURS = ("form", "onsubmit", "return false")
 # What `served()` names a record's own detail page — the editable one.
 ONE_RECORD = "one record"
 
-STATIC_PAGES = ("index.html", "table.html", "detail.html", "people.html", "cycles.html",
-                "graph.html", "timeline.html")
+STATIC_PAGES = (
+    "index.html",
+    "table.html",
+    "detail.html",
+    "people.html",
+    "cycles.html",
+    "graph.html",
+    "timeline.html",
+)
 
 
 def ids(text: str) -> tuple[str, str, str]:
     """The three ids this plan uses, each carrying the payload."""
-    return (f"pitch-b2000{id_text(text)}",
-            f"task-c0000{id_text(text)}",
-            f"task-c0001{id_text(text)}")
+    return (
+        f"pitch-b2000{id_text(text)}",
+        f"task-c0000{id_text(text)}",
+        f"task-c0001{id_text(text)}",
+    )
 
 
 def inbox_ids(text: str) -> tuple[str, str]:
@@ -298,8 +307,13 @@ def census_routes(record_ids: tuple[str, ...]) -> dict[str, str]:
     pages have the payload in their path, so the hostile plan and the benign
     one address different URLs for the same page."""
     return {
-        "records": "/", "table": "/table", "graph": "/graph", "timeline": "/timeline",
-        "people": "/people", "cycles": "/cycles", "cycle 41": "/cycle/41",
+        "records": "/",
+        "table": "/table",
+        "graph": "/graph",
+        "timeline": "/timeline",
+        "people": "/people",
+        "cycles": "/cycles",
+        "cycle 41": "/cycle/41",
         # The deck was left out of a census that says it covers every page the
         # server draws, and it is the page a field is most likely to leave the
         # building on: a deck is printed and handed to somebody who was not in
@@ -307,15 +321,18 @@ def census_routes(record_ids: tuple[str, ...]) -> dict[str, str]:
         "deck 41": "/deck/41",
         # The inbox views of the landing — the same page held to one kind, so
         # each renders the hostile issue or note rows under its own URL.
-        "issues": "/issues", "notes": "/notes",
+        "issues": "/issues",
+        "notes": "/notes",
         # Help draws documentation and no record, so the two corpora make the
         # same page and this passes by construction today. Covered rather than
         # exempted all the same: it renders markdown through the same `_MD` every
         # shaping document goes through, and the day it draws anything a person
         # typed, it is already in the census instead of being remembered into it.
         "help": "/help",
-        "new issue": "/new?kind=issue", "new note": "/new?kind=note",
-        "new task": "/new?kind=task", "new pitch": "/new?kind=pitch",
+        "new issue": "/new?kind=issue",
+        "new note": "/new?kind=note",
+        "new task": "/new?kind=task",
+        "new pitch": "/new?kind=pitch",
         # `/detail` is the whole plan and read-only; a record's own page is the
         # editable one, and the only one that carries the combobox.
         "every detail": "/detail",
@@ -354,14 +371,12 @@ def served(
 
 @pytest.fixture
 def hostile_served(tmp_path: Path) -> dict[str, str]:
-    return served(tmp_path, corpus(PAYLOAD), "hostile",
-                  (*ids(PAYLOAD), *inbox_ids(PAYLOAD)))
+    return served(tmp_path, corpus(PAYLOAD), "hostile", (*ids(PAYLOAD), *inbox_ids(PAYLOAD)))
 
 
 @pytest.fixture
 def benign_served(tmp_path: Path) -> dict[str, str]:
-    return served(tmp_path, corpus(BENIGN), "benign",
-                  (*ids(BENIGN), *inbox_ids(BENIGN)))
+    return served(tmp_path, corpus(BENIGN), "benign", (*ids(BENIGN), *inbox_ids(BENIGN)))
 
 
 # --------------------------------------------------------------------------- #
@@ -399,6 +414,7 @@ def test_every_html_get_route_is_in_the_census(tmp_path: Path):
     commit_directly(path, corpus(BENIGN), "seed a plan for the route census")
     app = create_app(path, auth="dev", secret="a-signing-secret-for-tests")
     with TestClient(app):
+
         def is_page(route) -> bool:
             drawn = getattr(route, "response_class", None)
             # FastAPI wraps an undeclared response class in a DefaultPlaceholder.
@@ -458,8 +474,10 @@ def test_no_template_marks_a_value_safe():
     true while nothing writes `|safe` again.
     """
     lines = [
-        line for line in render_source().splitlines()
-        if "|safe" in line and not line.lstrip().startswith(("#", "*"))
+        line
+        for line in render_source().splitlines()
+        if "|safe" in line
+        and not line.lstrip().startswith(("#", "*"))
         # The rule is written down in three docstrings, which have to be able to
         # name the thing they forbid.
         and "`|safe`" not in line
@@ -529,7 +547,10 @@ def run_js(html: str, expression: str = "null", **options: object) -> dict:
         pytest.skip("node is not installed, so the shipped JavaScript cannot be driven")
     result = subprocess.run(
         ["node", str(DRIVER), expression, json.dumps(options)],
-        input=html, capture_output=True, text=True, timeout=120,
+        input=html,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     assert result.returncode == 0, f"the driver failed:\n{result.stderr}"
     return json.loads(result.stdout)
@@ -675,8 +696,15 @@ _DELIMITED = re.compile(r"@@[\w.-]+@@")
 # not a name anything answers to now — renaming it here would pin a string this
 # repository never substituted and stop pinning the one it did.
 SUBSTITUTED = (
-    "PAYLOAD_JSON", "ELEMENTS_JSON", "BARS_JSON", "HELD_JSON", "ROSTER_JSON", "ENTITY_HREF",
-    "@@cytoscape.min.js@@", "@@dagre.min.js@@", "@@cytoscape-dagre.js@@",
+    "PAYLOAD_JSON",
+    "ELEMENTS_JSON",
+    "BARS_JSON",
+    "HELD_JSON",
+    "ROSTER_JSON",
+    "ENTITY_HREF",
+    "@@cytoscape.min.js@@",
+    "@@dagre.min.js@@",
+    "@@cytoscape-dagre.js@@",
 )
 
 
@@ -882,8 +910,8 @@ def test_no_page_is_assembled_by_substitution():
             called = node.func
             if isinstance(called, ast.Attribute) and called.attr in ("replace", "sub", "subn"):
                 offenders.append(f"{source.name}:{node.lineno}: {ast.unparse(node)[:80]}")
-    assert not offenders, (
-        "a page is being assembled by substitution again:\n" + "\n".join(offenders)
+    assert not offenders, "a page is being assembled by substitution again:\n" + "\n".join(
+        offenders
     )
 
 
@@ -911,7 +939,7 @@ _JSONABLE = st.recursive(
 # escaped quote eats the quote that closes the string.
 @example({"a\\": 'b"c'})
 @example(["a\\", '"', '\\"'])
-@example({'<img src=x onerror=alert(1)>': "</script>&amp;"})
+@example({"<img src=x onerror=alert(1)>": "</script>&amp;"})
 @settings(max_examples=200)
 @given(_JSONABLE)
 def test_the_json_a_page_ships_reads_back_and_can_end_nothing(data: object):

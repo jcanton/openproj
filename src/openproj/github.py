@@ -186,7 +186,7 @@ class GitHubApp:
         incapable of touching source. Raises on any refusal, and the CALLER
         treats that as survivable: the branch is already durable on the remote
         by the time this is asked, the PR is only the visibility
-        (docs/deferred-push.md), and the store logs rather than dies.
+        (design/deferred-push.md), and the store logs rather than dies.
         """
         if not self.repository:
             raise ValueError(
@@ -221,9 +221,7 @@ class GitHubApp:
         an installation token; the token itself goes in the password."""
         import pygit2
 
-        return pygit2.RemoteCallbacks(
-            credentials=pygit2.UserPass("x-access-token", self.token())
-        )
+        return pygit2.RemoteCallbacks(credentials=pygit2.UserPass("x-access-token", self.token()))
 
 
 def open_pull_requests(

@@ -79,7 +79,7 @@ class Compound:
     ids: tuple[str, ...] = ()
     classes: tuple[str, ...] = ()
     attrs: tuple[str, ...] = ()
-    pseudos: tuple[tuple[str, str | None, bool], ...] = ()   # name, argument, is-element
+    pseudos: tuple[tuple[str, str | None, bool], ...] = ()  # name, argument, is-element
 
 
 # `:where()` contributes nothing; `:is()`, `:not()` and `:has()` contribute the
@@ -238,7 +238,7 @@ def _compound_matches(compound: Compound, path: list[El], at: int) -> bool:
         return False
     for name, argument, is_element in compound.pseudos:
         if is_element:
-            return False        # nothing here resolves ::before
+            return False  # nothing here resolves ::before
         if name in _ZERO | _FORWARDING and argument is not None:
             hit = any(_matches(one, path[: at + 1]) for one in split_list(argument))
             if hit == (name == "not"):
@@ -259,8 +259,7 @@ def _walk(parts: list[tuple[str, Compound]], part: int, path: list[El], at: int)
     if combinator in (" ", ""):
         return any(_walk(parts, part - 1, path, up) for up in range(at - 1, -1, -1))
     raise NotImplementedError(
-        f"{combinator!r} needs siblings, and an element here is described by its "
-        f"ancestors only"
+        f"{combinator!r} needs siblings, and an element here is described by its ancestors only"
     )
 
 
@@ -317,14 +316,12 @@ class Sheet:
         self.rules: list[Rule] = []
         for prelude, body in _blocks(css):
             if prelude.startswith("@"):
-                continue        # a different condition; see the module docstring
+                continue  # a different condition; see the module docstring
             declarations = _declarations(body)
             if not declarations:
                 continue
             for one in split_list(prelude):
-                self.rules.append(
-                    Rule(one, specificity(one), len(self.rules), declarations)
-                )
+                self.rules.append(Rule(one, specificity(one), len(self.rules), declarations))
 
     def winner(self, path: list[El], prop: str) -> Won | None:
         """The declaration a browser would use, or None if nothing sets it."""

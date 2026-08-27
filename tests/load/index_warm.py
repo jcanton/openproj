@@ -124,7 +124,7 @@ if __name__ == "__main__":
     first = cold()
     rows = main()
     rows["first_build_in_a_fresh_process_ms"] = first
-    out = ROOT / "docs/probes/load/index-warm.json"
+    out = ROOT / "design/probes/load/index-warm.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"probe": "index-warm", **rows}, indent=1) + "\n")
     print(json.dumps(rows, indent=1))

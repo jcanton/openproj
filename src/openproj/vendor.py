@@ -61,8 +61,11 @@ def _docs_root() -> Path:
         Path(__file__).resolve().parents[2],
     ]
     for candidate in candidates:
-        if candidate is not None and (candidate / "docs").is_dir() \
-                and (candidate / "README.md").is_file():
+        if (
+            candidate is not None
+            and (candidate / "docs").is_dir()
+            and (candidate / "README.md").is_file()
+        ):
             return candidate
     raise RuntimeError(
         "the documentation (README.md and docs/) is missing. It is not part of the wheel, so "
@@ -154,7 +157,9 @@ def _ace() -> Markup:
         raise ValueError("static/ace-LICENSE.txt would end the comment it is written into")
     return Markup(
         f"/* Ace 1.44.0 (ace.js and keybinding-vim.js), BSD-3-Clause.\n\n{notice}*/\n"
-        + _inline("ace.js") + "\n" + _inline("keybinding-vim.js")
+        + _inline("ace.js")
+        + "\n"
+        + _inline("keybinding-vim.js")
     )
 
 

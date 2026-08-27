@@ -286,8 +286,14 @@ def sweep_client(tmp_path: Path):
 # /api/table.json is the table's payload served without the page around it,
 # and it leaks or it does not exactly as /table does.
 PLAN_PAGES = (
-    "/table", "/graph", "/timeline", "/people",
-    "/cycles", "/cycle/1", "/deck/1", "/api/table.json",
+    "/table",
+    "/graph",
+    "/timeline",
+    "/people",
+    "/cycles",
+    "/cycle/1",
+    "/deck/1",
+    "/api/table.json",
 )
 
 
@@ -346,7 +352,8 @@ def test_an_inbox_tag_is_offered_where_tags_are_edited_and_its_id_is_not(
         page = sweep_client.get(route)
         blob = re.search(
             r'<script id="suggest" type="application/json">(.*?)</script>',
-            page.text, re.S,
+            page.text,
+            re.S,
         )
         assert blob, f"{route} lost its suggestion blob, so this asserts nothing"
         suggest = json.loads(blob.group(1))

@@ -100,11 +100,22 @@ assert not set(CSP) & set('<>&"'), "a policy needing escaping cannot be written 
 
 STATIC = Links()
 ROUTES = Links(
-    records="/", issues="/issues", notes="/notes",
-    table="/table", detail="/detail", graph="/graph", timeline="/timeline",
-    record="/detail/", new="/new", people="/people",
-    cycles="/cycles", cycle="/cycle/", help="/help",
-    repo="/", deck="/deck/", body="/api/body/",
+    records="/",
+    issues="/issues",
+    notes="/notes",
+    table="/table",
+    detail="/detail",
+    graph="/graph",
+    timeline="/timeline",
+    record="/detail/",
+    new="/new",
+    people="/people",
+    cycles="/cycles",
+    cycle="/cycle/",
+    help="/help",
+    repo="/",
+    deck="/deck/",
+    body="/api/body/",
 )
 
 
@@ -263,6 +274,17 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
   --line: #dce4e5; --line-strong: #859195; --muted: #5a6b70;
   --accent: #0f5c6b; --on-accent: #ffffff;
   --danger: #9a3327; --warn: #8a5308; --ok: #2f7248;
+  /* The code palette, for the app's own colours. A scheme derives these from its
+     base16 hues (`_CODE_HUES`, `_readable`); this palette has no sixteen to
+     derive from, so the eight are written, and they are written rather than
+     borrowed from --danger/--warn/--ok because those are three and this needs
+     eight distinct enough to tell a keyword from a string at a glance. Measured
+     against --surface-2, which is the ground a fence is drawn on: the lowest
+     here is the cyan at 4.75 and every one clears AA. */
+  --code-comment: var(--muted); --code-operator: var(--fg);
+  --code-keyword: #8a3fa0; --code-type: #8a5308; --code-function: #14607f;
+  --code-name: #9a3327; --code-number: #a0522d; --code-string: #2f7248;
+  --code-escape: #0f7b7b; --code-error: #9a3327;
   /* The em dash that means "no value" is *text*, so it owes 4.5:1 and not the
      3.45 it was first given. Whether a field is empty is a fact, not a hint. */
   --empty: #5f7176; --focus: #0f5c6b;
@@ -386,6 +408,10 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
     --line: #263336; --line-strong: #61767c; --muted: #93a6aa;
     --accent: #5cb9ca; --on-accent: #0b1214;
     --danger: #e0796a; --warn: #d9a557; --ok: #6fc095;
+  --code-comment: var(--muted); --code-operator: var(--fg);
+  --code-keyword: #c99ae0; --code-type: #d9a557; --code-function: #6fb7d8;
+  --code-name: #e0796a; --code-number: #e0a878; --code-string: #6fc095;
+  --code-escape: #63c7c7; --code-error: #e0796a;
     --empty: #84969c; --focus: #5cb9ca;
     /* The same ladder, climbed the other way: parked is the darkest rung here
        and done the lightest, so a shape is always the *more* solid the further
@@ -447,6 +473,10 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
   --line: #263336; --line-strong: #61767c; --muted: #93a6aa;
   --accent: #5cb9ca; --on-accent: #0b1214;
   --danger: #e0796a; --warn: #d9a557; --ok: #6fc095;
+  --code-comment: var(--muted); --code-operator: var(--fg);
+  --code-keyword: #c99ae0; --code-type: #d9a557; --code-function: #6fb7d8;
+  --code-name: #e0796a; --code-number: #e0a878; --code-string: #6fc095;
+  --code-escape: #63c7c7; --code-error: #e0796a;
   --empty: #84969c; --focus: #5cb9ca;
   --st-thinking: #448c99; --st-thinking-ink: #101416; --st-thinking-line: #26555d;
   --st-thinking-soft: #182e33; --st-thinking-text: #60becd;
@@ -1335,7 +1365,7 @@ table.tight-priority td[data-col="priority"] .chip.pri { padding: .1rem .3rem; }
    are. That is the part that was missing, and it is the part that made this a
    grid that only READ as a table while the two lists happened to be the same
    length — three reported rounds of "the legend is not aligned"
-   (`docs/QUEUE.md` §7.5), each of which this arrangement would have survived.
+   (`design/QUEUE.md` §7.5), each of which this arrangement would have survived.
    Measured, not eyed, in `test_the_legend_is_two_rows_and_the_keys_line_up`. */
 .legends { display: inline-grid;
            grid-template-columns: auto repeat({{ statuses|length }}, max-content);
@@ -2550,7 +2580,7 @@ function fitRoom() { roomSlack = 0; settleRoom(4); }
 {% endif -%}
 {#- The pile banner: the loud middle of the deferred push's escalation, between
     the table's quiet per-row mark and the 503 the store answers past the pile
-    ceiling (docs/deferred-push.md, "Saying it on the page"). In the shell
+    ceiling (design/deferred-push.md, "Saying it on the page"). In the shell
     because the graph, the timeline, the cycles and the record page have no
     mark of their own and rely on it; in flow at the top of <main>, in the
     `.unreadable` strip's own position and shape, because "saves that have not
@@ -2972,7 +3002,7 @@ source.onmessage = event => {
 };
 </script>
 <script>
-// The pile banner (docs/deferred-push.md, "Saying it on the page"): loud when
+// The pile banner (design/deferred-push.md, "Saying it on the page"): loud when
 // the saves already made here are not landing on GitHub, quiet otherwise. It
 // reads the numbers /api/health reports — the reading the store's write gate
 // also refuses on, so this banner and the 503 cannot disagree about the pile.
@@ -3263,12 +3293,17 @@ def _titles(index: Index) -> dict[str, str]:
 # written out by hand were six places for a seventh page to be added and marked
 # nowhere.
 _NAV = (
-    ("records", "Records"), ("table", "Table"), ("graph", "Graph"),
-    ("timeline", "Timeline"), ("cycles", "Cycles"), ("people", "People"),
+    ("records", "Records"),
+    ("table", "Table"),
+    ("graph", "Graph"),
+    ("timeline", "Timeline"),
+    ("cycles", "Cycles"),
+    ("people", "People"),
     # The two inbox views of the landing list, back in the nav on jcanton's
     # ruling: quick access to what would otherwise be a click on a filter. At
     # the end, where they sat before the records flip retired their own pages.
-    ("issues", "Issues"), ("notes", "Notes"),
+    ("issues", "Issues"),
+    ("notes", "Notes"),
     # Last, and after the two inboxes, because it is the one item that is not a
     # view of the plan: everything to its left answers "what is in the plan" and
     # this answers "what is this tool". jcanton, 2026-08-27, given the choice
@@ -3379,7 +3414,7 @@ def _page(
             "One file in the plan is not a record, so nothing in it is on this page."
             if len(unreadable) == 1
             else f"{len(unreadable)} files in the plan are not records, "
-                 "so nothing in them is on this page."
+            "so nothing in them is on this page."
         ),
         nav=[
             {"href": getattr(links, key), "label": label, "current": key == current}
@@ -3399,7 +3434,8 @@ def _page(
         # wrong place. A page that is only ever reached FROM somewhere passes
         # neither and reads the stamp instead.
         origin=(
-            origin if origin is not None
+            origin
+            if origin is not None
             else next((_BACK_LABEL.get(key, label) for key, label in _NAV if key == current), "")
         ),
         origin_path=_ORIGIN_PATH,

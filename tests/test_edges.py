@@ -73,8 +73,12 @@ def test_an_existing_dependency_can_be_taken_off_the_diagram(
     there is no "and also remove this" on the wire."""
     waits, first = a_dependency(index)
     got = measured_in(
-        chrome(), page, tmp_path / "remove.html", 1400,
-        _REMOVE % (json.dumps(first), json.dumps(waits)), height=1000,
+        chrome(),
+        page,
+        tmp_path / "remove.html",
+        1400,
+        _REMOVE % (json.dumps(first), json.dumps(waits)),
+        height=1000,
     )
 
     assert got["marked"], "the arrow was clicked and nothing was marked"
@@ -136,7 +140,10 @@ def test_reset_and_leaving_the_mode_both_put_a_marked_edge_back(
     the plan."""
     waits, first = a_dependency(index)
     got = measured_in(
-        chrome(), page, tmp_path / "reset.html", 1400,
+        chrome(),
+        page,
+        tmp_path / "reset.html",
+        1400,
         _RESET % (json.dumps(first), json.dumps(waits), json.dumps(first), json.dumps(waits)),
         height=1000,
     )
@@ -186,8 +193,13 @@ def hand_index() -> Index:
     hand-written edge the canvas cannot draw and must not rebuild away."""
     from datetime import date
 
-    waits = Task(id="task-aa0001", kind="task", title="Waits by hand", status="ready",
-                 depends_on=["task-bb0001", "issue-0f0001"])
+    waits = Task(
+        id="task-aa0001",
+        kind="task",
+        title="Waits by hand",
+        status="ready",
+        depends_on=["task-bb0001", "issue-0f0001"],
+    )
     first = Task(id="task-bb0001", kind="task", title="Finishes first", status="ready")
     third = Task(id="task-cc0001", kind="task", title="A third record", status="ready")
     noticed = Issue(id="issue-0f0001", kind="issue", title="Hand-written blocker")

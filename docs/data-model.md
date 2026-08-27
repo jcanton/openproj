@@ -1,143 +1,86 @@
 # The data model
 
-One markdown file per record: YAML frontmatter, then the shaping document as the body. Git is the
+One markdown file per record: YAML frontmatter, then the body. Git is the
 database — every write is one commit through `store.py` against a bare repository, from the editor,
 from `/api/record`, or from somebody with a terminal — so everything here is either a field in a file
 or something derived from the files, and **nothing derived is ever written back**. `architecture.md`
-has the pages these structures are drawn on; this file is the structures. Both are on the app's
-**Help** page as well as in the repository, read off the same files.
+has the pages these structures are drawn on; this file is the structures.
 
 ## One type, six kinds
 
 There is one record type. `Record` (`model.py`) carries what every kind shares — `id`, `kind`,
 `title`, `parent`, `status`, `owner`, `assignees`, `reviewers`, `review_waived`, `assigned_on`,
-`priority`, `depends_on`, `cycle`, `tags`, `prs`, `body`, `created_schema_version` — and `kind` says
-which rung it is on. The six rungs are subclasses that add fields. They are not six different things:
-one model, one parser, one write path, one page.
+`priority`, `depends_on`, `cycle`, `tags`, `prs`, `body` — and `kind` says which rung it is on. The
+six rungs are subclasses that add fields. They are not six different things: one model, one parser,
+one write path, one page.
 
-| kind | id | files | filed under | in the plan | fields it adds |
-|---|---|---|---|---|---|
-| `product` | `prod-a3f81c` | `products/` | — | yes | none |
-| `project` | `proj-…` | `projects/` | `product` | yes | none |
-| `pitch` | `pitch-…` | `pitches/` | `project` | yes | `person_weeks` |
-| `task` | `task-…` | `tasks/` | `pitch`, `project` | yes | `person_weeks` |
-| `issue` | `issue-…` | `issues/` | — | no | `reported_by`, `opened_on`, `pitched_into` |
-| `note` | `note-…` | `notes/` | — | no | `written_by`, `written_on`, `became` |
+| kind      | id        | files       | filed under        | in the plan | fields it adds                             |
+| --------- | --------- | ----------- | ------------------ | ----------- | ------------------------------------------ |
+| `product` | `prod-_`  | `products/` | —                  | yes         | none                                       |
+| `project` | `proj-…`  | `projects/` | `product`          | yes         | none                                       |
+| `pitch`   | `pitch-…` | `pitches/`  | `project`          | yes         | `person_weeks`                             |
+| `task`    | `task-…`  | `tasks/`    | `pitch`, `project` | yes         | `person_weeks`                             |
+| `issue`   | `issue-…` | `issues/`   | —                  | no          | `reported_by`, `opened_on`, `pitched_into` |
+| `note`    | `note-…`  | `notes/`    | —                  | no          | `written_by`, `written_on`, `became`       |
 
-That table is not prose about the code. It **is** `KINDS` in `model.py` — a tuple of `Rung`, coarsest
-first — with a few of its columns left out here: whether the scheduler dates the kind, whether it may
-wait on anything, whether it carries an appetite, whether a hover shows its document, which words its
-`status` may take, and which field answers "who is behind this". Everything else is derived from that
-tuple: the directories the loader walks, the id pattern (a rung's prefix and six hex digits from
-`secrets.token_hex(3)` — random and not sequential, so two people creating records in different
-tabs, or on different branches, never collide), the parent rules, the filter menus, the create form,
-and `unread_fields`, which is how a form declines to offer a box the validator would then complain
-about. A seventh kind is a row, not a search for the places `project` was written down.
-
-A field the rung does not read is reported beside the record rather than refused — a blocker where it
-changes what the plan means (`depends_on` on a product is a dependency nobody will schedule,
-`person_weeks` on a note an appetite nobody will read) and a warning where the field is merely
-ignored.
+That table is not prose about the code. It **is** `KINDS` in `model.py`, and everything else is
+derived from it: the directories the loader walks, the id pattern, the parent rules, the filter
+menus, and the create form. A seventh kind is a row, not a search for the places `project` was
+written down.
 
 Each kind is one thing and says so:
 
-- A **pitch** is the unit of the bet: what the betting table offers, what carries an appetite, and
-  the only kind whose body the shaping hints read. Its `owner` is who shaped it and holds it —
-  there is no `shaped_by` field; `assignees` are who is building it, `reviewers` who read the PR.
-- A **task** is a piece of a pitch. It has its own size and its own people and takes its cycle from
-  the pitch — a bet is made once, on the thing the room named. A task with **no** parent is a chore
-  nobody pitched: bettable in its own right, and then the cycle is its own.
-- A **project** groups pitches. No size, no capacity, never bet; its span is the rollup of what is
-  inside it.
-- A **product** is a codebase and a container for projects. gt4py is the DSL under icon4py, dace is a
-  backend, and work in one waits on work in another — which is why one plan holds all of them:
-  separate plans cannot express a cross-product dependency, and one the tool cannot express is one
-  somebody tracks in their head. Container and nothing else: no status, no PRs, no appetite, never
-  scheduled, waits on nothing, and a dashed outline rather than a filled box on the graph.
-- An **issue** is something existing that is broken, before anybody has decided to do it. It has no
-  `shaping` status, because a shaped issue is a pitch: somebody reads the open issues at the betting
-  table and writes one, and that is the whole lifecycle.
+- A **pitch** is the unit of the bet: what the betting table offers, and the only kind whose body the
+  shaping hints read. Its `owner` is who shaped it and holds it — there is no `shaped_by` field;
+  `assignees` build it, `reviewers` read the PR.
+
+- A **task** is a piece of a pitch, with its own size and its own people, taking its cycle from the
+  pitch. A task with **no** parent is a chore nobody pitched: bettable in its own right.
+
+- A **project** groups pitches. No size, no capacity, never bet; its span is the rollup.
+
+- A **product** is a codebase and a container for projects. Work in one waits on work in another,
+  which is why one plan holds all of them: separate plans cannot express a cross-product dependency.
+  Container and nothing else — no status, no PRs, no appetite, never scheduled.
+
+- An **issue** is something existing that is broken, before anybody has decided to fix it. No
+  `shaping` status, because a shaped issue is a pitch.
+
 - A **note** is the second inbox, and one sentence pays for having two:
 
   > an issue is "we found something existing that is broken", a note is "we are thinking of creating
   > something that does not exist and our ideas are confused".
 
-  A note is therefore not a pitch in `shaping`, which is what it most looks like from a distance: a
-  pitch presupposes you know what you are shaping, and a note precedes the problem, the solution and
-  the appetite alike. It has no appetite, owner, size, cycle or dependencies, and exactly two written
-  statuses — `thinking` and `dropped`, plus `promoted`, which is derived. No `in_progress` (the
-  moment there is work there is a record that is work), no `ready` ("ready to be shaped" is a promise
-  the Promote button keeps in one press), no `done` (a note is not finished, it is answered).
+  A note is therefore not a pitch in `shaping`: a pitch presupposes you know what you are shaping.
+  Two written statuses, `thinking` and `dropped`, plus `promoted`, which is derived.
 
 `product ← project ← pitch ← task` is enforced, not just documented: a parent of the wrong kind is a
 blocker for anything written since the rule existed and a warning for everything older.
 
-**Status is a written field; state is what a record actually is.** `Record.state()` returns the
-status; `Issue.state` derives `in_progress` and `done` from what the issue was pitched into, and
-`Note.state` derives `promoted` from `became`. Derived for the reason `blocks` is: a copy stored
-beside the link goes stale the first time somebody closes the pitch.
+**Status is a written field; state is what a record actually is.** An issue derives `in_progress` and
+`done` from what it was pitched into, and a note derives `promoted` from `became` — derived for the
+reason `blocks` is: a copy stored beside the link goes stale the first time somebody closes the
+pitch.
 
 **A plan directory is flat.** `products/`, `projects/`, `pitches/`, `tasks/`, `cycles/`, `issues/`,
 `notes/` and `people/` hold one file per record and nothing below them, because every reader takes an
-identity off the filename. `people/team/ann.md` is not a record filed tidily — it is a second `ann`,
-visible to half the application. `record_paths_in` is the one place that decides this, for the server
-reading a tree at a commit and for the CLI globbing a disk, and a file below a plan directory is
-named on every page and by `openproj check` with the move that fixes it.
-
-`drawings/` is a ninth directory, and it is flat for a different reason: it holds no records at all,
-one PNG per drawing, named by the drawing's id (`drawings/draw-a1b2c3.png`) — and unlike `assets/`,
-it is **mutable**, rewritten in place on every edit through `Store.put_drawing`. It is invisible to
-the record model by construction, not by omission. `record_paths_in` (`model.py`) never gets as far
-as asking whether a drawing's directory is one it wants: the loop's own `if not
-path.endswith(".md")` continue drops every non-markdown path before that question is ever put to
-it. `_plan_files` (`model.py`) only ever `rglob`s `*.md` in the first place, and `SEARCH_FIELDS`
-(`index.py`) reads record fields and never a blob. Say the consequence out loud, because it is the
-unpleasant one: a mistyped drawing path in a body is a **silent broken image** — no banner, no
-`openproj check` line, nothing sees it because nothing here was ever built to look. And `seed/`
-ships no drawings, because `cli.py`'s `_seed_files` filters to `.md` and `.yaml`, so a seeded body
-naming a drawing would name a file that is not there.
-
-Names and not line numbers, here and everywhere in these documents. Three of the five references
-this paragraph used to carry were already wrong within a fortnight — `_plan_files` had moved from
-1611 to 1593 and `_seed_files` from 163 to 151 — and a stale line number is worse than none,
-because it sends the reader to a line that says something else with every appearance of being the
-right one.
+identity off the filename: `people/team/ann.md` is a second `ann`. A file below a plan directory is
+named on every page and by `openproj check`, with the move that fixes it.
 
 ## Two populations: `Index.records` and `Index.plan`
 
-`build_index` (`index.py`) turns the parsed files into one in-memory `Index`, which holds the same
+`build_index` (`index.py`) turns the parsed files into one in-memory `Index`, holding the same
 records twice under two names because two questions are asked of them. `records` is everything that
-parsed, whatever its kind: the landing list, the detail lookup and the delete cascade read it,
+parsed, whatever its kind — the landing list, the detail lookup and the delete cascade read it,
 because those must resolve an id that may name an issue or a note. `plan` is the kinds whose rung
-says `planned`, and every PM surface — table, graph, timeline, people, scheduler, facets,
-`/api/index.json` — reads that.
-
-One distinction, not two attributes. The narrowing happens in one comprehension and a
-`model_validator` on `Index` refuses a `plan` holding an unplanned kind, which is why this is a
-narrowing rather than an exclusion written into each page: a consumer nobody edits stays correct, and
-one somebody forgets **fails closed** — it sees fewer records, never an issue on the timeline.
-`plan ⊂ records`, so the total map is always the safe door, and each name states its population on
-the line that uses it.
-
-Everything else on the `Index` is derived from those records and the config:
-
-| field | what it holds |
-|---|---|
-| `children` | parent id to child ids, total over `records` |
-| `blocked_by` / `blocks` | `depends_on` and its reverse; edges to records that do not exist are dropped from both at once |
-| `spans` | `Span` per record from `schedule.py` — `start`, `end`, and flags for estimated, unowned, historical, unscheduled, and weeks past the cycle's build |
-| `explanations` | `Explanation` per record: why the scheduler placed it there, and what it waited on |
-| `progress` | `Progress` per plan record — `done`/`total` in weeks from child tasks, or in items from the body's checklist, never both |
-| `problems` | `Problem` per finding, each carrying the `schema_version` that introduced its rule |
-| `unreadable` | `Unreadable` per plan file that is not a record, with the reason in one line |
-| `facets`, `for_later` | what the filter menus offer, and which bodies keep a `## For later` — both plan facts, because a dead option on the table is a filter that can select nothing |
-| `search_blob` | what the search box matches, over every record: one missing from it is one its own page cannot find |
-| `cycles`, `plans`, `holidays`, `known_people`, `icons`, `today` | carried so a renderer needs nothing but the index |
+says `planned`, and every PM surface reads that. A validator refuses a `plan` holding an unplanned
+kind, so a consumer somebody forgets **fails closed**: it sees fewer records, never an issue on the
+timeline.
 
 ## Promotion
 
 **An inbox that cannot become work is a second inbox nobody empties.** `POST /api/promote` is the one
-door out of both, and `render.PROMOTABLE` is the graph:
+door out of both:
 
 ```mermaid
 flowchart LR
@@ -158,147 +101,63 @@ flowchart LR
 ```
 
 - **The source survives** — it is the only record of the thinking that led to the bet — and gains
-  `became`, or `pitched_into` on an issue: one direction, on the record where the decision was made,
-  the same rule `depends_on` follows.
-- **The new record says where it came from in its own document**, in prose, above everything. Not a
-  field: a `from_note` on every planned kind would put a note id into the rows the table, the graph
-  and the timeline are built from. So "where did this pitch come from" is answerable from the pitch
-  alone, in `git show`, with no index and no server.
-- **One commit**, because it is one decision. Both files go through `Store.write_all`, each
-  compared-and-swapped on its own path; as two commits the second can fail after the first has landed
+  `became`, or `pitched_into` on an issue.
+- **The new record says where it came from in its own document**, in prose and not in a field.
+- **One commit**, because it is one decision. As two, the second can fail after the first has landed
   and leave a pitch nothing points at.
 - **Title, tags and body cross, and nothing else.** The new record is created in `shaping`, the one
-  status whose required-field gate is empty, so a promotion always produces a record that validates
-  without inventing an owner, a size or a cycle nobody agreed to. Its body is the kind's template with
-  the source's text under `## Problem`, which is what that heading asks for.
+  status whose required-field gate is empty, so a promotion always validates without inventing an
+  owner, a size or a cycle nobody agreed to.
 
 ## Sizes, dependencies, requiredness
 
-A size is `person_weeks` on a pitch and on a task — the work one person would need — and the people on
-it divide it, each at their own availability, so adding a second name halves the elapsed time. A pitch
-with tasks takes its dates and its capacity from them, which makes its own appetite the **bet**: what
-the room agreed to spend, kept as written. Where the tasks add up to more, the page says so and
-`openproj check` warns; cutting scope or re-betting is a person's decision, so nothing refuses the save.
-A cycle bet over its capacity is warned about the same way — on that cycle's page, with both numbers
-beside each other — and is never a `Problem` and never a CI failure: a build that fails on whoever
-honestly declared they were busy is a rule that gets reverted rather than obeyed.
+A size is `person_weeks` on a pitch and on a task, and the people on it divide it, each at their own
+availability. A pitch with tasks takes its dates and its capacity from them, which makes its own
+appetite the **bet**: what the room agreed to spend, kept as written. Where the tasks add up to more,
+the page says so and `openproj check` warns; nothing refuses the save, and neither a pitch nor a
+cycle over its capacity is ever a CI failure.
 
-Only `depends_on` is stored, on the dependent. Any kind may block any kind — a task may wait on a
-whole pitch — and an edge written on a pitch is inherited by everything inside it, so the edge stays
-written once where somebody wrote it. The one forbidden direction is your own containment chain:
-containment already requires a child before its parent, so a dependency along it demands to be both
-before and after itself.
+Only `depends_on` is stored, on the dependent. Any kind may block any kind, and an edge written on a
+pitch is inherited by everything inside it. The one forbidden direction is your own containment
+chain: a dependency along it demands to be both before and after itself.
 
 Requiredness is **status-gated**, lives in `validate_all`, and is enforced in the create form,
-`openproj check` and the index gate. The six statuses a project, pitch or task moves through are
-`thinking`, `shaping`, `ready`, `in_progress`, `done`, `shelved`, in that order; priority is one of
-`very_high`, `high`, `medium`, `low`, `very_low` — five rungs, because three left the team writing
-`High+` in the margin of its own table.
+`openproj check` and the index gate. `quickstart.md` has the table of what each status requires.
+Priority is one of `very_high`, `high`, `medium`, `low`, `very_low` — five rungs, because three left
+the team writing `High+` in the margin of its own table.
 
-A record opens on `thinking`, and an issue never holds it: an issue is *reported*, so by the time it
-exists somebody has already thought about it, which is why its own ladder starts at `ready`.
+**A reviewer is named when the bet is made, not when a PR appears**: a bet nobody will review is a
+bet that should not be made. `review_waived` is a deliberate act, for work with nothing to review,
+and it is a facet and a count, so a team that waives everything sees itself doing it. **A reviewer is
+not a worker**: review is never charged against capacity.
 
-| status | additionally required |
-|---|---|
-| `thinking` | nothing — nobody has looked at this yet, and it is where a new record starts |
-| `shaping` | nothing — an idea nobody has bet on has no owner and no size by definition |
-| `ready` | `owner`; somebody assigned; a reviewer or `review_waived`; a size |
-| `in_progress` | `assigned_on`; a reviewer who is not the owner |
-| `done` | at least one PR |
-| `shelved` | nothing — parked work is not broken work |
-
-**A reviewer is named when the bet is made, not when a PR appears**: assignment is routing, and a bet
-nobody will review is a bet that should not be made. `review_waived` is not an empty list — it is a
-deliberate act, for work with nothing to review (a paper, a spike), and it is a facet and a count, so
-a team that waives everything sees itself doing it. Without it the honest answer for a reading task
-is a fake reviewer, and the field becomes noise. **A reviewer is not a worker**: `_workers` is the
-owner and the assignees, so review is never charged against capacity or a cycle's load. Modelling it
-in the scheduler would double the model for a small correction, so `reviewers` is a facet and a
-column and never weeks — the people page says so in its own words, that a half-hour review added to
-a six-week build is not a workload.
-
-**Parse permissively, validate strictly.** Every field is optional at the type level and `status` and
-`priority` are plain `str`, so a hand-edited file with a missing field or a retired word still loads
-and reports a problem instead of taking the index down. Only `kind` is strict: an unknown kind has no
-directory, no id prefix, no parent rule and no model, so there is nothing to draw it as. A retired
-*field* gets the same courtesy in the other direction: a file that still says `shaped_by:` loads,
-keeps the key byte for byte through every save, and reports a warning naming where the value lives
-now (`owner`) — never a blocker, because the file is older than the vocabulary, not wrong.
-
-**Grandfathering.** Each rule records the `schema_version` that introduced it and a record is blocked
-only by rules that existed when it was created; a newer rule warns. Without it, adding one required
-field invalidates the whole corpus at once and the rule gets reverted rather than adopted. The
-somebody-assigned rule at `ready` is the live example: introduced at version 2, so it blocks a record
-created since and warns about the rest of the corpus.
+**Parse permissively, validate strictly, and grandfather.** Every field is optional at the type level
+and `status` and `priority` are plain `str`, so a hand-edited file with a missing field or a retired
+word still loads and reports a problem instead of taking the index down; only `kind` is strict. Each
+rule also records the `schema_version` that introduced it, and a record is blocked only by rules that
+existed when it was created — without that, one new required field invalidates the whole corpus at
+once.
 
 ## The structures that are not records
 
-**`Cycle`** — `cycles/<n>.md`, frontmatter and a body like a record, but not on the ladder: it has no
-id, no kind, and lives in `Config.plans` rather than in `Index.records`. Not a seventh kind, and that
-is a decision: `Record` would drag in a `status` its two dates already answer, a `depends_on` that
-between cycles is temporal and would put cycles in the scheduler's DAG and on the graph, and an
-`assignees` list with nowhere for the percentage the whole feature exists for — and it would reach
-`_place` with no size and draw itself a half-week bar nobody wrote. It stores **two dates, and
-both are meetings**: `starts_on` is the betting table and the first day of build, `reviews_on` is the
-review meeting, which is also the brainstorm for the next cycle. Beside them sit an `availability`
-fraction per person, a `goal` the betting table settles, and a body for what came up. Everything else
-— where build ends, how many **working** weeks it holds with the holidays taken out, where the
-cool-down ends — is derived by `Config.with_plans`, and a date the tool had to assume is marked as
-assumed on the page rather than printed as though somebody had chosen it. Lengths were stored
-instead, and a length is a prediction of a date somebody picks: it cannot know that a review moved
-for a conference, or that a cycle over the ETH closure holds a fortnight of building rather than
-four weeks — and since `capacity = availability × build weeks`, that last one was the betting table's
-own number being wrong.
+**`Cycle`** — `cycles/<n>.md`, frontmatter and a body like a record, but not on the ladder: no id, no
+kind, and it lives in `Config.plans`. It stores **two dates, and both are meetings**: `starts_on` is
+the betting table and the first day of build, `reviews_on` is the review. Beside them sit an
+`availability` fraction per person, a `goal`, and a body for what came up. Everything else — where
+build ends, how many **working** weeks it holds with the holidays taken out, where cool-down ends —
+is derived, and a date the tool had to assume is marked as assumed.
 
 A record's `cycle:` records **where a bet was made** and is never re-stamped, so an overrun keeps
-accusing. It lives on the thing that was bet, everything under a pitch takes the pitch's, and a
-project therefore has no cycle at all.
+accusing. Everything under a pitch takes the pitch's, and a project therefore has no cycle at all.
 
-**`Person`** — `people/<login>.md`, holding what one person chose for themselves (today, `icon`: the
-name of a drawing, not the drawing). **The login is the filename and is not a field**: every other
-record carries its id in the frontmatter because other records point at it, and nothing points at a
-person, so a second copy would only give the two halves of the app something to disagree about. Its
-body is not a field either — nothing reads it, no page offers a box for it, and a save hands it back
-byte for byte. A file each rather than a map in the config, because `store.write` merges frontmatter
-key-by-key and line-merges the prose below it: whole-file YAML through that turns two edits nobody
-would call a disagreement into text that is not YAML, and two people picking an icon at once write
-two different paths, where compare-and-swap is scoped.
+**`Person`** — `people/<login>.md`, holding what one person chose for themselves. **The login is the
+filename and is not a field**: nothing points at a person, so a second copy would only give the two
+halves of the app something to disagree about.
 
-**`Config`** — `config/*.yaml`: `schema_version` (the version new records are created at, not
-necessarily the corpus's), `nominal_availability`, `default_task_effort`, `cooldown_weeks`,
-`holidays`, the cycle windows, and `known_people`, the **roster**. Empty means the check is off, which
-is the right default; when it does name people, an owner, assignee or reviewer who is not on
-it is a warning and never a blocker, because the roster is maintained by hand and a new colleague must
-not be unassignable on their first day. It carries `plans` and `people` too, loaded from the record
-files rather than from any config file — the roster and a person's own record answer different
-questions and neither validates the other.
+**`Config`** — `config/*.yaml`: `schema_version`, `nominal_availability`, `default_task_effort`,
+`cooldown_weeks`, `holidays`, the cycle windows, and `known_people`, the **roster**. Empty means the
+check is off; when it does name people, somebody who is not on it is a warning and never a blocker.
 
 **`Problem` and `Unreadable`** — a `Problem` is keyed by record id, so every page hangs it on that
-record's row. An `Unreadable` is keyed by a path, deliberately not a `Problem`: a file that will not
-parse has no record, which is precisely what is wrong with it, and keying one to a record would add to
-a count whose filter can never show it.
-
-## The body
-
-The body of a pitch is prose and stays prose. Nothing validates it, rewrites it or requires a word of
-it — but two headings are read, because the team's own template already asks for them:
-
-- **`## Progress`** — a task list, which is a *task's* business. A pitch's progress is its tasks, each
-  ticked from its own `status` and weighted by its size, so `4/7.5 wk` is four weeks of a
-  seven-and-a-half-week bet rather than a count of rows. A pitch with no tasks yet has its own list
-  counted; one that keeps both is told which the page is reading. Counted, never written: a checkbox
-  stored beside a task's status is the same stale copy `blocks` would be.
-- **`## For later`** — deferred scope. The only record the plan keeps of a bet trimmed to fit its
-  appetite, and it was invisible until it had a name.
-
-A missing `## Rabbit holes` or `## No-gos` on a live pitch prints a note on that pitch's page and
-nowhere else — never in `openproj check`, never in CI, never blocking a save. A validator with an
-opinion about prose is one people route around.
-
-Creating a record starts from the team's own template, guidance in HTML comments exactly as HackMD
-carries it, stripped when the page renders — so a pitch drafted in either place is the same document.
-The three header lines of the HackMD template are covered instead: `Appetite` and `Developers` are
-fields here, `Shaped by` is what `owner` records now — a heading restating a field is the
-two-copies-of-one-fact problem this tool exists to end.
-
-🤖 Written by an agent on behalf of @jcanton
+record's row. An `Unreadable` is keyed by a path: a file that will not parse has no record, which is
+precisely what is wrong with it.

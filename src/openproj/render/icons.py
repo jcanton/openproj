@@ -99,8 +99,7 @@ _ICON_ART = {
         ' 6.7 19.6 8.4 13.5 3.4 9.5 9.8 9.2Z"/>'
     ),
     "cloud": (
-        '<path d="M7.4 18.6h9.8a4.2 4.2 0 0 0 .4-8 5.7 5.7 0 0 0-10.8-1.3'
-        'a4.8 4.8 0 0 0 .6 9.3Z"/>'
+        '<path d="M7.4 18.6h9.8a4.2 4.2 0 0 0 .4-8 5.7 5.7 0 0 0-10.8-1.3a4.8 4.8 0 0 0 .6 9.3Z"/>'
     ),
     "bolt": '<path d="M13.8 2.6 5.8 13.8h4.8l-.8 7.6 8.4-11.4h-5Z"/>',
     # Six spokes and a chevron at each tip, and nothing along them. The version
@@ -116,8 +115,7 @@ _ICON_ART = {
     # below: that one is tilted and carries a midrib, and a drop that leaned would
     # be the same lens.
     "drop": (
-        '<path d="M12 2.6c4.4 5.6 6.6 8.6 6.6 11.2a6.6 6.6 0 0 1-13.2 0'
-        'c0-2.6 2.2-5.6 6.6-11.2Z"/>'
+        '<path d="M12 2.6c4.4 5.6 6.6 8.6 6.6 11.2a6.6 6.6 0 0 1-13.2 0c0-2.6 2.2-5.6 6.6-11.2Z"/>'
     ),
     # The ring passes behind the body as two arcs that stop at its edge, rather
     # than as one ellipse crossing it. An ellipse drawn over the disc lays two

@@ -46,6 +46,7 @@ def _people_on(record: Record) -> list[str]:
     named = ([record.owner] if record.owner else []) + list(record.assignees)
     return list(dict.fromkeys(named))
 
+
 COMPUTED_PREDICATES = (
     "blocked",
     "unblocked",
@@ -482,8 +483,15 @@ NO_VALUE = "(none)"
 # table — the inbox kinds earn no exception. Anyone reopening this reopens it
 # for the query language (`body:` as a field), not for the blob.
 SEARCH_FIELDS = (
-    "id", "title", "tags", "prs", "owner", "assignees", "reviewers",
-    "reported_by", "written_by",
+    "id",
+    "title",
+    "tags",
+    "prs",
+    "owner",
+    "assignees",
+    "reviewers",
+    "reported_by",
+    "written_by",
 )
 
 
@@ -610,9 +618,7 @@ def build_index(
         # not `records`: an unplanned record with a hand-written `parent` is
         # already a containment problem, and counting it into a pitch's progress
         # would let the bad file move a number on the table.
-        kids = [
-            plan[k] for k in children[record_id] if k in plan and plan[k].status != "shelved"
-        ]
+        kids = [plan[k] for k in children[record_id] if k in plan and plan[k].status != "shelved"]
         rolling[record_id] = _progress_of(plan[record_id], kids, config, _rolled)
         return rolling[record_id]
 
@@ -651,9 +657,7 @@ def build_index(
         cooldown_weeks=config.cooldown_weeks,
         known_people=config.known_people,
         repositories=config.repositories,
-        icons={
-            login: person.icon for login, person in config.people.items() if person.icon
-        },
+        icons={login: person.icon for login, person in config.people.items() if person.icon},
         today=today,
         default_task_effort=config.default_task_effort,
         holidays=config.holidays,
@@ -728,9 +732,7 @@ def predicates_of(index: Index, record_id: str) -> list[str]:
     `apply_filters` answer `predicate:` from these lists, and a site that
     filtered `COMPUTED_PREDICATES` its own way would disagree silently.
     """
-    return [
-        name for name in COMPUTED_PREDICATES if _matches_predicate(index, record_id, name)
-    ]
+    return [name for name in COMPUTED_PREDICATES if _matches_predicate(index, record_id, name)]
 
 
 def query_fields(index: Index, record_id: str) -> dict[str, list[str]]:

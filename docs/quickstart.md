@@ -4,80 +4,59 @@ The plan is at <https://openproj-392761827400.europe-west1.run.app>. Sign in wit
 in C2SM you can write. There is no database behind it — every page is drawn from markdown files in
 `github.com/jcanton/icon4py-plan`, and every save is a commit there with your name on it.
 
-The landing page is **Records**: every record in the plan, one line each, newest edit first, with
-the search box above it — it is how you get back to the thing you were writing. The tabs are the
-plan seen several ways. **Table** is the plan's records, filterable and searchable, and is where
-most people live. **Graph** is the dependency diagram. **Timeline** is the Gantt. **Cycles** is one
-page per cycle, with what was bet in it and who has room. **People** is who is on what. **Help** is this page
-and the rest of the documentation, on one page inside the app. Clicking any record opens its own
-page, which is where you edit it.
+**Records** is the landing page: every record in the plan, one line each, newest edit first, with the
+search box above it. The tabs are the plan seen several ways — **Table** is where most people live,
+**Graph** is the dependency diagram, **Timeline** the Gantt, **Cycles** one page per cycle with what
+was bet in it and who has room, **People** who is on what. Clicking any record opens its own page,
+which is where you edit it. Filters live in the URL, so the view in front of you is a link, and there
+are no saved views to manage.
 
-Filters live in the URL, so the view in front of you is a link, and there are no saved views to
-manage.
-
-The plan is empty today, on purpose: it grows out of what the team bets on rather than out of an
-example nobody wrote. Start a cycle from **Cycles**, then write the first pitch.
+The plan is empty today, on purpose. Start a cycle from **Cycles**, then write the first pitch.
 
 ## The three things
 
 A **pitch** is a bet: a problem, a solution shaped to fit an appetite, and the argument for spending
-the time on it. It is what the betting table says yes or no to, and it is one file — the fields at
-the top, the shaping document underneath, so the thing being bet on and the reasoning never drift
-apart.
+the time on it. It is one file — the fields at the top, the shaping document underneath — so the
+thing being bet on and the reasoning never drift apart.
 
 A **task** is a piece of a pitch, with its own size and its own people, taking its cycle from the
-pitch it belongs to — a bet is made once, on the thing the room named. A task with no parent is a
-chore nobody pitched, and then it is bettable in its own right.
+pitch it belongs to. A task with no parent is a chore nobody pitched, and is bettable in its own
+right.
 
-A **cycle** is the block of weeks the team bets in, and its record stores two dates, both of them
-meetings: `starts_on` is the betting table and the first day of build, `reviews_on` is the review
-meeting. Where build ends, how many working weeks that is once the holidays are out, and where the
-cool-down ends are worked out from those two and from what fraction of the weeks each person has.
+A **cycle** is the block of weeks the team bets in. It stores two dates, both of them meetings:
+`starts_on` is the betting table and the first day of build, `reviews_on` is the review. Where build
+ends, how many working weeks that is once the holidays are out, and where cool-down ends are all
+derived from those two and from each person's availability.
 
-Two more you will meet. A **project** groups pitches into a milestone: it has no size, is never bet,
-and its span is the rollup of what is inside it. An **issue** is somewhere to put a half-formed
-thing — most issues will never be worked on, which is exactly what they are for, and a shaped issue
-is a pitch.
-
-And one that is none of those. A **note** is an idea before anybody knows what it is: an issue is
-"we found something existing that is broken", a note is "we are thinking of creating something that
-does not exist and our ideas are confused". It has no appetite, no owner and no size, and it lives
-on **Records** and its own page, on no view of the plan — which is the point, because a plan
-showing bets nobody has made is a plan you cannot read. When it turns out to be work, **Promote**
-turns it into a project, a pitch or a task in one commit: the new record starts in Shaping carrying
-the note's title, tags and text, and says in its own shaping document where it came from. The note
-stays, and points at what it became. The same button on an issue writes the pitch — or the task —
-for it.
+Three more you will meet. A **project** groups pitches into a milestone: no size, never bet, its span
+the rollup of what is inside it. An **issue** is somewhere to put something existing that is broken —
+most issues will never be worked on, which is exactly what they are for. A **note** is an idea before
+anybody knows what it is: no appetite, no owner, no size, and on no view of the plan. **Promote**
+turns either into a project, a pitch or a task in one commit; the source stays, and points at what it
+became.
 
 ## Appetite is person-weeks
 
 A size is the work **one person** would need. It is not elapsed time, and that is the distinction
-people get wrong first.
-
-Six person-weeks with one person on it, at full availability, is six weeks. Put two people on it and
-it is three. Give it to one person who is half on something else and it is twelve. The cycle's
-roster says what fraction each person has, and the scheduler divides the size among the people at
-their own availability.
+people get wrong first: six person-weeks is six weeks for one person at full availability, three for
+two people, twelve for one person who is half on something else. The cycle's roster says what
+fraction each person has.
 
 A pitch that has tasks takes its dates and its load from them, so the pitch's own appetite stays
-what it always was: **the bet**, as the room agreed it, kept as written. When the tasks add up to
-more than it, the pitch page says so and `openproj check` warns. Nothing refuses the save — cutting
-scope or re-betting is a decision for a person, not for a validator.
+**the bet**, as the room agreed it. When the tasks add up to more, the page says so and `openproj check` warns — but nothing refuses the save, because cutting scope or re-betting is a decision for a
+person.
 
 ## Nobody types a date
 
 There is exactly one date to type: `assigned_on`, the earliest day the work may start. Starts, ends,
-the critical path, when a person frees up, whether something runs past the end of its cycle — all
-derived, from the sizes, the dependencies and the roster.
+the critical path, when a person frees up, whether something runs past its cycle — all derived from
+the sizes, the dependencies and the roster. So when a date is wrong, do not go looking for the date:
+change a size, change what the thing depends on, or change an availability.
 
-So when a date is wrong, do not go looking for the date. Change a size, change what the thing
-depends on, or change an availability. There is nowhere to type an end date on purpose: a typed date
-is a second copy of a fact the graph already holds, and the two disagree within the week.
-
-Only `depends_on` is stored, and it is stored on the thing that is waiting. What a record blocks is
-derived by reversing that, so the two can never contradict each other. Any kind may depend on any
-kind — a task can wait on a whole pitch — and a dependency written on a pitch is what every task
-inside it waits for.
+Only `depends_on` is stored, and on the thing that is waiting; what a record blocks is derived by
+reversing it, so the two can never contradict each other. Any kind may depend on any kind — a task
+can wait on a whole pitch — and a dependency written on a pitch is what every task inside it waits
+for.
 
 ## Writing one
 
@@ -85,57 +64,117 @@ inside it waits for.
 in comments that never render: Problem, Appetite, Solution, Rabbit holes, No-gos, For later. It is
 the HackMD template you already write, so a pitch drafted in either place is the same document.
 
-Write prose. Nothing here validates it, rewrites it, or asks for a word of it. Two headings are read
-rather than judged:
+Write prose; nothing validates it. Two headings are read rather than judged:
 
 - `## Progress` on a **task** is its checklist. A pitch's progress is its tasks instead, weighted by
   their sizes — so `4/7.5 wk` means four weeks of a seven-and-a-half-week bet, not four ticks out of
-  seven. It is counted, never stored: a checkbox kept beside a task's status is stale the first time
-  somebody closes that task from the table.
+  seven.
 - `## For later` on a pitch is scope cut to fit the appetite. It is the only record the plan keeps of
   a bet that was trimmed, and it was invisible until it had a name.
-
-The header lines of the HackMD template are covered without being headings: Appetite and Developers
-are fields here, and Shaped by is what `owner` records now. A heading restating a field is the
-two-copies-of-one-fact problem this tool exists to end.
 
 ## The statuses
 
 Six, in the order work moves through them. What each one additionally requires is checked when you
 save and by `openproj check`.
 
-| status | what it means | what it then requires |
-|---|---|---|
-| `thinking` | nobody has looked at this yet, and it is where a new record opens | nothing |
-| `shaping` | an idea nobody has bet on | nothing — it has no owner and no size by definition |
-| `ready` | shaped, and bettable | an owner, somebody assigned, a reviewer or `review_waived`, and a size |
-| `in_progress` | being built | `assigned_on`, and a reviewer who is not the owner |
-| `done` | finished | at least one PR |
-| `shelved` | parked | nothing — parked work is not broken work |
+| status        | what it means                                                     | what it then requires                                                  |
+| ------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `thinking`    | nobody has looked at this yet, and it is where a new record opens | nothing                                                                |
+| `shaping`     | an idea nobody has bet on                                         | nothing — it has no owner and no size by definition                    |
+| `ready`       | shaped, and bettable                                              | an owner, somebody assigned, a reviewer or `review_waived`, and a size |
+| `in_progress` | being built                                                       | `assigned_on`, and a reviewer who is not the owner                     |
+| `done`        | finished                                                          | at least one PR                                                        |
+| `shelved`     | parked                                                            | nothing — parked work is not broken work                               |
 
-An issue has four of them. There is no `shaping`, because a shaped issue is a pitch — and no
-`thinking`, because an issue is something somebody noticed and reported, which is already more
-thought than `thinking` claims.
-
-A note has `thinking` and `dropped` and nothing between them: a note is not work being done, it is
-a thought waiting to be promoted into something that is.
+An issue has four of them: no `shaping`, because a shaped issue is a pitch, and no `thinking`,
+because an issue is something somebody reported. A note has `thinking` and `dropped` and nothing
+between them.
 
 A record that is missing something still saves and still loads; the page says what is wrong, beside
 the record it is wrong on. A rule only *blocks* records written after that rule existed — older ones
-warn instead — so a new required field does not invalidate the plan overnight.
+warn instead.
+
+## Editing a record
+
+Clicking a record opens its page, and that page is the editor. It lands on the reading view; the
+writing box and a live preview sit side by side, and the split between them is draggable. The fields
+at the top are the frontmatter and the box below is the shaping document — one form, one **Save**,
+one commit. **Reset** puts everything back to what was on the page when you arrived and leaves you
+in the editor.
+
+The status control is the hill beside the title: drag the ball to the stop you want. Changing a
+record's kind is the chip beside it — a pitch that turns out to be a task does not have to be
+rewritten. **Promote** on an issue or a note writes the pitch, the task or the project it becomes,
+in the same commit that marks the source. **Delete** asks first.
+
+The button beside the image button opens a drawing canvas; what you draw is saved as a PNG in the
+plan repository and referenced from the body, so a sketch on a pitch is versioned with the pitch.
+
+Several people can have the same document open and type in it at once. It still ends as one commit,
+authored by whoever wrote the most of it, with a `Co-authored-by:` for everybody else. If somebody
+committed to the same record while you were writing, the page says so in one line and keeps your
+draft rather than throwing it away.
 
 ## Editing it in git
 
 Both directions are first class. The files are ordinary markdown, a save from the browser is one
-commit, and a commit you push by hand is read on the next request. A save only rewrites the fields
-whose values actually changed, so comments, key order and list style survive it.
-
+commit, and a commit you push by hand is picked up within a minute of somebody using the service. A
+save only rewrites the fields whose values changed, so comments, key order and list style survive it.
 From a clone, with no service running:
 
 ```bash
 openproj check .        # every rule, exits non-zero only on blockers
 openproj schedule .     # the derived dates, one line per record, with the reason
 openproj render . out/  # the pages as static files
+```
+
+`openproj render` writes the whole plan as static files, which is the copy to keep when there is no
+service left to serve it. To run the editable server against a plan of your own, point it at a bare
+clone:
+
+```bash
+git clone --bare https://github.com/jcanton/icon4py-plan.git plan.git
+openproj serve --repo plan.git --auth dev
+```
+
+`--auth dev` skips sign-in and is for a local run only. To see the tool with no plan to point it at,
+`openproj demo` serves a bundled corpus offline, in a temporary directory it builds for itself.
+
+## Writing a record from a terminal
+
+`openproj new` is the other door into the plan, and the one to use when there is no browser — a
+script, a CI job, an agent working in the codebase the plan is about.
+
+```bash
+openproj new issue . --title "Quadratic extrapolation lives in two places" \
+    --tag dycore --as jcanton --commit
+```
+
+It mints the id, files the record in its kind's directory, starts the body from that kind's shaping
+template, and stamps the day and the schema version the repository is on. Then it holds the record to
+every rule `check` holds it to, *before* anything reaches the disk: a blocker means nothing is
+written at all, so there is never a bad file to `rm` your way out of. A warning is printed and the
+record is written anyway, which is the case this exists for:
+
+```
+warning: issue-b71a56: prs: an issue is never scheduled, so its prs is not read
+```
+
+`prs` is a real field on the model, so nothing refuses it — it is simply never read on a record that
+is never scheduled, and that is the kind of thing you cannot see by copying the record next door. The
+six things `new` does not ask you for are the six that somebody copying gets wrong: the id, the
+directory, the body template, the opening status, the date, and the schema version.
+
+`--set field=value` writes any other field, repeatably, with the value read as YAML — `--set person_weeks=1.5` is a number, `--set review_waived=true` is a boolean, and a field that holds a list
+takes one `--set` per entry. `--body-file` replaces the template and `-` reads the body from stdin.
+`--json` prints the id and the path, for a caller that is not a person. Without `--commit` it writes
+the file and prints the git commands; with it, the next command is `git push` and nothing else.
+
+Nothing has to be installed first:
+
+```bash
+uvx openproj new issue . --title "…"                              # from PyPI
+uvx --from git+https://github.com/jcanton/openproj openproj new …  # straight from this repository
 ```
 
 🤖 Written by an agent on behalf of @jcanton

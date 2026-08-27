@@ -143,8 +143,14 @@ def coedit_characters(verdict: Verdict, plan: Path, head: str, typed: list) -> N
 
 def form_changes(verdict: Verdict, plan: Path, head: str, sent: list) -> None:
     files, _ = _final_bodies(plan, head)
-    counts = {"committed": 0, "refused": 0, "lost": 0, "ambiguous_present": 0,
-              "ambiguous_absent": 0, "refused_but_present": 0}
+    counts = {
+        "committed": 0,
+        "refused": 0,
+        "lost": 0,
+        "ambiguous_present": 0,
+        "ambiguous_absent": 0,
+        "refused_but_present": 0,
+    }
     lost, ambiguous = [], []
     for one in sent:
         text = files.get(one.record, "")
@@ -216,11 +222,17 @@ def conflict_markers(verdict: Verdict, plan: Path) -> None:
             except (KeyError, UnicodeDecodeError):
                 continue
             if ("<<<<<<<" in text or ">>>>>>>" in text) and (
-                str(commit.id), delta.new_file.path
+                str(commit.id),
+                delta.new_file.path,
             ) not in seen:
                 seen.add((str(commit.id), delta.new_file.path))
-                found.append({"commit": str(commit.id)[:10], "path": delta.new_file.path,
-                              "at": "the commit that wrote it"})
+                found.append(
+                    {
+                        "commit": str(commit.id)[:10],
+                        "path": delta.new_file.path,
+                        "at": "the commit that wrote it",
+                    }
+                )
     verdict.checks["conflict_markers"] = {"commits_walked": walked, "found": found}
     if found:
         verdict.say(LOST, f"{len(found)} committed blobs carry a conflict marker", found[:10])
@@ -231,8 +243,11 @@ def pushed(verdict: Verdict, plan: Path, origin: Path | None) -> None:
 
     local = harness.head_of(plan)
     if origin is None or not origin.exists():
-        verdict.checks["push"] = {"local": local[:10], "origin": None,
-                                  "note": "no remote was configured for this run"}
+        verdict.checks["push"] = {
+            "local": local[:10],
+            "origin": None,
+            "note": "no remote was configured for this run",
+        }
         return
     remote = harness.head_of(origin)
     git = pygit2.Repository(str(plan))
@@ -241,9 +256,7 @@ def pushed(verdict: Verdict, plan: Path, origin: Path | None) -> None:
         seen = {str(c.id) for c in git.walk(git[remote].id)} if git.get(remote) else set()
         unpushed = sum(1 for c in git.walk(git[local].id) if str(c.id) not in seen)
     forked = (
-        local != remote
-        and git.get(remote) is not None
-        and not git.descendant_of(local, remote)
+        local != remote and git.get(remote) is not None and not git.descendant_of(local, remote)
     )
     verdict.checks["push"] = {
         "local": local[:10],
@@ -273,8 +286,10 @@ def fsck(verdict: Verdict, plan: Path, origin: Path | None) -> None:
             capture_output=True,
             text=True,
         )
-        out[name] = {"returncode": done.returncode,
-                     "output": (done.stdout + done.stderr).strip()[:2000]}
+        out[name] = {
+            "returncode": done.returncode,
+            "output": (done.stdout + done.stderr).strip()[:2000],
+        }
         if done.returncode != 0:
             verdict.say(BROKEN, f"git fsck failed on {name}", out[name])
     verdict.checks["fsck"] = out
@@ -294,7 +309,8 @@ def snapshot(plan: Path) -> dict:
     try:
         subprocess.run(
             ["git", "clone", "--quiet", str(plan), str(where / "plan")],
-            check=True, capture_output=True,
+            check=True,
+            capture_output=True,
         )
         records, config, unreadable = load_repo(where / "plan")
         problems = validate_all(records, config)
@@ -399,8 +415,9 @@ def fields_are_values_somebody_sent(verdict: Verdict, plan: Path, head: str, sen
             verdict.say(BROKEN, f"{record} no longer parses: {error}")
             continue
         if record.person_weeks is not None and record.person_weeks not in values:
-            invented.append({"record": record, "final": record.person_weeks,
-                             "sent": sorted(values)})
+            invented.append(
+                {"record": record, "final": record.person_weeks, "sent": sorted(values)}
+            )
     verdict.checks["fields"] = {"checked": len(wanted), "invented": invented}
     if invented:
         verdict.say(BROKEN, "a committed person_weeks is a value nobody sent", invented)
@@ -409,8 +426,14 @@ def fields_are_values_somebody_sent(verdict: Verdict, plan: Path, head: str, sen
 # -- the whole verdict -------------------------------------------------------
 
 
-def verify(plan: Path, origin: Path | None, typed: list, sent: list,
-           logins: set[str] | None = None, before: dict | None = None) -> dict:
+def verify(
+    plan: Path,
+    origin: Path | None,
+    typed: list,
+    sent: list,
+    logins: set[str] | None = None,
+    before: dict | None = None,
+) -> dict:
     verdict = Verdict()
     head = harness.head_of(plan)
     verdict.checks["head"] = head[:10]
@@ -430,6 +453,8 @@ def summary(result: dict) -> str:
     for finding in result["findings"]:
         lines.append(f"  [{finding['severity']}] {finding['what']}")
     if not lines:
-        lines.append("  nothing to report: every write is committed or refused, "
-                     "nothing is unpushed, the plan parses")
+        lines.append(
+            "  nothing to report: every write is committed or refused, "
+            "nothing is unpushed, the plan parses"
+        )
     return "\n".join(lines)

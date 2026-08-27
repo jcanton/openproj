@@ -1591,7 +1591,9 @@ if (PICK && PICKER) {
 # list and the Table page both open with the same line — the class was on the
 # markup here and dressed by nothing, which is a wrapper that scrolls the
 # document instead of itself.
-_PEOPLE_STYLE = _SCROLL_STYLE + """
+_PEOPLE_STYLE = (
+    _SCROLL_STYLE
+    + """
 .hint { max-width: 46rem; font-size: 13px; }
 #roles { border-collapse: collapse; width: 100%; max-width: 72rem; font-size: 13px; }
 #roles th, #roles td { border-bottom: 1px solid var(--line); padding: .3rem .5rem;
@@ -1721,6 +1723,7 @@ button.pick.unset::before { content: ""; width: 1.1rem; height: 1.1rem; border-r
 .groupline #state { flex: 0 0 100%; color: var(--muted); font-size: 12px; }
 .groupline #state.bad { color: var(--warn); }
 """
+)
 
 _ROLES = (("owner", "owner"), ("assignees", "assignee"), ("reviewers", "reviewer"))
 
@@ -1860,8 +1863,7 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         # The same two exclusions `load` makes, so this list explains that number
         # and not a different one: a parent is a rollup and charges nothing, and
         # work with nobody on it charges nobody.
-        if not index.children.get(i)
-        and (index.plan[i].owner or index.plan[i].assignees)
+        if not index.children.get(i) and (index.plan[i].owner or index.plan[i].assignees)
     ]
 
     candidates = []
@@ -1869,9 +1871,8 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
     # betting table is what to pick up, and what is already running is context.
     order = ("ready", "in_progress")
     for record_id, record in sorted(
-        index.plan.items(), key=lambda kv: (order.index(kv[1].status)
-                                                if kv[1].status in order else len(order),
-                                                kv[0])
+        index.plan.items(),
+        key=lambda kv: (order.index(kv[1].status) if kv[1].status in order else len(order), kv[0]),
     ):
         # A bet is made on a pitch, or on a chore nobody pitched. A task under a
         # pitch is part of that bet and comes with it; a project is a container
@@ -1880,9 +1881,7 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         # and ticking any of them stamped a second cycle onto one decision.
         if record.status not in order or not is_bettable(record):
             continue
-        size, defaulted = size_weeks(
-            record, Config(default_task_effort=index.default_task_effort)
-        )
+        size, defaulted = size_weeks(record, Config(default_task_effort=index.default_task_effort))
         candidates.append(
             {
                 "id": record_id,
@@ -2014,9 +2013,7 @@ def _cycle_totals(index: Index, number: int) -> dict:
         if plan
         else (window[0].isoformat() if window else ""),
         "builds_until": plan.builds_until.isoformat() if plan else "",
-        "ends_on": plan.ends_on.isoformat()
-        if plan
-        else (window[1].isoformat() if window else ""),
+        "ends_on": plan.ends_on.isoformat() if plan else (window[1].isoformat() if window else ""),
         "people": len(plan.availability) if plan else 0,
         "bet": bet,
         "capacity": capacity,
@@ -2025,9 +2022,7 @@ def _cycle_totals(index: Index, number: int) -> dict:
     }
 
 
-def render_cycles(
-    index: Index, links: Links = STATIC, base_commit: str | None = None
-) -> str:
+def render_cycles(index: Index, links: Links = STATIC, base_commit: str | None = None) -> str:
     # Every cycle the plan names, not only the ones with a file. A cycle dated in
     # config, or one that records point at with nothing behind it, is exactly
     # the cycle somebody needs to find: it holds work and holds no record.
@@ -2065,9 +2060,7 @@ def render_cycles(
             # `days_after`, because the cycle this reads from may be the one
             # somebody dated at the end of the calendar: a day past that would be
             # `/cycles` gone too.
-            "starts_on": days_after(ends[1], 1).isoformat()
-            if ends
-            else index.today.isoformat(),
+            "starts_on": days_after(ends[1], 1).isoformat() if ends else index.today.isoformat(),
             "reviews_on": days_after(
                 days_after(ends[1], 1) if ends else index.today,
                 _DEFAULT_CYCLE_DAYS
@@ -2088,7 +2081,11 @@ def render_cycles(
         roster=last.availability if last else {},
     )
     return _page(
-        "openproj — cycles", body, _DETAIL_STYLE + _CYCLE_STYLE, links, "cycles",
+        "openproj — cycles",
+        body,
+        _DETAIL_STYLE + _CYCLE_STYLE,
+        links,
+        "cycles",
         index.unreadable,
     )
 
@@ -2134,8 +2131,7 @@ def _person_load(index: Index, logins: list[str]) -> dict:
     return {"cycle": number, "recorded": plan is not None, "people": people}
 
 
-def render_people(index: Index, links: Links = STATIC, editable: bool = False,
-                  me: str = "") -> str:
+def render_people(index: Index, links: Links = STATIC, editable: bool = False, me: str = "") -> str:
     """Everyone in the plan, and what they are on the hook for.
 
     Built from the fields rather than from a roster: a page that reads a separate

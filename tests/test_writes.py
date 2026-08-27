@@ -58,23 +58,33 @@ def pages(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
         head = client.get("/healthz").json()["head"]
         bet = client.patch(
             f"/api/record/{TASK}",
-            json={"base_commit": head, "fields": {"cycle": 41, "assignees": ["ann"]},
-                  "body": None},
+            json={"base_commit": head, "fields": {"cycle": 41, "assignees": ["ann"]}, "body": None},
         )
         client.put(
             "/api/cycle/41",
-            json={"base_commit": bet.json()["commit"],
-                  "fields": {"starts_on": "2026-08-17", "reviews_on": "2026-09-14",
-                             "availability": {"ann": 0.5, "bo": 1.0}},
-                  "body": "## Goal\n\nShip it.\n"},
+            json={
+                "base_commit": bet.json()["commit"],
+                "fields": {
+                    "starts_on": "2026-08-17",
+                    "reviews_on": "2026-09-14",
+                    "availability": {"ann": 0.5, "bo": 1.0},
+                },
+                "body": "## Goal\n\nShip it.\n",
+            },
         )
-        routes = {"cycle": "/cycle/41", "table": "/table", "detail": f"/detail/{TASK}",
-                  "graph": "/graph", "cycles": "/cycles", "new": "/new?kind=task",
-                  # ann owns a task in this corpus, so she has a row on the People
-                  # page and the row has her picker on it. A person who holds
-                  # nothing gets no row and no picker, which is the page's rule
-                  # and not an accident of this fixture.
-                  "people": "/people"}
+        routes = {
+            "cycle": "/cycle/41",
+            "table": "/table",
+            "detail": f"/detail/{TASK}",
+            "graph": "/graph",
+            "cycles": "/cycles",
+            "new": "/new?kind=task",
+            # ann owns a task in this corpus, so she has a row on the People
+            # page and the row has her picker on it. A person who holds
+            # nothing gets no row and no picker, which is the page's rule
+            # and not an accident of this fixture.
+            "people": "/people",
+        }
         drawn = {}
         for name, route in routes.items():
             answer = client.get(route)
@@ -251,12 +261,15 @@ def test_no_write_path_reads_a_key_a_conflict_does_not_carry():
     of the bug: it is a page deciding what the answer holds without knowing that
     the status could be 409."""
     stray = [
-        line.strip() for line in render_source().splitlines()
-        if "answer.detail" in line and not line.lstrip().startswith("//")
+        line.strip()
+        for line in render_source().splitlines()
+        if "answer.detail" in line
+        and not line.lstrip().startswith("//")
         # `refusal` itself is the one place that may read it, and the asset
         # uploader posts to an endpoint that cannot conflict — an image is named
         # by the hash of its own bytes, so there is nothing to disagree about.
-        and not line.strip().startswith("return answer.detail") and "upload" not in line
+        and not line.strip().startswith("return answer.detail")
+        and "upload" not in line
     ]
 
     assert not stray, stray
@@ -288,9 +301,11 @@ def test_the_tables_conflict_banner_goes_when_the_next_save_lands(pages):
     answer = drive(
         pages["table"],
         SAVE_A_CELL_TWICE,
-        [{"status": 409, "json": CONFLICT},          # the cell, refused
-         {"status": 200, "json": {"commit": "a" * 40, "outcome": "written"}},
-         {"status": 200, "json": {"problems": []}}],  # the problems it re-reads after
+        [
+            {"status": 409, "json": CONFLICT},  # the cell, refused
+            {"status": 200, "json": {"commit": "a" * 40, "outcome": "written"}},
+            {"status": 200, "json": {"problems": []}},
+        ],  # the problems it re-reads after
     )
     got = answer["value"]
 
@@ -629,8 +644,7 @@ def test_a_refused_pick_leaves_the_list_open_with_the_reason_beside_it(pages):
 # The two shas are what makes the sentence actionable, and `_absorb_remote`'s own
 # wording is what carries them.
 _FORK = StoreDiverged(
-    "local abc1234 and remote def5678 have both moved; "
-    "refusing to guess which commits to discard"
+    "local abc1234 and remote def5678 have both moved; refusing to guess which commits to discard"
 )
 WEDGED = {"detail": _refusal(_FORK).detail}
 WEDGED_STATUS = _refusal(_FORK).status_code
@@ -644,9 +658,7 @@ def test_a_forked_plan_gives_the_page_back_and_says_why(pages):
     looking. This is the same shape as the plain-text 500 that took `flush()`
     down with it, and the difference is that there is now something to read.
     """
-    answer = drive(
-        pages["cycle"], SAVE_THE_ROSTER, [{"status": WEDGED_STATUS, "json": WEDGED}]
-    )
+    answer = drive(pages["cycle"], SAVE_THE_ROSTER, [{"status": WEDGED_STATUS, "json": WEDGED}])
     got = answer["value"]
 
     assert got["threw"] is None, "the refusal came back as an exception nobody catches"
@@ -669,9 +681,7 @@ def test_every_page_that_writes_says_the_whole_sentence_a_forked_plan_answers(pa
     carry. That is asserted here from the browser's side — whatever `_refusal`
     picks, this page has to print the sentence and not the empty-report wording.
     """
-    answer = drive(
-        pages[page], f"refusal({json.dumps(WEDGED)}, {WEDGED_STATUS})"
-    )
+    answer = drive(pages[page], f"refusal({json.dumps(WEDGED)}, {WEDGED_STATUS})")
 
     assert answer["value"] == WEDGED["detail"]
     assert "somebody else changed this first" not in answer["value"], (

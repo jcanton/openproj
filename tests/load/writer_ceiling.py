@@ -154,7 +154,8 @@ def main(where: Path, seconds: float, points: list[float]) -> dict:
     head = corpus.build(plan, pitches=8, tasks_each=3, notes=4, issues=4)
     subprocess.run(
         ["git", "clone", "--bare", "--quiet", str(plan), str(origin)],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
     install_shim()
     paths = task_paths(plan, THREADS)

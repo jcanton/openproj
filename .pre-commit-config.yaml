@@ -7,6 +7,33 @@
 # `--no-verify`d, and then uninstalled, by exactly the person it was written to
 # help. The suite is the merge gate's job; this file is only for what is cheap
 # enough to never think about.
+#
+# **THREE TREES IN THIS REPOSITORY ARE NOT OURS TO REFORMAT**, and every hook
+# below that rewrites a file carries the same exclusion, written once as
+# `&frozen` and referenced after:
+#
+#   `static/`           vendored libraries, pinned. `static/VENDOR.md` records
+#                       the bytes and the sha of each; a formatter that strips a
+#                       trailing space from `ace.js` makes the file we ship stop
+#                       being the file upstream published, and the record of what
+#                       we vendored stops being checkable.
+#   `tests/fixtures/`   the frozen golden corpus and `roundtrip.md`. `model.py`
+#                       round-trips a record BYTE FOR BYTE — that is what lets a
+#                       save rewrite one field and leave a hand-written comment,
+#                       a key order and a list style exactly as somebody typed
+#                       them — and the scheduler's goldens are measured against
+#                       this corpus. A hook that renumbers a list in there
+#                       rewrites the fixture the goldens are pinned to, and the
+#                       failure it produces reads as a scheduling bug.
+#   `seed/`             the same corpus wearing the demo's clothes, plus a README
+#                       `test_cli.py` reads a sentence out of.
+#   `design/probes/load/`
+#                       measurement artifacts. A probe's JSON is what a run
+#                       actually produced; reformatting it edits a measurement.
+#
+# The parse checks (`check-json`, `check-yaml`, `check-added-large-files`) are
+# deliberately NOT excluded from those trees: they read and never write, and a
+# large file or a broken JSON is worth hearing about wherever it lands.
 repos:
   # Same version as the ruff resolved in `uv.lock` for the dev group. Bump the
   # two together: a hook that formats a file the way CI's ruff then rejects is
@@ -16,18 +43,21 @@ repos:
     hooks:
       - id: ruff-check
         args: [--fix]
-      # This repo is not format-clean yet (32 files of 103), and the hook only
-      # touches what you staged — so the first commit to an old file carries
-      # that file's reformat into an unrelated diff. `uv run ruff format .` as
-      # its own commit gets the noise out of everybody's review at once, and is
-      # the same commit that lets CI start checking format.
+        exclude: &frozen ^(static/|tests/fixtures/|seed/|design/probes/load/)
+      # Run over the whole tree once, in its own commit, the day these hooks
+      # were extended: 97 files of 124 were not format-clean, and a hook that
+      # only touches what you staged would have landed each file's back-format
+      # inside somebody's unrelated diff.
       - id: ruff-format
+        exclude: *frozen
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
+        exclude: *frozen
       - id: end-of-file-fixer
+        exclude: *frozen
       # Conflict markers reach a branch that two other worktrees are cut from,
       # and history here does not move — so a marker committed is a marker
       # fixed forward, in public, forever.
@@ -38,3 +68,72 @@ repos:
       # people learn to skip. This is for the stray screenshot or database dump.
       - id: check-added-large-files
         args: [--maxkb=1000]
+      # The parse checks icon4py runs, minus the ones for file kinds this
+      # repository does not have. A malformed `ci.yml` or `pyproject.toml` is a
+      # failure that otherwise waits for a push to be noticed.
+      - id: check-toml
+      - id: check-yaml
+        # `--unsafe` for icon4py's reason: a check that refuses a custom tag
+        # refuses a valid workflow. This parses the structure and not the tags.
+        args: [--unsafe]
+      - id: check-json
+      - id: check-case-conflict
+      # A `breakpoint()` or a bare `pdb` import reaching main is a server that
+      # hangs on the request that hits it, with nothing in the log to say why.
+      - id: debug-statements
+
+  # Everything below came from icon4py's own `.pre-commit-config.yaml`, at the
+  # revisions it pins, so a person moving between the two repositories meets one
+  # formatter and not two opinions. What was deliberately left there: `mypy` and
+  # `tach` (AGENTS.md, "Type checking: measured, not adopted"), and the
+  # licence-header hook, which is that project's `HEADER.txt`.
+
+  # The markdown formatter, and this repository is mostly markdown: four
+  # documents on the Help page, a directory of design records, and AGENTS.md.
+  # `--wrap` is left at its default of `keep`, which is icon4py's setting too —
+  # these documents are hand-wrapped at about a hundred columns and a formatter
+  # that re-flowed every paragraph would make the first prose commit after it
+  # unreviewable.
+  - repo: https://github.com/hukkin/mdformat
+    rev: 0.7.22
+    hooks:
+      - id: mdformat
+        additional_dependencies:
+          - mdformat-frontmatter
+          - mdformat-gfm
+          - mdformat-gfm-alerts
+          - mdformat-tables
+        args: [--number]
+        exclude: *frozen
+
+  - repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
+    rev: v2.15.0
+    hooks:
+      - id: pretty-format-toml
+        args: [--autofix, --indent, "2"]
+        # `uv.lock` on top of the frozen trees: it is generated, `uv lock` writes
+        # it in uv's own layout, and a formatter that rewrites it makes every
+        # dependency change a two-way fight between two tools.
+        exclude: ^(static/|tests/fixtures/|seed/|design/probes/load/|uv\.lock$)
+      - id: pretty-format-yaml
+        args: [--autofix, --preserve-quotes, --indent, "2", --offset, "2"]
+        exclude: *frozen
+
+  - repo: https://github.com/abravalheri/validate-pyproject
+    rev: v0.24.1
+    hooks:
+      - id: validate-pyproject
+
+  - repo: local
+    hooks:
+      # `uv lock` on a dependency change, so the lockfile CI installs from and
+      # the `pyproject.toml` a reviewer reads cannot describe two different
+      # environments. Run through the repository's own uv rather than a copy
+      # pinned here, which is icon4py's reasoning for its uv-managed hooks.
+      - id: uv-lock
+        name: uv-lock
+        entry: uv lock
+        language: python
+        additional_dependencies: [uv>=0.6.10]
+        files: ^(uv\.lock|pyproject\.toml|uv\.toml)$
+        pass_filenames: false

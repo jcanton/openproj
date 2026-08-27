@@ -6,7 +6,7 @@ server-side time per push, measured — and a coroutine holding one would hold
 the event loop that answers every page. And CPU is allocated only while a
 request is in flight, so a timer cannot be relied on to fire at all; this
 thread does no timing of its own except to back off, and is otherwise driven
-entirely by the poke a commit makes (docs/deferred-push.md, "Why not batch on
+entirely by the poke a commit makes (design/deferred-push.md, "Why not batch on
 a timer").
 
 The thread owns every conversation with the remote. `sync()` works on a fresh
@@ -80,9 +80,7 @@ class Pusher:
         # A daemon, so a process that dies without calling `close` is not held
         # open by this thread waiting on a poke that will never come. The drain
         # on an orderly shutdown does not rely on daemonhood; `close` joins.
-        self._thread = threading.Thread(
-            target=self._run, name="openproj-pusher", daemon=True
-        )
+        self._thread = threading.Thread(target=self._run, name="openproj-pusher", daemon=True)
 
     def start(self) -> None:
         # Poked once at birth: a backlog can predate this process — a laptop

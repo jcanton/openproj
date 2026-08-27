@@ -72,25 +72,42 @@ def main(argv: list[str] | None = None) -> int:
     unreachable_at = round(window * 0.27, 1)
     reachable_at = round(window * 0.53, 1)
 
-    with harness.Harness(seed=args.seed, corpus="corpus", size="small",
-                         port=args.port, remote=True) as world:
+    with harness.Harness(
+        seed=args.seed, corpus="corpus", size="small", port=args.port, remote=True
+    ) as world:
         ids = world.record_ids("task-")
         before = verify.snapshot(world.plan)
         zero = time.monotonic()
         writers = [
-            users.FormWriter(f"writer-{i}", harness.PEOPLE[i], world, ledger, args.seed,
-                             0.0, zero, record=ids[i], gap=args.gap, style="append")
+            users.FormWriter(
+                f"writer-{i}",
+                harness.PEOPLE[i],
+                world,
+                ledger,
+                args.seed,
+                0.0,
+                zero,
+                record=ids[i],
+                gap=args.gap,
+                style="append",
+            )
             for i in range(args.writers)
         ]
         # One reader, because half of what this probe is about is that nothing
         # a reader can see changes: every page is drawn from the LOCAL ref, so a
         # service that cannot write a single character still answers 200 on
         # every route and on `/api/health`. That is why nobody finds out.
-        reader = users.Reader("reader-0", harness.PEOPLE[3], world, ledger, args.seed,
-                              0.0, zero, ids=ids, think=0.4)
+        reader = users.Reader(
+            "reader-0", harness.PEOPLE[3], world, ledger, args.seed, 0.0, zero, ids=ids, think=0.4
+        )
         terminal = adversarial.Terminal(
-            origin=world.origin, plan=world.plan, clone=world.work / "terminal",
-            base_url=world.base, zero=zero, schedule=[], watch_seconds=10.0,
+            origin=world.origin,
+            plan=world.plan,
+            clone=world.work / "terminal",
+            base_url=world.base,
+            zero=zero,
+            schedule=[],
+            watch_seconds=10.0,
         )
         terminal.prepare()
 
@@ -103,20 +120,29 @@ def main(argv: list[str] | None = None) -> int:
         try:
             time.sleep(max(0.0, zero + unreachable_at - time.monotonic()))
             subprocess.run(["chmod", "-R", "a-w", str(world.origin)], check=True)
-            timeline.append({"at": unreachable_at, "what": "origin made unwritable: "
-                             "every push from here fails while the commit succeeds"})
+            timeline.append(
+                {
+                    "at": unreachable_at,
+                    "what": "origin made unwritable: "
+                    "every push from here fails while the commit succeeds",
+                }
+            )
 
             time.sleep(max(0.0, zero + reachable_at - time.monotonic()))
             subprocess.run(["chmod", "-R", "u+w", str(world.origin)], check=True)
             local, remote = harness.head_of(world.plan), harness.head_of(world.origin)
             push = terminal._push(reachable_at, ids[-1], "TD01")
-            timeline.append({
-                "at": reachable_at,
-                "what": "origin writable again, and a person pushed to it",
-                "instance_head": local[:10], "origin_head_before": remote[:10],
-                "terminal_commit": (push.sha or "")[:10], "pushed_ok": push.pushed_ok,
-                "instance_was_ahead_by": _ahead(world.plan, local, remote),
-            })
+            timeline.append(
+                {
+                    "at": reachable_at,
+                    "what": "origin writable again, and a person pushed to it",
+                    "instance_head": local[:10],
+                    "origin_head_before": remote[:10],
+                    "terminal_commit": (push.sha or "")[:10],
+                    "pushed_ok": push.pushed_ok,
+                    "instance_was_ahead_by": _ahead(world.plan, local, remote),
+                }
+            )
         finally:
             subprocess.run(["chmod", "-R", "u+w", str(world.origin)], check=False)
 
@@ -127,8 +153,9 @@ def main(argv: list[str] | None = None) -> int:
         world.stop()
 
         sent = [row for one in writers for row in one.sent]
-        verdict = verify.verify(world.plan, world.origin, [], sent,
-                                logins={one.login for one in writers}, before=before)
+        verdict = verify.verify(
+            world.plan, world.origin, [], sent, logins={one.login for one in writers}, before=before
+        )
         phases = _by_phase(ledger, unreachable_at, reachable_at)
         reading = _by_phase(ledger, unreachable_at, reachable_at, kind="GET /")
         head = harness.head_of(world.plan)
@@ -141,8 +168,13 @@ def main(argv: list[str] | None = None) -> int:
     blob = {
         "probe": "diverge",
         "seed": args.seed,
-        "config": {"seconds": window, "writers": args.writers, "gap": args.gap,
-                   "unreachable_at": unreachable_at, "reachable_at": reachable_at},
+        "config": {
+            "seconds": window,
+            "writers": args.writers,
+            "gap": args.gap,
+            "unreachable_at": unreachable_at,
+            "reachable_at": reachable_at,
+        },
         "world": world.describe(),
         "timeline": timeline,
         "by_phase": phases,
@@ -186,8 +218,9 @@ def _ahead(plan: Path, local: str, remote: str) -> int:
     return sum(1 for c in git.walk(git[local].id) if str(c.id) not in seen)
 
 
-def _by_phase(ledger: measure.Ledger, unreachable_at: float, reachable_at: float,
-              kind: str = "PATCH") -> dict:
+def _by_phase(
+    ledger: measure.Ledger, unreachable_at: float, reachable_at: float, kind: str = "PATCH"
+) -> dict:
     """Every PATCH answer, in the phase it was answered in.
 
     The phases are the whole probe: `200` means one thing before the remote goes
@@ -222,8 +255,7 @@ def _instance_only(world: harness.Harness, sent: list, head: str) -> list[str]:
         if one.status != "200":
             continue
         here = harness.read_blob(world.plan, head, paths_local.get(one.record, "")) or ""
-        there = harness.read_blob(world.origin, origin_head,
-                                  paths_remote.get(one.record, "")) or ""
+        there = harness.read_blob(world.origin, origin_head, paths_remote.get(one.record, "")) or ""
         if one.marker in here and one.marker not in there:
             orphaned.append(one.marker)
     return orphaned

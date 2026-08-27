@@ -154,7 +154,7 @@ def main() -> None:
 
         print(json.dumps({k: v for k, v in rows.items() if k != "profile_tottime_top"}, indent=1))
         print(rows["profile_tottime_top"])
-        out = ROOT / "docs/probes/load/detail-cost.json"
+        out = ROOT / "design/probes/load/detail-cost.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps({"probe": "detail-cost", **rows}, indent=1) + "\n")
         print(f"wrote {out}")

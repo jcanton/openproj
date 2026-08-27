@@ -64,9 +64,7 @@ def main(where: Path) -> dict:
         report["first_line_after_concurrent_splice"] = first
         report["emoji_intact"] = THUMB_UP in first
         report["no_replacement_character"] = "�" not in ann.body()
-        report["no_lone_surrogate"] = not any(
-            0xD800 <= ord(ch) <= 0xDFFF for ch in ann.body()
-        )
+        report["no_lone_surrogate"] = not any(0xD800 <= ord(ch) <= 0xDFFF for ch in ann.body())
         report["both_marks_present"] = "<ann>" in first and "<bo>" in first
 
         # And a third splice on either side of the em dash while they are at it.
@@ -101,9 +99,7 @@ def main(where: Path) -> dict:
         report["git_has_both_marks"] = "<ann>" in committed and "<bo>" in committed
         report["git_no_replacement_character"] = "�" not in committed
         time.sleep(1.0)
-        report["room_matches_git_after_absorb"] = (
-            ann.body().rstrip("\n") == committed.rstrip("\n")
-        )
+        report["room_matches_git_after_absorb"] = ann.body().rstrip("\n") == committed.rstrip("\n")
         report["ann_and_bo_still_agree"] = ann.body() == bo.body()
 
         ann.close()

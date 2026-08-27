@@ -44,7 +44,7 @@ from .tokens import (
 
 # The three views of one document, drawn as one control.
 #
-# **Page chrome, not editor chrome.** `docs/hackmd-observed.md` reads it off the
+# **Page chrome, not editor chrome.** `design/hackmd-observed.md` reads it off the
 # pixels of a real note: it sits in the header, immediately after the note's
 # identity, as a segmented control of three icons with the active one pressed —
 # not as three more buttons in the row that already holds a template picker and a
@@ -2723,9 +2723,7 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
                 "for": "" if name == "status" else field["id"],
                 "display": display,
                 "control": (
-                    control
-                    if control is not None
-                    else _control_html(field, describedby=teach_id)
+                    control if control is not None else _control_html(field, describedby=teach_id)
                 ),
                 "gates": field["gates"],
                 "derived": False,
@@ -2788,9 +2786,7 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
                 "label": "Scheduled",
                 "for": "",
                 "display": (
-                    Markup("{} → {}{}").format(span.start, span.end, overrun)
-                    if span
-                    else empty
+                    Markup("{} → {}{}").format(span.start, span.end, overrun) if span else empty
                 ),
                 "control": "",
                 "gates": (),
@@ -3005,7 +3001,9 @@ def _detail_rows(index: Index, links: Links = STATIC, only: str | None = None) -
     chosen = (
         sorted(index.records.items())
         if only is None
-        else [(only, index.records[only])] if only in index.records else []
+        else [(only, index.records[only])]
+        if only in index.records
+        else []
     )
     return [
         {
@@ -3081,7 +3079,7 @@ def _new_rows() -> list[dict]:
         # id, because that page can hold sixteen of them at once.
         for field in _editable_for(blank, "new"):
             if field["name"] == "title":
-                continue          # the title is the heading, not a row
+                continue  # the title is the heading, not a row
             if field["name"] == "status" and not RUNG[kind].planned:
                 # The one status control on this form is the plan ladder, and
                 # `shaping` on an issue is a word the server refuses — the form
@@ -3095,19 +3093,21 @@ def _new_rows() -> list[dict]:
                 continue
             row = rows.setdefault(
                 field["name"],
-                {"label": LABELS.get(field["name"], field["name"]),
-                 # Empty for status, for the reason the `<dt>` above gives: its
-                 # control is a group, and a label names one element.
-                 "for": "" if field["name"] == "status" else field["id"],
-                 "control": _control_html(field), "gates": field["gates"], "kinds": []},
+                {
+                    "label": LABELS.get(field["name"], field["name"]),
+                    # Empty for status, for the reason the `<dt>` above gives: its
+                    # control is a group, and a label names one element.
+                    "for": "" if field["name"] == "status" else field["id"],
+                    "control": _control_html(field),
+                    "gates": field["gates"],
+                    "kinds": [],
+                },
             )
             row["kinds"].append(kind)
     # `EDITABLE` decides the order, so this form and the facts column cannot
     # disagree; the loops above only decide which rows exist.
     return [
-        {**rows[name], "kinds": " ".join(rows[name]["kinds"])}
-        for name in EDITABLE
-        if name in rows
+        {**rows[name], "kinds": " ".join(rows[name]["kinds"])} for name in EDITABLE if name in rows
     ]
 
 
@@ -3146,18 +3146,21 @@ _ARTICLE = {"pitch": "a pitch", "task": "a task", "project": "a project"}
 # keeps the same words through the flow.
 _PROMOTE_HINTS = {
     "issue": "The new record starts in Shaping, carrying this issue’s title, its "
-             "tags and its text, and saying in its own document that it came from "
-             "here. Nothing else is carried: an issue has no owner and no size to "
-             "give it. The issue stays open until what it became is done.",
+    "tags and its text, and saying in its own document that it came from "
+    "here. Nothing else is carried: an issue has no owner and no size to "
+    "give it. The issue stays open until what it became is done.",
     "note": "The new record starts in Shaping, carrying this note’s title, its "
-            "tags and its text, and saying in its own document that it came from "
-            "here. Nothing else is carried: a note has no owner and no size to "
-            "give it. This note stays, and points at what it became.",
+    "tags and its text, and saying in its own document that it came from "
+    "here. Nothing else is carried: a note has no owner and no size to "
+    "give it. This note stays, and points at what it became.",
 }
 
 
 def _promote_html(
-    source_id: str, kinds: Sequence[str], hint: str, base_commit: str,
+    source_id: str,
+    kinds: Sequence[str],
+    hint: str,
+    base_commit: str,
     links: Links = ROUTES,
 ) -> Markup:
     """The promotion control, for either inbox.
@@ -3201,11 +3204,13 @@ def _promote_html(
 # written, states are what a page may draw and sort by. The issue rung adds no
 # new words; `ISSUE_STATUS` is a subset of the plan ladder, and the dedup keeps
 # the plan's order for it.
-_TOC_LADDER = tuple(dict.fromkeys(
-    word
-    for rung in KIND_LADDER
-    for word in (NOTE_STATES if rung.name == "note" else rung.statuses)
-))
+_TOC_LADDER = tuple(
+    dict.fromkeys(
+        word
+        for rung in KIND_LADDER
+        for word in (NOTE_STATES if rung.name == "note" else rung.statuses)
+    )
+)
 
 
 def _by_status(rows: list[dict]) -> list[dict]:
@@ -3248,26 +3253,28 @@ def render_detail(
         # A blank record through the same row machinery. No id (the server
         # mints it), no cascade (nothing to delete), no problems (nothing has
         # been refused yet).
-        rows: list[dict] = [{
-            "id": "",
-            "title": "",
-            "kind": creating,
-            "parent": None,
-            "parent_link": "",
-            "problems": [],
-            "hints": [],
-            "progress": None,
-            "body": Markup(""),
-            "rows": _new_rows(),
-            "raw_body": "",
-            "deletes": [],
-            "frees": [],
-            # Explicit rather than riding Jinja's default Undefined
-            # stringifying to "": the "never on the creating article" rule
-            # below must survive a move to StrictUndefined, not hold by
-            # accident.
-            "promote": Markup(""),
-        }]
+        rows: list[dict] = [
+            {
+                "id": "",
+                "title": "",
+                "kind": creating,
+                "parent": None,
+                "parent_link": "",
+                "problems": [],
+                "hints": [],
+                "progress": None,
+                "body": Markup(""),
+                "rows": _new_rows(),
+                "raw_body": "",
+                "deletes": [],
+                "frees": [],
+                # Explicit rather than riding Jinja's default Undefined
+                # stringifying to "": the "never on the creating article" rule
+                # below must survive a move to StrictUndefined, not hold by
+                # accident.
+                "promote": Markup(""),
+            }
+        ]
     else:
         rows = _detail_rows(index, links, only)
         # Every record gets its facts, not only the one being served on its own
@@ -3298,8 +3305,11 @@ def render_detail(
             # of the same shape.
             row["promote"] = (
                 _promote_html(
-                    row["id"], PROMOTABLE[record.kind], _PROMOTE_HINTS[record.kind],
-                    base_commit or "", links,
+                    row["id"],
+                    PROMOTABLE[record.kind],
+                    _PROMOTE_HINTS[record.kind],
+                    base_commit or "",
+                    links,
                 )
                 if base_commit is not None and may_write and record.kind in PROMOTABLE
                 else Markup("")
@@ -3376,11 +3386,18 @@ def render_detail(
         # within the set, and pressing Table from this form abandons it rather
         # than staying put. With nothing lit, the <h1> is what names the page.
         return _page(
-            f"openproj — new {creating}", body, _DETAIL_STYLE + _SUGGEST_STYLE, links,
+            f"openproj — new {creating}",
+            body,
+            _DETAIL_STYLE + _SUGGEST_STYLE,
+            links,
             unreadable=index.unreadable,
         )
     return _page(
-        "openproj — detail", body, _DETAIL_STYLE + _SUGGEST_STYLE, links, "detail",
+        "openproj — detail",
+        body,
+        _DETAIL_STYLE + _SUGGEST_STYLE,
+        links,
+        "detail",
         index.unreadable,
     )
 

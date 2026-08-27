@@ -1,54 +1,60 @@
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[dependency-groups]
+dev = ["pytest>=8.2", "hypothesis>=6.100", "ruff>=0.5", "pytest-split>=0.10"]
+
 [project]
-name = "openproj"
-version = "0.39.0"
+dependencies = [
+  "pydantic>=2.7",
+  "ruamel.yaml>=0.18",
+  "python-frontmatter>=1.1",
+  "networkx>=3.3",
+  "jinja2>=3.1",
+  "markdown-it-py>=4.2.0",
+  # Syntax highlighting for the code fences, done on the server. The alternative
+  # was a highlighter in the browser, and this repository already refuses that
+  # trade twice over: `static/VENDOR.md` has the arithmetic on what a bundle
+  # costs, and every page here is held to `default-src 'none'`. Pygments emits
+  # spans and nothing else — no script, no fetch, no bytes on any page that has
+  # no fence on it.
+  "pygments>=2.18",
+  # Task lists. markdown-it-py's own companion package, and zero browser bytes.
+  "mdit-py-plugins>=0.5",
+  "pygit2>=1.15",
+  "fastapi>=0.115",
+  "uvicorn>=0.30",
+  "httpx>=0.27",
+  "itsdangerous>=2.2",
+  "cryptography>=50.0.0",
+  "pycrdt>=0.14",
+  "wsproto>=1.2"
+]
 description = "Git-backed appetite planning for the icon4py team"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+name = "openproj"
 # The project page on PyPI is this file, and without this line it is blank. It
 # also cannot be fixed in place: a version's metadata is frozen the moment it is
 # uploaded, so a missing README is missing until the next release.
 readme = "README.md"
-license = "BSD-3-Clause"
-license-files = ["LICENSE"]
 requires-python = ">=3.12"
-dependencies = [
-    "pydantic>=2.7",
-    "ruamel.yaml>=0.18",
-    "python-frontmatter>=1.1",
-    "networkx>=3.3",
-    "jinja2>=3.1",
-    "markdown-it-py>=4.2.0",
-    # Task lists. markdown-it-py's own companion package, and zero browser bytes.
-    "mdit-py-plugins>=0.5",
-    "pygit2>=1.15",
-    "fastapi>=0.115",
-    "uvicorn>=0.30",
-    "httpx>=0.27",
-    "itsdangerous>=2.2",
-    "cryptography>=50.0.0",
-    "pycrdt>=0.14",
-    "wsproto>=1.2",
-]
-
-[project.urls]
-Homepage = "https://github.com/jcanton/openproj"
-Source = "https://github.com/jcanton/openproj"
+version = "0.39.0"
 
 # The one entry point, and what makes `uvx openproj new …` work without anything
 # being installed: uv builds the wheel into a throwaway environment and runs this.
 [project.scripts]
 openproj = "openproj.cli:main"
 
-[dependency-groups]
-dev = ["pytest>=8.2", "hypothesis>=6.100", "ruff>=0.5"]
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+[project.urls]
+Homepage = "https://github.com/jcanton/openproj"
+Source = "https://github.com/jcanton/openproj"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/openproj"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
 # `-ra`, and deliberately not `-q`. The documented command is `pytest -q`, and a
 # `-q` here made that `-qq`, which suppresses the final "N passed" line
 # altogether — so a run printed dots and nothing else. Thirty-four tests skip
@@ -57,6 +63,7 @@ testpaths = ["tests"]
 # silently dropped them looked exactly like one that had run them. `-ra` names
 # every skip and its reason, in every verbosity anybody runs.
 addopts = "-ra"
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100

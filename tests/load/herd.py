@@ -64,7 +64,9 @@ def patch(base, record_id, head, weeks):
         {"base_commit": head, "fields": {"person_weeks": weeks}, "body": None}
     ).encode()
     request = urllib.request.Request(
-        f"{base}/api/record/{record_id}", data=body, method="PATCH",
+        f"{base}/api/record/{record_id}",
+        data=body,
+        method="PATCH",
         headers={"content-type": "application/json"},
     )
     with urllib.request.urlopen(request, timeout=120) as response:

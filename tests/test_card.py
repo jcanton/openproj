@@ -210,9 +210,9 @@ def test_a_rendered_file_draws_a_card_with_no_server_to_ask(index: Index):
     `detail.html#id`, where the whole document is — the same shape as co-editing
     falling back to a plain textarea."""
     record_id = one_pitch(index)
-    page = render_table(index)     # STATIC links: no `body` route
+    page = render_table(index)  # STATIC links: no `body` route
 
-    assert 'data-body-url' not in page
+    assert "data-body-url" not in page
     answer = card_for(page, record_id)
 
     assert "card-title" in answer["value"]["first"]
@@ -356,9 +356,7 @@ def test_a_pointer_passing_over_a_row_does_not_open_a_card(index: Index, tmp_pat
         + (_HOVER_INTENT % json.dumps(record_id))
         + "})();</script></body>",
     )
-    got = measured_in(
-        chrome(), page, tmp_path / "intent.html", 1200, "return window.__asked;"
-    )
+    got = measured_in(chrome(), page, tmp_path / "intent.html", 1200, "return window.__asked;")
 
     assert got["atOnce"] is True, "the card opened on the first pointer event"
     assert got["later"] is False, "the card never opened at all"
@@ -377,9 +375,7 @@ window.__reach = {events: style.pointerEvents, leaving, afterGrace: CARD.hidden}
 """
 
 
-def test_the_card_can_be_reached_and_stays_while_the_pointer_is_in_it(
-    index: Index, tmp_path: Path
-):
+def test_the_card_can_be_reached_and_stays_while_the_pointer_is_in_it(index: Index, tmp_path: Path):
     """The document is capped and scrollable, and a box the pointer passes
     straight through is a scrollbar nobody can grab — which is what shipped.
 
@@ -390,13 +386,9 @@ def test_the_card_can_be_reached_and_stays_while_the_pointer_is_in_it(
     record_id = one_pitch(index)
     page = render_table(index, ROUTES, base_commit=HEAD, may_write=True).replace(
         "</body>",
-        "<script>(async () => {"
-        + (_REACHABLE % json.dumps(record_id))
-        + "})();</script></body>",
+        "<script>(async () => {" + (_REACHABLE % json.dumps(record_id)) + "})();</script></body>",
     )
-    got = measured_in(
-        chrome(), page, tmp_path / "reach.html", 1200, "return window.__reach;"
-    )
+    got = measured_in(chrome(), page, tmp_path / "reach.html", 1200, "return window.__reach;")
 
     assert got["events"] != "none", "the pointer goes straight through the card"
     assert got["leaving"] is False, "the card went the instant the row was left"
@@ -424,13 +416,9 @@ def test_one_card_holds_one_document(index: Index, tmp_path: Path):
     record_id = one_pitch(index)
     page = render_table(index, ROUTES, base_commit=HEAD, may_write=True).replace(
         "</body>",
-        "<script>(async () => {"
-        + (_TWICE % json.dumps(record_id))
-        + "})();</script></body>",
+        "<script>(async () => {" + (_TWICE % json.dumps(record_id)) + "})();</script></body>",
     )
-    got = measured_in(
-        chrome(), page, tmp_path / "twice.html", 1200, "return window.__twice;"
-    )
+    got = measured_in(chrome(), page, tmp_path / "twice.html", 1200, "return window.__twice;")
 
     assert got["bodies"] == 1, f"{got['bodies']} documents in one card"
     assert got["text"] == 1
@@ -509,8 +497,9 @@ def test_a_box_answers_for_its_label_and_not_for_its_acres(index: Index, tmp_pat
     page = render_graph(index, ROUTES, base_commit=HEAD)
     # Longer than the default: this answers from a continuation, and the waits it
     # needs are one `CARD_DELAY` per box plus the first one.
-    got = measured_in(chrome(), page, tmp_path / "boxcard.html", 1400, _OVER_A_BOX,
-                      height=1000, patience=3800)
+    got = measured_in(
+        chrome(), page, tmp_path / "boxcard.html", 1400, _OVER_A_BOX, height=1000, patience=3800
+    )
 
     assert not got.get("error"), got
     assert got["middles"] is not None, "the continuation never ran, so nothing was measured"
@@ -589,13 +578,11 @@ def test_the_card_arrives_in_one_piece(index: Index, tmp_path: Path):
     so the answer is normally already here and both halves land in one paint.
     """
     page = render_table(index, ROUTES, base_commit=HEAD, may_write=True)
-    got = measured_in(chrome(), page, tmp_path / "paint.html", 1400, _PAINTS,
-                      patience=2500)
+    got = measured_in(chrome(), page, tmp_path / "paint.html", 1400, _PAINTS, patience=2500)
 
     assert got["paints"] is not None, "the continuation never ran"
     assert got["shown"], "no card came up at all"
     assert got["hasBody"], "the card came up without the document it exists to show"
     assert got["paints"] <= 1, (
-        f"the card's markup changed {got['paints']} times: the body still lands "
-        "in a second pass"
+        f"the card's markup changed {got['paints']} times: the body still lands in a second pass"
     )

@@ -29,8 +29,7 @@ This is written down because it has now gone wrong twice in one night, in both d
   a clean checkout of the tag in a spare worktree.
 
 So: `pwd` before an edit if a command has just failed, and `git status` in the root before a
-release. A root that is not clean is somebody else's work, not yours to stash — and never `git
-checkout` a file there to "fix" a diff you did not write.
+release. A root that is not clean is somebody else's work, not yours to stash — and never `git checkout` a file there to "fix" a diff you did not write.
 
 ## This branch's history does not move
 
@@ -104,8 +103,7 @@ five hues at one lightness: hue is the channel a dichromat loses, and on the gra
 the fill used to be the only channel there was.
 
 **A page reaches this server and nothing else — and the server may reach GitHub.**
-The two halves of that are one rule and they are worth writing apart. `connect-src
-'self'` is the whole of what a page may talk to, which is why the live update, the
+The two halves of that are one rule and they are worth writing apart. `connect-src 'self'` is the whole of what a page may talk to, which is why the live update, the
 preview and `/api/prs` are all this app's own routes; a page that fetched
 api.github.com would be a page whose content depends on a host we do not serve, and
 `test_no_page_reaches_the_network` is the tripwire. The SERVER already talks to
@@ -189,29 +187,29 @@ there is no working copy, and why a single `repo.index` anywhere in that file gi
 **This is the section worth the file.** Twelve rounds of adversarial audit ran on this branch, and a
 green test suite missed every defect they found. Each round was cracked by exactly one question.
 
-| Ask this | What it found |
-|---|---|
-| What if a stylesheet meant for one page is loaded by another? | A capacity-meter `.bar` rule in the shared shell overrode the geometry of every timeline `<rect>`. The whole Gantt drew 140×8 and said nothing about dates. |
-| What if a value *equals* the mechanism instead of exploiting it? | Pages were assembled by `str.replace`. A title of `BARS_JSON` and an owner of `x onmouseover=alert(1) y` put a live handler on every bar link, using no character any escaper touches. |
-| What if it is spelled a way the check did not enumerate? | `//host/a.png` and `HTTP://host/a.png` both drew live `<img>` tags past a `startswith(("http://", "https://"))`. |
-| What does the write path accept that the read path cannot read back? | Eleven PATCH bodies committed and then 500ed every page permanently. |
-| The same arithmetic is written three times — which copies got the guard? | Two of three date computations had none. A build-weeks of 500000 killed nine routes. |
-| Can the test tell the difference between the value resolving and the pixel appearing? | An outset `box-shadow` on a cell in a `border-collapse: collapse` table is never painted by Chrome. The test asserted the stylesheet resolved correctly, and it did, while nothing was drawn. |
-| What do the diagnostic tools say when the thing is broken? | `openproj check` reported "0 blockers, 0 warnings" and `openproj render` wrote no files, on a plan that 500ed every page. |
-| What does a person with a terminal commit that this never tries to parse? | Fifteen files that are not records — a pasted note with no `---` among them. Each took ten of eleven routes down permanently; `/healthz` alone answered, and `openproj check` died with a traceback on the first one and never mentioned the second. |
-| Two readers walk the same tree — do they agree on which files are records? | `_people_at` matched on the first path segment while `load_repo` globbed one level, so a hand-committed `people/team/ann.md` was a second record for `ann` on every served page, invisible to the CLI, and `openproj check` said nothing. |
-| Which index space is that `int` in, and would anything say if it were the other one? | `Room.absorb` measured a splice in Python code points and applied it to `pycrdt`, which addresses UTF-8 bytes. Both are `int`, an index inside a character silently appends at the end instead of raising, and every body with an em dash before the edit was rewritten in the wrong place — and committed. |
-| What has already run by the time this line reads that value? | The Yjs observer wrote the room's text over a restored draft *before* the branch that checks for one compared the textarea against what the server rendered. The check was therefore always false in exactly the case it was written for, and somebody's unsaved writing went into the box and then out of `localStorage`. |
-| The invariant is written in two languages — which copy is guarded? | `byte_offset` fixed the server and a syntax test held it there. The browser's half of the same splice went on scanning UTF-16 code units, so a boundary between the halves of a surrogate pair spliced half a character: `👍 done` edited to `👎 done` left the browser holding one document and the room another, with nothing raising in either. Emoji were strictly worse with a socket than without one, and the mandated footer of this file is `🤖`. |
-| What happens on the branch that decides *not* to act? | Three of them said nothing at all. An update over the frame ceiling was dropped with `continue`, so a 263 kB paste produced no frame back and the room committed the text from before it. A Save with nothing to commit returned without answering, so the page stayed "saving" for ever and the shell queued every later banner behind it. And the two ceilings were the same number, so the transport refused a body the policy would have taken. |
-| What does the callee document itself as raising, and what does the handler name? | `store.write` raises `StoreDiverged`, `StoreLocked` and `pygit2.GitError`; the room caught `(HTTPException, ValueError)`. An escape killed the timer task in `_watch`, and a dead timer has exactly one symptom: nothing is committed any more. |
-| Is the harness itself lying? | `tests/js/drive.js` handed this realm's `String` into the vm context it built, so `text.constructor === String` — how `YText.insert` tells a string from an embed — was false for every string the page made. Every insert became a one-unit embed with no text in it. A test written against that shim would have reported a defect the editor did not have, and passed one it did. |
-| What does *one* participant's socket do to everybody else's? | The room broadcast by awaiting `send_json` per member in turn. uvicorn's send begins `await self.writable.wait()`, cleared when a transport's buffer fills, so one member who stopped draining held that coroutine — and with it every other member's keystroke and the room's own timer, which reaches the same line. Three real sockets: the second member got nothing for thirty seconds, nothing was committed again, and `/healthz` answered 200 throughout. |
-| Whose names end up in a line this server signs? | Every write path built its commit message as `', '.join(fields)` — keys off the wire, verbatim. A field named `notes\n\nCo-authored-by: Mallory <…>` committed exactly that trailer, which git's parser, `git shortlog --group=trailer:co-authored-by` and GitHub all honour. On a branch whose whole point is that `Co-authored-by:` records who wrote a document. |
-| Is the harness itself lying? (again) | `drive.js` copied a parsed element's text into `textContent` and never into `.value`, so a `<textarea>` answered `''` where a browser answers the record's body. `ORIGINAL_BODY` was therefore always empty in page mode, which flips the one branch in the editor that can lose unsaved work. Two of the three rounds before this one were misled by this same file. |
-| Is the picture wrong, or is what we did to it wrong? | The graph drew boxes lying across each other, and the question asked was whether cytoscape and ELK were the right libraries. They were. `packComponents` — written here — re-arranged the drawing afterwards by `cy.elements().components()`, which is edge-connectivity, and an edge on that page is a dependency and never containment. It took every group apart: 0 overlapping boxes became 17-21, 0 foreign cards became 29-70. Fifteen agents and forty-two library options later, the answer was to delete eight lines of ours. Measure immediately before and immediately after your own post-processing before you audit anybody else's library. |
-| The page drew. Did the script finish? | Deleting that function took the `cytoscape()` constructor, `route()` and `paint()` with it, because the deleted range ran past the closing brace. The canvas still appeared, so it looked fine; everything after the throw simply never ran, and the error was thrown before any listener existed to report it. What caught it was a test written the same hour, failing for a reason that made no sense. `typeof x` throwing `TDZ` on a `let` is the tell: execution never reached that line. || Which rule gives this drawing a size — and is there one? | The draft row's check and cross are `<svg class="icon">`, which carries a `viewBox` and no `width` or `height`. Every earlier icon sat in a box that sized it (`.avatar svg`, `.picker .art svg`), this one did not, and an SVG nothing sizes lays out at 0x0: the two controls that create and abandon a record were empty boxes on the served page, under a suite that was green because it only ever asked whether the markup was emitted. |
-| Does the fix throw out the person who was working? | The first version of the outbox evicted a member whose queue passed a byte ceiling. Three real tabs: a tab applying a burst of whole-document updates goes a megabyte behind for a moment and catches up completely, and it was thrown out beside the tab that was actually suspended — so the room emptied and committed nothing. *Behind* and *not draining* are different things, and only a clock can tell them apart. |
+| Ask this                                                                              | What it found                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| What if a stylesheet meant for one page is loaded by another?                         | A capacity-meter `.bar` rule in the shared shell overrode the geometry of every timeline `<rect>`. The whole Gantt drew 140×8 and said nothing about dates.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| What if a value *equals* the mechanism instead of exploiting it?                      | Pages were assembled by `str.replace`. A title of `BARS_JSON` and an owner of `x onmouseover=alert(1) y` put a live handler on every bar link, using no character any escaper touches.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| What if it is spelled a way the check did not enumerate?                              | `//host/a.png` and `HTTP://host/a.png` both drew live `<img>` tags past a `startswith(("http://", "https://"))`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| What does the write path accept that the read path cannot read back?                  | Eleven PATCH bodies committed and then 500ed every page permanently.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| The same arithmetic is written three times — which copies got the guard?              | Two of three date computations had none. A build-weeks of 500000 killed nine routes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Can the test tell the difference between the value resolving and the pixel appearing? | An outset `box-shadow` on a cell in a `border-collapse: collapse` table is never painted by Chrome. The test asserted the stylesheet resolved correctly, and it did, while nothing was drawn.                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| What do the diagnostic tools say when the thing is broken?                            | `openproj check` reported "0 blockers, 0 warnings" and `openproj render` wrote no files, on a plan that 500ed every page.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| What does a person with a terminal commit that this never tries to parse?             | Fifteen files that are not records — a pasted note with no `---` among them. Each took ten of eleven routes down permanently; `/healthz` alone answered, and `openproj check` died with a traceback on the first one and never mentioned the second.                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Two readers walk the same tree — do they agree on which files are records?            | `_people_at` matched on the first path segment while `load_repo` globbed one level, so a hand-committed `people/team/ann.md` was a second record for `ann` on every served page, invisible to the CLI, and `openproj check` said nothing.                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Which index space is that `int` in, and would anything say if it were the other one?  | `Room.absorb` measured a splice in Python code points and applied it to `pycrdt`, which addresses UTF-8 bytes. Both are `int`, an index inside a character silently appends at the end instead of raising, and every body with an em dash before the edit was rewritten in the wrong place — and committed.                                                                                                                                                                                                                                                                                                                                               |
+| What has already run by the time this line reads that value?                          | The Yjs observer wrote the room's text over a restored draft *before* the branch that checks for one compared the textarea against what the server rendered. The check was therefore always false in exactly the case it was written for, and somebody's unsaved writing went into the box and then out of `localStorage`.                                                                                                                                                                                                                                                                                                                                |
+| The invariant is written in two languages — which copy is guarded?                    | `byte_offset` fixed the server and a syntax test held it there. The browser's half of the same splice went on scanning UTF-16 code units, so a boundary between the halves of a surrogate pair spliced half a character: `👍 done` edited to `👎 done` left the browser holding one document and the room another, with nothing raising in either. Emoji were strictly worse with a socket than without one, and the mandated footer of this file is `🤖`.                                                                                                                                                                                                |
+| What happens on the branch that decides *not* to act?                                 | Three of them said nothing at all. An update over the frame ceiling was dropped with `continue`, so a 263 kB paste produced no frame back and the room committed the text from before it. A Save with nothing to commit returned without answering, so the page stayed "saving" for ever and the shell queued every later banner behind it. And the two ceilings were the same number, so the transport refused a body the policy would have taken.                                                                                                                                                                                                       |
+| What does the callee document itself as raising, and what does the handler name?      | `store.write` raises `StoreDiverged`, `StoreLocked` and `pygit2.GitError`; the room caught `(HTTPException, ValueError)`. An escape killed the timer task in `_watch`, and a dead timer has exactly one symptom: nothing is committed any more.                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Is the harness itself lying?                                                          | `tests/js/drive.js` handed this realm's `String` into the vm context it built, so `text.constructor === String` — how `YText.insert` tells a string from an embed — was false for every string the page made. Every insert became a one-unit embed with no text in it. A test written against that shim would have reported a defect the editor did not have, and passed one it did.                                                                                                                                                                                                                                                                      |
+| What does *one* participant's socket do to everybody else's?                          | The room broadcast by awaiting `send_json` per member in turn. uvicorn's send begins `await self.writable.wait()`, cleared when a transport's buffer fills, so one member who stopped draining held that coroutine — and with it every other member's keystroke and the room's own timer, which reaches the same line. Three real sockets: the second member got nothing for thirty seconds, nothing was committed again, and `/healthz` answered 200 throughout.                                                                                                                                                                                         |
+| Whose names end up in a line this server signs?                                       | Every write path built its commit message as `', '.join(fields)` — keys off the wire, verbatim. A field named `notes\n\nCo-authored-by: Mallory <…>` committed exactly that trailer, which git's parser, `git shortlog --group=trailer:co-authored-by` and GitHub all honour. On a branch whose whole point is that `Co-authored-by:` records who wrote a document.                                                                                                                                                                                                                                                                                       |
+| Is the harness itself lying? (again)                                                  | `drive.js` copied a parsed element's text into `textContent` and never into `.value`, so a `<textarea>` answered `''` where a browser answers the record's body. `ORIGINAL_BODY` was therefore always empty in page mode, which flips the one branch in the editor that can lose unsaved work. Two of the three rounds before this one were misled by this same file.                                                                                                                                                                                                                                                                                     |
+| Is the picture wrong, or is what we did to it wrong?                                  | The graph drew boxes lying across each other, and the question asked was whether cytoscape and ELK were the right libraries. They were. `packComponents` — written here — re-arranged the drawing afterwards by `cy.elements().components()`, which is edge-connectivity, and an edge on that page is a dependency and never containment. It took every group apart: 0 overlapping boxes became 17-21, 0 foreign cards became 29-70. Fifteen agents and forty-two library options later, the answer was to delete eight lines of ours. Measure immediately before and immediately after your own post-processing before you audit anybody else's library. |
+| The page drew. Did the script finish?                                                 | Deleting that function took the `cytoscape()` constructor, `route()` and `paint()` with it, because the deleted range ran past the closing brace. The canvas still appeared, so it looked fine; everything after the throw simply never ran, and the error was thrown before any listener existed to report it. What caught it was a test written the same hour, failing for a reason that made no sense. `typeof x` throwing `TDZ` on a `let` is the tell: execution never reached that line.                                                                                                                                                            |
+| Does the fix throw out the person who was working?                                    | The first version of the outbox evicted a member whose queue passed a byte ceiling. Three real tabs: a tab applying a burst of whole-document updates goes a megabyte behind for a moment and catches up completely, and it was thrown out beside the tab that was actually suspended — so the room emptied and committed nothing. *Behind* and *not draining* are different things, and only a clock can tell them apart.                                                                                                                                                                                                                                |
 
 Behind all twelve is one habit: **ask the question in the medium where the answer lives.** In
 practice that means:
@@ -317,6 +315,58 @@ asserted it on, and Chrome painted nothing — an outset `box-shadow` on a cell 
 is not a dimmer line, it is no line. The Gantt drew every bar 140px wide for a whole round. If a
 claim is about pixels, look at the pixels.
 
+## Decided against, and not to be re-opened
+
+These lived in `docs/` until the documentation was cut back to what a reader of a plan needs. They
+are here because the reason is the whole value: without it each one gets proposed again.
+
+`docs/` is now the user guide and nothing else — quickstart, the practice, the model, the
+architecture. The design records that used to sit beside it are in `design/`, which has its own
+index: the editor's library audit, the drawing subsystem, the deferred push, what HackMD actually
+contained, the work queue, and the probes.
+
+**Asked for at the tailoring pass, 2026-08-16, and declined.** `postponed` as a bet outcome —
+leaving a pitch `ready` says the same thing, and it produced a better idea instead, the notes box on
+the cycle page. Appetite in cycle units — appetite is person-week effort and the assignees divide
+it; "full cycle" on the team's own sheet is staffing shorthand, not a second unit. A roster grouped
+by institution — if institutions turn out to matter, the answer is separate plans and separate
+deployments, not a grouping column. An availability field that admits uncertainty — better a lie
+that forces a good estimate than a field that accepts `some time > 0`. A `buggy` status — work that
+is wrong does not get merged; it goes back to `in_progress` or is shelved.
+
+**Never built.** Notification infrastructure is its own project, and Slack exists. User-defined
+custom fields mean editing the model and running a migration — the honest cost of a field every page
+has to know about. A PR-based editing workflow is what git already is, and the premise of this tool
+is that a pull request is the wrong default for a plan. Time tracking, burndown charts and
+per-project permissions were out of scope in the first requirements list and nobody has asked since;
+no argument was ever recorded for them, and each would need a second source of truth before there
+could be one. Inline comments and resolved threads on a record would be the first piece of plan
+state that is not a file — a second store, a second permission model and a second notification path
+— while the review channel this team already uses is the pull request, which every pitch names in
+`prs:`. Real-time co-editing was on this list until `coedit.py`, excluded on the grounds that
+compare-and-swap *is* the design, and that argument still holds for everything except the body of
+one document two people are writing at once.
+
+**The six status marks stay characters and are not small hills.** The reason used to be that the
+same marks go inside `<option>` elements and an option is a string; that stopped being true when
+status left the native `<select>` and became the hill, so what is left is the drawing itself. Mocked
+against the real stylesheet at 26×11, `shelved` reads as a ball floating inside the hill instead of
+resting on the ground under it, and `ready` and `shaping` are two dots a few pixels apart, in the
+one column already under width pressure.
+
+**A mistyped drawing path in a body is a silent broken image, and nothing here was built to notice.**
+`drawings/` is flat and holds no records — one PNG per drawing, named by its id — and unlike
+`assets/` it is mutable, rewritten in place by `Store.put_drawing`. It is invisible to the record
+model by construction rather than by omission: `record_paths_in` drops every non-`.md` path before
+the question is ever put to it, `_plan_files` only ever globs `*.md`, and `SEARCH_FIELDS` reads
+record fields and never a blob. So there is no banner and no `openproj check` line for a bad path.
+`seed/` ships no drawings either, because `cli.py`'s `_seed_files` filters to `.md` and `.yaml`.
+
+**Names, and not line numbers, in every document here.** Three of the five references one paragraph
+of `data-model.md` carried were already wrong within a fortnight — `_plan_files` had moved from 1611
+to 1593 and `_seed_files` from 163 to 151 — and a stale line number is worse than none, because it
+sends the reader to a line that says something else with every appearance of being the right one.
+
 ## How to test here
 
 - **Test the behaviour in the medium where it happens.** If the claim is about pixels, the test has
@@ -374,21 +424,37 @@ ruff: line length 100, target py312, `E,F,I,UP,B`.
 suite on every pull request, with real Chrome and real node, on hardware that is not somebody's
 working machine.
 
-**It is six jobs, not one, and the shape is load-bearing.** `lint` is ruff alone and answers in ten
+**It is ten jobs, not one, and the shape is load-bearing.** `lint` is ruff alone and answers in ten
 seconds, deliberately not depended on by anything: a lint error and a test failure are different
-news and you should get both in one run rather than the first one twice. Then five `suite` shards
-run the tests in parallel on five machines, cut by `.github/shards/<name>` — one test path per
-line, hand-written, because the cut is decided by Chrome and by two module fixtures rather than by
-file size and no heuristic finds that. Then `check` fans them in, and **`check` is the name branch
-protection requires, so it must not move**: a `strategy.matrix` on a job named `check` reports six
-differently-named checks, none of them called `check`, and the merge button goes green while every
-shard is red.
+news and you should get both in one run rather than the first one twice. Then eight `suite` groups
+run the tests in parallel on eight machines. Then `check` fans them in, and **`check` is the name
+branch protection requires, so it must not move**: a `strategy.matrix` on a job named `check`
+reports one differently-named check per leg, none of them called `check`, and the merge button goes
+green while every leg is red.
 
-Two things follow for anybody adding tests. A new test FILE has to be named in exactly one shard
-file — `test_every_test_file_is_in_exactly_one_ci_shard` in `tests/test_harness.py` holds that, and
-it is the reason a file cannot quietly fall out of the gate. And the shard lists drift out of
-balance every time a file grows; rebalancing them is a five-minute job with `--durations` and
-`docs/probes/ci-speed.md` says how.
+**The groups are cut by measured duration, not by hand.** `pytest-split` reads `.test_durations` —
+one recorded time per test — and divides the collected list into eight contiguous runs of roughly
+equal cost. Nothing names a file anywhere. This replaced five hand-written lists in
+`.github/shards/` on 2026-08-27, and the reason was arithmetic: `tests/test_editor.py` had grown to
+**26.0% of the suite** against the 20.0% a perfect fifth would be, so one file needed more than a
+whole leg and no arrangement of file lists could be balanced at all. Eight groups come out
+113-124s against the 254s that one file costs, and the worst leg is 2s off the ideal.
+
+Three things follow for anybody adding tests. **A new test needs no registration** — it is collected,
+so it is in exactly one group whether or not it has ever been measured, and the old way of falling
+out of the gate entirely is gone with the lists. An unmeasured test is given the average, so what a
+stale table costs is balance and never coverage. **Re-measure when it drifts**, with one serial run:
+
+```bash
+uv run pytest --store-durations
+```
+
+`test_the_durations_table_still_knows_what_the_suite_is_made_of` in `tests/test_harness.py` is the
+alarm — it fails when a whole test file has never been measured, or when the table knows less than
+80% of the suite. And **the contiguous algorithm is the choice, not the default landing on us**:
+the greedy one balances marginally better and scatters a file's tests across groups, which
+`tests/test_coedit.py` cannot have — real sockets, a real uvicorn on a real port, literal
+`sleep(0.5)` budgets, which need to stay serial and in order in one process.
 
 This is not a licence to push carelessly. It is a decision about where eight minutes of CPU and
 several gigabytes of RAM should be spent — jcanton, 2026-08-20, on a machine that has already been

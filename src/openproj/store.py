@@ -47,7 +47,7 @@ _TRACKING = "refs/remotes/origin/main"
 # exactly that window. Not the tracking ref: a fetch moves that to whatever the
 # remote says today, and the whole point of this one is to notice when what the
 # remote says today no longer contains what we saw it hold — the force-push
-# guard (docs/deferred-push.md, recovery step 2).
+# guard (design/deferred-push.md, recovery step 2).
 _PUSHED = "refs/openproj/pushed"
 # The recovery's scratch name for the rebased tip. A push refspec needs a ref on
 # the local side, and the tip must reach the remote BEFORE refs/heads/main moves
@@ -78,7 +78,7 @@ class WriteResult(BaseModel):
     outcome: Literal["committed", "retried", "merged", "conflict"]
     conflict: str | None = None
     # Whether the commit has reached the remote — always False on a fresh write
-    # now that the push has left the request path (docs/deferred-push.md); the
+    # now that the push has left the request path (design/deferred-push.md); the
     # background pusher lands it and announces the landing itself. The meaning
     # is unchanged on purpose: on an ephemeral filesystem an unpushed commit is
     # a lost commit, and nothing may claim the remote holds one before it does.
@@ -104,7 +104,7 @@ class Condition(BaseModel):
     # LOST a commit this process positively confirmed it held. Not
     # both-sides-moved: with the push off the request path that is the ordinary
     # recoverable race, and a flag that goes red on every hand-push is a flag
-    # people learn to ignore (docs/deferred-push.md, "Health").
+    # people learn to ignore (design/deferred-push.md, "Health").
     diverged: bool
     # Commits on local `main` that `remote` does not hold: what this container
     # loses if it is replaced. `pushed: false` tells one caller about one write;
@@ -129,7 +129,7 @@ class SyncOutcome(NamedTuple):
     Announced whole rather than as an event per commit, because confirmation
     cannot be "my sha is on main": recovery re-mints shas, so a client waiting
     to see its own answered sha on the branch would wait forever after any
-    rejection (docs/deferred-push.md). One outcome names the tip that landed,
+    rejection (design/deferred-push.md). One outcome names the tip that landed,
     every sha that changed name on the way, and every sha that could not land
     and where it went instead.
     """
@@ -186,7 +186,7 @@ class StoreSwamped(RuntimeError):
 # refused rather than accepted onto a backlog that is not landing — on Cloud
 # Run the filesystem is memory, so a 200 there is data loss with a receipt.
 # Both numbers are arbitrary and are written down so they can be argued with
-# rather than discovered in an incident (docs/deferred-push.md, "Saying it on
+# rather than discovered in an incident (design/deferred-push.md, "Saying it on
 # the page"): ten minutes is long enough to ride out a GitHub outage and short
 # enough that a wedged pusher is caught inside one working session, and fifty
 # commits is more than a betting table generates in that window.
@@ -283,9 +283,7 @@ def swamped(state: Condition) -> str | None:
     ceiling is a pile the next write would grow past it.
     """
     age = state.oldest_unpushed_age
-    if state.unpushed < PILE_CEILING_COMMITS and (
-        age is None or age < PILE_CEILING_SECONDS
-    ):
+    if state.unpushed < PILE_CEILING_COMMITS and (age is None or age < PILE_CEILING_SECONDS):
         return None
     return _swamped_message(state.unpushed, age or 0.0)
 
@@ -449,9 +447,7 @@ def _merge_body(base: str, mine: str, theirs: str) -> tuple[str | None, list[str
                     if span[0] == span[1]
                     else f"lines {span[0] + 1}-{span[1]}"
                 )
-                conflicts.append(
-                    f"  {where}: stored {stored_text!r} · yours {yours_text!r}"
-                )
+                conflicts.append(f"  {where}: stored {stored_text!r} · yours {yours_text!r}")
     if conflicts:
         return None, conflicts
 
@@ -506,7 +502,7 @@ class _Rejected(Exception):
     local and still in the backlog, worth sending unchanged when the network
     comes back. A rejection means somebody else's commit is on the remote and
     ours is not a descendant of it — recoverable only by replaying the backlog
-    onto what actually landed (docs/deferred-push.md), which is the pusher's
+    onto what actually landed (design/deferred-push.md), which is the pusher's
     job and never the request's.
     """
 
@@ -928,7 +924,7 @@ class Store:
         their cached stamp. When it is NOT an ancestor — which stays routine,
         not a force-push story: a rejected push is recovered by replaying
         local-only commits onto what the remote holds and swapping the branch
-        to the re-minted tip (docs/deferred-push.md), and the old tip is no
+        to the re-minted tip (design/deferred-push.md), and the old tip is no
         ancestor of the new one — the map is discarded and rebuilt from
         scratch. Retract-by-rebuild is the whole correctness story: there is no
         retraction logic to get wrong, it
@@ -962,7 +958,7 @@ class Store:
     # exist. The push is the background pusher's job, off the request path:
     # nothing inside `_writing` touches the network at all, because a save that
     # waits for GitHub costs GitHub's latency — measured at ~1.5s of a ~2s
-    # request (docs/deferred-push.md).
+    # request (design/deferred-push.md).
 
     def _remote_head(self) -> str | None:
         repo = pygit2.Repository(str(self._path))
@@ -1150,7 +1146,7 @@ class Store:
         # is the ORDINARY case: somebody pushed to the plan by hand since this
         # process last looked. Raising `StoreDiverged` here called that
         # unrecoverable, and it is the exact case the pusher's replay recovers
-        # from (docs/deferred-push.md).
+        # from (design/deferred-push.md).
         #
         # A genuine fork — somebody force-pushed, or two writers existed — is
         # still caught where a fresh fetch exists to catch it: `push` checks
@@ -1158,13 +1154,9 @@ class Store:
         # answer is given by code that has fetched, rather than guessed here
         # from a tracking ref that is stale by design.
         if remote_head is not None and not self._repo.descendant_of(local, remote_head):
-            raise _Rejected(
-                f"the remote is at {remote_head[:7]} and this is not on top of it"
-            )
+            raise _Rejected(f"the remote is at {remote_head[:7]} and this is not on top of it")
         try:
-            self._repo.remotes[_ORIGIN].push(
-                [f"{_BRANCH}:{_BRANCH}"], callbacks=self._callbacks()
-            )
+            self._repo.remotes[_ORIGIN].push([f"{_BRANCH}:{_BRANCH}"], callbacks=self._callbacks())
         except Exception:
             # A refusal and an unreachable host arrive as the same class, and they
             # want opposite answers: one is recoverable by replaying the backlog
@@ -1254,7 +1246,7 @@ class Store:
         and local ahead means one push, sending the original commits under
         their original shas — a client's answered sha is the sha that lands,
         and sha instability exists only on the recovery path
-        (docs/deferred-push.md). No fetch first: the rejection IS the freshness
+        (design/deferred-push.md). No fetch first: the rejection IS the freshness
         question, so a round trip to predict it would be the write path's old
         pre-fetch moved into the pusher, paid on every pass whether or not
         anybody else wrote. A rejected push goes to `_recover`; leftover parked
@@ -1320,7 +1312,7 @@ class Store:
     def _recover(self, repo: pygit2.Repository, local: str, remote_tip: str) -> SyncOutcome:
         """The push was rejected: replay the backlog onto what the remote holds.
 
-        The seven steps of docs/deferred-push.md's "Recovery, when the push is
+        The seven steps of design/deferred-push.md's "Recovery, when the push is
         rejected", in order. Everything here runs WITHOUT `_writing` except the
         swap at the end, and the swap does no network — the lock is never held
         across a conversation with the remote.
@@ -1420,9 +1412,7 @@ class Store:
             repo.references.create(_PUSHED, tip, force=True)
         return SyncOutcome(landed=tip, remapped=remapped, parked=parked, state="landed")
 
-    def _local_only(
-        self, repo: pygit2.Repository, tip: str, floor: str
-    ) -> list[pygit2.Commit]:
+    def _local_only(self, repo: pygit2.Repository, tip: str, floor: str) -> list[pygit2.Commit]:
         """The commits reachable from `tip` and not from `floor`, oldest first.
 
         Oldest first because each replay's delta is against its own parent, so a
@@ -1477,9 +1467,7 @@ class Store:
             try:
                 was = repo[was_oid].data.decode("utf-8") if was_oid is not None else None
                 mine = repo[mine_oid].data.decode("utf-8") if mine_oid is not None else None
-                stored = (
-                    repo[stored_oid].data.decode("utf-8") if stored_oid is not None else None
-                )
+                stored = repo[stored_oid].data.decode("utf-8") if stored_oid is not None else None
             except UnicodeDecodeError:
                 # Three genuinely different byte states and at least one is not
                 # text: there is no line merge to run. Content-addressed assets
@@ -1501,9 +1489,7 @@ class Store:
             if refusal is not None:
                 refusals.append(refusal)
                 continue
-            resolved[path] = (
-                repo.create_blob(text.encode("utf-8")) if text is not None else None
-            )
+            resolved[path] = repo.create_blob(text.encode("utf-8")) if text is not None else None
         if refusals or not resolved:
             return onto, refusals
         tree = repo[onto].tree.id
@@ -1583,7 +1569,7 @@ class Store:
         refusal from GitHub — the 403 of a revoked `pull_requests: write`, an
         outage — is logged and swallowed, per branch so one failure does not
         silence the next: the branch is the durability and the PR is only the
-        visibility (docs/deferred-push.md), and a pusher thread that dies over
+        visibility (design/deferred-push.md), and a pusher thread that dies over
         an announcement stops landing everybody's commits.
         """
         offer = getattr(self._credentials, "offer_pull_request", None)
@@ -1657,7 +1643,7 @@ class Store:
         each one accepted with a 200. No page reads /api/health; the save's own
         answer is the one place the person is guaranteed to hear it, while
         their text is still in their editor. The banner and the pile thresholds
-        are piece 4's escalation (docs/deferred-push.md, "Saying it on the
+        are piece 4's escalation (design/deferred-push.md, "Saying it on the
         page"); this is the floor under it — a fork is never resolved
         automatically, and never papered over either.
 
@@ -1678,7 +1664,7 @@ class Store:
     def _refuse_swamped(self) -> None:
         """Every write refuses while the unpushed pile is past its ceiling.
 
-        The last rung of the escalation (docs/deferred-push.md, "Saying it on
+        The last rung of the escalation (design/deferred-push.md, "Saying it on
         the page"): the per-row mark and the banner have both had their say by
         the time a pile is fifty commits deep or ten minutes old, and a commit
         accepted past that joins a backlog that is demonstrably not landing —
@@ -1868,9 +1854,7 @@ class Store:
         """One file, one commit. The overwhelming majority of writes here."""
         return self.write_all({path: content}, base_commit, author, message)
 
-    def remove(
-        self, path: str, base_commit: str, author: str, message: str
-    ) -> WriteResult:
+    def remove(self, path: str, base_commit: str, author: str, message: str) -> WriteResult:
         """Take one file out of the plan, in a commit.
 
         `None` and not an empty string, which is a real file with nothing in it —
@@ -1918,7 +1902,7 @@ class Store:
             # NO NETWORK IN HERE. The pre-fetch went first — it cost a round
             # trip on every save whether or not the remote had moved, about
             # 600 ms from a laptop — and the push has now followed it out
-            # (docs/deferred-push.md): a save commits against local HEAD and
+            # (design/deferred-push.md): a save commits against local HEAD and
             # answers, and the background pusher lands the branch on its own
             # clock. Remote staleness is the pusher's problem; the
             # compare-and-swap below keeps handling browser-side staleness — a
@@ -1944,7 +1928,7 @@ class Store:
         the push is deferred, `set_target(before)` would discard commits other
         people made after the one being retried. Nothing rewinds
         `refs/heads/main` any more; a rejected push is the pusher's to recover,
-        by replay (docs/deferred-push.md).
+        by replay (design/deferred-push.md).
         """
         current = self.head()
         resolved: dict[str, str] = {}
@@ -1977,9 +1961,7 @@ class Store:
             # caller, the replay, has no outcome to report to anybody.
             outcomes.append("retried" if was == stored else "merged")
         if conflicts:
-            return WriteResult(
-                commit=None, outcome="conflict", conflict="\n".join(conflicts)
-            )
+            return WriteResult(commit=None, outcome="conflict", conflict="\n".join(conflicts))
         # The most eventful thing that happened to any of them. A caller shown
         # "committed" for a set in which one file had to be merged has been
         # told the quiet half of what happened.
@@ -1991,7 +1973,7 @@ class Store:
         """Commit made; answer now, and poke the pusher.
 
         The push that lived here was ~1.5s of a ~2s save — GitHub's server-side
-        time, none of it ours to make faster (docs/deferred-push.md) — so the
+        time, none of it ours to make faster (design/deferred-push.md) — so the
         request stops paying for it. `pushed=False` is the truth at this moment,
         not pessimism: the commit is real, local, and in the pusher's backlog,
         and nothing may say the remote holds it before the remote does.

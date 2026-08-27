@@ -281,11 +281,9 @@ def evaluate(node: Node | None, fields: dict[str, list[str]], text: str, empty: 
             node.right, fields, text, empty
         )
     if isinstance(node, Either):
-        return evaluate(node.left, fields, text, empty) or evaluate(
-            node.right, fields, text, empty
-        )
+        return evaluate(node.left, fields, text, empty) or evaluate(node.right, fields, text, empty)
     if node.name not in fields:
-        return False        # a field this plan has not got: nothing, not everything
+        return False  # a field this plan has not got: nothing, not everything
     held = fields[node.name]
     if node.value == empty:
         return not held

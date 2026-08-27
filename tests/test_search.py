@@ -207,16 +207,13 @@ def test_two_tags_can_be_asked_for_at_once(index: Index):
         (one, two)
         for one in tags
         for two in tags
-        if one < two
-        and any({one, two} <= set(e.tags) for e in index.plan.values())
+        if one < two and any({one, two} <= set(e.tags) for e in index.plan.values())
     ]
     assert pairs, "no record in this corpus carries two tags, so this asks nothing"
 
     one, two = pairs[0]
     both = ids(index, f"tag:{one} and tag:{two}")
-    assert both == sorted(
-        i for i, e in index.plan.items() if {one, two} <= set(e.tags)
-    )
+    assert both == sorted(i for i, e in index.plan.items() if {one, two} <= set(e.tags))
     assert set(both) < set(ids(index, f"tag:{one} or tag:{two}"))
 
 
@@ -254,9 +251,7 @@ def test_an_unknown_field_matches_nothing_rather_than_everything(index: Index):
     """The rule `apply_filters` already had, extended to the language: a typo that
     silently widens a result set is worse than one that visibly empties it."""
     assert ids(index, "onwer:jackdawrie") == []
-    assert ids(index, "owner:jackdawrie or onwer:jackdawrie") == ids(
-        index, "owner:jackdawrie"
-    )
+    assert ids(index, "owner:jackdawrie or onwer:jackdawrie") == ids(index, "owner:jackdawrie")
 
 
 def test_a_malformed_query_says_so_and_matches_nothing(index: Index):
@@ -349,8 +344,7 @@ def test_the_two_field_lists_are_the_same():
     from openproj.index import _HOLDER_FACETS, _LIST_FACETS, _SCALAR_FACETS
     from openproj.render import _FILTER_JS
 
-    here = [*_SCALAR_FACETS, *_LIST_FACETS, *_HOLDER_FACETS,
-            "id", "title", "prs", "predicate"]
+    here = [*_SCALAR_FACETS, *_LIST_FACETS, *_HOLDER_FACETS, "id", "title", "prs", "predicate"]
     said = re.search(r"const QUERY_FIELDS = \[([^\]]*)\]", _FILTER_JS).group(1)
     there = re.findall(r"'([^']+)'", said)
 

@@ -63,8 +63,14 @@ def run(
     cycle the helpers below put records in by default."""
     if availability is not None:
         config = config.with_plans(
-            [Cycle(cycle=36, starts_on=date(2026, 6, 22), build_weeks=6.0,
-                   availability=availability)]
+            [
+                Cycle(
+                    cycle=36,
+                    starts_on=date(2026, 6, 22),
+                    build_weeks=6.0,
+                    availability=availability,
+                )
+            ]
         )
     return schedule(records, config, today)
 
@@ -194,8 +200,10 @@ def test_step5_a_cycle_closed_by_a_containment_edge_does_not_raise():
     graph adds child -> parent edges and closes the loop. A naive
     lexicographical_topological_sort raises NetworkXUnfeasible here and takes the
     whole page down over one bad record."""
-    records = [pitch("bbb001", owner="bo"), task("aaa001", parent="pitch-bbb001",
-                                                 depends_on=["pitch-bbb001"])]
+    records = [
+        pitch("bbb001", owner="bo"),
+        task("aaa001", parent="pitch-bbb001", depends_on=["pitch-bbb001"]),
+    ]
     spans, _ = run(records)
     assert {"pitch-bbb001", "task-aaa001"} <= set(spans)
 
@@ -311,8 +319,8 @@ def test_a_size_is_person_weeks_and_the_people_on_it_divide_it():
     alone, _ = run([pitch("bbb001", owner="ann", size=6.0)])
     shared, _ = run([pitch("bbb001", owner="ann", assignees=["bo", "cy"], size=6.0)])
 
-    assert alone["pitch-bbb001"].end == date(2026, 9, 25)     # six working weeks
-    assert shared["pitch-bbb001"].end == date(2026, 8, 28)    # two
+    assert alone["pitch-bbb001"].end == date(2026, 9, 25)  # six working weeks
+    assert shared["pitch-bbb001"].end == date(2026, 8, 28)  # two
 
 
 def test_an_owner_who_is_also_an_assignee_is_one_person():
@@ -329,19 +337,17 @@ def test_availability_stretches_the_work_of_whoever_is_slower():
     not the bug the old spec called out — that draft was only wrong under D1's
     reading of what a size means."""
     full, _ = run([pitch("bbb001", owner="ann", size=3.0, cycle=36)])
-    half, _ = run([pitch("bbb001", owner="ann", size=3.0, cycle=36)],
-                  availability={"ann": 0.5})
+    half, _ = run([pitch("bbb001", owner="ann", size=3.0, cycle=36)], availability={"ann": 0.5})
 
-    assert full["pitch-bbb001"].end == date(2026, 9, 4)      # three working weeks
-    assert half["pitch-bbb001"].end == date(2026, 9, 25)     # six
+    assert full["pitch-bbb001"].end == date(2026, 9, 4)  # three working weeks
+    assert half["pitch-bbb001"].end == date(2026, 9, 25)  # six
 
 
 def test_somebody_nobody_rated_works_at_the_nominal_rate():
     """Absent from the map means nobody said otherwise, not unavailable. A roster
     that must name everybody to schedule anybody goes stale and takes the dates
     with it."""
-    rated, _ = run([pitch("bbb001", owner="ann", size=3.0, cycle=36)],
-                   availability={"zz": 0.1})
+    rated, _ = run([pitch("bbb001", owner="ann", size=3.0, cycle=36)], availability={"zz": 0.1})
     unrated, _ = run([pitch("bbb001", owner="ann", size=3.0, cycle=36)])
 
     # Dates only: the rated run has a cycle RECORD, whose own build length also
@@ -354,7 +360,7 @@ def test_unowned_work_is_one_notional_person_rather_than_a_division_by_zero():
     spans, _ = run([task("aaa001", owner=None, size=2.0)])
 
     assert spans["task-aaa001"].unowned
-    assert spans["task-aaa001"].end == date(2026, 8, 28)     # two working weeks
+    assert spans["task-aaa001"].end == date(2026, 8, 28)  # two working weeks
 
 
 def test_regression_a_task_and_a_pitch_of_the_same_size_take_the_same_time():
@@ -729,9 +735,7 @@ def test_the_cycle_records_the_goldens_are_derived_against(seed_root: Path):
     # a later cycle exists, so the END is read rather than assumed. Nothing else
     # in either corpus takes that second branch.
     assert thirty_seven.assumed_review and not thirty_seven.assumed_end
-    assert thirty_seven.availability == {
-        "redpollard": 0.5, "chiffchaffy": 0.25, "Whimbrelson": 1.0
-    }
+    assert thirty_seven.availability == {"redpollard": 0.5, "chiffchaffy": 0.25, "Whimbrelson": 1.0}
 
     thirty_eight = config.plans[38]
     assert thirty_eight.builds_until == date(2027, 1, 22)
@@ -743,7 +747,10 @@ def test_the_cycle_records_the_goldens_are_derived_against(seed_root: Path):
     assert thirty_eight.build_weeks == 7.2
     shutdown = [d for d in config.holidays if date(2026, 12, 1) <= d <= date(2027, 1, 31)]
     assert [d for d in shutdown if d.weekday() < 5] == [
-        date(2026, 12, 24), date(2026, 12, 25), date(2026, 12, 31), date(2027, 1, 1)
+        date(2026, 12, 24),
+        date(2026, 12, 25),
+        date(2026, 12, 31),
+        date(2027, 1, 1),
     ]
     assert [d for d in shutdown if d.weekday() >= 5] == [date(2026, 12, 26)]
 
@@ -856,19 +863,21 @@ def test_a_size_that_is_not_a_number_is_one_bad_row(size: float):
 
 
 def test_a_pitch_level_dependency_delays_the_tasks_inside_the_dependent_pitch():
-    """"The bed port waits for throughflow" is a sentence about two pitches, and
+    """ "The bed port waits for throughflow" is a sentence about two pitches, and
     it moved nothing: only a leaf is placed against its blockers, and a parent's
     span is the rollup of children who had never heard of the edge.
 
     The demo shipped with exactly this — the bed starting a month before the
     throughflow it declared it waited for, while the table's `blocked` filter
     returned it. Two views of one record, disagreeing."""
-    spans, _ = run([
-        pitch("aaa001"),
-        pitch("aaa002", depends_on=["pitch-aaa001"]),
-        task("bbb001", parent="pitch-aaa001", size=2.0, owner="ann"),
-        task("bbb002", parent="pitch-aaa002", size=2.0, owner="bo"),
-    ])
+    spans, _ = run(
+        [
+            pitch("aaa001"),
+            pitch("aaa002", depends_on=["pitch-aaa001"]),
+            task("bbb001", parent="pitch-aaa001", size=2.0, owner="ann"),
+            task("bbb002", parent="pitch-aaa002", size=2.0, owner="bo"),
+        ]
+    )
 
     blocker_ends = spans["pitch-aaa001"].end
     assert spans["task-bbb002"].start > blocker_ends, "the task waits for its pitch's blocker"
@@ -878,13 +887,14 @@ def test_a_pitch_level_dependency_delays_the_tasks_inside_the_dependent_pitch():
 def test_a_dependency_is_inherited_down_the_whole_chain_not_just_one_level():
     """A project's blocker reaches the tasks two levels below it. The edge stays
     written once, where somebody wrote it."""
-    spans, _ = run([
-        task("aaa001", size=2.0, owner="cy"),
-        model.Project(id="proj-000001", kind="project", title="M",
-                      depends_on=["task-aaa001"]),
-        pitch("aaa002", parent="proj-000001"),
-        task("bbb002", parent="pitch-aaa002", size=1.0, owner="ann"),
-    ])
+    spans, _ = run(
+        [
+            task("aaa001", size=2.0, owner="cy"),
+            model.Project(id="proj-000001", kind="project", title="M", depends_on=["task-aaa001"]),
+            pitch("aaa002", parent="proj-000001"),
+            task("bbb002", parent="pitch-aaa002", size=1.0, owner="ann"),
+        ]
+    )
 
     assert spans["task-bbb002"].start > spans["task-aaa001"].end
 
@@ -893,12 +903,14 @@ def test_an_inherited_blocker_is_named_in_the_explanation():
     """The first unexplained date is when a timeline stops being believed, and an
     inherited blocker is the least obvious of them: the reason is written on a
     record one level up from the bar somebody is pointing at."""
-    _, why = run([
-        pitch("aaa001"),
-        pitch("aaa002", depends_on=["pitch-aaa001"]),
-        task("bbb001", parent="pitch-aaa001", size=2.0, owner="ann"),
-        task("bbb002", parent="pitch-aaa002", size=2.0, owner="bo"),
-    ])
+    _, why = run(
+        [
+            pitch("aaa001"),
+            pitch("aaa002", depends_on=["pitch-aaa001"]),
+            task("bbb001", parent="pitch-aaa001", size=2.0, owner="ann"),
+            task("bbb002", parent="pitch-aaa002", size=2.0, owner="bo"),
+        ]
+    )
 
     assert why["task-bbb002"].blocker_id == "pitch-aaa001"
     assert "pitch-aaa001" in why["task-bbb002"].text
@@ -910,14 +922,15 @@ def test_a_loop_that_only_inheritance_closes_costs_those_records_and_no_others()
     `_unschedulable` cannot see it — it reads the written edges. The sort must not
     raise, because one contradictory pair costing every date on the page is the
     failure this scheduler is built to avoid."""
-    spans, _ = run([
-        pitch("aaa001", depends_on=["pitch-aaa002"]),
-        pitch("aaa002"),
-        task("bbb001", parent="pitch-aaa001", size=1.0, owner="ann"),
-        task("bbb002", parent="pitch-aaa002", size=1.0, owner="bo",
-             depends_on=["task-bbb001"]),
-        task("ccc001", size=1.0, owner="cy"),
-    ])
+    spans, _ = run(
+        [
+            pitch("aaa001", depends_on=["pitch-aaa002"]),
+            pitch("aaa002"),
+            task("bbb001", parent="pitch-aaa001", size=1.0, owner="ann"),
+            task("bbb002", parent="pitch-aaa002", size=1.0, owner="bo", depends_on=["task-bbb001"]),
+            task("ccc001", size=1.0, owner="cy"),
+        ]
+    )
 
     assert any(spans[i].unscheduled for i in ("pitch-aaa002", "task-bbb002"))
     assert spans["task-ccc001"] == Span(start=MONDAY, end=date(2026, 8, 21)), (
@@ -928,20 +941,24 @@ def test_a_loop_that_only_inheritance_closes_costs_those_records_and_no_others()
 def test_a_project_with_no_pitches_draws_nothing():
     """It is a container, and an empty one contains nothing. Having no size field
     it fell to the default and drew a half-week bar nobody had written."""
-    spans, _ = run([
-        model.Project(id="proj-000001", kind="project", title="Empty", owner="ann"),
-        task("aaa001", size=1.0, owner="ann"),
-    ])
+    spans, _ = run(
+        [
+            model.Project(id="proj-000001", kind="project", title="Empty", owner="ann"),
+            task("aaa001", size=1.0, owner="ann"),
+        ]
+    )
 
     assert "proj-000001" not in spans
     assert spans["task-aaa001"] == Span(start=MONDAY, end=date(2026, 8, 21))
 
 
 def test_a_project_with_pitches_is_still_their_rollup():
-    spans, _ = run([
-        model.Project(id="proj-000001", kind="project", title="M"),
-        pitch("aaa001", parent="proj-000001", size=1.0, owner="ann"),
-    ])
+    spans, _ = run(
+        [
+            model.Project(id="proj-000001", kind="project", title="M"),
+            pitch("aaa001", parent="proj-000001", size=1.0, owner="ann"),
+        ]
+    )
 
     assert spans["proj-000001"] == spans["pitch-aaa001"]
 

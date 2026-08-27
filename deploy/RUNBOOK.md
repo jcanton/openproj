@@ -15,7 +15,7 @@ GitHub authored by a person. Private also costs nothing here — the only thing 
 old note claimed for public was unlimited Actions minutes, and a private repo on
 the Free plan gets 2,000 a month, which a nightly check will not come close to.
 
----
+______________________________________________________________________
 
 ## What is already done
 
@@ -31,7 +31,7 @@ the Free plan gets 2,000 a month, which a nightly check will not come close to.
 - `GitHubApp.from_environment` returns `None` unless all three variables are set:
   two of three is a deployment somebody stopped half way through.
 
----
+______________________________________________________________________
 
 ## 1. The plan repository
 
@@ -70,17 +70,17 @@ gh api repos/jcanton/icon4py-plan/branches/main/protection \
   -q '"force pushes: \(.allow_force_pushes.enabled)  deletions: \(.allow_deletions.enabled)"'
 ```
 
----
+______________________________________________________________________
 
 ## 2. The GitHub App — the credential the server writes with
 
 A **GitHub App**, not a PAT and not a deploy key:
 
-| | scope | tied to a person | if it leaks |
-|---|---|---|---|
-| Fine-grained PAT | repo | **yes** — dies when they leave | valid up to 366 days |
-| Deploy key | one repo | no | **valid forever**, until a human notices |
-| **App installation token** | **one repo** | no | **expires in under an hour** |
+|                            | scope        | tied to a person               | if it leaks                              |
+| -------------------------- | ------------ | ------------------------------ | ---------------------------------------- |
+| Fine-grained PAT           | repo         | **yes** — dies when they leave | valid up to 366 days                     |
+| Deploy key                 | one repo     | no                             | **valid forever**, until a human notices |
+| **App installation token** | **one repo** | no                             | **expires in under an hour**             |
 
 A PAT also breaks the audit story: every commit's *committer* would trace to a
 human's token, which is what the author/committer split exists to avoid.
@@ -136,14 +136,14 @@ top — it is *not* the Client ID beside it, and it is not the installation id.
 
 A token printed means the App, the key and the installation all line up:
 
-| what you see | what it means |
-|---|---|
-| `token minted, first 8: ghs_...` | all three agree; go to step 3 |
-| `not set: OPENPROJ_APP_ID` | that variable is missing from the command |
-| `401 Unauthorized` | the key does not belong to that App, or the App ID is wrong |
-| `404 Not Found` | the installation id is wrong, or the App is not installed there |
+| what you see                     | what it means                                                   |
+| -------------------------------- | --------------------------------------------------------------- |
+| `token minted, first 8: ghs_...` | all three agree; go to step 3                                   |
+| `not set: OPENPROJ_APP_ID`       | that variable is missing from the command                       |
+| `401 Unauthorized`               | the key does not belong to that App, or the App ID is wrong     |
+| `404 Not Found`                  | the installation id is wrong, or the App is not installed there |
 
----
+______________________________________________________________________
 
 ## 3. The OAuth app — how a person signs in
 
@@ -161,8 +161,10 @@ have.
 Register at **https://github.com/settings/applications/new**.
 
 - **Application name:** anything, e.g. `openproj`.
+
 - **Homepage URL:** `https://github.com/jcanton/openproj`. Cosmetic, like the
   App's in step 2.
+
 - **Redirect URIs** — the field older docs call the authorization callback URL.
   **A URL on YOUR service, not on github.com**, and the one field here that is
   load-bearing: it is where GitHub sends the browser after somebody signs in, and
@@ -222,7 +224,7 @@ and it is not where the repo lives. Keep `C2SM` even though the repository is
 under your account: the question is "is this person on the team", and the answer
 still comes from C2SM.
 
----
+______________________________________________________________________
 
 ## 4. Deploy
 
@@ -344,7 +346,7 @@ treat the status code as the alarm and `unpushed` as a separate, slower-tempered
 one. Do not alert on `unpushed` at the first sample; alert if it has stayed above
 zero for a few minutes.
 
----
+______________________________________________________________________
 
 ## The service, as deployed
 
@@ -432,22 +434,25 @@ worst thing this service can do to the plan "add a commit".
 
 **What makes it less likely.** Two instances is the fastest route here: each
 container clones into its own in-memory filesystem and takes its own `flock` on
-its own file, so neither can see the other and both are granted. `--max-instances
-1` can be briefly exceeded. If this recurs, look at `container/instance_count`
+its own file, so neither can see the other and both are granted. `--max-instances 1` can be briefly exceeded. If this recurs, look at `container/instance_count`
 before looking at anything else.
 
 ## Day one, before anybody else uses it
 
 - Branch protection on `icon4py-plan`'s `main` (step 1).
+
 - A nightly `git clone --mirror` of the plan somewhere off GitHub.
+
 - The runtime service account holding `secretAccessor` on three secrets and
   nothing else.
+
 - **Activate the full account before 16 November 2026.** The CHF 246 of trial
   credit expires then, and Google deletes a lapsed trial's resources rather than
   charging the card. Activating means pay-as-you-go with a card on file — and
   then the always-free tier applies, which is a separate and permanent thing from
   the trial credit. The plan survives either way, since it is in git and the
   container is a cache, but the service does not.
+
 - **Tear down what is left in `europe-west6`.** The first deployment went to
   Zurich, which is a Tier 2 pricing region and therefore possibly outside Cloud
   Run's always-free allowance; the service now runs in `europe-west1`. A deploy
@@ -462,8 +467,10 @@ before looking at anything else.
 
   Then remove its two redirect URIs from the OAuth App, so a stale bookmark fails
   visibly rather than signing somebody into a service nobody is watching.
+
 - `config/people.yaml` in the plan is `known_people: []`. An unlisted login is a
   warning rather than a refusal, so nothing breaks, but nothing autocompletes
   either.
+
 - If the tool is adopted: move both repositories to `C2SM`, reinstall the App
   there, and change `OPENPROJ_REMOTE`. Nothing else changes.

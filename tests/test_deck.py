@@ -73,9 +73,17 @@ class _Slides(HTMLParser):
         if tag == "article" and "slide" in classes:
             self._depth = 1
             self.found.append(
-                {"classes": frozenset(classes), "under": "", "heading": "",
-                 "points": [], "prs": [], "images": [], "doc": "", "note": "",
-                 "text": []}
+                {
+                    "classes": frozenset(classes),
+                    "under": "",
+                    "heading": "",
+                    "points": [],
+                    "prs": [],
+                    "images": [],
+                    "doc": "",
+                    "note": "",
+                    "text": [],
+                }
             )
             return
         if not self._depth:
@@ -176,23 +184,66 @@ The gather/scatter seam is the one to watch.
 
 def corpus() -> list[Record]:
     project = Project(id="proj-000001", kind="project", title="Physics")
-    bed = Pitch(id="pitch-0c0001", kind="pitch", title="Porting the bed", owner="ann",
-                 person_weeks=6.0, parent="proj-000001", status="in_progress", cycle=37,
-                 assigned_on=date(2026, 8, 17), reviewers=["bo"])
-    solver = Task(id="task-0c1001", kind="task", title="Port the bed solver", owner="ann",
-                  person_weeks=4.0, parent="pitch-0c0001", status="in_progress",
-                  assigned_on=date(2026, 8, 17), reviewers=["bo"],
-                  prs=["kilnlab/kiln4py#2427", "kilnlab/hearth#2765"], body=BED)
-    fluxes = Task(id="task-0c1002", kind="task", title="Coordinate with Kettleworth", owner="bo",
-                  person_weeks=1.0, parent="pitch-0c0001", status="done",
-                  assigned_on=date(2026, 8, 17), reviewers=["ann"], prs=["kilnlab/kiln4py#2403"])
+    bed = Pitch(
+        id="pitch-0c0001",
+        kind="pitch",
+        title="Porting the bed",
+        owner="ann",
+        person_weeks=6.0,
+        parent="proj-000001",
+        status="in_progress",
+        cycle=37,
+        assigned_on=date(2026, 8, 17),
+        reviewers=["bo"],
+    )
+    solver = Task(
+        id="task-0c1001",
+        kind="task",
+        title="Port the bed solver",
+        owner="ann",
+        person_weeks=4.0,
+        parent="pitch-0c0001",
+        status="in_progress",
+        assigned_on=date(2026, 8, 17),
+        reviewers=["bo"],
+        prs=["kilnlab/kiln4py#2427", "kilnlab/hearth#2765"],
+        body=BED,
+    )
+    fluxes = Task(
+        id="task-0c1002",
+        kind="task",
+        title="Coordinate with Kettleworth",
+        owner="bo",
+        person_weeks=1.0,
+        parent="pitch-0c0001",
+        status="done",
+        assigned_on=date(2026, 8, 17),
+        reviewers=["ann"],
+        prs=["kilnlab/kiln4py#2403"],
+    )
     # A chore nobody pitched: bettable in its own right, so its cycle is its own.
-    chore = Task(id="task-0f0001", kind="task", title="Tidy the serialisation scripts",
-                 owner="cy", person_weeks=0.5, status="ready", cycle=37, reviewers=["ann"],
-                 body="## Progress\n\n- [ ] Move the docs out of the shared drive\n")
+    chore = Task(
+        id="task-0f0001",
+        kind="task",
+        title="Tidy the serialisation scripts",
+        owner="cy",
+        person_weeks=0.5,
+        status="ready",
+        cycle=37,
+        reviewers=["ann"],
+        body="## Progress\n\n- [ ] Move the docs out of the shared drive\n",
+    )
     # Bet into a different cycle, and therefore on a different deck.
-    other = Pitch(id="pitch-0d0001", kind="pitch", title="Aroma transport", owner="cy",
-                  person_weeks=2.0, status="ready", cycle=36, reviewers=["ann"])
+    other = Pitch(
+        id="pitch-0d0001",
+        kind="pitch",
+        title="Aroma transport",
+        owner="cy",
+        person_weeks=2.0,
+        status="ready",
+        cycle=36,
+        reviewers=["ann"],
+    )
     return [project, bed, solver, fluxes, chore, other]
 
 
@@ -203,10 +254,14 @@ def plan_of(number: int = 37) -> Cycle:
     # as `body="## Goal\n\n..."` and the deck read the body, so the two agreed by
     # accident and the deck's bug was invisible for as long as no cycle record
     # anywhere had a real `goal:` and a real body.
-    return Cycle(cycle=number, starts_on=date(2026, 8, 17), reviews_on=date(2026, 9, 28),
-                 availability={"ann": 0.5, "bo": 1.0, "cy": 0.6},
-                 goal="The bed port is the one that cannot slip.",
-                 body="## Notes\n\nWhat the room said while betting.\n")
+    return Cycle(
+        cycle=number,
+        starts_on=date(2026, 8, 17),
+        reviews_on=date(2026, 9, 28),
+        availability={"ann": 0.5, "bo": 1.0, "cy": 0.6},
+        goal="The bed port is the one that cannot slip.",
+        body="## Notes\n\nWhat the room said while betting.\n",
+    )
 
 
 @pytest.fixture
@@ -277,15 +332,27 @@ def test_the_slides_of_one_bet_are_consecutive(index: Index):
     they interleave, and a deck that jumps between two subjects and back is a
     deck the room cannot follow."""
     more = corpus() + [
-        Task(id="task-0a0001", kind="task", title="A chore", owner="cy", person_weeks=1.0,
-             status="ready", cycle=37, reviewers=["ann"]),
+        Task(
+            id="task-0a0001",
+            kind="task",
+            title="A chore",
+            owner="cy",
+            person_weeks=1.0,
+            status="ready",
+            cycle=37,
+            reviewers=["ann"],
+        ),
     ]
     config = Config(known_people=["ann", "bo", "cy"]).with_plans([plan_of()])
-    headings = [s["heading"] for s in slides_in(render_deck(build_index(more, config, TODAY),
-                                                            37, ROUTES))]
+    headings = [
+        s["heading"] for s in slides_in(render_deck(build_index(more, config, TODAY), 37, ROUTES))
+    ]
 
-    bed = [at for at, name in enumerate(headings)
-           if name in ("Port the bed solver", "Coordinate with Kettleworth")]
+    bed = [
+        at
+        for at, name in enumerate(headings)
+        if name in ("Port the bed solver", "Coordinate with Kettleworth")
+    ]
     assert bed == [min(bed), min(bed) + 1], headings
 
 
@@ -350,8 +417,7 @@ def test_the_sections_a_slide_leaves_out_are_read_off_the_templates():
 
     found = _bet_headings()
 
-    assert {"problem", "appetite", "solution", "rabbit holes", "no-gos",
-            "for later"} == found
+    assert {"problem", "appetite", "solution", "rabbit holes", "no-gos", "for later"} == found
     assert "progress" not in found
     # Skipping the kinds that carry no shaping document at all: a product is a
     # container — `RUNG["product"].carded is False`, which is also why it shows no
@@ -369,11 +435,19 @@ def test_the_progress_section_is_what_a_review_slide_is_for(index: Index):
     """The checklist is lifted to the points at the top, and whatever else
     somebody wrote under `## Progress` is the sentence they are about to say out
     loud. It was being deleted along with the rest of the template."""
-    said = Task(id="task-0c1001", kind="task", title="Port the bed solver", owner="ann",
-                person_weeks=4.0, parent="pitch-0c0001", status="in_progress",
-                assigned_on=TODAY, reviewers=["bo"],
-                body="## Problem\n\nFortran.\n\n## Progress\n\n- [x] Bindings\n\n"
-                     "Blocked on a tap point nobody has generated yet.\n")
+    said = Task(
+        id="task-0c1001",
+        kind="task",
+        title="Port the bed solver",
+        owner="ann",
+        person_weeks=4.0,
+        parent="pitch-0c0001",
+        status="in_progress",
+        assigned_on=TODAY,
+        reviewers=["bo"],
+        body="## Problem\n\nFortran.\n\n## Progress\n\n- [x] Bindings\n\n"
+        "Blocked on a tap point nobody has generated yet.\n",
+    )
     other = [e for e in corpus() if e.id != "task-0c1001"]
     config = Config(known_people=["ann", "bo", "cy"]).with_plans([plan_of()])
     found = slides_in(render_deck(build_index([*other, said], config, TODAY), 37, ROUTES))
@@ -400,9 +474,17 @@ def test_a_task_that_is_still_this_tools_own_template_has_a_slide_to_present():
     characters `[ ]`: the blank slide of the round before, respelt."""
     from openproj.render import _TASK_TEMPLATE
 
-    fresh = Task(id="task-0f0002", kind="task", title="Nobody wrote this one down",
-                 owner="cy", person_weeks=1.0, status="ready", cycle=37,
-                 reviewers=["ann"], body=_TASK_TEMPLATE)
+    fresh = Task(
+        id="task-0f0002",
+        kind="task",
+        title="Nobody wrote this one down",
+        owner="cy",
+        person_weeks=1.0,
+        status="ready",
+        cycle=37,
+        reviewers=["ann"],
+        body=_TASK_TEMPLATE,
+    )
     config = Config(known_people=["ann", "bo", "cy"]).with_plans([plan_of()])
     page = render_deck(build_index([*corpus(), fresh], config, TODAY), 37, ROUTES)
     slide = next(s for s in slides_in(page) if s["heading"] == "Nobody wrote this one down")
@@ -426,10 +508,18 @@ def test_a_heading_the_bet_emptied_is_not_printed_over_blank_paper():
     whose only content was a `### Solution` written under it arrived as
     `<h2>Notes</h2>` and nothing else, and was truthy enough to suppress the
     fallback that exists to stop exactly this."""
-    only = Task(id="task-0c1001", kind="task", title="Port the bed solver", owner="ann",
-                person_weeks=4.0, parent="pitch-0c0001", status="in_progress",
-                assigned_on=TODAY, reviewers=["bo"],
-                body="## Notes\n\n### Solution\n\nThe plan lives here.\n")
+    only = Task(
+        id="task-0c1001",
+        kind="task",
+        title="Port the bed solver",
+        owner="ann",
+        person_weeks=4.0,
+        parent="pitch-0c0001",
+        status="in_progress",
+        assigned_on=TODAY,
+        reviewers=["bo"],
+        body="## Notes\n\n### Solution\n\nThe plan lives here.\n",
+    )
     others = [e for e in corpus() if e.id != "task-0c1001"]
     config = Config(known_people=["ann", "bo", "cy"]).with_plans([plan_of()])
     page = render_deck(build_index([*others, only], config, TODAY), 37, ROUTES)
@@ -504,12 +594,20 @@ def test_a_review_shows_what_was_finished_and_what_was_parked(index: Index):
     and parked work is a decision the room will be asked about."""
     from openproj.model import Task as T
 
-    parked = T(id="task-0f0002", kind="task", title="Circuit broken", owner="cy",
-               person_weeks=1.0, status="shelved", cycle=37)
+    parked = T(
+        id="task-0f0002",
+        kind="task",
+        title="Circuit broken",
+        owner="cy",
+        person_weeks=1.0,
+        status="shelved",
+        cycle=37,
+    )
     config = Config(known_people=["ann", "bo", "cy"]).with_plans([plan_of()])
-    headings = [s["heading"] for s in
-                slides_in(render_deck(build_index(corpus() + [parked], config, TODAY),
-                                      37, ROUTES))]
+    headings = [
+        s["heading"]
+        for s in slides_in(render_deck(build_index(corpus() + [parked], config, TODAY), 37, ROUTES))
+    ]
 
     assert not any(index.counts_in(e, 37) for e in (parked,))
     assert "Coordinate with Kettleworth" in headings, "a done task is what a review is about"
@@ -636,10 +734,7 @@ def test_no_slide_in_the_shipped_demo_is_a_heading_over_an_empty_page(demo_index
     assert len(found) == 11, [s["heading"] for s in found]
     assert "CI for the standalone driver v1.5" in [s["heading"] for s in found]
 
-    blank = [
-        s["heading"] for s in work
-        if not s["points"] and not s["prs"] and len(s["doc"]) < 80
-    ]
+    blank = [s["heading"] for s in work if not s["points"] and not s["prs"] and len(s["doc"]) < 80]
     assert blank == [], f"{len(blank)} of {len(work)} slides have nothing to present"
 
 
@@ -663,9 +758,10 @@ def test_every_slide_of_the_frozen_corpus_is_worth_the_sheet_it_prints_on(
         for slide in found[1:]:
             # Words, and the record's own words: the heading, the chip and the id
             # are already excluded by reading `doc` rather than `text`.
-            assert (
-                len(slide["doc"].split()) >= 20 or slide["points"] or slide["prs"]
-            ), (number, slide["heading"])
+            assert len(slide["doc"].split()) >= 20 or slide["points"] or slide["prs"], (
+                number,
+                slide["heading"],
+            )
 
 
 def test_a_record_that_is_only_its_bet_falls_back_to_what_it_was_going_to_do(
@@ -679,8 +775,11 @@ def test_a_record_that_is_only_its_bet_falls_back_to_what_it_was_going_to_do(
 
     It keeps its own heading so that nobody in the room mistakes the plan for a
     report of it."""
-    slide = next(s for s in slides_in(render_deck(demo_index, 37, ROUTES))
-                 if s["heading"] == "Port the bed solver")
+    slide = next(
+        s
+        for s in slides_in(render_deck(demo_index, 37, ROUTES))
+        if s["heading"] == "Port the bed solver"
+    )
 
     assert slide["doc"].startswith("Solution")
     assert "Finish the forward-elimination half" in slide["doc"]
@@ -713,9 +812,18 @@ def test_the_plan_a_slide_falls_back_to_is_cut_to_the_sheet_and_says_so(tmp_path
     from browser import chrome, printed
 
     plan = long_plan()
-    unread = Task(id="task-0c1002", kind="task", title="Coordinate with Kettleworth", owner="bo",
-                  person_weeks=1.0, parent="pitch-0c0001", status="done",
-                  assigned_on=TODAY, reviewers=["ann"], body=plan)
+    unread = Task(
+        id="task-0c1002",
+        kind="task",
+        title="Coordinate with Kettleworth",
+        owner="bo",
+        person_weeks=1.0,
+        parent="pitch-0c0001",
+        status="done",
+        assigned_on=TODAY,
+        reviewers=["ann"],
+        body=plan,
+    )
     others = [e for e in corpus() if e.id != "task-0c1002"]
     config = Config(known_people=["ann", "bo", "cy"]).with_plans([plan_of()])
     page = render_deck(build_index([*others, unread], config, TODAY), 37, ROUTES)
@@ -760,7 +868,6 @@ def test_a_hand_written_checklist_reaches_the_slide_it_belongs_to(golden_index: 
         assert all(p["text"] for p in points), heading
 
 
-
 # --------------------------------------------------------------------------- #
 # The route
 # --------------------------------------------------------------------------- #
@@ -780,7 +887,7 @@ BET_FILE = (
     "assigned_on: 2026-08-17\n"
     "person_weeks: 2\n"
     "cycle: 37\n"
-    "prs: [\"kilnlab/kiln4py#2403\"]\n"
+    'prs: ["kilnlab/kiln4py#2403"]\n'
     "---\n"
     "\n## Progress\n\n- [x] Gather to rank 0\n- [ ] Parallel netCDF\n"
 )
@@ -835,8 +942,11 @@ def test_an_uploaded_screenshot_is_served_into_the_deck_as_bytes(served):
 
     saved = client.patch(
         f"/api/record/{BET_ID}",
-        json={"base_commit": git_head(repo), "fields": {},
-              "body": f"## Progress\n\n- [x] Gather to rank 0\n\n## Notes\n\n![a run]({path})\n"},
+        json={
+            "base_commit": git_head(repo),
+            "fields": {},
+            "body": f"## Progress\n\n- [x] Gather to rank 0\n\n## Notes\n\n![a run]({path})\n",
+        },
     )
     assert saved.status_code == 200, saved.text
 
@@ -858,8 +968,13 @@ def test_the_points_on_a_slide_are_the_ones_the_meter_counted():
     `checklist_items` summed, so there is one parse of one document. Two walks of
     the same lines is two answers to "how many", and the slide draws one of them
     directly under the other."""
-    bodies = [BED, "- [X] upper\n- [ ] lower\n", "", "no list at all",
-              "```\n- [x] an example, not a point\n```\n"]
+    bodies = [
+        BED,
+        "- [X] upper\n- [ ] lower\n",
+        "",
+        "no list at all",
+        "```\n- [x] an example, not a point\n```\n",
+    ]
 
     for body in bodies:
         items = checklist_items(body)
@@ -898,7 +1013,8 @@ def test_a_link_on_a_slide_is_drawn_against_paper_and_not_against_the_theme(deck
     for states in ("", "visited"):
         link = SLIDE + [el("a", states=states)]
         assert sheet.value(link, "color") == "var(--paper-link)", (
-            states, sheet.selectors_reaching(link, "color")
+            states,
+            sheet.selectors_reaching(link, "color"),
         )
     assert sheet.value(SLIDE, "background") == "var(--paper)"
     assert sheet.value(SLIDE, "color") == "var(--paper-ink)"
@@ -920,7 +1036,7 @@ def test_paper_is_defined_where_every_reader_matches_it(deck: str):
     bare = re.search(r"\n:root \{([^}]*--paper:[^}]*)\}", style)
 
     assert bare, "the paper block moved, so this proves nothing"
-    assert '--paper: #ffffff' in bare.group(1)
+    assert "--paper: #ffffff" in bare.group(1)
     assert re.search(r':root\[data-theme="dark"\] \{', style), "so do the theme blocks"
     assert re.findall(r"--paper[\w-]*\s*:", bare.group(1)) == re.findall(
         r"--paper[\w-]*\s*:", style
@@ -965,20 +1081,27 @@ def test_a_point_is_a_line_of_markdown_and_is_rendered_as_one(index: Index):
     dead reference — the field looking decorative, which is the thing `_pr_link`
     exists to stop."""
     more = [e for e in corpus() if e.id != "task-0f0001"] + [
-        Task(id="task-0f0001", kind="task", title="Tidy the serialisation scripts",
-             owner="cy", person_weeks=0.5, status="ready", cycle=37, reviewers=["ann"],
-             body="- [ ] call `inspect_tappoints` from kilnlab/kiln4py#2409\n"),
+        Task(
+            id="task-0f0001",
+            kind="task",
+            title="Tidy the serialisation scripts",
+            owner="cy",
+            person_weeks=0.5,
+            status="ready",
+            cycle=37,
+            reviewers=["ann"],
+            body="- [ ] call `inspect_tappoints` from kilnlab/kiln4py#2409\n",
+        ),
     ]
     config = Config(known_people=["ann", "bo", "cy"]).with_plans([plan_of()])
     page = render_deck(build_index(more, config, TODAY), 37, ROUTES)
-    slide = next(s for s in slides_in(page)
-                 if s["heading"] == "Tidy the serialisation scripts")
+    slide = next(s for s in slides_in(page) if s["heading"] == "Tidy the serialisation scripts")
 
     assert "<code>inspect_tappoints</code>" in page
     assert slide["prs"] == [], "the links inside a point are not the PR field"
     assert "https://github.com/kilnlab/kiln4py/pull/2409" in page
     # And it stays on the row with its own tick rather than starting a paragraph.
-    assert "<li class=\"\"><span class=\"box\" aria-hidden=\"true\">☐</span><p>" not in page
+    assert '<li class=""><span class="box" aria-hidden="true">☐</span><p>' not in page
 
 
 def test_a_heading_inside_the_notes_is_not_drawn_at_the_size_of_the_slides_own(deck: str):
@@ -995,9 +1118,7 @@ def test_a_heading_inside_the_notes_is_not_drawn_at_the_size_of_the_slides_own(d
     inside = SLIDE + [el("div", "doc"), el("h2")]
 
     assert sheet.value(own, "font-size") == "1.9rem", sheet.selectors_reaching(own, "font-size")
-    assert sheet.value(inside, "font-size") == "1rem", (
-        sheet.selectors_reaching(inside, "font-size")
-    )
+    assert sheet.value(inside, "font-size") == "1rem", sheet.selectors_reaching(inside, "font-size")
 
 
 def test_a_status_on_a_slide_is_a_word_and_not_the_ladder(deck: str):
@@ -1018,7 +1139,8 @@ def test_a_status_on_a_slide_is_a_word_and_not_the_ladder(deck: str):
     for status in STATUSES:
         chip = SLIDE + [el("p", "who"), el("span", f"chip st-{status}")]
         assert sheet.value(chip, "background") == "transparent", (
-            status, sheet.selectors_reaching(chip, "background")
+            status,
+            sheet.selectors_reaching(chip, "background"),
         )
         assert sheet.value(chip, "color") == "var(--paper-muted)", status
 
@@ -1042,7 +1164,10 @@ def paper_sheet(page: str) -> Sheet:
     """
     style = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
     on_paper = "".join(
-        body if prelude == "@media print" else "" if prelude.startswith("@")
+        body
+        if prelude == "@media print"
+        else ""
+        if prelude.startswith("@")
         else f"{prelude}{{{body}}}"
         for prelude, body in _blocks(style)
     )
@@ -1066,7 +1191,8 @@ def test_a_deck_prints_on_paper_whatever_theme_it_was_read_in(deck: str):
         el("html", states="root", data_theme="light"),
     ):
         assert paper.value([described], "color-scheme") == "light", (
-            described, paper.selectors_reaching([described], "color-scheme")
+            described,
+            paper.selectors_reaching([described], "color-scheme"),
         )
     for tag in ("html", "body"):
         assert paper.value([el(tag)], "background") == "var(--paper)", tag
@@ -1095,9 +1221,15 @@ def _one(**over) -> Task:
         "## Progress\n- [x] one\n- [ ] two\n\nIt went well.\n",
     )
     fields = {
-        "id": "task-d00001", "kind": "task", "title": "A leaf",
-        "status": "in_progress", "owner": "ann", "cycle": 37,
-        "person_weeks": 1, "priority": "high", "body": body,
+        "id": "task-d00001",
+        "kind": "task",
+        "title": "A leaf",
+        "status": "in_progress",
+        "owner": "ann",
+        "cycle": 37,
+        "person_weeks": 1,
+        "priority": "high",
+        "body": body,
     }
     return Task(**{**fields, **over})
 
@@ -1223,16 +1355,20 @@ def test_a_deck_order_puts_the_listed_first_and_keeps_everything_else():
     whose reader cannot check."""
     a, b, c = (_one(id=f"task-d0000{n}", title=f"T{n}") for n in (1, 2, 3))
     assert [one.id for one in _deck_order([a, b, c], ["task-d00003"])] == [
-        "task-d00003", "task-d00001", "task-d00002",
+        "task-d00003",
+        "task-d00001",
+        "task-d00002",
     ]
     # An id for a record this cycle no longer holds is ignored, not drawn as a gap.
     assert [one.id for one in _deck_order([a, b], ["task-d00009", "task-d00002"])] == [
-        "task-d00002", "task-d00001",
+        "task-d00002",
+        "task-d00001",
     ]
     # A repeated id is taken once. The rail deduplicates before it saves, so this
     # is a hand-edited file, and the honest reading is "that record, once".
     assert [one.id for one in _deck_order([a, b], ["task-d00002", "task-d00002"])] == [
-        "task-d00002", "task-d00001",
+        "task-d00002",
+        "task-d00001",
     ]
     # Nothing listed is the order the deck had before this field existed.
     assert [one.id for one in _deck_order([a, b, c], [])] == [a.id, b.id, c.id]
@@ -1262,8 +1398,7 @@ def test_a_slide_nobody_can_read_costs_that_slide_and_nothing_else():
     from openproj.model import parse_text
 
     text = (
-        "---\nid: task-d00001\nkind: task\ntitle: A leaf\ncycle: 37\n"
-        "slide: 5\n---\n\nThe body.\n"
+        "---\nid: task-d00001\nkind: task\ntitle: A leaf\ncycle: 37\nslide: 5\n---\n\nThe body.\n"
     )
     assert parse_text(text, "x").slide is None
     # And a map whose MEMBERS are nonsense keeps the map and loses the members,

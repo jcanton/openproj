@@ -134,11 +134,11 @@ PRIORITY_LEVEL = {"very_low": 1, "low": 2, "medium": 3, "high": 4, "very_high": 
 # in the legend, the meter on a node. In a native `<select>` it cannot — an
 # option is a string — which is the same bargain the status glyphs already make.
 PRIORITY_GLYPH = {
-    "very_low": "\u2582",    # ▂ one quarter — an eighth is a hairline at 12px
-    "low": "\u2583",         # ▃ three eighths
-    "medium": "\u2585",      # ▅ five eighths
-    "high": "\u2587",        # ▇ seven eighths
-    "very_high": "\u2588",   # █ full
+    "very_low": "\u2582",  # ▂ one quarter — an eighth is a hairline at 12px
+    "low": "\u2583",  # ▃ three eighths
+    "medium": "\u2585",  # ▅ five eighths
+    "high": "\u2587",  # ▇ seven eighths
+    "very_high": "\u2588",  # █ full
 }
 
 # The redundant channel. On the graph and the timeline a fill is the only thing
@@ -217,15 +217,15 @@ PRIORITY_GLYPH = {
 # that resolves against the system's own fonts and not the page's `@font-face`
 # at all, which is exactly how the tick has been drawing correctly all along.
 # The cost of a character no machine has is one 14px mark drawn as a box, not a
-# broken page — the same bargain `docs/QUEUE.md` §7.2 struck for the priority
+# broken page — the same bargain `design/QUEUE.md` §7.2 struck for the priority
 # blocks, and a sixth character costs nothing the five already shipped do not.
 STATUS_GLYPH = {
-    "thinking": "○",        # a place for one: nothing has started
-    "shaping": "↗",         # the climb: figuring out what to do
-    "ready": "⌒",           # over the top, and knowing
-    "in_progress": "↘",     # the descent: getting it done
-    "done": "✓",            # finished
-    "shelved": "✕",         # struck out, not failed
+    "thinking": "○",  # a place for one: nothing has started
+    "shaping": "↗",  # the climb: figuring out what to do
+    "ready": "⌒",  # over the top, and knowing
+    "in_progress": "↘",  # the descent: getting it done
+    "done": "✓",  # finished
+    "shelved": "✕",  # struck out, not failed
 }
 
 
@@ -263,10 +263,12 @@ STATUS_GLYPH = {
 # svg`; an SVG nothing sizes lays out at 0x0, which this application has now
 # shipped twice.
 DRAWING_SIZE_MARKS = {
-    "full": _ICON_SVG.format('<path d="M9 4H4v5"/><path d="M15 4h5v5"/>'
-                             '<path d="M15 20h5v-5"/><path d="M9 20H4v-5"/>'),
-    "small": _ICON_SVG.format('<path d="M4 9h5V4"/><path d="M20 9h-5V4"/>'
-                              '<path d="M20 15h-5v5"/><path d="M4 15h5v5"/>'),
+    "full": _ICON_SVG.format(
+        '<path d="M9 4H4v5"/><path d="M15 4h5v5"/><path d="M15 20h5v-5"/><path d="M9 20H4v-5"/>'
+    ),
+    "small": _ICON_SVG.format(
+        '<path d="M4 9h5V4"/><path d="M20 9h-5V4"/><path d="M20 15h-5v5"/><path d="M4 15h5v5"/>'
+    ),
 }
 
 
@@ -296,10 +298,12 @@ DRAFT_MARKS = {
 # Sized by `.marks .hist svg` — an SVG nothing sizes lays out at 0x0, and this
 # application has shipped that twice.
 HISTORY_MARKS = {
-    "undo": _ICON_SVG.format('<path d="M9.5 4.5 5 9l4.5 4.5"/>'
-                             '<path d="M5 9h9a5 5 0 0 1 0 10h-3.5"/>'),
-    "redo": _ICON_SVG.format('<path d="M14.5 4.5 19 9l-4.5 4.5"/>'
-                             '<path d="M19 9h-9a5 5 0 0 0 0 10h3.5"/>'),
+    "undo": _ICON_SVG.format(
+        '<path d="M9.5 4.5 5 9l4.5 4.5"/><path d="M5 9h9a5 5 0 0 1 0 10h-3.5"/>'
+    ),
+    "redo": _ICON_SVG.format(
+        '<path d="M14.5 4.5 19 9l-4.5 4.5"/><path d="M19 9h-9a5 5 0 0 0 0 10h3.5"/>'
+    ),
 }
 
 # The mark the drawings button wears, beside the two the history buttons wear
@@ -414,26 +418,46 @@ REQUIRED_AT = required_at()
 # unit that D1 got wrong — and Appetite is still the word a reader gets, because
 # it is the domain's and the team's own template's.
 LABELS = {
-    "title": "Title", "status": "Status", "owner": "Owner", "assignees": "Assignees",
-    "reviewers": "Reviewers", "review_waived": "Review waived", "assigned_on": "Assigned on",
-    "priority": "Priority", "cycle": "Cycle", "parent": "Parent", "depends_on": "Blocked by",
-    "tags": "Tags", "prs": "PRs", "person_weeks": "Appetite (person-weeks)",
-    "reported_by": "Reported by", "written_by": "Written by",
-    "pitched_into": "Pitched into", "became": "Became",
-    "opened_on": "Opened on", "written_on": "Written on",
+    "title": "Title",
+    "status": "Status",
+    "owner": "Owner",
+    "assignees": "Assignees",
+    "reviewers": "Reviewers",
+    "review_waived": "Review waived",
+    "assigned_on": "Assigned on",
+    "priority": "Priority",
+    "cycle": "Cycle",
+    "parent": "Parent",
+    "depends_on": "Blocked by",
+    "tags": "Tags",
+    "prs": "PRs",
+    "person_weeks": "Appetite (person-weeks)",
+    "reported_by": "Reported by",
+    "written_by": "Written by",
+    "pitched_into": "Pitched into",
+    "became": "Became",
+    "opened_on": "Opened on",
+    "written_on": "Written on",
     # The records list's two columns that are not one stored field. `who` is
     # `Rung.who` — owner, reported_by or written_by by rung — and the header is
     # "Who", not "Created by": `owner` is who HOLDS a pitch, not who typed it,
     # and a header promising authorship over a field recording ownership is
     # exactly the copy drift HUMAN exists to prevent. `edited` is the history
     # walk's stamp, a fact about commits rather than about any field.
-    "who": "Who", "edited": "Last modified",
+    "who": "Who",
+    "edited": "Last modified",
     # Not stored fields: a facet and a derived column. They are read by the same
     # people in the same control bar, so they take their words from here too.
-    "kind": "Kind", "project": "Project", "product": "Product",
-    "size": "Appetite", "blocked_by": "Blockers",
+    "kind": "Kind",
+    "project": "Project",
+    "product": "Product",
+    "size": "Appetite",
+    "blocked_by": "Blockers",
     "progress": "Progress",
-    "start": "Start", "end": "End", "id": "Id", "predicate": "Flags",
+    "start": "Start",
+    "end": "End",
+    "id": "Id",
+    "predicate": "Flags",
     # The people page's own facet. Which hat somebody is wearing is not stored on
     # a record at all — it is which field their name is in — but it is read in
     # the same control bar as the rest, so it takes its word from the same map.
@@ -529,16 +553,12 @@ def _human(value: object) -> str:
 # the licence question never arises. The long form is `docs/shape-up.md`.
 FIELD_TEACH = {
     "person_weeks": (
-        "Appetite is a budget, not an estimate: how much this is worth, "
-        "not how long it will take."
+        "Appetite is a budget, not an estimate: how much this is worth, not how long it will take."
     ),
     # The circuit breaker, and the one Shape Up idea the scheduler most quietly
     # assumes. A newcomer reading a derived end date otherwise expects a slip to
     # push it out, which is the opposite of the rule the review meeting keeps.
-    "cycle": (
-        "A bet is for one cycle. Work that overruns is re-bet, "
-        "not extended by default."
-    ),
+    "cycle": ("A bet is for one cycle. Work that overruns is re-bet, not extended by default."),
 }
 
 # The same thing keyed by status word rather than by field, because status is one
@@ -558,8 +578,7 @@ FIELD_TEACH = {
 # them. See `_LADDER_OF`.
 STATUS_TEACH = {
     "thinking": (
-        "Somebody has written this down as possible work — nobody has started "
-        "shaping it yet."
+        "Somebody has written this down as possible work — nobody has started shaping it yet."
     ),
     # The one line that measured three, in a column where every other lesson
     # measured two. jcanton, 2026-08-24, choosing the shorter of two drafts after
@@ -583,10 +602,7 @@ STATUS_TEACH = {
     # Each is one sentence that paints as two lines in the column this is drawn
     # in, which is the measure `shaping` was cut down to on 2026-08-24 — the one
     # that ran to three was rewritten rather than allowed to set a new height.
-    "ready": (
-        "Shaped, sized and argued for — waiting for a betting table to put it "
-        "in a cycle."
-    ),
+    "ready": ("Shaped, sized and argued for — waiting for a betting table to put it in a cycle."),
     # The rule this teaches is the cycle field's own, in the cycle field's own
     # words: "Work that overruns is re-bet, not extended by default." One
     # vocabulary through the flow, which is what stops `in_progress` meaning
@@ -595,16 +611,13 @@ STATUS_TEACH = {
         "Somebody is building this in the cycle it was bet into — an overrun is "
         "re-bet, not extended."
     ),
-    "done": (
-        "Built and finished inside its cycle — anything still wanted from it is "
-        "a new bet."
-    ),
+    "done": ("Built and finished inside its cycle — anything still wanted from it is a new bet."),
     "shelved": "A decision, not a failure: we looked, and we are not doing this.",
 }
 
 
 # Where "how long ago" stops being the useful answer and "when" begins.
-# docs/hackmd-observed.md reads the boundary off the pixels: one column runs
+# design/hackmd-observed.md reads the boundary off the pixels: one column runs
 # `17 hours ago` … `10 days ago` and then switches to `2026-07-08` (about 43
 # days before the shot), so the threshold falls somewhere past ten days and
 # before forty-three. Fourteen keeps every relative form the screenshot shows
@@ -666,10 +679,17 @@ PEOPLE_FIELDS = ("owner", "assignees", "reviewers", "reported_by", "written_by")
 # value, so the comma-separated ones also get an "add" picker that appends a token
 # — otherwise the suggestions are useless the moment there is more than one name.
 SUGGESTS = {
-    "owner": "people", "assignees": "people", "reviewers": "people",
-    "parent": "records", "depends_on": "records", "tags": "tags", "prs": "prs",
-    "reported_by": "people", "written_by": "people",
-    "pitched_into": "records", "became": "records",
+    "owner": "people",
+    "assignees": "people",
+    "reviewers": "people",
+    "parent": "records",
+    "depends_on": "records",
+    "tags": "tags",
+    "prs": "prs",
+    "reported_by": "people",
+    "written_by": "people",
+    "pitched_into": "records",
+    "became": "records",
     # A cycle number is a reference too. Typed from memory it is off by one as
     # often as it is right, and a record bet into a cycle nobody has named is
     # weeks that never appear on anybody's capacity.
@@ -719,6 +739,9 @@ def _editable_for(record: Record, prefix: str = "field", signed_in: str = "") ->
     ]
 
 
+# The appetite, by the name the model gives it. `detail.py` reads it to decide
+# which field's label gets the tasks-add-up-to note; the table's own
+# column-to-field map is `_COLUMN_FIELD`, which is about columns and lives there.
 _SIZE_FIELD_NAME = "person_weeks"
 
 

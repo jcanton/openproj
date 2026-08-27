@@ -72,10 +72,14 @@ def test_a_mermaid_fence_is_a_code_block_where_there_is_not():
 
 
 def test_every_other_fence_is_left_alone():
+    # Read through the tags rather than for the raw sentence: a fence with a
+    # language on it is syntax-highlighted now, so `not a diagram` reaches the
+    # page as three words in three spans. What this is asking has not changed —
+    # the fence is a fence and its text is all still there.
     for info in ("", "python", "bash", "mermaidish"):
         drawn = str(_markdown(f"```{info}\nnot a diagram\n```\n", ROUTES))
         assert '<pre class="mermaid">' not in drawn, info
-        assert "not a diagram" in drawn, info
+        assert "not a diagram" in re.sub(r"<[^>]+>", "", drawn), info
     # And the info string's FIRST word is what decides, so a fence carrying an
     # attribute after the language is still a diagram.
     assert '<pre class="mermaid">' in str(_markdown("```mermaid title=x\nA-->B\n```\n", ROUTES))
@@ -86,7 +90,7 @@ def test_the_text_inside_a_fence_is_escaped_like_any_other_value():
     has shipped five escaping bugs into pages that all looked like this one.
     `Markup(...).format` is the boundary; nothing here builds markup out of it.
     """
-    hostile = '```mermaid\nA --> B</pre><script>alert(1)</script>\n```\n'
+    hostile = "```mermaid\nA --> B</pre><script>alert(1)</script>\n```\n"
     drawn = str(_markdown(hostile, ROUTES))
     assert "<script>" not in drawn
     assert "&lt;/pre&gt;&lt;script&gt;" in drawn
@@ -275,8 +279,9 @@ def serving(app):
     runs it, and there is no browser and no origin in an ASGI shim.
     """
     server = uvicorn.Server(
-        uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error",
-                       timeout_graceful_shutdown=1)
+        uvicorn.Config(
+            app, host="127.0.0.1", port=0, log_level="error", timeout_graceful_shutdown=1
+        )
     )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -412,7 +417,9 @@ def test_a_diagram_does_not_push_the_page_sideways(repo_path: Path, tmp_path: Pa
 
     with serving(create_app(repo_path, auth="dev", secret=SECRET)) as url:
         with browsing._devtools(
-            browsing.chrome(), f"{url}/detail/pitch-aaaaaa", tmp_path,
+            browsing.chrome(),
+            f"{url}/detail/pitch-aaaaaa",
+            tmp_path,
             flags=("--window-size=390,780",),
         ) as (call, said):
             found = None

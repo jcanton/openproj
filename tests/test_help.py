@@ -76,9 +76,7 @@ class _Page(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         if tag == self._heading:
-            self.headings.append(
-                (tag, " ".join("".join(self._text).split()), self._section)
-            )
+            self.headings.append((tag, " ".join("".join(self._text).split()), self._section))
             self._heading = None
         if tag == "section":
             self._section = ""
@@ -117,7 +115,7 @@ def page(index: Index) -> str:
 def test_every_document_the_page_names_is_a_file_in_this_repository():
     """`DOCS` is a list of paths and nothing checks them at import time.
 
-    Renaming `docs/EDITOR.md` is a normal thing to do, and without this the only
+    Renaming `design/EDITOR.md` is a normal thing to do, and without this the only
     symptom is a section on a page nobody opens saying it could not be read. The
     root comes from `_docs_root`, so this also fails if the resolution itself
     stops working in a checkout.
@@ -171,8 +169,9 @@ def test_every_contents_entry_points_at_something_on_the_page(page: str):
     # document whose headings were not collected draws a title in the contents
     # and nothing under it.
     for doc in DOCS:
-        assert any(f.startswith(f"{doc.key}-") for f in found.fragments), \
+        assert any(f.startswith(f"{doc.key}-") for f in found.fragments), (
             f"{doc.path} contributed no headings to the contents"
+        )
 
 
 def test_a_document_is_demoted_under_the_heading_that_names_it(page: str):
@@ -314,9 +313,7 @@ def test_the_page_does_not_scroll_sideways_on_a_phone(page: str, tmp_path: Path)
     assert found["scrollWidth"] <= found["windowWidth"]
 
 
-def test_the_contents_folds_on_a_narrow_screen_and_sticks_on_a_wide_one(
-    page: str, tmp_path: Path
-):
+def test_the_contents_folds_on_a_narrow_screen_and_sticks_on_a_wide_one(page: str, tmp_path: Path):
     """Two claims a parsed document cannot answer, and both were wrong first time.
 
     A contents entry per heading in every document, stacked above the first word
@@ -345,7 +342,14 @@ def test_the_contents_folds_on_a_narrow_screen_and_sticks_on_a_wide_one(
     assert wide["open"] is True
     assert wide["summary"] == "none", "nothing to fold beside a column of its own"
     assert wide["top"][1] <= 16, f"the contents did not stick: {wide['top']}"
-    assert wide["scrollable"], "the contents is taller than the window and must scroll"
+
+    # Measured on a short window rather than on the 900 above, because WHETHER the
+    # contents overflows is a fact about how many headings the documents happen to
+    # carry, and it stopped overflowing at 900 the day they were cut back. What has
+    # to hold is the rule and not the accident: a contents taller than its window
+    # scrolls inside itself instead of being cut off by the `max-height` pinning it.
+    short = measured_in(browser, page, tmp_path / "short.html", 1280, script, 400)
+    assert short["scrollable"], "a contents taller than the window must scroll"
 
     narrow = measured_in(browser, page, tmp_path / "narrow.html", 390, script, 780)
     assert narrow["open"] is False, "the contents did not fold"

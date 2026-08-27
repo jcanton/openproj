@@ -26,5 +26,12 @@
 # file as well as the Dockerfile for exactly that reason: two files decide
 # whether a document reaches production and only one of them was being checked.
 tests/
+# The table CI cuts its eight test groups from. Test-time, like `tests/` above.
+.test_durations
 deploy/RUNBOOK.md
 gcloud_deploy.sh
+# `design/` is the other half of that lesson, from the other direction: these are
+# design records for whoever changes a subsystem, the Help page has never named
+# one, and nothing reads them at run time. They are excluded because they are not
+# the service — not because nothing noticed them.
+design/

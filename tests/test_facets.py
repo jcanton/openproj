@@ -560,11 +560,14 @@ def test_an_open_menu_is_not_painted_over(index: Index, name: str, tmp_path: Pat
     between the two elements as much as on the numbers written on them.
     """
     got = measured_in(
-        chrome(), every_page(index)[name], tmp_path / f"over-{name}.html", 1460,
-        _NOTHING_OVER_THE_MENU, height=900, patience=2500,
+        chrome(),
+        every_page(index)[name],
+        tmp_path / f"over-{name}.html",
+        1460,
+        _NOTHING_OVER_THE_MENU,
+        height=900,
+        patience=2500,
     )
 
     assert got["fields"] > 3, f"{name}: there is no filter bar to measure"
-    assert got["covered"] == [], (
-        f"{name}: something is painted over an open menu: {got['covered']}"
-    )
+    assert got["covered"] == [], f"{name}: something is painted over an open menu: {got['covered']}"

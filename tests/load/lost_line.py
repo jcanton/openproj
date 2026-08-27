@@ -88,8 +88,10 @@ def end_to_end(scratch: Path, offset: int) -> int:
         assert "BOB'S SENTENCE" in store.read(first.commit, PATH)
 
         second = store.write(PATH, ann, opened, "ann", "ann: rewrite the first line")
-        print(f"ann   -> {second.outcome} {second.commit and second.commit[:7]} "
-              f"conflict={second.conflict}")
+        print(
+            f"ann   -> {second.outcome} {second.commit and second.commit[:7]} "
+            f"conflict={second.conflict}"
+        )
 
         landed = store.read(store.head(), PATH)
         print("\nthe file in git now:\n" + landed)

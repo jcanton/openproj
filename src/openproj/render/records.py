@@ -119,7 +119,9 @@ recordsApply();
 </script>
 """
 
-_RECORDS_STYLE = _SCROLL_STYLE + """
+_RECORDS_STYLE = (
+    _SCROLL_STYLE
+    + """
 /* One row per record: chip, title, who, tags, time. The chips come from the
    shell (`.chip.kind-…`), so a kind added to the ladder arrives here already
    drawn; the scroll box and the frozen header row are `_SCROLL_STYLE`, the
@@ -154,6 +156,7 @@ _RECORDS_STYLE = _SCROLL_STYLE + """
                                  white-space: nowrap;
                                  font-variant-numeric: tabular-nums; }
 """
+)
 
 
 def _record_row(index: Index, record_id: str) -> dict:
@@ -270,8 +273,9 @@ def render_records(
                 # Through the same gate `_record_row` reads by, so a product —
                 # whose `owner` is a field it does not read — answers Who with
                 # nothing rather than with a stray value from its file.
-                "who": None if rung.who in unread_fields(record.kind)
-                       else getattr(record, rung.who),
+                "who": None
+                if rung.who in unread_fields(record.kind)
+                else getattr(record, rung.who),
             }
         )
     if timed:
@@ -309,13 +313,13 @@ def render_records(
     }
     describe = {
         "records": "Everything written down in this plan, newest edit first — "
-                   "the plan's work, its issues and its notes.",
+        "the plan's work, its issues and its notes.",
         "issues": "Something somebody noticed. At the betting table somebody "
-                  "reads what is open and writes a pitch for what matters.",
+        "reads what is open and writes a pitch for what matters.",
         "notes": "Something somebody is thinking about, before anybody knows "
-                 "what it is. A note has no owner, no size and no cycle — when "
-                 "it turns out to be work, promote it and it becomes a "
-                 "project, a pitch or a task.",
+        "what it is. A note has no owner, no size and no cycle — when "
+        "it turns out to be work, promote it and it becomes a "
+        "project, a pitch or a task.",
     }[key]
     body = _compiled(_RECORDS).render(
         rows=rows,
@@ -335,6 +339,4 @@ def render_records(
         facets=_facets_html(index.facets, fields=()),
         filters=_FILTER_JS,
     )
-    return _page(
-        f"openproj — {key}", body, _RECORDS_STYLE, links, key, index.unreadable
-    )
+    return _page(f"openproj — {key}", body, _RECORDS_STYLE, links, key, index.unreadable)

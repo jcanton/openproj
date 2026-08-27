@@ -173,9 +173,7 @@ def test_nobody_is_drawn_a_band_for_themselves(index: Index, tmp_path: Path):
     page = render_detail(
         index, ROUTES, only=record_id, base_commit=HEAD, may_write=True, editor="plain"
     )
-    page = page.replace("<head>", "<head>" + STUB, 1).replace(
-        "</body>", MY_OWN_SEAT + "</body>"
-    )
+    page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", MY_OWN_SEAT + "</body>")
 
     got = measured_in(chrome(), page, tmp_path / "mine.html", 1200, _MINE, height=900)
 
@@ -224,9 +222,7 @@ def test_two_people_get_two_colours_and_two_places(index: Index, tmp_path: Path)
     page = render_detail(
         index, ROUTES, only=record_id, base_commit=HEAD, may_write=True, editor="plain"
     )
-    page = page.replace("<head>", "<head>" + STUB, 1).replace(
-        "</body>", TWO_PEOPLE + "</body>"
-    )
+    page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", TWO_PEOPLE + "</body>")
 
     got = measured_in(chrome(), page, tmp_path / "two.html", 1200, _COLOURS, height=900)
 
@@ -280,15 +276,17 @@ def test_this_tab_says_where_it_is_sitting(index: Index, tmp_path: Path):
 #
 # So the width is SWEPT, one CSS pixel at a time. A single width proves nothing:
 # the error is invisible at most of them and a line height at a few.
-_WRAPPING = "\\n".join((
-    "first line",
-    "a paragraph of ordinary prose that has to wrap many times over at every one "
-    "of the widths this sweeps, which is what makes where it ends sensitive to a "
-    "mirror that is two pixels narrower than the box it mirrors. " * 10,
-    "third line",
-    "fourth line",
-    "fifth line, and the caret below is in this one",
-))
+_WRAPPING = "\\n".join(
+    (
+        "first line",
+        "a paragraph of ordinary prose that has to wrap many times over at every one "
+        "of the widths this sweeps, which is what makes where it ends sensitive to a "
+        "mirror that is two pixels narrower than the box it mirrors. " * 10,
+        "third line",
+        "fourth line",
+        "fifth line, and the caret below is in this one",
+    )
+)
 
 WRAPPED_SEAT = """
 <script>
@@ -413,9 +411,7 @@ return {answers, widened, line,
 """
 
 
-def test_a_seat_band_lands_on_the_right_line_at_a_width_that_wraps(
-    index: Index, tmp_path: Path
-):
+def test_a_seat_band_lands_on_the_right_line_at_a_width_that_wraps(index: Index, tmp_path: Path):
     """S3.1, and the reason it is a correctness fix and not a tidy-up.
 
     A band that is one line out is worse than no band: it points at the sentence
@@ -436,13 +432,16 @@ def test_a_seat_band_lands_on_the_right_line_at_a_width_that_wraps(
     page = render_detail(
         index, ROUTES, only=record_id, base_commit=HEAD, may_write=True, editor="plain"
     )
-    page = page.replace("<head>", "<head>" + STUB, 1).replace(
-        "</body>", WRAPPED_SEAT + "</body>"
-    )
+    page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", WRAPPED_SEAT + "</body>")
 
     got = measured_in(
-        chrome(), page, tmp_path / "wrapped.html", 1200, _BAND_AT_EVERY_WIDTH,
-        height=900, patience=4800,
+        chrome(),
+        page,
+        tmp_path / "wrapped.html",
+        1200,
+        _BAND_AT_EVERY_WIDTH,
+        height=900,
+        patience=4800,
     )
 
     assert got["numbered"], (
@@ -532,7 +531,12 @@ def test_somebody_elses_keystroke_leaves_the_numbers_counting_the_document_there
     page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", SEAT + "</body>")
 
     got = measured_in(
-        chrome(), page, tmp_path / "remote.html", 1200, _REMOTE_LINES, height=900,
+        chrome(),
+        page,
+        tmp_path / "remote.html",
+        1200,
+        _REMOTE_LINES,
+        height=900,
         patience=2800,
     )
 
@@ -607,8 +611,14 @@ def test_the_second_surface_draws_where_everybody_is(index: Index, tmp_path: Pat
     page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", _ACE_SEAT + "</body>")
 
     got = measured_in(
-        chrome(), page, tmp_path / "ace-seat.html", 1200, _ACE_DRAWN, height=900,
-        query="?editor=ace", patience=4800,
+        chrome(),
+        page,
+        tmp_path / "ace-seat.html",
+        1200,
+        _ACE_DRAWN,
+        height=900,
+        query="?editor=ace",
+        patience=4800,
     )
 
     assert got["surface"] == "ace", "the page did not open on the second surface"
@@ -630,7 +640,6 @@ def test_the_second_surface_draws_where_everybody_is(index: Index, tmp_path: Pat
         "textarea — two bands for one caret, one of them measured through a mirror "
         "of a box nobody is typing in"
     )
-
 
 
 # A login is a string off a socket, and on this surface it is written into a CSS
@@ -673,9 +682,7 @@ return {
 """
 
 
-def test_a_login_cannot_write_css_into_the_band_it_is_drawn_in(
-    index: Index, tmp_path: Path
-):
+def test_a_login_cannot_write_css_into_the_band_it_is_drawn_in(index: Index, tmp_path: Path):
     """The band's colour and the name in it are one inline `style`, so a login is
     a value inside a mechanism.
 
@@ -692,13 +699,17 @@ def test_a_login_cannot_write_css_into_the_band_it_is_drawn_in(
     page = render_detail(
         index, ROUTES, only=record_id, base_commit=HEAD, may_write=True, editor="ace"
     )
-    page = page.replace("<head>", "<head>" + STUB, 1).replace(
-        "</body>", _HOSTILE_SEAT + "</body>"
-    )
+    page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", _HOSTILE_SEAT + "</body>")
 
     got = measured_in(
-        chrome(), page, tmp_path / "ace-hostile.html", 1200, _HOSTILE_DRAWN, height=900,
-        query="?editor=ace", patience=4800,
+        chrome(),
+        page,
+        tmp_path / "ace-hostile.html",
+        1200,
+        _HOSTILE_DRAWN,
+        height=900,
+        query="?editor=ace",
+        patience=4800,
     )
 
     assert got["bands"] == 1, "the band was not drawn at all, so this asks nothing"
@@ -894,9 +905,7 @@ return {answers, line, scrolled, folded, foldedRows, away, paintedOff, painted,
 """
 
 
-def test_a_seat_band_lands_on_the_right_line_on_the_second_surface(
-    index: Index, tmp_path: Path
-):
+def test_a_seat_band_lands_on_the_right_line_on_the_second_surface(index: Index, tmp_path: Path):
     """The sweep, on Ace, and the rule it is held to is the same rule.
 
     `VENDOR.md` holds this feature to "a caret one line off is worse than no
@@ -919,8 +928,13 @@ def test_a_seat_band_lands_on_the_right_line_on_the_second_surface(
     )
 
     got = measured_in(
-        chrome(), page, tmp_path / "ace-wrapped.html", 1200, _ACE_BAND_AT_EVERY_WIDTH,
-        height=900, patience=6800,
+        chrome(),
+        page,
+        tmp_path / "ace-wrapped.html",
+        1200,
+        _ACE_BAND_AT_EVERY_WIDTH,
+        height=900,
+        patience=6800,
     )
 
     assert got["surface"] == "ace", "the page did not open on the second surface"
@@ -976,8 +990,7 @@ def test_a_seat_band_lands_on_the_right_line_on_the_second_surface(
 
     assert len(got["two"]) == 2, "two people are in the document and two bands were not drawn"
     assert got["two"][0] != got["two"][1], (
-        f"two people share one colour, so the band says somebody is there and not who: "
-        f"{got['two']}"
+        f"two people share one colour, so the band says somebody is there and not who: {got['two']}"
     )
     assert {"bo", "cy"} == {name.strip(chr(34) + chr(39)) for name in got["twoNames"]}, (
         f"the two bands do not name the two people in the room: {got['twoNames']}"
@@ -994,20 +1007,20 @@ def test_a_seat_band_lands_on_the_right_line_on_the_second_surface(
     )
 
 
-
-
 # A shaping document, in the shape the corpus actually has: a heading, a blank
 # line, a bullet, a blank line, and the paragraph somebody is writing in. The
 # short lines above the paragraph are the whole point — a stale index walks back
 # through CHARACTERS, so three of them cross three characters of prose and two
 # whole rows of a checklist.
-_PITCH = "\\n".join((
-    "## Problem",
-    "",
-    "- one",
-    "",
-    "the paragraph the other person has their caret in",
-))
+_PITCH = "\\n".join(
+    (
+        "## Problem",
+        "",
+        "- one",
+        "",
+        "the paragraph the other person has their caret in",
+    )
+)
 
 _JITTER = """
 <script>
@@ -1083,12 +1096,15 @@ def test_typing_above_somebody_does_not_move_their_band(index: Index, tmp_path: 
     page = render_detail(
         index, ROUTES, only=record_id, base_commit=HEAD, may_write=True, editor="plain"
     )
-    page = page.replace("<head>", "<head>" + STUB, 1).replace(
-        "</body>", _JITTER + "</body>"
-    )
+    page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", _JITTER + "</body>")
 
     got = measured_in(
-        chrome(), page, tmp_path / "jitter.html", 1200, _JITTERED, height=900,
+        chrome(),
+        page,
+        tmp_path / "jitter.html",
+        1200,
+        _JITTERED,
+        height=900,
         patience=2800,
     )
 
@@ -1101,7 +1117,6 @@ def test_typing_above_somebody_does_not_move_their_band(index: Index, tmp_path: 
         f"without one word of theirs changing: {got['tops']}, on a {got['line']}px row. "
         "Their caret is where it was; only this tab's idea of the index moved."
     )
-
 
 
 _ACE_JITTER = """
@@ -1157,13 +1172,17 @@ def test_typing_above_somebody_does_not_move_their_band_on_the_second_surface(
     page = render_detail(
         index, ROUTES, only=record_id, base_commit=HEAD, may_write=True, editor="ace"
     )
-    page = page.replace("<head>", "<head>" + STUB, 1).replace(
-        "</body>", _ACE_JITTER + "</body>"
-    )
+    page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", _ACE_JITTER + "</body>")
 
     got = measured_in(
-        chrome(), page, tmp_path / "ace-jitter.html", 1200, _ACE_JITTERED, height=900,
-        query="?editor=ace", patience=4800,
+        chrome(),
+        page,
+        tmp_path / "ace-jitter.html",
+        1200,
+        _ACE_JITTERED,
+        height=900,
+        query="?editor=ace",
+        patience=4800,
     )
 
     assert got["tops"] and all(top is not None for top in got["tops"]), (
@@ -1312,16 +1331,19 @@ def test_the_next_session_is_one_seat_not_two(index: Index, tmp_path: Path):
     page = page.replace("<head>", "<head>" + COUNTING, 1).replace("</body>", RESEATED + "</body>")
 
     got = measured_in(
-        chrome(), page, tmp_path / "reseated.html", 1200,
+        chrome(),
+        page,
+        tmp_path / "reseated.html",
+        1200,
         "return {now: window.__now, roster: window.__roster,"
         "        afterStale: window.__afterStale, later: window.__later};",
-        height=900, patience=2400,
+        height=900,
+        patience=2400,
     )
 
     assert got["now"] == [3, 1], f"one closed seat and one live one, not {got['now']}"
     assert got["roster"] == "also editing: bo", (
-        f"the live room never seated bo, so the stale halves below prove nothing: "
-        f"{got['roster']!r}"
+        f"the live room never seated bo, so the stale halves below prove nothing: {got['roster']!r}"
     )
     assert got["afterStale"]["roster"] == "also editing: bo", (
         "a frame in flight when the old session ended was heard: the ended socket "

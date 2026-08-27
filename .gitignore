@@ -6,6 +6,7 @@ __pycache__/
 
 out/
 .worktrees/
+.claude/worktrees/
 
 # What `uv build` writes. The release workflow builds these on a runner and
 # uploads them from there; a copy on somebody's laptop is a build artefact, and

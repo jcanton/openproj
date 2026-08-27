@@ -12,15 +12,15 @@
 written and measured.** Every run below is green, and the last three are the
 answer:*
 
-| run | tree | slowest pytest | wall clock |
-|---|---|---:|---:|
-| [32630205174](https://github.com/jcanton/openproj/actions/runs/32630205174) | `main`, the baseline | 1353.47s | **22m50s** |
-| [32631287159](https://github.com/jcanton/openproj/actions/runs/32631287159) | `main` + the `--durations` flags | 1392.75s | 23m24s |
-| [32633361097](https://github.com/jcanton/openproj/actions/runs/32633361097) | + changes 1 and 2 | 711.04s | 12m08s |
-| [32634566905](https://github.com/jcanton/openproj/actions/runs/32634566905) | + changes 3 to 8, five shards | 181.15s | **3m33s** |
-| [32634764278](https://github.com/jcanton/openproj/actions/runs/32634764278) | + change 9 | 156.04s | **3m02s** |
-| [32635323118](https://github.com/jcanton/openproj/actions/runs/32635323118) | + this document | 161.12s | **3m18s** |
-| [32635606308](https://github.com/jcanton/openproj/actions/runs/32635606308) | + the run above, written up | 168.63s | **3m13s** |
+| run                                                                         | tree                             | slowest pytest | wall clock |
+| --------------------------------------------------------------------------- | -------------------------------- | -------------: | ---------: |
+| [32630205174](https://github.com/jcanton/openproj/actions/runs/32630205174) | `main`, the baseline             |       1353.47s | **22m50s** |
+| [32631287159](https://github.com/jcanton/openproj/actions/runs/32631287159) | `main` + the `--durations` flags |       1392.75s |     23m24s |
+| [32633361097](https://github.com/jcanton/openproj/actions/runs/32633361097) | + changes 1 and 2                |        711.04s |     12m08s |
+| [32634566905](https://github.com/jcanton/openproj/actions/runs/32634566905) | + changes 3 to 8, five shards    |        181.15s |  **3m33s** |
+| [32634764278](https://github.com/jcanton/openproj/actions/runs/32634764278) | + change 9                       |        156.04s |  **3m02s** |
+| [32635323118](https://github.com/jcanton/openproj/actions/runs/32635323118) | + this document                  |        161.12s |  **3m18s** |
+| [32635606308](https://github.com/jcanton/openproj/actions/runs/32635606308) | + the run above, written up      |        168.63s |  **3m13s** |
 
 **Twenty-three minutes is three.** 1688 tests, zero skipped, five machines, four
 green sharded runs at 3m02s, 3m13s, 3m18s and 3m33s.
@@ -30,8 +30,8 @@ adds a row starts the run that would be the next one. So the number to quote is
 the **range**, 3m02s–3m33s, and the useful fact is that every run has landed
 inside it.*
 
-*Raw tables in `docs/probes/ci-durations.txt` and
-`docs/probes/ci-durations-after-cache.txt`. Section 5 is no longer a prediction:
+*Raw tables in `design/probes/ci-durations.txt` and
+`design/probes/ci-durations-after-cache.txt`. Section 5 is no longer a prediction:
 it is the measurement, including the three places the prediction was wrong.*
 
 jcanton asked: *"we should make testing and CI faster: splitting it as much as it
@@ -54,7 +54,7 @@ across processes on one machine — for reasons that are measured below and are 
 the reasons anybody guessed. The runner was probed in the same run and it is a
 **2-core, 8 GB** box, which settles that argument rather than assuming it.
 
----
+______________________________________________________________________
 
 ## 0b. The 4-core re-measurement (2026-08-24)
 
@@ -82,13 +82,13 @@ visibility changed on a day somebody happened to be reading.
 
 Job seconds over the twelve most recent green runs before any change:
 
-| leg | 2-core pytest | 4-core job — min / **med** / max |
-|---|---:|---:|
-| `editor` | 133.05 | 99 / **119** / 156 |
-| `views` | 156.04 | 124 / **138** / 197 |
-| `graph` | 134.67 | 91 / **100** / 111 |
-| `rest` | 147.63 | 129 / **140** / 168 |
-| `coedit` | 118.56 | 110 / **124** / 143 |
+| leg      | 2-core pytest | 4-core job — min / **med** / max |
+| -------- | ------------: | -------------------------------: |
+| `editor` |        133.05 |               99 / **119** / 156 |
+| `views`  |        156.04 |              124 / **138** / 197 |
+| `graph`  |        134.67 |               91 / **100** / 111 |
+| `rest`   |        147.63 |              129 / **140** / 168 |
+| `coedit` |        118.56 |              110 / **124** / 143 |
 
 **Wall clock 145–202s, median 151s.** The gate is **2m25s–3m22s**, and the 2m25s that prompted this
 was its fast end rather than its middle.
@@ -97,13 +97,13 @@ was its fast end rather than its middle.
 
 Pytest seconds per leg on the two boxes, same tree, same shards:
 
-| leg | 2-core | 4-core | ratio |
-|---|---:|---:|---:|
-| `editor` | 133.05 | 99.63 | 0.75 |
-| `views` | 156.04 | 119.63 | 0.77 |
-| `graph` | 134.67 | 89.70 | 0.67 |
-| `rest` | 147.63 | 120.39 | 0.82 |
-| `coedit` | 118.56 | 109.13 | 0.92 |
+| leg       |     2-core |     4-core |    ratio |
+| --------- | ---------: | ---------: | -------: |
+| `editor`  |     133.05 |      99.63 |     0.75 |
+| `views`   |     156.04 |     119.63 |     0.77 |
+| `graph`   |     134.67 |      89.70 |     0.67 |
+| `rest`    |     147.63 |     120.39 |     0.82 |
+| `coedit`  |     118.56 |     109.13 |     0.92 |
 | **total** | **689.95** | **538.48** | **0.78** |
 
 **The legs did not shrink together and the order changed.** `editor` was the file the whole cut was
@@ -121,24 +121,24 @@ and 501.3s of rows out of 538.5s of pytest means **37s of the suite is invisible
 evenly**: 16.0s of that was on the leg with 1103 tests and 3.1s on the leg with 79. The cut
 compensated with a fitted term, `attributed + 2.5s + 12ms per test`, and the fit did not hold:
 
-| leg | predicted | printed | error |
-|---|---:|---:|---:|
-| `editor` | 107.4 | 89.87 | −17.5 |
-| `rest` | 107.2 | 108.69 | +1.5 |
-| `graph` | 107.3 | 114.37 | +7.1 |
-| `views` | 107.2 | 112.00 | +4.8 |
-| `coedit` | 107.5 | 120.22 | +12.7 |
+| leg      | predicted | printed | error |
+| -------- | --------: | ------: | ----: |
+| `editor` |     107.4 |   89.87 | −17.5 |
+| `rest`   |     107.2 |  108.69 |  +1.5 |
+| `graph`  |     107.3 |  114.37 |  +7.1 |
+| `views`  |     107.2 |  112.00 |  +4.8 |
+| `coedit` |     107.5 |  120.22 | +12.7 |
 
 A test that builds a real bare git repo costs an order of magnitude more than one that does not, and
 those are exactly the tests that hide under a 50ms floor. So the threshold went to **zero** and the
-cut was re-made from complete per-file totals: `docs/probes/ci-durations-4core.txt`, 532.3s of rows
+cut was re-made from complete per-file totals: `design/probes/ci-durations-4core.txt`, 532.3s of rows
 over 42 files, 18s unattributed and that 18s is collection and imports.
 
-| cut | critical leg | spread |
-|---|---:|---:|
-| the 2-core lists | 119.8s | 26.7s |
-| the modelled re-cut | 116.3s | 20.8s |
-| **from exact totals** | **106.5s** | **0.1s** |
+| cut                   | critical leg |   spread |
+| --------------------- | -----------: | -------: |
+| the 2-core lists      |       119.8s |    26.7s |
+| the modelled re-cut   |       116.3s |    20.8s |
+| **from exact totals** |   **106.5s** | **0.1s** |
 
 `tests/test_editor.py` is 101.6s of the 106.4s leg it sits in, so that is **five seconds off the
 floor** and there is nothing further to win by moving files between lists.
@@ -147,13 +147,13 @@ floor** and there is nothing further to win by moving files between lists.
 
 Four runs of the final lists, printed pytest seconds:
 
-| leg | run 1 | run 2 | run 3 | run 4 | median |
-|---|---:|---:|---:|---:|---:|
-| `editor` | 99.00 | 99.21 | 91.38 | 111.55 | 99.11 |
-| `views` | 102.85 | 116.70 | **76.57** | 120.37 | 109.78 |
-| `graph` | 106.57 | 97.66 | 100.98 | 95.74 | 99.32 |
-| `rest` | 115.85 | 118.02 | 129.34 | 126.19 | 122.11 |
-| `coedit` | 119.41 | 116.13 | 127.12 | 113.28 | 117.77 |
+| leg          |      run 1 |      run 2 |      run 3 |      run 4 |    median |
+| ------------ | ---------: | ---------: | ---------: | ---------: | --------: |
+| `editor`     |      99.00 |      99.21 |      91.38 |     111.55 |     99.11 |
+| `views`      |     102.85 |     116.70 |  **76.57** |     120.37 |    109.78 |
+| `graph`      |     106.57 |      97.66 |     100.98 |      95.74 |     99.32 |
+| `rest`       |     115.85 |     118.02 |     129.34 |     126.19 |    122.11 |
+| `coedit`     |     119.41 |     116.13 |     127.12 |     113.28 |    117.77 |
 | **critical** | **119.41** | **118.02** | **129.34** | **126.19** | **122.8** |
 
 **120.4s before, 122.8s after — and the difference is not resolvable at this sample size.** Three
@@ -175,13 +175,13 @@ is NOT kept is the idea that this is worth doing again.
 
 Two runs of **identical shard lists**:
 
-| leg | run A | run B | Δ |
-|---|---:|---:|---:|
-| `editor` | 89.87 | 113.18 | **23.3** |
-| `views` | 112.00 | 101.95 | 10.1 |
-| `graph` | 114.37 | 120.58 | 6.2 |
-| `rest` | 108.69 | 98.10 | 10.6 |
-| `coedit` | 120.22 | 116.81 | 3.4 |
+| leg      |  run A |  run B |        Δ |
+| -------- | -----: | -----: | -------: |
+| `editor` |  89.87 | 113.18 | **23.3** |
+| `views`  | 112.00 | 101.95 |     10.1 |
+| `graph`  | 114.37 | 120.58 |      6.2 |
+| `rest`   | 108.69 |  98.10 |     10.6 |
+| `coedit` | 120.22 | 116.81 |      3.4 |
 
 **A leg moves 23s between runs of the same list.** The whole imbalance that was worth removing is
 13s. So a re-cut is real in expectation and invisible in any single run, and anybody comparing two
@@ -192,11 +192,11 @@ This is section 5's finding again — *"the spread between runs is larger than a
 optimise"* — and it has survived a doubling of the hardware, an inverted leg order, and three
 separate cuts:
 
-| cut | critical, measured |
-|---|---:|
-| the 2-core lists | 120.39s |
-| the modelled re-cut | 120.22s |
-| from exact totals, median of 4 | 122.8s |
+| cut                            | critical, measured |
+| ------------------------------ | -----------------: |
+| the 2-core lists               |            120.39s |
+| the modelled re-cut            |            120.22s |
+| from exact totals, median of 4 |             122.8s |
 
 **Three arrangements of the same 42 files, all inside each other's noise.** Do not spend an
 afternoon rebalancing: the answer is known, and it is that the arrangement does not matter. The cut
@@ -204,25 +204,24 @@ is five seconds off its floor and the floor is one file.
 
 ### `pytest-xdist -n 2`: measured, and refused for a new reason
 
-The old refusal was arithmetic about a 2-core box, so it had to be re-taken. Four legs at `-n 2
---dist load`, `coedit` serial because it must never be internally parallelised:
+The old refusal was arithmetic about a 2-core box, so it had to be re-taken. Four legs at `-n 2 --dist load`, `coedit` serial because it must never be internally parallelised:
 
-| leg | serial | `-n 2` | |
-|---|---:|---:|---|
-| `editor` | 89.87 | **113.83** | **+27%** |
-| `views` | 112.00 | 86.96 | −22% |
-| `graph` | 114.37 | 93.69 | −18% |
-| `rest` | 108.69 | 79.79 | −27% |
-| `coedit` | 120.22 | 129.67 | serial in both |
-| **total** | **545.15** | **503.94** | −7.6% |
+| leg       |     serial |     `-n 2` |                |
+| --------- | ---------: | ---------: | -------------- |
+| `editor`  |      89.87 | **113.83** | **+27%**       |
+| `views`   |     112.00 |      86.96 | −22%           |
+| `graph`   |     114.37 |      93.69 | −18%           |
+| `rest`    |     108.69 |      79.79 | −27%           |
+| `coedit`  |     120.22 |     129.67 | serial in both |
+| **total** | **545.15** | **503.94** | −7.6%          |
 
 Green everywhere, so the suite is *correct* under two workers, module-scoped fixtures included.
 It is still refused, on two measurements rather than one argument:
 
-* **It makes the floor worse.** `tests/test_editor.py` is 53 fresh Chromes laying out a page
+- **It makes the floor worse.** `tests/test_editor.py` is 53 fresh Chromes laying out a page
   carrying 594 KB of inlined Ace. Two workers do not halve that; the cost is process startup and
   memory, and two Chromes on four cores contend. +27% on the one leg worth improving.
-* **It cannot reach the critical path.** That is `coedit`, which must stay serial. A 7.6% cut in
+- **It cannot reach the critical path.** That is `coedit`, which must stay serial. A 7.6% cut in
   total machine seconds buys **zero** wall clock when the bound is a leg you are not allowed to
   split.
 
@@ -244,22 +243,92 @@ against `?editor=plain` — which survived the editor toggle being removed in v0
 Free for a public repository. Section 5's billed column is a curiosity now, and the argument against
 a sixth shard rests on balance rather than cost.
 
+## 0c. The file-level cut is retired (2026-08-27)
+
+§ 0b ended by naming the only lever left: *"the gate cannot go below about 102s of pytest while
+`tests/test_editor.py` is one file"*, and the answer it proposed was splitting that file at
+`?editor=ace` against `?editor=plain`. That answer was right about the problem and too small about
+the fix. Splitting one file by hand postpones the same arithmetic to whichever file grows next.
+
+**What made it urgent.** Re-measured on 2026-08-27, over 2056 tests and 975.8s on a laptop
+(`.test_durations`; a different machine from the runner, so read the shares and not the seconds):
+
+| file                   | share of the suite | when the lists were cut |
+| ---------------------- | ------------------ | ----------------------- |
+| `tests/test_editor.py` | 26.0%              | 19.1%                   |
+| `tests/test_render.py` | 18.9%              | 14.4%                   |
+| `tests/test_coedit.py` | 10.1%              | —                       |
+| `tests/test_table.py`  | 8.5%               | —                       |
+
+A perfect fifth is 20.0%. One file had passed it, so the five-way cut was not merely unbalanced —
+it had become **unbalanceable**, and no rearrangement of file lists could have fixed it.
+
+**The fix is to stop cutting by file.** `pytest-split` divides the collected list by recorded
+duration, so the unit is a test and the floor is the slowest single test — 32.4s
+(`test_the_rooms_own_commit_does_not_reload_the_page_under_the_person_in_it`) rather than 253.9s.
+Simulated over the real table, worst leg:
+
+| N     | ideal    | `duration_based_chunks` | `least_duration` |
+| ----- | -------- | ----------------------- | ---------------- |
+| 5     | 195s     | 210s                    | 195s             |
+| 6     | 163s     | 165s                    | 163s             |
+| **8** | **122s** | **124s**                | 122s             |
+| 10    | 98s      | 110s                    | 98s              |
+| 12    | 81s      | 93s                     | 81s              |
+
+**Eight, contiguous.** Eight is where the return stops covering a machine's ~12s of setup. Contiguous
+because the greedy algorithm's extra 2s is not worth scattering a file's tests across eight
+machines: `tests/test_coedit.py` needs to stay serial and in order in one process, and a module
+fixture split eight ways is built eight times. Verified rather than assumed — the eight groups
+partition all 2056 tests with no overlap, at 113-124s.
+
+### What it actually did
+
+Run [33117676737](https://github.com/jcanton/openproj/actions/runs/33117676737), the first eight-way
+split. Legs, in seconds of pytest:
+
+| 1   | 2   | 3   | 4   | 5   | 6   | 7   | 8   | total |
+| --- | --- | --- | --- | --- | --- | --- | --- | ----- |
+| 108 | 97  | 88  | 125 | 131 | 104 | 119 | 118 | 890   |
+
+**Worst leg 131s, against the 231s `tests/test_editor.py` alone would force** on any file-level cut
+of this suite — 26.0% of 890s. The gate's pytest time is down 43%, and it is no longer bounded by a
+file.
+
+**The spread is 43s where the simulation said 11s**, and it is worth saying why rather than
+quoting the better number. The table was recorded on a laptop. Against the 193 tests this run timed,
+CI is **0.81×** the laptop in aggregate and **0.56–0.99×** per test: the two machines do not scale
+uniformly, so a split cut from one is systematically slightly wrong on the other.
+
+Rescaling the laptop table by that aggregate factor, keeping the 193 real CI values, was tried and
+**simulates worse — 67s of spread**, because a flat factor mis-scales the 1863 tests that have no CI
+number. A coherent table from one machine beats a mixed one. The fix is a coherent table from the
+RIGHT machine, which is what the `measure` job is: `workflow_dispatch`, one serial run on the
+runner, `--store-durations --clean-durations`, table uploaded as an artifact. It could not be a side
+effect of the split legs — `pytest-split` reads and writes one `--durations-path`, so eight legs
+would race on one file and each `--clean-durations` would strip the seven groups it did not run.
+
+**§ 0b's other findings all still stand.** `-n auto` is still refused for the reason measured there
+(`-n 2` on the editor leg was 27% slower; the cost is process startup and two Chromes contending on
+four cores). The noise is still the same size as any imbalance, so a single run still cannot
+separate two cuts. What changed is not the measurement — it is that the scheme being measured could
+no longer express the answer.
 
 ## 1. What CI costs today, per step, measured
 
 From the jobs API for run 32631287159, one job named `check` on `ubuntu-latest`:
 
-| Step | Seconds |
-|---|---:|
-| Set up job | 1 |
-| `actions/checkout@v7` | 1 |
-| `astral-sh/setup-uv@v10.0.1` | 2 |
-| `actions/setup-node@v7` | 1 |
-| `uv sync --locked --group dev` | 0 |
-| `uv run ruff check .` | 0 |
-| **`uv run pytest -q`** | **1395** |
-| post steps + complete job | 0 |
-| **job total** | **1404** |
+| Step                           |  Seconds |
+| ------------------------------ | -------: |
+| Set up job                     |        1 |
+| `actions/checkout@v7`          |        1 |
+| `astral-sh/setup-uv@v10.0.1`   |        2 |
+| `actions/setup-node@v7`        |        1 |
+| `uv sync --locked --group dev` |        0 |
+| `uv run ruff check .`          |        0 |
+| **`uv run pytest -q`**         | **1395** |
+| post steps + complete job      |        0 |
+| **job total**                  | **1404** |
 
 The same eight steps in the second run: 1, 1, 3, 0, 1, 0, **713**, 1. Nine
 seconds either way.
@@ -283,10 +352,10 @@ google-chrome    151.0.7922.137
 the lockfile resolves instantly, `setup-node` is a cached tarball, and Chrome is
 already in the image. Two theories die here:
 
-* *"ruff runs serially in front of a twenty-minute suite."* It runs in **0
+- *"ruff runs serially in front of a twenty-minute suite."* It runs in **0
   seconds**. Moving it out of the critical path is worth zero seconds of wall
   clock. It is still worth doing, for a different reason — see change 7.
-* *"Extra jobs would pay ninety seconds of setup each."* They would pay **nine**.
+- *"Extra jobs would pay ninety seconds of setup each."* They would pay **nine**.
   That single number is what decides splitting-by-job against splitting-by-
   process, and it is the opposite of what it was assumed to be.
 
@@ -296,7 +365,7 @@ inside it, or is about how many machines run it.
 ## 2. What the suite costs, per category, measured
 
 `--durations=0 --durations-min=0.05` over the full run, in
-`docs/probes/ci-durations.txt`. 1107 rows summing to **1365.28s** of the
+`design/probes/ci-durations.txt`. 1107 rows summing to **1365.28s** of the
 1392.75s, so only ~27 seconds is collection, imports and the 3954 hidden
 sub-50ms durations. Everything below is summed out of that file directly.
 
@@ -307,14 +376,14 @@ bodies faster is arguing about 60% of the problem.
 By machinery, each test charged to its single most expensive one — Chrome beats
 node beats hypothesis beats git beats plain Python:
 
-| category | seconds | tests |
-|---|---:|---:|
-| Chrome, one process per assertion | 555.88 | 175 |
-| pure Python | 439.41 | 274 |
-| a real bare git repo | 218.01 | 287 |
-| node driving shipped JS | 61.19 | 93 |
-| Chrome, one long-lived process | 6.84 | 3 |
-| hypothesis | 3.78 | 4 |
+| category                          | seconds | tests |
+| --------------------------------- | ------: | ----: |
+| Chrome, one process per assertion |  555.88 |   175 |
+| pure Python                       |  439.41 |   274 |
+| a real bare git repo              |  218.01 |   287 |
+| node driving shipped JS           |   61.19 |    93 |
+| Chrome, one long-lived process    |    6.84 |     3 |
+| hypothesis                        |    3.78 |     4 |
 
 That classification covers 1285.11s of the 1365.28s — it was built by static
 reachability from each test body and its fixtures, and it silently dropped 55
@@ -325,24 +394,24 @@ any way other than summing the file disagrees with it: one earlier pass had
 47.53s, and had `test_coedit.py` at 87.91s with its 20.58s of teardown dropped.
 These are the numbers the shard cut has to be made from:
 
-| file | total | setup | call | teardown | rows |
-|---|---:|---:|---:|---:|---:|
-| `test_render.py` | 367.71 | 246.18 | 121.53 | 0 | 177 |
-| `test_injection.py` | 226.11 | 218.14 | 7.97 | 0 | 26 |
-| `test_editor.py` | 178.42 | 4.36 | 174.06 | 0 | 118 |
-| `test_coedit.py` | 115.47 | 0.64 | 94.25 | 20.58 | 66 |
-| `test_table.py` | 69.44 | 15.33 | 54.11 | 0 | 203 |
-| `test_facets.py` | 54.10 | 2.13 | 51.97 | 0 | 42 |
-| `test_gitdoor.py` | 47.53 | 0 | 47.53 | 0 | 43 |
-| `test_graph_layout.py` | 46.46 | 20.82 | 25.64 | 0 | 16 |
-| `test_cascade.py` | 39.79 | 12.76 | 27.03 | 0 | 69 |
-| `test_card.py` | 35.65 | 0.98 | 34.67 | 0 | 28 |
-| `test_search.py` | 27.72 | 1.69 | 26.03 | 0 | 26 |
-| `test_hill.py` | 22.35 | 0.77 | 21.58 | 0 | 25 |
-| `test_seats.py` | 21.42 | 0.64 | 20.78 | 0 | 18 |
-| `test_web.py` | 19.16 | 0.69 | 18.22 | 0.25 | 88 |
-| the other 20 files | 93.95 | | | | 162 |
-| **total** | **1365.28** | **519.23** | **825.22** | **20.83** | **1107** |
+| file                   |       total |      setup |       call |  teardown |     rows |
+| ---------------------- | ----------: | ---------: | ---------: | --------: | -------: |
+| `test_render.py`       |      367.71 |     246.18 |     121.53 |         0 |      177 |
+| `test_injection.py`    |      226.11 |     218.14 |       7.97 |         0 |       26 |
+| `test_editor.py`       |      178.42 |       4.36 |     174.06 |         0 |      118 |
+| `test_coedit.py`       |      115.47 |       0.64 |      94.25 |     20.58 |       66 |
+| `test_table.py`        |       69.44 |      15.33 |      54.11 |         0 |      203 |
+| `test_facets.py`       |       54.10 |       2.13 |      51.97 |         0 |       42 |
+| `test_gitdoor.py`      |       47.53 |          0 |      47.53 |         0 |       43 |
+| `test_graph_layout.py` |       46.46 |      20.82 |      25.64 |         0 |       16 |
+| `test_cascade.py`      |       39.79 |      12.76 |      27.03 |         0 |       69 |
+| `test_card.py`         |       35.65 |       0.98 |      34.67 |         0 |       28 |
+| `test_search.py`       |       27.72 |       1.69 |      26.03 |         0 |       26 |
+| `test_hill.py`         |       22.35 |       0.77 |      21.58 |         0 |       25 |
+| `test_seats.py`        |       21.42 |       0.64 |      20.78 |         0 |       18 |
+| `test_web.py`          |       19.16 |       0.69 |      18.22 |      0.25 |       88 |
+| the other 20 files     |       93.95 |            |            |           |      162 |
+| **total**              | **1365.28** | **519.23** | **825.22** | **20.83** | **1107** |
 
 Cost has nothing to do with test count. `tests/test_table.py` is 203 rows for
 69.44s; `tests/test_injection.py` is 26 rows for 226.11s. `tests/test_store.py`
@@ -364,21 +433,21 @@ Same command, same tree plus seventeen lines. 732 rows summing to 675.79s of
 711.04s — **setup 59.26s, call 600.60s, teardown 15.93s.** Setup was 519.23s;
 460 seconds of it was compiling templates.
 
-| file | before | after | Δ |
-|---|---:|---:|---:|
-| `test_render.py` | 367.71 | 95.60 | −272.11 |
-| `test_injection.py` | 226.11 | 18.99 | −207.12 |
-| `test_gitdoor.py` | 47.53 | 2.90 | −44.63 |
-| `test_editor.py` | 178.42 | 151.27 | −27.15 |
-| `test_table.py` | 69.44 | 43.28 | −26.16 |
-| `test_cascade.py` | 39.79 | 16.40 | −23.39 |
-| `test_facets.py` | 54.10 | 32.92 | −21.18 |
-| `test_web.py` | 19.16 | 2.36 | −16.80 |
-| `test_coedit.py` | 115.47 | 98.99 | −16.48 |
-| `test_delete.py` | 16.92 | 12.60 | −4.32 |
-| `test_card.py` | 35.65 | 32.67 | −2.98 |
-| `test_graph_layout.py` | 46.46 | 45.79 | −0.67 |
-| **suite** | **1392.75** | **711.04** | **−681.71** |
+| file                   |      before |      after |           Δ |
+| ---------------------- | ----------: | ---------: | ----------: |
+| `test_render.py`       |      367.71 |      95.60 |     −272.11 |
+| `test_injection.py`    |      226.11 |      18.99 |     −207.12 |
+| `test_gitdoor.py`      |       47.53 |       2.90 |      −44.63 |
+| `test_editor.py`       |      178.42 |     151.27 |      −27.15 |
+| `test_table.py`        |       69.44 |      43.28 |      −26.16 |
+| `test_cascade.py`      |       39.79 |      16.40 |      −23.39 |
+| `test_facets.py`       |       54.10 |      32.92 |      −21.18 |
+| `test_web.py`          |       19.16 |       2.36 |      −16.80 |
+| `test_coedit.py`       |      115.47 |      98.99 |      −16.48 |
+| `test_delete.py`       |       16.92 |      12.60 |       −4.32 |
+| `test_card.py`         |       35.65 |      32.67 |       −2.98 |
+| `test_graph_layout.py` |       46.46 |      45.79 |       −0.67 |
+| **suite**              | **1392.75** | **711.04** | **−681.71** |
 
 The shape of that column is the whole finding. Files that draw pages fell by
 70–92%. Files that start Chrome processes or sleep on real clocks —
@@ -401,6 +470,7 @@ work was not rendering. It was *compiling templates*:
 ```python
 _ENV = Environment(autoescape=True)
 
+
 def _fragment(template: str, **values: object) -> Markup:
     return Markup(_ENV.from_string(template).render(**values))
 ```
@@ -413,13 +483,13 @@ cost in template compilation was linear in the size of the plan.
 
 Measured on this laptop, before and after a `functools.cache` on the compile:
 
-| | before | after |
-|---|---:|---:|
-| `render_static`, 479-record marker corpus | 43.57s | 2.19s |
-| `render_static`, frozen golden corpus | 0.66s | 0.027s |
-| `render_detail` ×5, golden corpus | 2.70s | 0.085s |
-| one served `GET /detail/{id}` | 60ms | 5ms |
-| `test_a_bar_is_exactly…` (one test) | 13.5s | 0.42s |
+|                                           | before |  after |
+| ----------------------------------------- | -----: | -----: |
+| `render_static`, 479-record marker corpus | 43.57s |  2.19s |
+| `render_static`, frozen golden corpus     |  0.66s | 0.027s |
+| `render_detail` ×5, golden corpus         |  2.70s | 0.085s |
+| one served `GET /detail/{id}`             |   60ms |    5ms |
+| `test_a_bar_is_exactly…` (one test)       |  13.5s |  0.42s |
 
 This is not only test time. The deployed server draws every page through the same
 calls, so a record page was paying a full lex-parse-codegen of the detail
@@ -433,17 +503,17 @@ template on every request.
 
 Probed directly on this laptop, five runs each, minimum reported:
 
-| page | bytes | budget | wall clock |
-|---|---:|---:|---:|
-| blank, 36 bytes | 36 | 1 | **1.93s** |
-| blank, 36 bytes | 36 | 2500 | 1.92s |
-| blank, 36 bytes | 36 | 8000 | 1.94s |
-| `render_table` | 540 KB | 2500 | 2.07s |
-| `render_table` | 540 KB | 8000 | 2.03s |
-| `render_graph` | 2.29 MB | 2500 | 2.21s |
-| `render_graph` | 2.29 MB | 8000 | 2.24s |
-| `render_detail` (Ace) | 418 KB | 2500 | 2.00s |
-| `render_detail` (Ace) | 418 KB | 8000 | 2.01s |
+| page                  |   bytes | budget | wall clock |
+| --------------------- | ------: | -----: | ---------: |
+| blank, 36 bytes       |      36 |      1 |  **1.93s** |
+| blank, 36 bytes       |      36 |   2500 |      1.92s |
+| blank, 36 bytes       |      36 |   8000 |      1.94s |
+| `render_table`        |  540 KB |   2500 |      2.07s |
+| `render_table`        |  540 KB |   8000 |      2.03s |
+| `render_graph`        | 2.29 MB |   2500 |      2.21s |
+| `render_graph`        | 2.29 MB |   8000 |      2.24s |
+| `render_detail` (Ace) |  418 KB |   2500 |      2.00s |
+| `render_detail` (Ace) |  418 KB |   8000 |      2.01s |
 
 Three facts fall out, and all three matter:
 
@@ -455,14 +525,13 @@ Three facts fall out, and all three matter:
    — and raising it, which is the cheap fix for the pixel-comparison race
    `screenshot`'s docstring records, is free.
 3. **Startup flags do not help.** Adding twelve of the usual quieting flags
-   (`--no-first-run --disable-background-networking --disable-component-update
-   --disable-sync --disable-extensions --disable-features=Translate,…`) moved the
+   (`--no-first-run --disable-background-networking --disable-component-update --disable-sync --disable-extensions --disable-features=Translate,…`) moved the
    1.93s by less than the noise.
 
 So the only levers on 175 Chrome launches are: run them at the same time, or
 launch fewer of them. Nothing in between.
 
----
+______________________________________________________________________
 
 ## 3. The changes, in order
 
@@ -668,16 +737,15 @@ jobs:
 
 Three details in there are load-bearing:
 
-* `needs.suite.result` on a matrix job is the aggregate — `success` only if every
+- `needs.suite.result` on a matrix job is the aggregate — `success` only if every
   leg succeeded. A skipped or cancelled leg is not `success`, and the `[ … ]`
   test fails closed on both.
-* `if: '!cancelled()'` and **not** `if: always()`. `always()` runs the gate even
-  when the run is being cancelled, which is exactly what `concurrency:
-  cancel-in-progress` does on every third push — and a gate that runs after its
+- `if: '!cancelled()'` and **not** `if: always()`. `always()` runs the gate even
+  when the run is being cancelled, which is exactly what `concurrency: cancel-in-progress` does on every third push — and a gate that runs after its
   shards were cancelled reports a red required check on a run nobody was waiting
   for. `!cancelled()` runs it when a shard fails and skips it when the run is
   torn down.
-* `fail-fast: false`, so one red shard does not cancel the other four and hide
+- `fail-fast: false`, so one red shard does not cancel the other four and hide
   three more failures. The whole point of a three-minute gate is getting all the
   bad news in one pass.
 
@@ -697,17 +765,17 @@ imports `test_web`, `test_store`, `test_injection`, `pages`, `browser`;
 by name. A shard missing an import hub fails at collection, not at assertion.
 Every shard is a full checkout and differs only in the selection argument.
 
-**Where to cut.** From `docs/probes/ci-durations-after-cache.txt`, not from the
+**Where to cut.** From `design/probes/ci-durations-after-cache.txt`, not from the
 pre-cache table — the cache moved the boundaries by more than the shard sizes.
 The suite is 675.79s of attributed rows and the five legs balance to within 8%:
 
-| shard | files | measured |
-|---|---|---:|
-| `editor` | `test_editor.py` | **151.3s** |
-| `views` | `test_render.py`, `test_table.py` | 138.9s |
-| `graph` | `test_graph_layout.py`, `test_card.py`, `test_facets.py`, `test_hill.py` | 131.2s |
-| `coedit` | `test_coedit.py`, `test_socket_offer.py`, `test_search.py` | 126.1s |
-| `rest` | `test_seats.py`, `test_injection.py`, `test_cascade.py`, `test_edges.py`, `test_delete.py`, `test_deck.py`, `test_themes.py`, `test_payload.py`, `test_status_gate.py`, `test_gitdoor.py`, `test_web.py`, `test_writes.py`, `test_records.py`, `test_cli.py`, `test_schedule.py`, `test_notes.py`, `test_index.py`, `test_headers.py`, `test_issues.py`, `test_exclusion.py`, `test_product.py`, `test_credential.py`, `test_identity.py`, `test_validate.py`, `test_model.py`, `test_parse.py`, `test_store.py`, `test_remote.py`, `test_config.py`, `test_auth.py`, `test_harness.py` | ~128s |
+| shard    | files                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |   measured |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------: |
+| `editor` | `test_editor.py`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | **151.3s** |
+| `views`  | `test_render.py`, `test_table.py`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |     138.9s |
+| `graph`  | `test_graph_layout.py`, `test_card.py`, `test_facets.py`, `test_hill.py`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |     131.2s |
+| `coedit` | `test_coedit.py`, `test_socket_offer.py`, `test_search.py`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |     126.1s |
+| `rest`   | `test_seats.py`, `test_injection.py`, `test_cascade.py`, `test_edges.py`, `test_delete.py`, `test_deck.py`, `test_themes.py`, `test_payload.py`, `test_status_gate.py`, `test_gitdoor.py`, `test_web.py`, `test_writes.py`, `test_records.py`, `test_cli.py`, `test_schedule.py`, `test_notes.py`, `test_index.py`, `test_headers.py`, `test_issues.py`, `test_exclusion.py`, `test_product.py`, `test_credential.py`, `test_identity.py`, `test_validate.py`, `test_model.py`, `test_parse.py`, `test_store.py`, `test_remote.py`, `test_config.py`, `test_auth.py`, `test_harness.py` |      ~128s |
 
 **Five, and five is the ceiling.** The break-even formula allows ten, but
 `test_editor.py` is 151.3s on its own and no file-level scheme goes below it. A
@@ -739,15 +807,15 @@ the runner queue is counted. Queue time is not ours and should not be promised.
 headline number was right. The reasoning under it was wrong in two ways, and
 both matter more than the headline.**
 
-| shard | tests | predicted | 566905 | 764278 | 323118 | 606308 | spread |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| `editor` | 120 | **151.3s** | **181.15s** | 133.05s | 152.38s | **168.63s** | **36%** |
-| `views` | 340 | 138.9s | 155.03s | **156.04s** | 158.59s | 153.83s | 3% |
-| `graph` | 78 | 131.2s | 106.38s | 134.67s | 107.21s | 139.96s | **32%** |
-| `rest` | 1032 | 128.8s | 136.66s | 147.63s | **161.12s** | 164.17s | 20% |
-| `coedit` | 118 | 125.6s | 125.86s | 118.56s | 123.62s | 128.16s | 8% |
-| | 1688 | 675.8s | 705.08s | 689.95s | 702.92s | 754.75s | |
-| **wall clock** | | ~2m45s | 3m33s | **3m02s** | 3m18s | 3m13s | |
+| shard          | tests |  predicted |      566905 |      764278 |      323118 |      606308 |  spread |
+| -------------- | ----: | ---------: | ----------: | ----------: | ----------: | ----------: | ------: |
+| `editor`       |   120 | **151.3s** | **181.15s** |     133.05s |     152.38s | **168.63s** | **36%** |
+| `views`        |   340 |     138.9s |     155.03s | **156.04s** |     158.59s |     153.83s |      3% |
+| `graph`        |    78 |     131.2s |     106.38s |     134.67s |     107.21s |     139.96s | **32%** |
+| `rest`         |  1032 |     128.8s |     136.66s |     147.63s | **161.12s** |     164.17s |     20% |
+| `coedit`       |   118 |     125.6s |     125.86s |     118.56s |     123.62s |     128.16s |      8% |
+|                |  1688 |     675.8s |     705.08s |     689.95s |     702.92s |     754.75s |         |
+| **wall clock** |       |     ~2m45s |       3m33s |   **3m02s** |       3m18s |       3m13s |         |
 
 Bold is the critical path. **Three different shards across four runs.**
 
@@ -874,8 +942,8 @@ lines have done their job and should come out in the commit that lands change 6
 23m12s against 21m27s–22m23s for the six runs before it, so treat the absolute
 numbers as ±5% and the proportions as solid.
 
-Keep the two probe files. `docs/probes/ci-durations.txt` and
-`docs/probes/ci-durations-after-cache.txt` are what the shard lists are cut from,
+Keep the two probe files. `design/probes/ci-durations.txt` and
+`design/probes/ci-durations-after-cache.txt` are what the shard lists are cut from,
 and what the next person re-cuts them from when the suite has grown.
 
 **Measured: about 30 seconds, and `--durations=25` stayed.** Runs 566905 and
@@ -891,7 +959,7 @@ and the `nproc && free -m && df -h /dev/shm && google-chrome --version` step are
 gone; the second one is why this document can say "2-core, 8 GB" instead of
 assuming it.
 
----
+______________________________________________________________________
 
 ## 4. Considered and rejected
 
@@ -900,22 +968,25 @@ assuming it.
 Not because it does not work, but because sharding by job is strictly better here
 and stacking both makes eight hazards live for a marginal gain.
 
-* **The box is the argument, and it was measured rather than assumed.** `nproc`
+- **The box is the argument, and it was measured rather than assumed.** `nproc`
   on the runner reports **2**, with 7942 MB of RAM and a 3.9 G `/dev/shm`. This
   repository is private, and GitHub's standard `ubuntu-latest` is 4-core/16 GB
   only for public ones. So `-n auto` (`os.cpu_count()`) means `-n 2` here, and
   `-n 4` written on the public number would 2×-oversubscribe the CPU — which is
   precisely what breaks the wall-clock tests below.
-* **The Chrome bucket does not parallelise as well as its shape suggests.** 90%
+
+- **The Chrome bucket does not parallelise as well as its shape suggests.** 90%
   of a `measured_in` call is process startup, which is CPU- and IO-bound and uses
   more than one core on its own. Two headless Chromes on two vCPUs are not two
   Chromes' worth of throughput. Realistic ceiling on this hardware: 1.4–1.7×.
-* **Memory is not the blocker, for the record.** Two pytest workers (~300–400 MB
+
+- **Memory is not the blocker, for the record.** Two pytest workers (~300–400 MB
   each once `render.py`'s caches hold 594 KB of Ace and 1.98 MB of graph
   libraries) plus two headless Chromes (~400–700 MB each across browser, gpu and
   renderer processes) is ~2.5 GB against 7. At four workers it is ~4.5 GB —
   survivable, with the page cache gone.
-* **What it would cost first.** `pytest-xdist` is not in the dev group and CI
+
+- **What it would cost first.** `pytest-xdist` is not in the dev group and CI
   runs `uv sync --locked`, so adding `-n` without adding the plugin and
   committing a regenerated `uv.lock` gives a red CI on the *sync* step. Then:
   `tests/test_coedit.py:2251`'s probe-socket port becomes a real collision;
@@ -934,28 +1005,29 @@ and stacking both makes eight hazards live for a marginal gain.
   test-code changes and a lockfile change to buy less than sharding buys with
   one workflow file.
 
-* **And the arithmetic no longer favours it.** `-n 2` at a 1.5× real ceiling
+- **And the arithmetic no longer favours it.** `-n 2` at a 1.5× real ceiling
   takes 711s to ~475s. Five shards take it to ~151s. The two are not close, and
   only one of them puts a headless Chrome and a 300-millisecond latency
   assertion on the same two cores.
 
-* **If it is ever used anyway, the mode is `--dist loadfile`.** Argued against
+- **If it is ever used anyway, the mode is `--dist loadfile`.** Argued against
   the alternatives:
-  * `load` — fastest scheduler, splits by test. It re-runs every module-scoped
+
+  - `load` — fastest scheduler, splits by test. It re-runs every module-scoped
     fixture on every worker that draws one of its tests. The five module-scoped
     fixtures here (`pem`, `marker_static`, `marker_served`, `pages`,
     `broken_id_table`) are merely *wasteful* under it and never wrong — each
     builds into a per-worker temp dir and returns strings tests only read — but
     it also scatters `test_coedit.py`'s real-socket block across workers, which
     is the one thing that must not happen.
-  * `loadfile` — whole file to one worker. Module-scoped fixtures are built once
+  - `loadfile` — whole file to one worker. Module-scoped fixtures are built once
     each, `test_coedit.py` stays entire on one worker in its recorded order for
     free, and the balance cost is acceptable because the file sizes are already
     known from the durations table. This is the one.
-  * `loadgroup` — `load` plus honouring `@pytest.mark.xdist_group`. It gives back
+  - `loadgroup` — `load` plus honouring `@pytest.mark.xdist_group`. It gives back
     what `load` takes away, but only for the tests somebody remembered to mark,
     and it fails open when somebody adds an unmarked timing test.
-  * `worksteal` — best balance, worst determinism: which worker runs which test
+  - `worksteal` — best balance, worst determinism: which worker runs which test
     changes between runs, so a flake reproduces on a different worker each time.
     Wrong trade for a suite whose expensive tests are the timing-sensitive ones.
 
@@ -988,12 +1060,12 @@ the run-to-run noise. Startup is startup.
 `setup-node` is 1s. Chrome ships in the image. That is the whole nine seconds.
 Two specific ideas, both refused:
 
-* **A warmed Chrome profile.** The 1.93s is process startup, not profile
+- **A warmed Chrome profile.** The 1.93s is process startup, not profile
   creation, and `--headless=new` in command mode (`--screenshot`,
   `--print-to-pdf`, `--dump-dom`) takes a throwaway profile anyway — which is
   also why concurrent invocations do not contend over a `SingletonLock`, verified
   by running four at once and getting four byte-identical PNGs.
-* **The hypothesis example database.** It is 3.78s of the suite, `.hypothesis/`
+- **The hypothesis example database.** It is 3.78s of the suite, `.hypothesis/`
   is not cached between runs today, and caching it across shards would make one
   shard's failure reproducible only in that shard. Leave it. (`.hypothesis/` and
   `.pytest_cache/` are missing from `.gitignore`, which is untidy and not a
@@ -1057,21 +1129,20 @@ thing that gets `test_editor.py` down to where the other legs live without
 splitting the file — and see change 6's measurement for why "its 151-second
 floor" turned out not to be a floor, or a stable number at all.
 
----
-
+______________________________________________________________________
 
 ## 5. The measured end state
 
 Not a prediction any more. Every row is a run you can open.
 
-| tree | slowest pytest | wall clock | billed |
-|---|---:|---:|---:|
-| `main`, the baseline ([32630205174](https://github.com/jcanton/openproj/actions/runs/32630205174)) | 1353.47s | **22m50s** | 23 min |
-| + changes 1 and 2 ([32633361097](https://github.com/jcanton/openproj/actions/runs/32633361097)) | 711.04s | 12m08s | 13 min |
-| + changes 3 to 8 ([32634566905](https://github.com/jcanton/openproj/actions/runs/32634566905)) | 181.15s | 3m33s | 18 min |
-| + change 9 ([32634764278](https://github.com/jcanton/openproj/actions/runs/32634764278)) | 156.04s | **3m02s** | 17 min |
-| + this document ([32635323118](https://github.com/jcanton/openproj/actions/runs/32635323118)) | 161.12s | 3m18s | 16 min |
-| + that run, written up ([32635606308](https://github.com/jcanton/openproj/actions/runs/32635606308)) | 168.63s | 3m13s | 17 min |
+| tree                                                                                                 | slowest pytest | wall clock | billed |
+| ---------------------------------------------------------------------------------------------------- | -------------: | ---------: | -----: |
+| `main`, the baseline ([32630205174](https://github.com/jcanton/openproj/actions/runs/32630205174))   |       1353.47s | **22m50s** | 23 min |
+| + changes 1 and 2 ([32633361097](https://github.com/jcanton/openproj/actions/runs/32633361097))      |        711.04s |     12m08s | 13 min |
+| + changes 3 to 8 ([32634566905](https://github.com/jcanton/openproj/actions/runs/32634566905))       |        181.15s |      3m33s | 18 min |
+| + change 9 ([32634764278](https://github.com/jcanton/openproj/actions/runs/32634764278))             |        156.04s |  **3m02s** | 17 min |
+| + this document ([32635323118](https://github.com/jcanton/openproj/actions/runs/32635323118))        |        161.12s |      3m18s | 16 min |
+| + that run, written up ([32635606308](https://github.com/jcanton/openproj/actions/runs/32635606308)) |        168.63s |      3m13s | 17 min |
 
 **22m50s → about 3m15s. A gate that was longer than a coffee break is shorter
 than reading the diff it is gating.** 1688 tests, 1688 run, zero skipped, zero
@@ -1081,22 +1152,22 @@ optimise, and the reason is measured in change 6.
 
 Per job in run 32634764278, the fastest of the three, and this is the whole gate:
 
-| job | wall | setup | pytest | tests |
-|---|---:|---:|---:|---:|
-| `lint` | 0m10s | 7s | ruff 1s | — |
-| `suite (coedit)` | 2m11s | 8s | 118.56s | 118 |
-| `suite (editor)` | 2m25s | 9s | 133.05s | 120 |
-| `suite (graph)` | 2m29s | 7s | 134.67s | 78 |
-| `suite (rest)` | 2m43s | 7s | 147.63s | 1032 |
-| **`suite (views)`** | **2m51s** | 10s | **156.04s** | 340 |
-| `check` | 0m03s | — | — | — |
-| **run** | **3m02s** | | | **1688** |
+| job                 |      wall | setup |      pytest |    tests |
+| ------------------- | --------: | ----: | ----------: | -------: |
+| `lint`              |     0m10s |    7s |     ruff 1s |        — |
+| `suite (coedit)`    |     2m11s |    8s |     118.56s |      118 |
+| `suite (editor)`    |     2m25s |    9s |     133.05s |      120 |
+| `suite (graph)`     |     2m29s |    7s |     134.67s |       78 |
+| `suite (rest)`      |     2m43s |    7s |     147.63s |     1032 |
+| **`suite (views)`** | **2m51s** |   10s | **156.04s** |      340 |
+| `check`             |     0m03s |     — |           — |        — |
+| **run**             | **3m02s** |       |             | **1688** |
 
 ### How much of three minutes is not testing
 
 Of that run's 182 seconds, **156 are pytest running tests and 26 are not**: 4s
 from run creation to the first runner picking the job up, 10s of setup on the
-critical-path leg (2s job init, 2s checkout, 3s `setup-uv`, 3s `setup-node`, <1s
+critical-path leg (2s job init, 2s checkout, 3s `setup-uv`, 3s `setup-node`, \<1s
 `uv sync --locked`), ~1s of interpreter start and collection, 4s of job teardown,
 and 7s for the `check` fan-in to schedule, run and finalise. In run 32635323118
 the same accounting is 37 of 198 seconds, and **the whole difference is runner
@@ -1148,7 +1219,7 @@ survived intact.
 
 Three things nevertheless got worse, and they should be written down:
 
-* **Per-leg wall clock varies by up to 36% run to run**, and three different
+- **Per-leg wall clock varies by up to 36% run to run**, and three different
   shards held the critical path across four runs. Nothing fails because of it —
   no test in this suite asserts on total elapsed time — but the shard lists
   cannot be tuned finer than the hardware, a leg that looks 20% over on one run
@@ -1156,11 +1227,11 @@ Three things nevertheless got worse, and they should be written down:
   3m02s–3m33s, not a number.** The jitter concentrates in the two most
   Chrome-heavy legs, which points at the same process-startup cost as the
   deferred item below.
-* **Five runners is five chances of an infrastructure hiccup**, where there was
+- **Five runners is five chances of an infrastructure hiccup**, where there was
   one. The compensation is that a re-run now costs three minutes rather than
   twenty-three, so the rational response to an odd red has changed from
   "investigate for an hour" to "press the button".
-* **The shard lists are hand-written and fail open.** Closed by
+- **The shard lists are hand-written and fail open.** Closed by
   `test_every_test_file_is_in_exactly_one_ci_shard`, which is why change 8 is not
   optional and why it must never be deleted as bookkeeping. Without it, adding
   `tests/test_new.py` and forgetting the list makes CI *greener*.

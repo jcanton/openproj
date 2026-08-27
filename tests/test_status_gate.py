@@ -41,17 +41,33 @@ BARE = "task-000003"
 def index() -> Index:
     records = [
         Task(
-            id=WITHOUT, kind="task", title="No date on it", status="ready",
-            owner="ann", assignees=["ann"], reviewers=["bo"], person_weeks=2,
+            id=WITHOUT,
+            kind="task",
+            title="No date on it",
+            status="ready",
+            owner="ann",
+            assignees=["ann"],
+            reviewers=["bo"],
+            person_weeks=2,
         ),
         Task(
-            id=WITH, kind="task", title="Dated already", status="ready",
-            owner="ann", assignees=["ann"], reviewers=["bo"], person_weeks=2,
+            id=WITH,
+            kind="task",
+            title="Dated already",
+            status="ready",
+            owner="ann",
+            assignees=["ann"],
+            reviewers=["bo"],
+            person_weeks=2,
             assigned_on=date(2026, 8, 10),
         ),
         Task(
-            id=BARE, kind="task", title="Nobody on it", status="ready",
-            owner="ann", person_weeks=2,
+            id=BARE,
+            kind="task",
+            title="Nobody on it",
+            status="ready",
+            owner="ann",
+            person_weeks=2,
         ),
     ]
     return build_index(records, Config(), date(2026, 8, 17))
@@ -88,8 +104,12 @@ def test_a_status_that_needs_a_date_asks_for_it(index: Index, page: str, tmp_pat
     input rather than a text box, so the answer cannot be `next tuesday`."""
     record_id = WITHOUT
     got = measured_in(
-        chrome(), page, tmp_path / "asks.html", 1400,
-        _ASKS % json.dumps(record_id), height=900,
+        chrome(),
+        page,
+        tmp_path / "asks.html",
+        1400,
+        _ASKS % json.dumps(record_id),
+        height=900,
     )
 
     assert got["asked"]["shown"], "the status was changed and nothing was asked"
@@ -127,8 +147,12 @@ def test_giving_up_on_the_question_changes_nothing(index: Index, page: str, tmp_
     so leaving the question unanswered leaves the row where it was."""
     record_id = WITHOUT
     got = measured_in(
-        chrome(), page, tmp_path / "cancels.html", 1400,
-        _CANCELS % (json.dumps(record_id), json.dumps(record_id)), height=900,
+        chrome(),
+        page,
+        tmp_path / "cancels.html",
+        1400,
+        _CANCELS % (json.dumps(record_id), json.dumps(record_id)),
+        height=900,
     )
 
     assert got["wrote"] == []
@@ -147,8 +171,12 @@ return {missing: missingFor(DATA.rows[cell.dataset.record], 'in_progress')};
 def test_a_row_that_has_what_the_status_wants_is_not_asked(index: Index, page: str, tmp_path: Path):
     """The question is only worth asking when there is something to ask for."""
     got = measured_in(
-        chrome(), page, tmp_path / "quiet.html", 1400,
-        _NO_QUESTION % json.dumps(WITH), height=900,
+        chrome(),
+        page,
+        tmp_path / "quiet.html",
+        1400,
+        _NO_QUESTION % json.dumps(WITH),
+        height=900,
     )
 
     assert got["missing"] == []
@@ -239,8 +267,12 @@ def test_the_question_offers_the_suggestions_a_cell_editor_offers(
     honoured one press did both.
     """
     got = measured_in(
-        chrome(), page, tmp_path / "suggesting.html", 1400,
-        _SUGGESTING % json.dumps(BARE), height=900,
+        chrome(),
+        page,
+        tmp_path / "suggesting.html",
+        1400,
+        _SUGGESTING % json.dumps(BARE),
+        height=900,
     )
 
     assert got["opened"]["fields"] == ["assignees", "reviewers", "assigned_on"]
@@ -301,8 +333,12 @@ def test_one_escape_dismisses_one_thing(index: Index, page: str, tmp_path: Path)
     The second Escape meets no list and is the panel's: cancelled, unwritten.
     """
     got = measured_in(
-        chrome(), page, tmp_path / "one-escape.html", 1400,
-        _ONE_ESCAPE % (json.dumps(BARE), json.dumps(BARE)), height=900,
+        chrome(),
+        page,
+        tmp_path / "one-escape.html",
+        1400,
+        _ONE_ESCAPE % (json.dumps(BARE), json.dumps(BARE)),
+        height=900,
     )
 
     assert got["wasOpen"], "the list never opened, so nothing here was asked"

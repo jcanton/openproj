@@ -16,7 +16,7 @@ workspace logo and before `+`, `?` and search: a **pencil** (edit only), a **spl
 (edit and preview), an **eye** (preview only). One is selected and drawn as a pressed segment;
 in this shot it is the split.
 
-This contradicts where the plan put it. `docs/EDITOR.md`'s decision table places the tri-state in
+This contradicts where the plan put it. `design/EDITOR.md`'s decision table places the tri-state in
 the existing `bodybar` beside Preview, which is inside the editing surface. HackMD puts it in
 the page's own header, next to the document's identity, because it is a property of how you
 are looking at the document rather than of the text — the same argument this repository makes
@@ -28,12 +28,12 @@ buttons in a row of unrelated controls do not.
 
 Left to right, with the separators where they actually fall:
 
-| group | buttons |
-|---|---|
-| history | undo, redo |
-| inline marks | **B**, *I*, ~~S~~, **H** |
-| block marks | `</>` code, `""` quote, bullet list, numbered list, checkbox |
-| insertables | link, image, table, horizontal rule, comment |
+| group        | buttons                                                      |
+| ------------ | ------------------------------------------------------------ |
+| history      | undo, redo                                                   |
+| inline marks | **B**, *I*, ~~S~~, **H**                                     |
+| block marks  | `</>` code, `""` quote, bullet list, numbered list, checkbox |
+| insertables  | link, image, table, horizontal rule, comment                 |
 
 Four facts in that worth having:
 
@@ -88,8 +88,7 @@ reference for it: number the logical line, position from the top of its first vi
   roughly 52% and preview 48%.
 - Above the preview: the note's owner, a collaborator avatar, "Changed 13 hours ago", and a row
   of icons at the right — favourite, bookmark, subscribe, and a brush.
-- The page header carries the workspace and the note title as a path (`GridTools / Icon4py
-  Tracer advection state`), an info button, a tag button, the account avatar, a history button
+- The page header carries the workspace and the note title as a path (`GridTools / Icon4py Tracer advection state`), an info button, a tag button, the account avatar, a history button
   and Share.
 
 ## The second shot: the status bar, and the URL
@@ -108,16 +107,16 @@ documentation and guessed right down to the word. Build those three spellings an
 
 The strip along the foot of the editor pane, left to right:
 
-| item | what it is |
-|---|---|
-| `Line 1, Columns 1 — 100 Lines` | caret position, and the document's line count |
-| a lightbulb | tips |
-| a tick | spellcheck |
-| a brush | editor theme |
-| **`Spaces: 4`** | **indent type and width — ask 5, and it is a click target, not a dialog** |
-| **`Breaks`** | whether a single newline renders as a line break |
-| a keyboard glyph | **the keymap selector — ask 6's control** |
-| `Length: 1369` | character count |
+| item                            | what it is                                                                |
+| ------------------------------- | ------------------------------------------------------------------------- |
+| `Line 1, Columns 1 — 100 Lines` | caret position, and the document's line count                             |
+| a lightbulb                     | tips                                                                      |
+| a tick                          | spellcheck                                                                |
+| a brush                         | editor theme                                                              |
+| **`Spaces: 4`**                 | **indent type and width — ask 5, and it is a click target, not a dialog** |
+| **`Breaks`**                    | whether a single newline renders as a line break                          |
+| a keyboard glyph                | **the keymap selector — ask 6's control**                                 |
+| `Length: 1369`                  | character count                                                           |
 
 This is where asks 5 and 6 belong. S5 is already called "The preference, the status bar, and
 the draft receipt", so the plan anticipated a status bar; it did not know what goes in one.
@@ -168,21 +167,21 @@ remember.
 
 ### What people actually write
 
-| construct | lines | notes |
-|---|---|---|
-| bullet | 17,640 | 676 |
-| heading | 7,212 | 719 |
-| inline code span | 6,312 | 588 |
-| **task list `- [ ]`** | **5,297** | **330** |
-| **fenced code block** | **2,960** | **261** |
-| **markdown link** | **1,560** | **388** |
-| **table row** | **1,530** | **69** |
-| bold | 1,455 | 195 |
-| hard break (two spaces) | 252 | 77 |
-| strikethrough | 188 | 67 |
-| image | 173 | 58 |
-| PR reference `#1234` | 101 | 40 |
-| blockquote | 74 | 25 |
+| construct               | lines     | notes   |
+| ----------------------- | --------- | ------- |
+| bullet                  | 17,640    | 676     |
+| heading                 | 7,212     | 719     |
+| inline code span        | 6,312     | 588     |
+| **task list `- [ ]`**   | **5,297** | **330** |
+| **fenced code block**   | **2,960** | **261** |
+| **markdown link**       | **1,560** | **388** |
+| **table row**           | **1,530** | **69**  |
+| bold                    | 1,455     | 195     |
+| hard break (two spaces) | 252       | 77      |
+| strikethrough           | 188       | 67      |
+| image                   | 173       | 58      |
+| PR reference `#1234`    | 101       | 40      |
+| blockquote              | 74        | 25      |
 
 **This settles the toolbar override, and settles it the other way round from how it was argued.**
 `d6997e3` cut the link button and the code-block button on a count of **8** markdown links and
@@ -198,16 +197,16 @@ is a correction of one.
 It does exist, and it is bounded: **640 of 735 notes (87%) render with nothing missing today.**
 The other 95 need something this renderer does not have.
 
-| missing | notes |
-|---|---|
-| raw HTML | 43 |
-| math, `$…$` and `$$…$$` | 27 |
-| footnotes `[^x]` | 15 |
-| `[TOC]` | 14 |
-| `:::` containers | 10 |
-| `[name=]` / `[color=]` | 2 |
-| image sizing `=200x` | 1 |
-| `{%youtube%}`-style embeds | **0** |
+| missing                          | notes                 |
+| -------------------------------- | --------------------- |
+| raw HTML                         | 43                    |
+| math, `$…$` and `$$…$$`          | 27                    |
+| footnotes `[^x]`                 | 15                    |
+| `[TOC]`                          | 14                    |
+| `:::` containers                 | 10                    |
+| `[name=]` / `[color=]`           | 2                     |
+| image sizing `=200x`             | 1                     |
+| `{%youtube%}`-style embeds       | **0**                 |
 | mermaid and other diagram fences | 0 outside code blocks |
 
 Three things to say about that list.
@@ -255,15 +254,15 @@ people who wanted a line break and knew how to ask for one asked for it in the p
 records. It is **part** of the corpus, not all of it; the rest is still in HackMD behind a login.
 29 files, 1,090 lines, at `e5dde0e`. Counted 2026-08-20:
 
-| construct | lines |
-|---|---|
-| heading | 123 |
-| bullet | 103 |
-| task list `- [ ]` | 26 |
-| inline code span | 26 |
-| markdown link | 18 |
-| fenced block | 6 |
-| bold | 2 |
+| construct                                                                                                            | lines      |
+| -------------------------------------------------------------------------------------------------------------------- | ---------- |
+| heading                                                                                                              | 123        |
+| bullet                                                                                                               | 103        |
+| task list `- [ ]`                                                                                                    | 26         |
+| inline code span                                                                                                     | 26         |
+| markdown link                                                                                                        | 18         |
+| fenced block                                                                                                         | 6          |
+| bold                                                                                                                 | 2          |
 | `[TOC]`, `:::info`, `> [name=`, `{%youtube%}`, `[^fn]`, `$math$`, mermaid fence, `![... =200x]`, table row, raw HTML | **0 each** |
 
 Two things follow, and both are decisions rather than curiosities.
@@ -301,11 +300,13 @@ A link to one note cannot answer a question that is a count across many, and
 `hackmd.io/ppDzW8W0QnmS2y8eFyU1Tw?both=` is gated to anything without jcanton's session — fetched
 2026-08-20, it returns the login page.
 
-The route already exists here. `docs/probes/hackmd_probe.py` speaks the HackMD API, and its
+The route already exists here. `design/probes/hackmd_probe.py` speaks the HackMD API, and its
 `inspect` phase already lists a team's notes:
 
-    GET /teams/<team>/notes         -> every note's id
-    GET /teams/<team>/notes/<id>    -> that note's `content`
+```
+GET /teams/<team>/notes         -> every note's id
+GET /teams/<team>/notes/<id>    -> that note's `content`
+```
 
 One token — hackmd.io, settings, API, new token — exported as `HACKMD_TOKEN` makes the whole
 corpus countable in a single read-only pass, with the same greps as the table above and no note

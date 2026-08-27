@@ -139,8 +139,10 @@ def clobber(team: str, note_id: str) -> None:
 
         again = show("GET (the CAS check)", api.get(path))
         moved = isinstance(again, dict) and again.get("lastChangedAt") != stamp
-        print(f"    lastChangedAt moved between the two reads: {moved}"
-              f"  <- if False while somebody types, it is useless as a version")
+        print(
+            f"    lastChangedAt moved between the two reads: {moved}"
+            f"  <- if False while somebody types, it is useless as a version"
+        )
 
         print("\n  PATCHing the whole content back, mid-sentence:")
         show("PATCH content", api.patch(path, json={"content": edited}))
@@ -151,8 +153,10 @@ def clobber(team: str, note_id: str) -> None:
             body = after.get("content") or ""
             landed = f"status: {FIELD_AFTER}" in body
             kept = base.strip()[-40:] in body
-            print(f"    +{wait:>2}s  our field landed: {str(landed):5}   "
-                  f"their text still there: {kept}")
+            print(
+                f"    +{wait:>2}s  our field landed: {str(landed):5}   "
+                f"their text still there: {kept}"
+            )
         print(f"\n  body tail after: ...{(body or '').strip()[-60:]!r}")
         print("\n  Ask the person typing: did their editor jump, lose characters, or")
         print("  carry on as if nothing happened? That answer is the design decision.")
@@ -177,8 +181,13 @@ if __name__ == "__main__":
     if len(sys.argv) < 3:
         sys.exit(__doc__)
     phase, team, rest = sys.argv[1], sys.argv[2], sys.argv[3:]
-    phases = {"inspect": inspect, "create": create,
-              "clobber": clobber, "verify": verify, "clean": clean}
+    phases = {
+        "inspect": inspect,
+        "create": create,
+        "clobber": clobber,
+        "verify": verify,
+        "clean": clean,
+    }
     if phase not in phases:
         sys.exit(__doc__)
     phases[phase](team, *rest)

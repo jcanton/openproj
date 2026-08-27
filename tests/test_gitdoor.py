@@ -49,8 +49,17 @@ from openproj.web import create_app
 # permanent breakages, and a green healthz over nine dead pages is how one of
 # them stayed up for a whole round.
 ROUTES = (
-    "/", "/graph", "/timeline", "/people", "/cycles", "/cycle/37", "/detail",
-    f"/detail/{TASK}", "/new", "/api/index.json", "/healthz",
+    "/",
+    "/graph",
+    "/timeline",
+    "/people",
+    "/cycles",
+    "/cycle/37",
+    "/detail",
+    f"/detail/{TASK}",
+    "/new",
+    "/api/index.json",
+    "/healthz",
 )
 
 # (what somebody committed, the file it lands in, its content)
@@ -254,7 +263,8 @@ def test_several_bad_files_are_all_named_rather_than_the_first(door):
     path, _ = door
     commit_directly(
         path,
-        SEED | {
+        SEED
+        | {
             "tasks/task-d00001.md": "no frontmatter here\n",
             "cycles/0039.md": "---\ncycle: 39\nstarts_on: [oops\n---\n",
             "config/people.yaml": "known_people: [ann, bo\n",
@@ -412,8 +422,7 @@ def test_check_still_reports_the_records_that_did_read(on_disk: Path, capsys):
     from openproj.cli import main
 
     (on_disk / "tasks/task-a00003.md").write_text(
-        "---\nid: task-a00003\nkind: task\ntitle: Done with nothing to show\n"
-        "status: done\n---\n",
+        "---\nid: task-a00003\nkind: task\ntitle: Done with nothing to show\nstatus: done\n---\n",
         encoding="utf-8",
     )
 
@@ -603,10 +612,10 @@ def test_a_reason_quoting_the_file_is_still_only_text(door):
     path, _ = door
     commit_directly(
         path,
-        SEED | {
-            "cycles/0042.md":
-                "---\ncycle: 42\nstarts_on: 2026-09-01\navailability:\n"
-                f"  '{PAYLOAD}': half\n---\n"
+        SEED
+        | {
+            "cycles/0042.md": "---\ncycle: 42\nstarts_on: 2026-09-01\navailability:\n"
+            f"  '{PAYLOAD}': half\n---\n"
         },
         "a login that would rather be markup",
     )

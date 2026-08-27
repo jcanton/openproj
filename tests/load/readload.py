@@ -110,9 +110,7 @@ def loadavg() -> list[float]:
 
 def machine() -> dict:
     def sysctl(name: str) -> str:
-        return subprocess.run(
-            ["sysctl", "-n", name], capture_output=True, text=True
-        ).stdout.strip()
+        return subprocess.run(["sysctl", "-n", name], capture_output=True, text=True).stdout.strip()
 
     return {
         "model": sysctl("hw.model"),
@@ -167,7 +165,8 @@ def cold_start(args: argparse.Namespace, world_args: dict) -> dict:
         with harness.Harness(**world_args) as world:
             idle = world.rss_mb()
             client = httpx.Client(
-                base_url=world.base, timeout=120.0,
+                base_url=world.base,
+                timeout=120.0,
                 headers={"cookie": harness.cookie_for(harness.PEOPLE[0])},
             )
             with client:
@@ -178,15 +177,17 @@ def cold_start(args: argparse.Namespace, world_args: dict) -> dict:
                 begun = time.monotonic()
                 client.get("/")
                 second = round((time.monotonic() - begun) * 1000, 1)
-            out.append({
-                "startup_seconds": world.describe()["startup_seconds"],
-                "first_page_ms": first,
-                "second_page_ms": second,
-                "status": answer.status_code,
-                "rss_mb_idle": idle,
-                "rss_mb_with_index": held,
-                "records": world.describe()["records"],
-            })
+            out.append(
+                {
+                    "startup_seconds": world.describe()["startup_seconds"],
+                    "first_page_ms": first,
+                    "second_page_ms": second,
+                    "status": answer.status_code,
+                    "rss_mb_idle": idle,
+                    "rss_mb_with_index": held,
+                    "records": world.describe()["records"],
+                }
+            )
             described = world.describe()
     return {"runs": out, "world": described}
 
@@ -208,7 +209,8 @@ def serial(world: harness.Harness, ids: list[str], first: str, passes: int = 3) 
     routes = [r for r in (*users.Reader.ALL_PAGES, detail) if r != first]
     routes.insert(0, first)
     client = httpx.Client(
-        base_url=world.base, timeout=120.0,
+        base_url=world.base,
+        timeout=120.0,
         headers={"cookie": harness.cookie_for(harness.PEOPLE[0])},
     )
     seen: dict[str, list[float]] = {}
@@ -270,15 +272,32 @@ def phase(
 
     if writer_gap:
         committer = Committer(
-            "writer-0", login(), world, ledger, seed, 0.0, zero,
-            record=ids[0], gap=writer_gap, stale=False, style="append",
+            "writer-0",
+            login(),
+            world,
+            ledger,
+            seed,
+            0.0,
+            zero,
+            record=ids[0],
+            gap=writer_gap,
+            stale=False,
+            style="append",
         )
         people.append(committer)
     for i in range(readers):
         people.append(
             users.Reader(
-                f"reader-{i}", login(), world, ledger, seed, 0.0, zero,
-                ids=ids, think=think, pages=users.Reader.ALL_PAGES,
+                f"reader-{i}",
+                login(),
+                world,
+                ledger,
+                seed,
+                0.0,
+                zero,
+                ids=ids,
+                think=think,
+                pages=users.Reader.ALL_PAGES,
             )
         )
 
@@ -347,22 +366,29 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="readload.py", description=__doc__.splitlines()[0])
     p.add_argument("--readers", type=int, default=20)
     p.add_argument("--seconds", type=float, default=60.0, help="per phase")
-    p.add_argument("--think", type=float, default=0.5,
-                   help="a reader's pause between pages. Small on purpose: this "
-                        "measures a ceiling, not a comfortable afternoon")
+    p.add_argument(
+        "--think",
+        type=float,
+        default=0.5,
+        help="a reader's pause between pages. Small on purpose: this "
+        "measures a ceiling, not a comfortable afternoon",
+    )
     p.add_argument("--writer-gap", type=float, default=5.0)
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--size", choices=("small", "medium", "large"), default="medium")
     p.add_argument("--corpus", choices=("corpus", "plans"), default="corpus")
     p.add_argument("--rtt-ms", type=float, default=0.0)
-    p.add_argument("--cold-starts", type=int, default=3,
-                   help="how many times to start a server from nothing and time the "
-                        "first page. --min-instances 0 makes this a real page view")
+    p.add_argument(
+        "--cold-starts",
+        type=int,
+        default=3,
+        help="how many times to start a server from nothing and time the "
+        "first page. --min-instances 0 makes this a real page view",
+    )
     p.add_argument("--no-serial", action="store_true", help="skip the two serial probes")
     p.add_argument("--no-phases", action="store_true", help="skip the concurrent phases")
     p.add_argument("--rows", action="store_true")
-    p.add_argument("--out", type=Path,
-                   default=ROOT / "docs" / "probes" / "load" / "read-load.json")
+    p.add_argument("--out", type=Path, default=ROOT / "docs" / "probes" / "load" / "read-load.json")
     return p.parse_args(argv)
 
 
@@ -379,8 +405,9 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     def world_args() -> dict:
-        return dict(seed=args.seed, rtt_ms=args.rtt_ms, corpus=args.corpus,
-                    size=args.size, remote=True)
+        return dict(
+            seed=args.seed, rtt_ms=args.rtt_ms, corpus=args.corpus, size=args.size, remote=True
+        )
 
     # -- what an idle instance costs the first person back ------------------
     if args.cold_starts:
@@ -412,14 +439,28 @@ def main(argv: list[str] | None = None) -> int:
         before = verify.snapshot(world.plan)
         started_at = harness.head_of(world.plan)
 
-        one, _ = phase("warm-1 (index cache empty at t=0)", world, ids,
-                       args.readers, args.seconds, args.think, args.seed)
+        one, _ = phase(
+            "warm-1 (index cache empty at t=0)",
+            world,
+            ids,
+            args.readers,
+            args.seconds,
+            args.think,
+            args.seed,
+        )
         blob["phases"].append(one)
         mid = harness.head_of(world.plan)
         print(f"  warm-1 done, head {mid[:10]}")
 
-        two, _ = phase("warm-2 (same commit, cache hot)", world, ids,
-                       args.readers, args.seconds, args.think, args.seed)
+        two, _ = phase(
+            "warm-2 (same commit, cache hot)",
+            world,
+            ids,
+            args.readers,
+            args.seconds,
+            args.think,
+            args.seed,
+        )
         blob["phases"].append(two)
         print(f"  warm-2 done, head {harness.head_of(world.plan)[:10]}")
         blob["same_commit"] = {
@@ -430,8 +471,13 @@ def main(argv: list[str] | None = None) -> int:
         }
 
         three, committer = phase(
-            f"writer (one commit every {args.writer_gap}s)", world, ids,
-            args.readers - 1, args.seconds, args.think, args.seed,
+            f"writer (one commit every {args.writer_gap}s)",
+            world,
+            ids,
+            args.readers - 1,
+            args.seconds,
+            args.think,
+            args.seed,
             writer_gap=args.writer_gap,
         )
         blob["phases"].append(three)
@@ -443,8 +489,12 @@ def main(argv: list[str] | None = None) -> int:
 
         sent = list(committer.sent) if committer else []
         blob["verification"] = verify.verify(
-            world.plan, world.origin, [], sent,
-            logins=set(harness.PEOPLE), before=before,
+            world.plan,
+            world.origin,
+            [],
+            sent,
+            logins=set(harness.PEOPLE),
+            before=before,
         )
         blob["commits"] = {
             "head_at_start": started_at[:10],
@@ -467,28 +517,37 @@ def report(blob: dict) -> None:
     w = blob.get("world", {})
     print(f"\n=== read-load · seed {blob['seed']} ===")
     print(f"{m['model']}, {m['cores']} cores, {m['memory_gb']} GB, {m['kernel']}")
-    print(f"plan: {w.get('records')} records ({w.get('corpus')}/{w.get('size')}), "
-          f"remote {w.get('remote')}, port {w.get('port')}")
+    print(
+        f"plan: {w.get('records')} records ({w.get('corpus')}/{w.get('size')}), "
+        f"remote {w.get('remote')}, port {w.get('port')}"
+    )
 
     if blob.get("cold_start"):
         print("\n-- a server started from nothing, first page on an empty index cache --")
-        print(f"{'startup s':>11}{'1st page ms':>13}{'2nd page ms':>13}"
-              f"{'RSS idle':>11}{'RSS+index':>11}")
+        print(
+            f"{'startup s':>11}{'1st page ms':>13}{'2nd page ms':>13}"
+            f"{'RSS idle':>11}{'RSS+index':>11}"
+        )
         for one in blob["cold_start"]["runs"]:
-            print(f"{one['startup_seconds']:>11}{one['first_page_ms']:>13}"
-                  f"{one['second_page_ms']:>13}{one['rss_mb_idle']:>11}"
-                  f"{one['rss_mb_with_index']:>11}")
+            print(
+                f"{one['startup_seconds']:>11}{one['first_page_ms']:>13}"
+                f"{one['second_page_ms']:>13}{one['rss_mb_idle']:>11}"
+                f"{one['rss_mb_with_index']:>11}"
+            )
 
     for probe in blob["serial"]:
-        print(f"\n-- one client, nothing else running · first request "
-              f"{probe['first_request_was']} --")
+        print(
+            f"\n-- one client, nothing else running · first request {probe['first_request_was']} --"
+        )
         print(f"{'route':<22}{'cold ms':>10}{'warm ms':>10}{'build ms':>10}{'KB':>10}")
         for route, cold in probe["cold_ms"].items():
             warm = probe["warm_ms"].get(route)
             build = f"{cold - warm:>10.1f}" if warm is not None else " " * 10
             kb = probe.get("bytes", {}).get(route, 0) / 1024
-            print(f"{route:<22}{cold:>10.1f}{(warm if warm is not None else 0):>10.1f}"
-                  f"{build}{kb:>10.1f}")
+            print(
+                f"{route:<22}{cold:>10.1f}{(warm if warm is not None else 0):>10.1f}"
+                f"{build}{kb:>10.1f}"
+            )
         if probe["bad_statuses"]:
             print(f"  !! non-200: {probe['bad_statuses']}")
 
@@ -496,16 +555,20 @@ def report(blob: dict) -> None:
         print(f"\n-- {ph['phase']} · {ph['readers']} readers · {ph['seconds']}s --")
         print(measure.table(ph["readers_only"]))
         t = ph["readers_only"]["throughput"]
-        print(f"  reader pages/s: {t.get('pages_per_second')}   "
-              f"server {ph['server_cpu_seconds']}s CPU = {ph['server_cores_used']} cores   "
-              f"driver {ph['driver_cores_used']} cores   RSS {ph['server_rss_mb']} MB")
+        print(
+            f"  reader pages/s: {t.get('pages_per_second')}   "
+            f"server {ph['server_cpu_seconds']}s CPU = {ph['server_cores_used']} cores   "
+            f"driver {ph['driver_cores_used']} cores   RSS {ph['server_rss_mb']} MB"
+        )
         print(f"  first request per reader (the herd): {ph['herd']}")
         if ph["readers_only"]["errors"]:
             print(f"  !! errors: {ph['readers_only']['errors']}")
         if ph.get("commits_attempted") is not None:
-            print(f"  writer: {ph['commits_attempted']} PATCHes, one every "
-                  f"{ph['seconds_per_commit']}s, outcomes "
-                  f"{ph['everything']['write_outcomes']}")
+            print(
+                f"  writer: {ph['commits_attempted']} PATCHes, one every "
+                f"{ph['seconds_per_commit']}s, outcomes "
+                f"{ph['everything']['write_outcomes']}"
+            )
         if ph["driver_failures"]:
             print(f"  !! driver threads failed: {ph['driver_failures']}")
 
@@ -516,8 +579,9 @@ def report(blob: dict) -> None:
     print(verify.summary(blob["verification"]))
     for name in ("form_writes", "push", "parses", "conflict_markers"):
         if name in blob["verification"]["checks"]:
-            print(f"  {name}: "
-                  f"{json.dumps(blob['verification']['checks'][name], default=str)[:400]}")
+            print(
+                f"  {name}: {json.dumps(blob['verification']['checks'][name], default=str)[:400]}"
+            )
     if blob["strays"]:
         print(f"\n!! processes left behind: {blob['strays']}")
 

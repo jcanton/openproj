@@ -140,8 +140,7 @@ def check(*records: Record, config: Config | None = None) -> list[Problem]:
 
 def only(problems: list[Problem], record_id: str, field: str | None = None) -> Problem:
     matching = [
-        p for p in problems
-        if p.record_id == record_id and (field is None or p.field == field)
+        p for p in problems if p.record_id == record_id and (field is None or p.field == field)
     ]
     named = record_id if field is None else f"{record_id}.{field}"
     assert len(matching) == 1, f"expected exactly one problem for {named}, got {matching}"
@@ -346,12 +345,16 @@ def test_a_parent_of_the_wrong_kind_is_named_as_such():
         Project(id="proj-000001", kind="project", title="P"),
         Pitch(id="pitch-000001", kind="pitch", title="Q", parent="proj-000001"),
         Task(id="task-000001", kind="task", title="T", parent="pitch-000001"),
-        Task(id="task-000002", kind="task", title="U", parent="task-000001",
-             created_schema_version=4),
+        Task(
+            id="task-000002", kind="task", title="U", parent="task-000001", created_schema_version=4
+        ),
     ]
     problem = only(validate_all(records, Config()), "task-000002", field="parent")
     assert summary(problem) == (
-        "blocker", "parent", "a task belongs to a pitch or a project, not to a task", 4
+        "blocker",
+        "parent",
+        "a task belongs to a pitch or a project, not to a task",
+        4,
     )
 
     # And with its article right when the wrong parent's kind starts with a
@@ -359,12 +362,16 @@ def test_a_parent_of_the_wrong_kind_is_named_as_such():
     # under an issue reaches this sentence and used to read "a issue".
     filed = [
         parse_text(
-            "---\nid: issue-000001\nkind: issue\ntitle: Broken\nstatus: ready\n"
-            "---\n\nx\n",
+            "---\nid: issue-000001\nkind: issue\ntitle: Broken\nstatus: ready\n---\n\nx\n",
             "issues/issue-000001.md",
         ),
-        Task(id="task-000003", kind="task", title="V", parent="issue-000001",
-             created_schema_version=4),
+        Task(
+            id="task-000003",
+            kind="task",
+            title="V",
+            parent="issue-000001",
+            created_schema_version=4,
+        ),
     ]
     problem = only(validate_all(filed, Config()), "task-000003", field="parent")
     assert problem.message == "a task belongs to a pitch or a project, not to an issue"
@@ -378,19 +385,28 @@ def test_a_task_may_hang_straight_off_a_project():
     that is two levels deep in places."""
     records = [
         Project(id="proj-000001", kind="project", title="P"),
-        Task(id="task-000001", kind="task", title="T", parent="proj-000001",
-             created_schema_version=4),
+        Task(
+            id="task-000001", kind="task", title="T", parent="proj-000001", created_schema_version=4
+        ),
     ]
 
-    assert not [p for p in validate_all(records, Config())
-                if p.record_id == "task-000001" and p.field == "parent"]
+    assert not [
+        p
+        for p in validate_all(records, Config())
+        if p.record_id == "task-000001" and p.field == "parent"
+    ]
 
 
 def test_a_project_belongs_to_nothing():
     records = [
         Project(id="proj-000001", kind="project", title="P"),
-        Project(id="proj-000002", kind="project", title="Q", parent="proj-000001",
-                created_schema_version=4),
+        Project(
+            id="proj-000002",
+            kind="project",
+            title="Q",
+            parent="proj-000001",
+            created_schema_version=4,
+        ),
     ]
     problem = only(validate_all(records, Config()), "proj-000002", field="parent")
     # A project belongs to a PRODUCT now, and to nothing else — the message is
@@ -415,8 +431,14 @@ def test_a_chore_nobody_pitched_keeps_its_own_cycle_and_a_parented_task_does_not
     dated = Config(cycles={36: (date(2026, 6, 22), date(2026, 8, 14))})
     records = [
         Pitch(id="pitch-000001", kind="pitch", title="Q", cycle=36),
-        Task(id="task-000001", kind="task", title="T", parent="pitch-000001", cycle=36,
-             created_schema_version=4),
+        Task(
+            id="task-000001",
+            kind="task",
+            title="T",
+            parent="pitch-000001",
+            cycle=36,
+            created_schema_version=4,
+        ),
         Task(id="task-000002", kind="task", title="Chore", cycle=36),
     ]
     problems = [p for p in validate_all(records, dated) if p.field == "cycle"]
@@ -463,8 +485,14 @@ def test_a_shelved_task_is_not_counted_against_its_pitchs_appetite():
     records = [
         Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=4.0),
         Task(id="task-000001", kind="task", title="A", parent="pitch-000001", person_weeks=4.0),
-        Task(id="task-000002", kind="task", title="B", parent="pitch-000001", person_weeks=4.0,
-             status="shelved"),
+        Task(
+            id="task-000002",
+            kind="task",
+            title="B",
+            parent="pitch-000001",
+            person_weeks=4.0,
+            status="shelved",
+        ),
     ]
     assert [p for p in validate_all(records, Config()) if p.field == "person_weeks"] == []
 
@@ -536,8 +564,9 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
     """
     records, config, _ = load_repo(seed_root)
     assert len(records) == 30
-    inherits = "the bet is on the pitch, so this task takes its cycle from {}; " \
-        "the number here is ignored"
+    inherits = (
+        "the bet is on the pitch, so this task takes its cycle from {}; the number here is ignored"
+    )
     assert summaries(validate_all(records, config)) == {
         # Nine records at ready or in_progress with nobody assigned, which is the
         # argument for that rule made against real files: an owner answers for a
@@ -598,13 +627,19 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         # or a dependency on a container is a claim about work that is not there,
         # while an owner on it is only a name nobody reads.
         (
-            "blocker", "prod-7c2b81", "depends_on",
-            "a product waits on nothing: its projects, pitches and tasks do", 1,
+            "blocker",
+            "prod-7c2b81",
+            "depends_on",
+            "a product waits on nothing: its projects, pitches and tasks do",
+            1,
         ),
         ("blocker", "prod-7c2b81", "person_weeks", "a product carries no appetite", 1),
         (
-            "warning", "prod-7c2b81", "owner",
-            "a product is a grouping and is never scheduled, so its owner is not read", 1,
+            "warning",
+            "prod-7c2b81",
+            "owner",
+            "a product is a grouping and is never scheduled, so its owner is not read",
+            1,
         ),
         # `note-b14d6a` points `became` at a pitch nobody wrote a file for, and its
         # body explains that the link is broken and is being left broken: the idea
@@ -615,9 +650,7 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
     }
 
 
-def test_check_over_the_seed_corpus_prints_exactly_the_validated_problems(
-    seed_root: Path, capsys
-):
+def test_check_over_the_seed_corpus_prints_exactly_the_validated_problems(seed_root: Path, capsys):
     """The seed-check pin, CLI half. The snapshot test above pins WHAT
     `validate_all` says about the real corpus, entry by entry; this pins that
     `openproj check` relays all of it — every line, the sort, the count, the
@@ -726,8 +759,9 @@ def test_each_rung_accepts_exactly_its_own_status_words():
             # a status two rungs up and a sentence that denies it outright
             # argues with the page the reader just came from.
             article = "an" if rung.name[:1] in "aeiou" else "a"
-            vocab = only(check(blank.model_copy(update={"status": "wip"})), blank.id,
-                         field="status")
+            vocab = only(
+                check(blank.model_copy(update={"status": "wip"})), blank.id, field="status"
+            )
             assert summary(vocab) == (
                 "blocker",
                 "status",
@@ -804,10 +838,7 @@ def test_no_message_names_a_field_the_way_the_file_spells_it():
     already the word a reader uses, so forbidding it would forbid English.
     """
     spelled_in_the_file = {
-        name
-        for model in (Project, Pitch, Task)
-        for name in model.model_fields
-        if "_" in name
+        name for model in (Project, Pitch, Task) for name in model.model_fields if "_" in name
     }
     assert "review_waived" in spelled_in_the_file, "the derivation still finds the fields"
 
@@ -818,9 +849,16 @@ def test_no_message_names_a_field_the_way_the_file_spells_it():
         pitch(status="ready", owner=None, reviewers=[], person_weeks=None),
         task(status="in_progress", assigned_on=None, reviewers=["jackdawrie"], owner="jackdawrie"),
         project(status="ready", owner=None, reviewers=[]),
-        Task(id=OTHER_TASK_ID, kind="task", title="T", status="ready", owner="jackdawrie",
-             reviewers=["merganserly"], person_weeks=None,
-             depends_on=["task-999999", SHELVED_ID]),
+        Task(
+            id=OTHER_TASK_ID,
+            kind="task",
+            title="T",
+            status="ready",
+            owner="jackdawrie",
+            reviewers=["merganserly"],
+            person_weeks=None,
+            depends_on=["task-999999", SHELVED_ID],
+        ),
         Task(id=SHELVED_ID, kind="task", title="D", status="shelved", owner="jackdawrie"),
         Task(id=loop_a, kind="task", title="A", status="shaping", depends_on=[loop_b]),
         Task(id=loop_b, kind="task", title="B", status="shaping", depends_on=[loop_a]),
@@ -829,10 +867,7 @@ def test_no_message_names_a_field_the_way_the_file_spells_it():
     assert len(problems) >= 9, f"the gates did not all fire: {[p.message for p in problems]}"
 
     leaked = sorted(
-        (p.field, p.message)
-        for p in problems
-        for name in spelled_in_the_file
-        if name in p.message
+        (p.field, p.message) for p in problems for name in spelled_in_the_file if name in p.message
     )
     assert leaked == [], f"a rule spelled a field the file's way: {leaked}"
 
@@ -974,8 +1009,17 @@ def test_a_todo_record_needs_somebody_on_it():
 
 
 def test_work_in_progress_needs_somebody_on_it():
-    problem = only(check(task(status="in_progress", assigned_on=date(2026, 8, 3),
-                              assignees=[], created_schema_version=2)), TASK_ID)
+    problem = only(
+        check(
+            task(
+                status="in_progress",
+                assigned_on=date(2026, 8, 3),
+                assignees=[],
+                created_schema_version=2,
+            )
+        ),
+        TASK_ID,
+    )
     assert summary(problem) == ("blocker", "assignees", NEEDS_SOMEBODY_WIP, 2)
 
 
@@ -1004,13 +1048,22 @@ def test_nothing_is_asked_of_a_record_nobody_has_looked_at():
     and the table's inline editor read: a field marked required at a status the
     server demands nothing at is a form refusing a record the server would take.
     """
-    bare = {"owner": None, "assignees": [], "reviewers": [], "person_weeks": None,
-            "assigned_on": None, "prs": []}
+    bare = {
+        "owner": None,
+        "assignees": [],
+        "reviewers": [],
+        "person_weeks": None,
+        "assigned_on": None,
+        "prs": [],
+    }
     # The control: the same record one rung up really does collect a handful, so
     # the empty list below is the status answering and not the fixture being
     # clean by accident.
     assert {p.field for p in check(task(status="ready", **bare))} == {
-        "owner", "assignees", "reviewers", "person_weeks",
+        "owner",
+        "assignees",
+        "reviewers",
+        "person_weeks",
     }
     assert check(task(status="thinking", **bare)) == []
 

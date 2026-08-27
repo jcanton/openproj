@@ -9,12 +9,12 @@ sleep so a `file://` remote on the same SSD can stand in for GitHub over HTTPS.
 
 ## The bench
 
-| | |
-|---|---|
-| machine | Apple Silicon laptop, CPython 3.12.13, pygit2 1.20.0 / libgit2 1.9.6 |
-| corpus | `tests/load/corpus.py` — 40 pitches × 10 tasks + 1 project + 60 notes + 60 issues = **561 records, 566 files**, bodies the length of a real shaping document |
-| server | one uvicorn, one worker, `--auth dev`, `file://` remote, bound 127.0.0.1 |
-| ports | 8931–8942, loopback only |
+|         |                                                                                                                                                              |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| machine | Apple Silicon laptop, CPython 3.12.13, pygit2 1.20.0 / libgit2 1.9.6                                                                                         |
+| corpus  | `tests/load/corpus.py` — 40 pitches × 10 tasks + 1 project + 60 notes + 60 issues = **561 records, 566 files**, bodies the length of a real shaping document |
+| server  | one uvicorn, one worker, `--auth dev`, `file://` remote, bound 127.0.0.1                                                                                     |
+| ports   | 8931–8942, loopback only                                                                                                                                     |
 
 Cloud Run runs this on **1 throttled vCPU**. Every CPU number below is a floor,
 not a forecast: a laptop core is several times a throttled Cloud Run core, and
@@ -40,15 +40,15 @@ Scenarios: `read`, `spread`, `same`, `same-stale`, `mixed`, `rooms`, `herd`.
 
 `tests/load/micro.py`, and `render_*` measured the same way.
 
-| | 81 records | 561 records | 1921 records |
-|---|---|---|---|
-| `store.head()` (opens a fresh `pygit2.Repository` every call) | 0.19 ms | 0.19 ms | 0.19 ms |
-| `store.blobs()` — whole tree walk | 0.02 | 0.30 | 1.25 |
-| `_entities_at` — warm `_PARSED` cache | 0.04 | 0.42 | 1.70 |
-| **`build_index`** | 3.1 | **25.7** | 136 |
-| `store.last_edited()` full history walk | 0.30 | 1.05 | 3.52 |
-| `render_table` | 26.0 | 40.1 | 154 |
-| **`render_detail`** | 82.6 | **240** | **718** |
+|                                                               | 81 records | 561 records | 1921 records |
+| ------------------------------------------------------------- | ---------- | ----------- | ------------ |
+| `store.head()` (opens a fresh `pygit2.Repository` every call) | 0.19 ms    | 0.19 ms     | 0.19 ms      |
+| `store.blobs()` — whole tree walk                             | 0.02       | 0.30        | 1.25         |
+| `_entities_at` — warm `_PARSED` cache                         | 0.04       | 0.42        | 1.70         |
+| **`build_index`**                                             | 3.1        | **25.7**    | 136          |
+| `store.last_edited()` full history walk                       | 0.30       | 1.05        | 3.52         |
+| `render_table`                                                | 26.0       | 40.1        | 154          |
+| **`render_detail`**                                           | 82.6       | **240**     | **718**      |
 
 `store.write` on 561 records: **3.1 ms** with no remote, **10.3 ms** over a
 `file://` remote. One `fetch` round trip on `file://` is 1.5 ms — GitHub over
@@ -59,14 +59,14 @@ substitutes.
 
 `tests/load/counters.py`, warm index cache, 561 records.
 
-| route | ms | `head()` | tree walks | blob reads |
-|---|---|---|---|---|
-| `GET /api/health` | 0.7 | 1 | 0 | 0 |
-| `GET /` | 29.1 | 2 | 0 | 0 |
-| `GET /table` | 43.3 | 1 | 0 | 0 |
-| `GET /api/index.json` | 5.7 | 1 | 0 | 0 |
-| `GET /detail/<id>` | **240.7** | 1 | 0 | 0 |
-| `PATCH /api/entity/<id>` (+ the `/api/health` before it) | 47.2 | **7** | **5** | 5.8 |
+| route                                                    | ms        | `head()` | tree walks | blob reads |
+| -------------------------------------------------------- | --------- | -------- | ---------- | ---------- |
+| `GET /api/health`                                        | 0.7       | 1        | 0          | 0          |
+| `GET /`                                                  | 29.1      | 2        | 0          | 0          |
+| `GET /table`                                             | 43.3      | 1        | 0          | 0          |
+| `GET /api/index.json`                                    | 5.7       | 1        | 0          | 0          |
+| `GET /detail/<id>`                                       | **240.7** | 1        | 0          | 0          |
+| `PATCH /api/entity/<id>` (+ the `/api/health` before it) | 47.2      | **7**    | **5**      | 5.8        |
 
 ## Serialisation
 
@@ -96,13 +96,13 @@ Read-only floor, no writers: 20 concurrent readers → `GET /` p50 560 ms,
 `run.sh same-stale 60 10 3 0` (each writer keeps the base its page was drawn at,
 which is a tab left open):
 
-| | fresh base | stale base |
-|---|---|---|
-| committed | 240 | 1 |
-| merged | 60 | 149 |
-| retried | 193 | 10 |
-| **409 conflict** | **0** | **396** (71%) |
-| saves/s | 8.08 | 2.63 |
+|                  | fresh base | stale base    |
+| ---------------- | ---------- | ------------- |
+| committed        | 240        | 1             |
+| merged           | 60         | 149           |
+| retried          | 193        | 10            |
+| **409 conflict** | **0**      | **396** (71%) |
+| saves/s          | 8.08       | 2.63          |
 
 No conflict marker ever reached the plan in either run, and `local == remote`
 at the end of every run.
@@ -113,12 +113,12 @@ at the end of every run.
 (web.py:2605, and the reason is written out above it). `run.sh rooms 60 8 0 <rtt> … 3`
 — eight rooms, Save every 3 s, while one thread times `GET /api/health`:
 
-| | rtt 0 | rtt 600 |
-|---|---|---|
-| `/api/health` p50 | 4.8 ms | 5.2 ms |
-| `/api/health` p95 | 6.6 ms | **5738 ms** |
-| `/api/health` max | 141 ms | **15300 ms** |
-| probes completed in the window | 713 | 48 |
+|                                | rtt 0  | rtt 600      |
+| ------------------------------ | ------ | ------------ |
+| `/api/health` p50              | 4.8 ms | 5.2 ms       |
+| `/api/health` p95              | 6.6 ms | **5738 ms**  |
+| `/api/health` max              | 141 ms | **15300 ms** |
+| probes completed in the window | 713    | 48           |
 
 At 20 rooms with rtt 600, 16 of 20 sockets stopped getting an answer inside the
 client's 10 s read timeout.
@@ -147,6 +147,7 @@ index rebuild per reader that was in flight**, not one. The herd window is one
 - Two people appending a line at the end of a document — the commonest
   co-editing shape there is — is **refused**, not merged, and the refusal reads
   `lines 3-2:` (an insertion span is empty, so `span[0] + 1 > span[1]`).
+
 - `_merge_body` calls two edits a conflict only where they overlap by a
   half-open test (`store.py:145`). An insertion's span is empty, so an insertion
   at line N and a replacement starting at line N are merged silently — and the
@@ -167,6 +168,7 @@ index rebuild per reader that was in flight**, not one. The herd window is one
   Driven through `Store.write` end to end: Bob's commit is in the history, his
   sentence is not in the file, and Ann was answered `outcome: "merged"`, 200,
   with no conflict to read.
+
 - Fuzzed over 50,000 random three-way pairs on 4–12 line documents: 43,237
   merged with no conflict, and of those **1,192 (2.8%) dropped a line the
   STORED commit had** and 1,028 (2.4%) dropped a line the incoming save had.

@@ -101,8 +101,7 @@ def test_a_product_is_the_top_and_a_project_sits_under_one():
 def test_a_product_waits_on_nothing():
     """Its projects, pitches and tasks do. jcanton: it "should not be allowed to
     have dependencies (only its projects/pitches/tasks can)"."""
-    one = Product(id="prod-000001", kind="product", title="hearth",
-                  depends_on=["proj-000001"])
+    one = Product(id="prod-000001", kind="product", title="hearth", depends_on=["proj-000001"])
     problems = validate_all([one], Config())
     waiting = [p for p in problems if p.field == "depends_on" and p.severity == "blocker"]
     assert waiting, "a product was allowed to wait on something"
@@ -133,10 +132,16 @@ def test_the_product_rules_are_as_old_as_the_kind():
     file red. No file can predate a KIND, though — every product that will ever
     exist is written after the rules about products — so those rules are stamped
     version 1 and are blockers on a hand-written file, which defaults to 1."""
-    one = Product(id="prod-000001", kind="product", title="hearth",
-                  depends_on=["proj-000001"], created_schema_version=1)
+    one = Product(
+        id="prod-000001",
+        kind="product",
+        title="hearth",
+        depends_on=["proj-000001"],
+        created_schema_version=1,
+    )
     waiting = [
-        p for p in validate_all([one], Config())
+        p
+        for p in validate_all([one], Config())
         if p.field == "depends_on" and "waits on nothing" in p.message
     ]
     assert waiting and waiting[0].severity == "blocker", (
@@ -166,23 +171,29 @@ def plan(tmp_path: Path) -> Path:
         (root / name).mkdir(parents=True)
     (root / "config" / "defaults.yaml").write_text("schema_version: 2\n")
     (root / "products" / "prod-000001.md").write_text(
-        "---\nid: prod-000001\nkind: product\ntitle: kiln4py\n---\n\nThe port.\n")
+        "---\nid: prod-000001\nkind: product\ntitle: kiln4py\n---\n\nThe port.\n"
+    )
     (root / "products" / "prod-000002.md").write_text(
-        "---\nid: prod-000002\nkind: product\ntitle: hearth\n---\n\nThe DSL under it.\n")
+        "---\nid: prod-000002\nkind: product\ntitle: hearth\n---\n\nThe DSL under it.\n"
+    )
     (root / "projects" / "proj-000001.md").write_text(
         "---\nid: proj-000001\nkind: project\ntitle: The port\nparent: prod-000001\n"
-        "status: ready\nowner: ann\nreviewers: [bo]\n---\n\nx\n")
+        "status: ready\nowner: ann\nreviewers: [bo]\n---\n\nx\n"
+    )
     (root / "projects" / "proj-000002.md").write_text(
         "---\nid: proj-000002\nkind: project\ntitle: The DSL\nparent: prod-000002\n"
-        "status: ready\nowner: bo\nreviewers: [ann]\n---\n\nx\n")
+        "status: ready\nowner: bo\nreviewers: [ann]\n---\n\nx\n"
+    )
     (root / "pitches" / "pitch-000002.md").write_text(
         "---\nid: pitch-000002\nkind: pitch\ntitle: Stencil lowering\n"
         "parent: proj-000002\nstatus: ready\nowner: bo\nreviewers: [ann]\n"
-        "person_weeks: 3\n---\n\nx\n")
+        "person_weeks: 3\n---\n\nx\n"
+    )
     (root / "pitches" / "pitch-000001.md").write_text(
         "---\nid: pitch-000001\nkind: pitch\ntitle: Port the transport\n"
         "parent: proj-000001\nstatus: ready\nowner: ann\nreviewers: [bo]\n"
-        "person_weeks: 2\ndepends_on: [pitch-000002]\n---\n\nx\n")
+        "person_weeks: 2\ndepends_on: [pitch-000002]\n---\n\nx\n"
+    )
     return root
 
 
@@ -192,7 +203,8 @@ def test_work_in_one_product_can_wait_on_work_in_another(plan: Path):
     records, config, unreadable = load_repo(plan)
     assert not unreadable, unreadable
     assert sorted(e.id for e in records if e.kind == "product") == [
-        "prod-000001", "prod-000002",
+        "prod-000001",
+        "prod-000002",
     ]
 
     index = build_index(records, config, date(2026, 8, 20))
@@ -315,13 +327,18 @@ def test_the_editors_do_not_offer_a_field_the_rung_does_not_read():
         "a product is a title, a sentence and somewhere to file projects; every "
         f"other box on the form belongs to the work inside it: {sorted(offered)}"
     )
-    assert not offered & set(RUNG and ("owner", "cycle", "priority", "depends_on",
-                                       "status", "prs"))
+    assert not offered & set(RUNG and ("owner", "cycle", "priority", "depends_on", "status", "prs"))
     # And no parent picker on the top rung: there is nothing to file it under.
     assert "parent" not in offered
-    assert "parent" in {f["name"] for f in _editable_for(parse_text(
-        "---\nid: proj-000001\nkind: project\ntitle: The port\n---\n\nx\n",
-        "projects/proj-000001.md"))}
+    assert "parent" in {
+        f["name"]
+        for f in _editable_for(
+            parse_text(
+                "---\nid: proj-000001\nkind: project\ntitle: The port\n---\n\nx\n",
+                "projects/proj-000001.md",
+            )
+        )
+    }
 
     columns = _new_row_fields()
     assert "owner" not in columns["product"] and "owner" in columns["project"]
@@ -358,9 +375,11 @@ def test_a_product_can_be_made_through_the_api(tmp_path: Path):
 
         made = client.post(
             "/api/record",
-            json={"base_commit": base,
-                  "fields": {"kind": "product", "title": "hearth"},
-                  "body": "The DSL under kiln4py.\n"},
+            json={
+                "base_commit": base,
+                "fields": {"kind": "product", "title": "hearth"},
+                "body": "The DSL under kiln4py.\n",
+            },
         )
         assert made.status_code == 201, made.json()
         product = made.json()["id"]
@@ -404,9 +423,11 @@ def test_a_status_on_a_product_still_warns_rather_than_refuses(tmp_path: Path):
         head = client.get("/healthz").json()["head"]
         made = client.post(
             "/api/record",
-            json={"base_commit": head,
-                  "fields": {"kind": "product", "title": "hearth", "status": "ready"},
-                  "body": "The DSL under kiln4py.\n"},
+            json={
+                "base_commit": head,
+                "fields": {"kind": "product", "title": "hearth", "status": "ready"},
+                "body": "The DSL under kiln4py.\n",
+            },
         )
         assert made.status_code == 201, made.json()
         product = made.json()["id"]
@@ -441,24 +462,30 @@ def test_a_product_can_be_patched_and_deleted(tmp_path: Path):
         head = client.get("/healthz").json()["head"]
         made = client.post(
             "/api/record",
-            json={"base_commit": head,
-                  "fields": {"kind": "product", "title": "hearth"},
-                  "body": "The DSL under kiln4py.\n"},
+            json={
+                "base_commit": head,
+                "fields": {"kind": "product", "title": "hearth"},
+                "body": "The DSL under kiln4py.\n",
+            },
         )
         assert made.status_code == 201, made.json()
         product = made.json()["id"]
 
         renamed = client.patch(
             f"/api/record/{product}",
-            json={"base_commit": made.json()["commit"],
-                  "fields": {"title": "hearth-next"}, "body": None},
+            json={
+                "base_commit": made.json()["commit"],
+                "fields": {"title": "hearth-next"},
+                "body": None,
+            },
         )
         assert renamed.status_code == 200, renamed.json()
         records = client.get("/api/index.json").json()["plan"]
         assert records[product]["title"] == "hearth-next"
 
         gone = client.request(
-            "DELETE", f"/api/record/{product}",
+            "DELETE",
+            f"/api/record/{product}",
             json={"base_commit": renamed.json()["commit"]},
         )
         assert gone.status_code == 200, gone.json()
@@ -538,9 +565,7 @@ def test_a_products_row_is_empty_where_a_product_holds_nothing(plan: Path):
                         "inside": [],
                     }
             elif inside and column is not None:
-                found[column]["inside"].append(
-                    (element.tag, element.attrs.get("class", ""))
-                )
+                found[column]["inside"].append((element.tag, element.attrs.get("class", "")))
         return found
 
     product = cells("prod-000001")
@@ -551,8 +576,7 @@ def test_a_products_row_is_empty_where_a_product_holds_nothing(plan: Path):
         if column in holds:
             continue
         assert cell["text"] == "", (
-            f"the product's {column} cell says {cell['text']!r}, and a product "
-            f"has no {column}"
+            f"the product's {column} cell says {cell['text']!r}, and a product has no {column}"
         )
         assert cell["inside"] == [], (
             f"the product's {column} cell draws {cell['inside']} — an empty cell "
@@ -573,7 +597,6 @@ def test_a_products_row_is_empty_where_a_product_holds_nothing(plan: Path):
         "the per-kind gate took the editor off a row that does read a status"
     )
     assert pitch["blocked_by"]["text"] == "1", (
-        "the pitch waits on one thing and its cell no longer says so: "
-        f"{pitch['blocked_by']}"
+        f"the pitch waits on one thing and its cell no longer says so: {pitch['blocked_by']}"
     )
     assert pitch["owner"]["text"] == "ann", pitch["owner"]

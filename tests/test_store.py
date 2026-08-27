@@ -135,9 +135,7 @@ def commit_directly(
     )
     if parents is None:
         parents = [] if repo.head_is_unborn else [repo.head.target]
-    oid = repo.create_commit(
-        ref, signature, signature, message, _write_tree(repo, root), parents
-    )
+    oid = repo.create_commit(ref, signature, signature, message, _write_tree(repo, root), parents)
     return str(oid)
 
 
@@ -416,8 +414,8 @@ def test_a_refusal_over_an_insertion_says_before_which_line():
     """
     merged, conflicts = _merge_body(
         "alpha\nbeta\ngamma\n",
-        "alpha\nmine, squeezed in\nbeta\ngamma\n",   # insertion: span (1, 1)
-        "alpha\ntheirs, replacing\ngamma\n",          # replacement: span (1, 2)
+        "alpha\nmine, squeezed in\nbeta\ngamma\n",  # insertion: span (1, 1)
+        "alpha\ntheirs, replacing\ngamma\n",  # replacement: span (1, 2)
     )
 
     assert merged is None
@@ -480,12 +478,18 @@ def test_the_same_edit_made_twice_is_not_a_collision(store: Store):
 
     both = "alpha\nBETA\ngamma\n"
     store.write(
-        path=PATH, content=record(body=both), base_commit=settled,
-        author="bo", message="task-c00001: shout beta",
+        path=PATH,
+        content=record(body=both),
+        base_commit=settled,
+        author="bo",
+        message="task-c00001: shout beta",
     )
     mine = store.write(
-        path=PATH, content=record(body=both), base_commit=settled,
-        author="ann", message="task-c00001: shout beta too",
+        path=PATH,
+        content=record(body=both),
+        base_commit=settled,
+        author="ann",
+        message="task-c00001: shout beta too",
     )
 
     assert mine.outcome in ("merged", "retried"), mine.conflict
@@ -767,7 +771,8 @@ def test_a_commit_made_outside_the_store_is_seen_by_head(store: Store, repo_path
     and a cached head turns their commit into the parent of nothing."""
     before = store.head()
     outside = commit_directly(
-        repo_path, {**SEED, "tasks/task-c00003.md": record(id="task-c00003", title="By hand")},
+        repo_path,
+        {**SEED, "tasks/task-c00003.md": record(id="task-c00003", title="By hand")},
         "task-c00003: added from a terminal",
     )
 
@@ -779,7 +784,8 @@ def test_the_next_write_lands_on_top_of_an_external_commit_not_over_it(
 ):
     stale = store.head()
     outside = commit_directly(
-        repo_path, {**SEED, "tasks/task-c00003.md": record(id="task-c00003", title="By hand")},
+        repo_path,
+        {**SEED, "tasks/task-c00003.md": record(id="task-c00003", title="By hand")},
         "task-c00003: added from a terminal",
     )
 
@@ -940,7 +946,7 @@ def test_concurrent_writers_to_one_path_neither_lose_nor_interleave(
             content=record(priority=["high", "medium", "low"][n % 3]),
             base_commit=store.head(),
             author=f"user{n}",
-            message=f'task-c00001: priority -> {["high", "medium", "low"][n % 3]}',
+            message=f"task-c00001: priority -> {['high', 'medium', 'low'][n % 3]}",
         )
 
     with ThreadPoolExecutor(max_workers=WRITERS) as pool:
@@ -1091,12 +1097,18 @@ def test_two_people_choosing_at_once_write_two_files_and_neither_is_merged(
     base = store.head()
 
     first = store.write(
-        path=ANN_RECORD, content=person("fox"), base_commit=base,
-        author="ann", message="ann: icon fox",
+        path=ANN_RECORD,
+        content=person("fox"),
+        base_commit=base,
+        author="ann",
+        message="ann: icon fox",
     )
     second = store.write(
-        path=BO_RECORD, content=person("owl"), base_commit=base,
-        author="bo", message="bo: icon owl",
+        path=BO_RECORD,
+        content=person("owl"),
+        base_commit=base,
+        author="bo",
+        message="bo: icon owl",
     )
 
     assert first.outcome == "committed"
@@ -1172,8 +1184,7 @@ def test_a_side_branch_edit_merged_in_carries_the_side_commits_time(tmp_path: Pa
     merged = dict(SEED)
     merged[PATH] = on_side[PATH]
     merged[OTHER] = on_main[OTHER]
-    merge = commit_directly(path, merged, "merge the branch", when=1_000_900,
-                            parents=[tip, side])
+    merge = commit_directly(path, merged, "merge the branch", when=1_000_900, parents=[tip, side])
 
     store = Store(path)
     try:
@@ -1476,7 +1487,7 @@ def test_a_stringified_none_etag_does_not_pass_for_a_drawing_that_is_not_there(s
 
 
 def test_a_put_against_a_hand_deleted_drawing_is_refused_honestly(store: Store, repo_path: Path):
-    """"Reopen it" is the ordinary conflict's whole answer, and it is the one
+    """ "Reopen it" is the ordinary conflict's whole answer, and it is the one
     thing that cannot work once the file is actually gone — deleted from the
     repo by hand, at a terminal, the way `git rm` would. That case gets its
     own sentence rather than inheriting the "somebody changed this" one, which
@@ -1486,7 +1497,7 @@ def test_a_put_against_a_hand_deleted_drawing_is_refused_honestly(store: Store, 
     handle on the same repository, rather than through `store.remove`:
     `remove` runs through `write_all`'s merge ladder, which reads the file
     back through `read()`'s UTF-8 decode to check it is really gone — the
-    exact crash `docs/drawings.md`'s "A PNG must never touch the merge
+    exact crash `design/drawings.md`'s "A PNG must never touch the merge
     ladder" warns a drawing must never reach, on the read side as much as the
     write side.
     """
@@ -1502,9 +1513,7 @@ def test_a_put_against_a_hand_deleted_drawing_is_refused_honestly(store: Store, 
         "refs/heads/main", who, who, "rm drawings/draw-a1b2c3.png", builder.write(), [parent]
     )
 
-    written, _ = store.put_drawing(
-        "drawings/draw-a1b2c3.png", png + b"mine", first, "a", "draw"
-    )
+    written, _ = store.put_drawing("drawings/draw-a1b2c3.png", png + b"mine", first, "a", "draw")
     assert written.outcome == "conflict"
     assert "deleted from the plan" in written.conflict
     assert "Reopen it" not in written.conflict
@@ -1518,9 +1527,7 @@ def test_a_drawing_saved_against_a_stale_blob_is_refused_and_says_so(store: Stor
     _, first = store.put_drawing("drawings/draw-a1b2c3.png", png, None, "a", "draw")
     store.put_drawing("drawings/draw-a1b2c3.png", png + b"theirs", first, "b", "draw")
 
-    written, _ = store.put_drawing(
-        "drawings/draw-a1b2c3.png", png + b"mine", first, "a", "draw"
-    )
+    written, _ = store.put_drawing("drawings/draw-a1b2c3.png", png + b"mine", first, "a", "draw")
     assert written.outcome == "conflict"
     assert "somebody changed this drawing while you had it open" in written.conflict
     assert store.read_asset(store.head(), "drawings/draw-a1b2c3.png") == png + b"theirs"

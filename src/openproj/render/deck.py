@@ -135,7 +135,8 @@ _ARTICLE = """
 """
 
 
-_DECK = """
+_DECK = (
+    """
 {#- Screen furniture, and the first thing `@media print` takes away: a deck is
     printed to reach the people who were not in the room, and neither a back link
     nor a Present button is part of it. -#}
@@ -198,7 +199,9 @@ _DECK = """
 </article>
 
 {% for s in d.slides %}
-""" + _ARTICLE + """
+"""
+    + _ARTICLE
+    + """
 {% else %}
 {#- Empty is not broken, and it is not a failure either: this cycle exists and
     holds no work. The way out is the cycle's own page, which is where work gets
@@ -215,6 +218,7 @@ _DECK = """
   </div>
 </div>
 """
+)
 
 
 _DECK_STYLE = """
@@ -1334,11 +1338,7 @@ def choosable(record: Record) -> list[tuple[str, bool]]:
     arrives unticked whatever it is.
     """
     bet = _bet_headings()
-    return [
-        (name, name in bet)
-        for name, text in sections(_said(record)).items()
-        if text.strip()
-    ]
+    return [(name, name in bet) for name, text in sections(_said(record)).items() if text.strip()]
 
 
 def _seeded(record: Record) -> Slide:
@@ -1513,7 +1513,9 @@ def slides_of(index: Index, record: Record, links: Links, assets: dict[str, str]
             "points": [
                 {"done": done, "text": _markdown_line(said, links, assets)}
                 for done, said in checklist_items(record.body)
-            ] if at == 0 and slide.progress else [],
+            ]
+            if at == 0 and slide.progress
+            else [],
             "prs": [_pr_link(ref) for ref in record.prs] if at == 0 and slide.prs else [],
             "body": body if at == 0 else Markup(""),
             "extra": _markdown(chunk, links, assets) if chunk else Markup(""),
@@ -1523,9 +1525,7 @@ def slides_of(index: Index, record: Record, links: Links, assets: dict[str, str]
     ]
 
 
-def slide_html(
-    index: Index, record: Record, links: Links, assets: dict[str, str]
-) -> Markup:
+def slide_html(index: Index, record: Record, links: Links, assets: dict[str, str]) -> Markup:
     """One record's slides as markup, for the editor's preview pane.
 
     The same `slides_of` and the same `_ARTICLE` the deck renders, so the pane
@@ -1561,10 +1561,7 @@ def _deck_order(records: list[Record], listed: list[str]) -> list[Record]:
     """
     by_id = {record.id: record for record in records}
     seen: set[str] = set()
-    first = [
-        by_id[one] for one in listed
-        if one in by_id and not (one in seen or seen.add(one))
-    ]
+    first = [by_id[one] for one in listed if one in by_id and not (one in seen or seen.add(one))]
     return first + [record for record in records if record.id not in seen]
 
 

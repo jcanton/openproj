@@ -108,13 +108,20 @@ class _Facts(HTMLParser):
             self.facts[-1]["described"].add(one)
         if tag in ("input", "select", "textarea"):
             self.facts[-1]["controls"].append(
-                {"name": a.get("name", ""), "id": a.get("id", ""),
-                 "describedby": a.get("aria-describedby", ""), "type": a.get("type", "")}
+                {
+                    "name": a.get("name", ""),
+                    "id": a.get("id", ""),
+                    "describedby": a.get("aria-describedby", ""),
+                    "type": a.get("type", ""),
+                }
             )
         if tag == "span":
-            self._span = {"id": a.get("id", ""),
-                          "classes": frozenset((a.get("class") or "").split()),
-                          "data": a.get("data-teach", ""), "text": ""}
+            self._span = {
+                "id": a.get("id", ""),
+                "classes": frozenset((a.get("class") or "").split()),
+                "data": a.get("data-teach", ""),
+                "text": "",
+            }
             self.facts[-1]["spans"].append(self._span)
 
     def handle_data(self, data: str) -> None:
@@ -238,9 +245,7 @@ def test_each_sentence_describes_the_control_it_sits_with(index: Index) -> None:
     for name, span in found.items():
         if not span["text"] and not span["data"]:
             continue
-        assert span["id"] in span["described"], (
-            f"{name}'s control does not point at its sentence"
-        )
+        assert span["id"] in span["described"], f"{name}'s control does not point at its sentence"
         for one in span["described"]:
             assert one in ids, f"{name} is described by {one}, which is not on this page"
 
@@ -298,14 +303,14 @@ def test_a_record_that_locks_and_teaches_points_at_both(
     import openproj.render as render
 
     monkeypatch.setitem(render._STATE_HINT, "task", "from what it waits on")
-    held = Handed(id="task-000001", kind="task", title="Handed on",
-                  status="shaping", owner="ann")
+    held = Handed(id="task-000001", kind="task", title="Handed on", status="shaping", owner="ann")
     page = editable_page(build_index([held], Config(), date(2026, 8, 17)), "task-000001")
 
     facts, ids = facts_of(page)
     status = next(f for f in facts if any(c["name"] == "status" for c in f["controls"]))
-    spans = {("teach" in one["classes"]): one
-             for one in status["spans"] if "hint" in one["classes"]}
+    spans = {
+        ("teach" in one["classes"]): one for one in status["spans"] if "hint" in one["classes"]
+    }
     assert set(spans) == {True, False}, "one row should carry a lock AND a lesson"
 
     lock, lesson = spans[False], spans[True]
@@ -377,8 +382,9 @@ def test_every_word_a_planned_record_stands_on_is_decided_about(index: Index) ->
     assert not set(STATUS_TEACH) & UNTAUGHT
 
     # And the fields, against the ones a pitch actually offers.
-    offered = {c["name"] for f in facts_of(editable_page(index, a_pitch(index)))[0]
-               for c in f["controls"]}
+    offered = {
+        c["name"] for f in facts_of(editable_page(index, a_pitch(index)))[0] for c in f["controls"]
+    }
     assert set(FIELD_TEACH) <= offered, "a sentence is written for a field no pitch has"
 
 
@@ -494,7 +500,10 @@ def test_the_sentence_follows_the_ball(index: Index, tmp_path: Path) -> None:
     index.plan[record_id].status = "shaping"
     page = editable_page(index, record_id)
     found = measured_in(
-        browser, page, tmp_path / "detail.html", 1100,
+        browser,
+        page,
+        tmp_path / "detail.html",
+        1100,
         """
         flipEditing();
         // A timer and not `requestAnimationFrame`: this runs under Chrome's
@@ -548,7 +557,8 @@ def test_the_sentence_follows_the_ball(index: Index, tmp_path: Path) -> None:
         said.value_after = value.value;
         return said;
         """,
-        height=1400, patience=2500,
+        height=1400,
+        patience=2500,
     )
     assert found["start"] == STATUS_TEACH["shaping"]
     # Two lines each, which is the constraint the character bound in
@@ -592,7 +602,10 @@ def test_a_status_nobody_may_set_is_never_taught_a_lesson(index: Index, tmp_path
     record_id = next(i for i, e in sorted(index.records.items()) if e.kind == "note" and e.became)
     page = editable_page(index, record_id)
     found = measured_in(
-        browser, page, tmp_path / "note.html", 1100,
+        browser,
+        page,
+        tmp_path / "note.html",
+        1100,
         """
         flipEditing();
         await new Promise(settled => setTimeout(settled, 50));
@@ -602,7 +615,8 @@ def test_a_status_nobody_may_set_is_never_taught_a_lesson(index: Index, tmp_path
           lock: document.querySelector('#facts .hint:not(.teach)')?.textContent.trim() || '',
         };
         """,
-        height=1400, patience=2500,
+        height=1400,
+        patience=2500,
     )
     assert found["live"] is False, "a derived status offered stops"
     assert found["teach"] is False

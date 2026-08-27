@@ -45,9 +45,7 @@ def chrome() -> str:
     return found
 
 
-def screenshot(
-    browser: str, html: Path, png: Path, width: int = 700, height: int = 600
-) -> bytes:
+def screenshot(browser: str, html: Path, png: Path, width: int = 700, height: int = 600) -> bytes:
     """One page, one window, one PNG. 700px wide by default so the table has more
     columns than room and can actually be scrolled sideways.
 
@@ -64,10 +62,19 @@ def screenshot(
     wall-clock only while there is something left to run.
     """
     subprocess.run(
-        [browser, "--headless=new", "--disable-gpu", "--hide-scrollbars",
-         "--force-device-scale-factor=1", f"--window-size={width},{height}",
-         f"--screenshot={png}", "--virtual-time-budget=5000", str(html)],
-        capture_output=True, check=True,
+        [
+            browser,
+            "--headless=new",
+            "--disable-gpu",
+            "--hide-scrollbars",
+            "--force-device-scale-factor=1",
+            f"--window-size={width},{height}",
+            f"--screenshot={png}",
+            "--virtual-time-budget=5000",
+            str(html),
+        ],
+        capture_output=True,
+        check=True,
     )
     return png.read_bytes()
 
@@ -89,9 +96,17 @@ def printed(browser: str, html: Path, pdf: Path) -> int:
     slide is not the artefact this is about.
     """
     subprocess.run(
-        [browser, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
-         f"--print-to-pdf={pdf}", "--virtual-time-budget=2500", str(html)],
-        capture_output=True, check=True,
+        [
+            browser,
+            "--headless=new",
+            "--disable-gpu",
+            "--no-pdf-header-footer",
+            f"--print-to-pdf={pdf}",
+            "--virtual-time-budget=2500",
+            str(html),
+        ],
+        capture_output=True,
+        check=True,
     )
     return len(_PDF_PAGE.findall(pdf.read_bytes()))
 
@@ -157,20 +172,32 @@ def measured_in(
     answer — so a question about a 300ms debounce asked three times over has to
     raise `patience` rather than shorten the debounce it is asking about.
     """
-    where.write_text(page.replace(
-        "</body>",
-        "<script>setTimeout(async () => { document.body.dataset.report = JSON.stringify("
-        f"await (async () => {{ {script} }})()); }}, {SETTLE});</script></body>",
-    ))
+    where.write_text(
+        page.replace(
+            "</body>",
+            "<script>setTimeout(async () => { document.body.dataset.report = JSON.stringify("
+            f"await (async () => {{ {script} }})()); }}, {SETTLE});</script></body>",
+        )
+    )
     done = subprocess.run(
-        [browser, "--headless=new", "--disable-gpu", "--hide-scrollbars",
-         "--force-device-scale-factor=1", f"--window-size={width},{height}",
-         # A URL and not a path, because a path is all Chrome will take it for:
-         # `…/deep.html?both=` handed over as a filename is a file that does not
-         # exist, and what loads instead is a blank page that reports nothing.
-         *flags, f"--virtual-time-budget={SETTLE + patience}", "--dump-dom",
-         where.as_uri() + query],
-        capture_output=True, text=True, check=True,
+        [
+            browser,
+            "--headless=new",
+            "--disable-gpu",
+            "--hide-scrollbars",
+            "--force-device-scale-factor=1",
+            f"--window-size={width},{height}",
+            # A URL and not a path, because a path is all Chrome will take it for:
+            # `…/deep.html?both=` handed over as a filename is a file that does not
+            # exist, and what loads instead is a blank page that reports nothing.
+            *flags,
+            f"--virtual-time-budget={SETTLE + patience}",
+            "--dump-dom",
+            where.as_uri() + query,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
     )
     found = re.search(r'data-report="([^"]*)"', done.stdout)
     assert found, "the page reported nothing: it did not lay out, or the script threw"
@@ -208,9 +235,18 @@ def _devtools(browser: str, url: str, profile: Path, flags: tuple[str, ...] = ()
 
     profile.mkdir(parents=True, exist_ok=True)
     chrome_process = subprocess.Popen(
-        [browser, "--headless=new", "--disable-gpu", "--no-first-run", *flags,
-         "--remote-debugging-port=0", f"--user-data-dir={profile}", "about:blank"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        [
+            browser,
+            "--headless=new",
+            "--disable-gpu",
+            "--no-first-run",
+            *flags,
+            "--remote-debugging-port=0",
+            f"--user-data-dir={profile}",
+            "about:blank",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     try:
         # Chrome writes the port it actually took into the profile, which is the
@@ -268,8 +304,9 @@ def _evaluated(call, expression: str, patient: bool = False):
     its first turn of a loop written to have many. `pressed_in` asks once, after
     the press, and a throw there is the answer.
     """
-    answer = call("Runtime.evaluate",
-                  {"expression": expression, "returnByValue": True, "awaitPromise": True})
+    answer = call(
+        "Runtime.evaluate", {"expression": expression, "returnByValue": True, "awaitPromise": True}
+    )
     thrown = answer.get("result", {}).get("exceptionDetails")
     if thrown and patient:
         return None
@@ -278,7 +315,13 @@ def _evaluated(call, expression: str, patient: bool = False):
 
 
 def pressed_in(
-    browser: str, url: str, profile: Path, *, setup: str, at: str, then: str,
+    browser: str,
+    url: str,
+    profile: Path,
+    *,
+    setup: str,
+    at: str,
+    then: str,
     settle: float = 1.5,
 ) -> tuple[object, list[str]]:
     """Put the page in a state, press a point on it the way a mouse does, and ask
@@ -316,10 +359,17 @@ def pressed_in(
         )
         x, y = where
         for kind in ("mousePressed", "mouseReleased"):
-            call("Input.dispatchMouseEvent", {
-                "type": kind, "x": x, "y": y, "button": "left", "clickCount": 1,
-                "buttons": 1 if kind == "mousePressed" else 0,
-            })
+            call(
+                "Input.dispatchMouseEvent",
+                {
+                    "type": kind,
+                    "x": x,
+                    "y": y,
+                    "button": "left",
+                    "clickCount": 1,
+                    "buttons": 1 if kind == "mousePressed" else 0,
+                },
+            )
             time.sleep(0.1)
         time.sleep(settle)
         return _evaluated(call, then), said
@@ -442,8 +492,10 @@ def measured_on_a_phone(
     first, *rest = files
     found: dict[str, object] = {}
     with _devtools(browser, files[first].as_uri() + query, profile) as (call, _said):
-        call("Emulation.setDeviceMetricsOverride",
-             {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": True})
+        call(
+            "Emulation.setDeviceMetricsOverride",
+            {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": True},
+        )
         call("Page.enable")
         call("Page.reload", {"ignoreCache": True})
         found[first] = _drawn(call, first, script, patience)
@@ -463,8 +515,7 @@ def _drawn(call, name: str, script: str, patience: float) -> object:
     """
     import time
 
-    ready = ("document.readyState === 'complete' && "
-             "document.fonts.status === 'loaded' && 'ready'")
+    ready = "document.readyState === 'complete' && document.fonts.status === 'loaded' && 'ready'"
     deadline = time.monotonic() + patience
     while time.monotonic() < deadline:
         if _evaluated(call, ready, patient=True):

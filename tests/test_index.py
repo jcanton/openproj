@@ -68,8 +68,9 @@ def a_family() -> list[Record]:
     """One project, one pitch under it, two tasks under the pitch, one dependency."""
     return [
         a_project("proj-a00001", "Griddle", owner="alice", reviewers=["bob"]),
-        a_pitch("pitch-b00001", "Halo exchange", parent="proj-a00001", person_weeks=2.0,
-                status="ready"),
+        a_pitch(
+            "pitch-b00001", "Halo exchange", parent="proj-a00001", person_weeks=2.0, status="ready"
+        ),
         a_task("task-c00001", "First", parent="pitch-b00001", owner="alice", person_weeks=1.0),
         a_task(
             "task-c00002",
@@ -478,10 +479,23 @@ def test_the_missing_required_fields_predicate_reads_the_problems():
     """Severity-agnostic on purpose: a grandfathered rule reports a warning, and a
     field the team has decided it wants is still missing whichever way it reports."""
     records = [
-        a_project("proj-a00001", owner="alice", assignees=["alice"], reviewers=["bob"],
-            status="in_progress", assigned_on=TODAY),
-        a_pitch("pitch-b00001", parent="proj-a00001", owner="alice", assignees=["alice"],
-                reviewers=["bob"], person_weeks=2.0, status="ready"),
+        a_project(
+            "proj-a00001",
+            owner="alice",
+            assignees=["alice"],
+            reviewers=["bob"],
+            status="in_progress",
+            assigned_on=TODAY,
+        ),
+        a_pitch(
+            "pitch-b00001",
+            parent="proj-a00001",
+            owner="alice",
+            assignees=["alice"],
+            reviewers=["bob"],
+            person_weeks=2.0,
+            status="ready",
+        ),
         a_task(
             "task-c00001",
             parent="pitch-b00001",
@@ -525,9 +539,10 @@ def test_the_has_blocker_predicate_is_the_strict_half_of_missing_required_fields
 
     assert blocking == {p.record_id for p in seed_index.problems if p.severity == "blocker"}
     assert blocking < any_problem, "a warning is a problem and is not a blocker"
-    assert any_problem - blocking == {
-        p.record_id for p in seed_index.problems if p.severity == "warning"
-    } - blocking
+    assert (
+        any_problem - blocking
+        == {p.record_id for p in seed_index.problems if p.severity == "warning"} - blocking
+    )
     # And the unplanned half is really in there, so that a future `over` reverting
     # to the plan fails here rather than passing narrower.
     assert "note-b14d6a" in any_problem - blocking
@@ -570,8 +585,9 @@ def test_search_is_a_case_insensitive_substring_match():
     records = [
         a_task("task-c00001", "Reproduce the 2-GPU seam artefact"),
         a_task("task-c00002", "Downgrade numpy", tags=["reductions"]),
-        a_task("task-c00003", "Read the paper",
-               body="The 2014 stable-summation paper on REDUCTIONS."),
+        a_task(
+            "task-c00003", "Read the paper", body="The 2014 stable-summation paper on REDUCTIONS."
+        ),
     ]
     index = build_index(records, CONFIG, TODAY)
 
@@ -668,9 +684,7 @@ def test_the_seed_blocked_set_is_exactly_the_live_diamond(seed_index: Index):
     # it is wrong; those are two different jobs and the honest answer is that
     # both happen. Pinned rather than tidied away — see the file's own body.
     assert seed_index.blocked_by["prod-7c2b81"] == ["prod-6d1a70"]
-    assert "depends_on" in {
-        p.field for p in seed_index.problems if p.record_id == "prod-7c2b81"
-    }
+    assert "depends_on" in {p.field for p in seed_index.problems if p.record_id == "prod-7c2b81"}
     # `task-7d9f52` waits on a task and on an ISSUE. The issue is a record, so the
     # edge survives into `blocked_by`; it is not part of the plan, so it never
     # reaches the scheduler and cannot move a date. That gap is the whole of
@@ -842,10 +856,18 @@ def test_the_seed_incomplete_records_are_the_ones_missing_fields(seed_index: Ind
 
     assert {"pitch-1b3f9a", "pitch-48ea9e", "task-3e07b2", "prod-7c2b81"} <= incomplete
     assert "task-3d84e9" not in incomplete
-    assert incomplete.isdisjoint({
-        "prod-6d1a70", "proj-9a4c25", "pitch-6f2d18", "pitch-7b3e94",
-        "task-6a5c02", "task-6b7d31", "task-7c8e40", "task-7d9f52",
-    })
+    assert incomplete.isdisjoint(
+        {
+            "prod-6d1a70",
+            "proj-9a4c25",
+            "pitch-6f2d18",
+            "pitch-7b3e94",
+            "task-6a5c02",
+            "task-6b7d31",
+            "task-7c8e40",
+            "task-7d9f52",
+        }
+    )
 
 
 def test_the_seed_index_carries_the_scheduler_and_validator_output(seed_root: Path):
@@ -920,8 +942,15 @@ def test_work_bet_in_an_earlier_cycle_and_still_running_counts_against_this_one(
 
 def test_work_finished_in_the_earlier_cycle_is_not_carried_into_this_one():
     records = [
-        a_task("task-c00001", owner="ann", person_weeks=3.0, cycle=36, status="done",
-               prs=["kilnlab/kiln4py#1"], assigned_on=date(2026, 7, 1)),
+        a_task(
+            "task-c00001",
+            owner="ann",
+            person_weeks=3.0,
+            cycle=36,
+            status="done",
+            prs=["kilnlab/kiln4py#1"],
+            assigned_on=date(2026, 7, 1),
+        ),
     ]
     index = build_index(records, _two_cycles(), TODAY)
     assert index.load(37) == {}
@@ -933,8 +962,14 @@ def test_an_undated_cycle_counts_only_what_was_bet_into_it_by_name():
     every running item would put the whole plan's load on the page for a cycle
     that may never run."""
     records = [
-        a_task("task-c00001", owner="ann", person_weeks=3.0, cycle=36, status="in_progress",
-               assigned_on=date(2026, 8, 3)),
+        a_task(
+            "task-c00001",
+            owner="ann",
+            person_weeks=3.0,
+            cycle=36,
+            status="in_progress",
+            assigned_on=date(2026, 8, 3),
+        ),
     ]
     index = build_index(records, _two_cycles(), TODAY)
     assert index.load(99) == {}
@@ -944,10 +979,23 @@ def test_a_carried_parent_charges_nothing_because_its_children_already_did():
     """The same rule `load` applies to anything else (D-C2). A rollup counted as
     well as its children double-books the same weeks."""
     records = [
-        a_pitch("pitch-b00001", owner="ann", person_weeks=4.0, cycle=36, status="in_progress",
-                assigned_on=date(2026, 8, 3)),
-        a_task("task-c00001", parent="pitch-b00001", owner="ann", person_weeks=1.0, cycle=36,
-               status="in_progress", assigned_on=date(2026, 8, 3)),
+        a_pitch(
+            "pitch-b00001",
+            owner="ann",
+            person_weeks=4.0,
+            cycle=36,
+            status="in_progress",
+            assigned_on=date(2026, 8, 3),
+        ),
+        a_task(
+            "task-c00001",
+            parent="pitch-b00001",
+            owner="ann",
+            person_weeks=1.0,
+            cycle=36,
+            status="in_progress",
+            assigned_on=date(2026, 8, 3),
+        ),
     ]
     index = build_index(records, _two_cycles(), TODAY)
 
@@ -971,8 +1019,13 @@ def test_a_pitch_is_as_far_along_as_its_tasks_weighted_by_their_sizes():
     for the two to disagree about."""
     records = [
         a_pitch("pitch-b00001", person_weeks=6.0),
-        a_task("task-c00001", parent="pitch-b00001", person_weeks=4.0, status="done",
-               prs=["kilnlab/kiln4py#1"]),
+        a_task(
+            "task-c00001",
+            parent="pitch-b00001",
+            person_weeks=4.0,
+            status="done",
+            prs=["kilnlab/kiln4py#1"],
+        ),
         a_task("task-c00002", parent="pitch-b00001", person_weeks=2.0),
     ]
     counted = build_index(records, CONFIG, TODAY).progress["pitch-b00001"]
@@ -1023,8 +1076,13 @@ def test_a_container_is_as_far_along_as_the_work_beneath_it():
         a_product("prod-a00001"),
         a_project("proj-b00001", parent="prod-a00001"),
         a_pitch("pitch-c00001", parent="proj-b00001", person_weeks=6.0),
-        a_task("task-d00001", parent="pitch-c00001", person_weeks=4.0, status="done",
-               prs=["kilnlab/kiln4py#1"]),
+        a_task(
+            "task-d00001",
+            parent="pitch-c00001",
+            person_weeks=4.0,
+            status="done",
+            prs=["kilnlab/kiln4py#1"],
+        ),
         a_task("task-d00002", parent="pitch-c00001", person_weeks=2.0),
         a_pitch("pitch-c00002", parent="proj-b00001", person_weeks=4.0, status="done"),
     ]
@@ -1069,8 +1127,13 @@ def test_a_shelved_task_is_in_neither_half_of_its_pitchs_progress():
     day before."""
     records = [
         a_pitch("pitch-b00001", person_weeks=6.0),
-        a_task("task-c00001", parent="pitch-b00001", person_weeks=4.0, status="done",
-               prs=["kilnlab/kiln4py#1"]),
+        a_task(
+            "task-c00001",
+            parent="pitch-b00001",
+            person_weeks=4.0,
+            status="done",
+            prs=["kilnlab/kiln4py#1"],
+        ),
         a_task("task-c00002", parent="pitch-b00001", person_weeks=2.0, status="shelved"),
     ]
     counted = build_index(records, CONFIG, TODAY).progress["pitch-b00001"]
@@ -1092,10 +1155,21 @@ def test_a_task_under_a_pitch_is_counted_in_the_cycle_its_pitch_was_bet_into():
     """The bet is made once, on the thing the room named. A task carries no cycle
     of its own, and the capacity sum has to find it anyway."""
     records = [
-        a_pitch("pitch-b00001", cycle=36, person_weeks=4.0, status="in_progress",
-                assigned_on=date(2026, 7, 1)),
-        a_task("task-c00001", parent="pitch-b00001", owner="ann", person_weeks=2.0,
-               status="in_progress", assigned_on=date(2026, 7, 1)),
+        a_pitch(
+            "pitch-b00001",
+            cycle=36,
+            person_weeks=4.0,
+            status="in_progress",
+            assigned_on=date(2026, 7, 1),
+        ),
+        a_task(
+            "task-c00001",
+            parent="pitch-b00001",
+            owner="ann",
+            person_weeks=2.0,
+            status="in_progress",
+            assigned_on=date(2026, 7, 1),
+        ),
     ]
     index = build_index(records, _two_cycles(), TODAY)
 
@@ -1108,10 +1182,14 @@ def test_a_ready_task_carried_into_this_cycle_is_counted_by_its_dates():
     started is still what somebody's next weeks are spent on, and it was dropped
     from the total for not having begun."""
     records = [
-        a_pitch("pitch-b00001", cycle=36, person_weeks=4.0, status="in_progress",
-                assigned_on=date(2026, 7, 1)),
-        a_task("task-c00001", parent="pitch-b00001", owner="ann", person_weeks=2.0,
-               status="ready"),
+        a_pitch(
+            "pitch-b00001",
+            cycle=36,
+            person_weeks=4.0,
+            status="in_progress",
+            assigned_on=date(2026, 7, 1),
+        ),
+        a_task("task-c00001", parent="pitch-b00001", owner="ann", person_weeks=2.0, status="ready"),
     ]
     index = build_index(records, _two_cycles(), TODAY)
 
@@ -1171,7 +1249,7 @@ def test_a_status_nobody_uses_is_left_out_of_the_menu_and_a_strange_one_is_not(s
 
 
 def test_a_pr_reference_is_searchable(demo_root: Path):
-    """"Which record is #1364?" is asked in front of a screen, and the answer was
+    """ "Which record is #1364?" is asked in front of a screen, and the answer was
     findable only if the number also happened to appear in the prose."""
     records, config, _ = load_repo(demo_root)
     index = build_index(records, config, TODAY)
@@ -1238,7 +1316,7 @@ def test_a_record_in_progress_with_nothing_linked_is_a_question_not_a_rule(seed_
 
 
 def test_a_field_nobody_filled_in_can_be_asked_for():
-    """"Which pitches are not in a cycle yet" and "what has no reviewer" are the
+    """ "Which pitches are not in a cycle yet" and "what has no reviewer" are the
     two questions a betting table actually asks, and neither could be asked at
     all: an unset field yields no facet value, so it could never appear in the
     menu, and the blank option at the top means "no constraint" rather than

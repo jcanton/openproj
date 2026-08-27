@@ -31,6 +31,7 @@ from openproj.render import (
     render_graph,
     render_table,
 )
+from openproj.render.styles import _CODE_HUES, _readable
 from openproj.themes import FAMILIES, SLOTS, contrast
 
 HEAD = "0" * 40
@@ -85,6 +86,68 @@ def test_the_ink_a_scheme_is_read_in_clears_the_floor():
             )
 
 
+def test_every_scheme_can_be_read_inside_a_code_fence():
+    """The eight syntax hues, on the ground a fence is actually drawn on.
+
+    **This is the measurement that decided the derivation.** The obvious mapping
+    is the nominal one — base08 red for a variable, base0B green for a string, and
+    so on, which is what those slots were put in the format for. Taken straight,
+    over these nine families in both polarities, it put 95 of 144 combinations
+    below AA: Default light's yellow at 1.25 against its own `--surface-2`,
+    Silk's blue at 1.79, Tomorrow's orange at 1.90. A terminal palette's hues are
+    chosen against a terminal's background, and most of these families have a
+    light polarity with a near-white one.
+
+    So `_readable` keeps the hue and takes the lightness, exactly as `_chosen`
+    does for the ink. This asks the result, per family, per polarity, per role —
+    against base01, because `--surface-2` is what a `<pre>` sits on and not
+    base00.
+    """
+    for family in FAMILIES:
+        for polarity, palette in (("light", family.light), ("dark", family.dark)):
+            slots = palette.slots
+            picks = _chosen(slots)
+            ink, ground = slots[picks["fg"]], slots["base01"]
+            for role, slot in _CODE_HUES.items():
+                drawn = _readable(slots[slot], ground, ink)
+                ratio = contrast(drawn, ground)
+                assert ratio >= 4.5, (
+                    f"{family.key} {polarity}: {role} ({slot}) is {ratio:.2f} on the "
+                    f"ground a fence is drawn on"
+                )
+
+
+def test_the_app_s_own_code_palette_is_readable_too():
+    """The app's own colours have no sixteen to derive from, so the eight are
+    written by hand in the shell — which means nothing measures them unless this
+    does.
+
+    Read out of `shell.py` and not out of a rendered page, because a rendered
+    page carries `_scheme_css` as well and its derived `--code-*` values match the
+    same pattern: the first version of this test measured Solarized's blue
+    against the app's grey ground and failed on a colour that was never meant to
+    be drawn there. Which ground a value belongs to is decided by the `--bg` of
+    the block it is written in, which is exactly what the cascade decides too.
+    """
+    source = (Path(__file__).resolve().parents[1] / "src/openproj/render/shell.py").read_text(
+        encoding="utf-8"
+    )
+    grounds = {"#ffffff": "#f5f8f8", "#11181b": "#1c262a"}
+    ground, measured = None, 0
+    for line in source.splitlines():
+        found = re.search(r"--bg: (#[0-9a-f]{6})", line)
+        if found and found.group(1) in grounds:
+            ground = grounds[found.group(1)]
+        for value in re.findall(r"--code-\w+: (#[0-9a-f]{6})", line):
+            assert ground, f"a code colour before any --bg told us its ground: {value}"
+            ratio = contrast(value, ground)
+            assert ratio >= 4.5, f"{value} is {ratio:.2f} on {ground}"
+            measured += 1
+    # Eight hues, two polarities, and the dark block is written twice — once for
+    # `prefers-color-scheme` and once for the explicit `[data-theme="dark"]`.
+    assert measured == 8 * 3, measured
+
+
 def test_the_stylesheet_answers_all_three_states_of_the_switch():
     """A theme choice has three states — light, dark, and the default, which
     follows the system — and a scheme has to answer all of them or a reader who
@@ -94,9 +157,9 @@ def test_the_stylesheet_answers_all_three_states_of_the_switch():
     for family in FAMILIES:
         assert f':root[data-scheme="{family.key}"] {{' in css
         assert f':root[data-scheme="{family.key}"][data-theme="dark"] {{' in css
-        assert (
-            f'  :root[data-scheme="{family.key}"]:not([data-theme="light"]) {{' in css
-        ), f"{family.key} does not follow a dark system"
+        assert f'  :root[data-scheme="{family.key}"]:not([data-theme="light"]) {{' in css, (
+            f"{family.key} does not follow a dark system"
+        )
     # And the derivation is one block for all of them, not one per scheme.
     page = render_table(
         build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD, may_write=True
@@ -172,8 +235,9 @@ def test_every_scheme_is_readable_where_the_page_paints_it(tmp_path: Path):
 
     4.5:1 is AA for body text and is what a chip's word and a node's title are.
     """
-    page = render_table(build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD,
-                        may_write=True)
+    page = render_table(
+        build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD, may_write=True
+    )
     keys = ["", *(family.key for family in FAMILIES)]
     # Both lists interpolated, and the second one used not to be: it was the
     # status ladder retyped as a JavaScript literal in a test file, which is the
@@ -183,12 +247,11 @@ def test_every_scheme_is_readable_where_the_page_paints_it(tmp_path: Path):
     # a rung nobody has ever measured — and it stayed green through the commit
     # that added one, still reporting 190 ratios about five statuses.
     script = (
-        f"const SCHEMES = {keys!r};\n"
-        f"const STATUSES = {list(STATUSES)!r};\n"
-        + _CONTRAST
+        f"const SCHEMES = {keys!r};\nconst STATUSES = {list(STATUSES)!r};\n" + _CONTRAST
     ).replace("'", '"')
-    got = measured_in(chrome(), page, tmp_path / "contrast.html", 1200, script,
-                      height=900, patience=2500)
+    got = measured_in(
+        chrome(), page, tmp_path / "contrast.html", 1200, script, height=900, patience=2500
+    )
 
     # 4.5:1 is AA for body text, which is what a chip's word and a node's title
     # are. Links are held to 3.5 and the floor is argued where it is set
@@ -232,10 +295,12 @@ def test_the_picker_puts_the_scheme_on_the_page_and_takes_it_off_again(tmp_path:
     "default" scheme would be a second copy of the app's own palette, free to
     drift from the one every page without a choice is still drawn in.
     """
-    page = render_table(build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD,
-                        may_write=True)
-    got = measured_in(chrome(), page, tmp_path / "picker.html", 1200, _PICKER,
-                      height=900, patience=2000)
+    page = render_table(
+        build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD, may_write=True
+    )
+    got = measured_in(
+        chrome(), page, tmp_path / "picker.html", 1200, _PICKER, height=900, patience=2000
+    )
 
     assert got["before"] is None, "a page nobody has chosen for arrives with a scheme"
     assert got["offered"][0] == "", "the app's own colours are the first option"
@@ -273,10 +338,12 @@ def test_a_scheme_reaches_the_boxes_people_type_into(tmp_path: Path):
     when the controls were made consistent; the boxes had not, because nothing in
     the default palette made them look wrong.
     """
-    page = render_table(build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD,
-                        may_write=True)
-    got = measured_in(chrome(), page, tmp_path / "boxes.html", 1400, _BOXES,
-                      height=900, patience=1500)
+    page = render_table(
+        build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD, may_write=True
+    )
+    got = measured_in(
+        chrome(), page, tmp_path / "boxes.html", 1400, _BOXES, height=900, patience=1500
+    )
 
     assert got["count"], "no typing boxes on the page at all"
     assert got["bg"] == "rgb(251, 241, 199)", f"the scheme did not apply: {got['bg']}"
@@ -306,11 +373,13 @@ def test_the_drawing_gets_colours_it_can_actually_read(tmp_path: Path):
     page = render_graph(index, ROUTES, base_commit=HEAD).replace(
         "<html", '<html data-scheme="solarized" data-theme="dark"', 1
     )
-    got = measured_in(chrome(), page, tmp_path / "canvas.html", 1500, _CANVAS,
-                      height=900, patience=3500)
+    got = measured_in(
+        chrome(), page, tmp_path / "canvas.html", 1500, _CANVAS, height=900, patience=3500
+    )
 
-    assert all(re.fullmatch(r"rgb\(\d+,\s*\d+,\s*\d+\)", one)
-               for one in got["fills"].values()), got["fills"]
+    assert all(re.fullmatch(r"rgb\(\d+,\s*\d+,\s*\d+\)", one) for one in got["fills"].values()), (
+        got["fills"]
+    )
     assert len(set(got["fills"].values())) == len(got["fills"]), (
         f"the statuses are drawn in {len(set(got['fills'].values()))} colours: {got['fills']}"
     )
