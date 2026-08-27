@@ -35,15 +35,17 @@ from ruamel.yaml import YAML
 from .index import build_index
 from .model import (
     DIRECTORY,
-    INBOXES,
     MODELS,
-    PREFIX,
     Config,
+    _an,
     edited_by_id,
+    in_model_order,
     load_repo,
-    opens_at,
+    mint_id,
+    opening_fields,
     parse_text,
     patch_text,
+    unknown_fields,
     validate_all,
 )
 
@@ -177,35 +179,31 @@ def _takes_a_list(annotation) -> bool:
     return any(get_origin(inside) is list for inside in get_args(annotation))
 
 
-def _shaped_like_the_model(kind: str, fields: dict) -> dict:
-    """The fields in the model's own order, with a scalar widened to a list where
-    the model asks for one.
+def _widened_to_lists(kind: str, fields: dict) -> dict:
+    """A scalar becomes a list of one wherever the model asks for a list.
 
-    **The order.** `patch_text` writes the keys in the order the mapping hands
-    them over, which without this is the order the command line happened to
-    mention them: a file led by whichever `--set` came first, with `id` at the
-    bottom. Every record in the corpus opens `id`, `kind`, `title`, and the
-    models declare those three in exactly that order — so the model IS the
-    convention, and reading the order off it beats writing the same list down a
-    second time here. The keys are all known by the time this runs, so nothing is
-    lost by rebuilding the mapping.
+    Because that is what somebody typing it means. `--set prs=C2SM/icon4py#1359`
+    is the exact string a person writes, and a `prs` that holds a list would
+    otherwise answer with a pydantic type error naming `list_type` — correct, and
+    no help at all when the fix is a pair of brackets that the shell also wants
+    quoting. Repeating the field already builds a list, so this is that same rule
+    applied to the first one.
 
-    **The widening.** `--set prs=C2SM/icon4py#1359` is the exact string a person
-    types, and a `prs` that holds a list would otherwise answer with a pydantic
-    type error naming `list_type` — correct, and no help at all when the fix is a
-    pair of brackets the shell also wants quoting. Repeating the field already
-    builds a list, so this is that same rule applied to the first one. It only
-    ever widens, and only in the direction the model asks for; everything else is
-    left exactly as the caller wrote it, for the model to accept or to refuse by
-    name.
+    This side only. The create route reaches the same fields through JSON, which
+    has real lists and a `_reject_bad_types` that already refuses a scalar where
+    one belongs — there is no ambiguity there to resolve, and resolving it anyway
+    would quietly accept a payload that route means to refuse.
+
+    It only ever widens, and only in the direction the model asks for; everything
+    else is left exactly as the caller wrote it, for the model to accept or to
+    refuse by name.
     """
     known = MODELS[kind].model_fields
     return {
-        field: [fields[field]]
-        if _takes_a_list(known[field].annotation) and not isinstance(fields[field], list)
-        else fields[field]
-        for field in known
-        if field in fields
+        field: [value]
+        if _takes_a_list(known[field].annotation) and not isinstance(value, list)
+        else value
+        for field, value in fields.items()
     }
 
 
@@ -265,25 +263,10 @@ def _new(args) -> int:
     # frontmatter unread, and every later reader of that file would believe it
     # meant something. Not a validation problem — a typo, and the only place it
     # can be caught is here.
-    unknown = sorted(set(fields) - set(MODELS[kind].model_fields))
+    unknown = unknown_fields(kind, fields)
     if unknown:
-        print(f"blocker: {kind} has no {', '.join(unknown)}")
+        print(f"blocker: {_an(kind)} has no {', '.join(unknown)}")
         return 1
-
-    inbox = INBOXES.get(kind)
-    if inbox is not None:
-        if args.author is not None:
-            fields.setdefault(inbox.author, args.author)
-        fields.setdefault("status", opens_at(kind))
-        # Written last, over anything `--set` said: when a record was made is not
-        # an opinion, and `opened_on` and `written_on` are derived rows on the
-        # page rather than fields anybody fills in.
-        fields[inbox.dated] = date.today().isoformat()
-    # Grandfathering protects the corpus that already exists, never the record
-    # being written right now — so this is the repository's number and not one
-    # in this file. A rule added after today may only warn about what is already
-    # in the plan; it blocks this.
-    fields.setdefault("created_schema_version", config.schema_version)
 
     body = TEMPLATES.get(kind, "")
     if args.body_file is not None:
@@ -291,16 +274,14 @@ def _new(args) -> int:
             encoding="utf-8"
         )
 
-    taken = {path.stem for path in args.repo.glob(f"{DIRECTORY[kind]}/*.md")}
-    while True:
-        # Six hex characters is 16.7 million and not infinity, and the loser of a
-        # collision is a record silently overwritten by the next one. Re-minting
-        # is cheaper than the conversation about what happened to it.
-        record_id = f"{PREFIX[kind]}-{secrets.token_hex(3)}"
-        if record_id not in taken:
-            break
-    fields["id"] = record_id
-    content = patch_text("---\n---\n", _shaped_like_the_model(kind, fields), body)
+    # `taken` because this side can see the whole directory for the price of a
+    # glob; the create route mints without it, having no cheap way to enumerate
+    # what exists and a compare-and-swap underneath it either way.
+    record_id = mint_id(kind, {path.stem for path in args.repo.glob(f"{DIRECTORY[kind]}/*.md")})
+    opening = opening_fields(kind, fields, config, record_id=record_id, who=args.author)
+    content = patch_text(
+        "---\n---\n", in_model_order(kind, _widened_to_lists(kind, opening)), body
+    )
 
     try:
         candidate = parse_text(content, record_id)

@@ -81,9 +81,7 @@ from .model import (
     KINDS,
     MAX_BODY_BYTES,
     MAX_SLIDE_BYTES,
-    MODELS,
     PEOPLE_DIR,
-    PREFIX,
     RUNG,
     Config,
     Cycle,
@@ -93,8 +91,10 @@ from .model import (
     Unreadable,
     _an,
     edited_by_id,
+    in_model_order,
     loop_made,
-    opens_at,
+    mint_id,
+    opening_fields,
     parse_cycle_text,
     parse_person_text,
     parse_text,
@@ -106,6 +106,7 @@ from .model import (
     record_paths_in,
     shaping_document,
     split_front_matter,
+    unknown_fields,
     unread_fields,
     validate_all,
     what_json_can_carry,
@@ -467,18 +468,16 @@ STATE_COOKIE = "op_state"
 # disagreed once about the anchors: `validate_all` blessed a trailing-newline id
 # every API write refused.
 #
-# `DIRECTORY`, `PREFIX`, `Inbox`, `INBOXES` and `opens_at` are imported from
-# `model.py` and are NOT re-derived here. They were defined on this line until the
-# CLI grew a write path of its own and needed the same five: importing them from
+# `DIRECTORY` is imported from `model.py` and NOT re-derived here, along with
+# `MODELS`, `PREFIX`, `INBOXES` and `opens_at` — which this file no longer names
+# at all, now that minting a record goes through `model.mint_id` and
+# `model.opening_fields`. All of them were defined on this line until the CLI
+# grew a write path of its own and needed the same five: importing them from
 # this module would have put FastAPI and uvicorn on the import path of `openproj
 # check`, and deriving them a second time in `cli.py` is how a ladder comes to
 # have a rung in one place and not the other. The comment that used to sit here
 # was already counting — "the SEVENTH copy" — which is the argument for moving
 # them rather than for adding an eighth.
-#
-# Re-exported by being imported: every `DIRECTORY[kind]` and `PREFIX[kind]` in
-# this file, and the handful of `from .web import DIRECTORY` elsewhere, read the
-# same objects they always did.
 #
 # The rung an id names, read off its prefix — the inverse of `PREFIX`, and the
 # one of the group that only this file asks for. It answers the two questions a
@@ -2051,7 +2050,7 @@ def create_app(
         who = getattr(source, stamp.author, None)
         when = getattr(source, stamp.dated, None)
 
-        record_id = f"{PREFIX[kind]}-{secrets.token_hex(3)}"
+        record_id = mint_id(kind)
         commit = store.head()
         config, _ = _config_at(store, commit)
         content = patch_text(
@@ -2930,7 +2929,7 @@ def create_app(
         # not checked here for the same reason they are not there: six hex bytes
         # against a plan of hundreds, and `write_all` refuses a path that already
         # holds something anyway.
-        new_id = f"{PREFIX[kind]}-{secrets.token_hex(3)}"
+        new_id = mint_id(kind)
         original = store.read(base, path)
         # One pass: the two fields that change, and the fields the new rung does
         # not read taken out. `patch_text` cannot remove a key by setting it to
@@ -3622,34 +3621,26 @@ def create_app(
         # A pitch has an appetite and a task has an effort. The create page carries
         # every kind's fields and hides the ones that do not apply, so what belongs
         # to this kind is decided here rather than by which controls a script left
-        # visible: fields are written to the file before the model ever sees them,
-        # and a key the model does not own would sit in the frontmatter unread.
-        allowed = set(MODELS[kind].model_fields)
-        unknown = sorted(set(fields) - allowed)
+        # visible.
+        unknown = unknown_fields(kind, fields)
         if unknown:
             raise HTTPException(422, f"{_an(kind)} has no {', '.join(unknown)}")
 
-        # Minted here, never accepted from the client: an id supplied by a browser
-        # is a path supplied by a browser once it becomes `tasks/<id>.md`.
-        record_id = f"{PREFIX[kind]}-{secrets.token_hex(3)}"
+        # The id and the opening fields, from `model.py` — the one copy, shared
+        # with `openproj new`. Everything this route knows and that one does not
+        # is on this side of the call: a signed-in login to default the author to,
+        # and a commit to read the config at.
+        record_id = mint_id(kind)
         commit = store.head()
         config, _ = _config_at(store, commit)
-        fields["id"] = record_id
-        # The defaults the deleted inbox routes used to supply. `author` is a
-        # default and not a fact — somebody files what a colleague mentioned in
-        # a corridor, so the form can say otherwise — but the date is written
-        # last, over anything the client sent, exactly as the old routes
-        # stripped it: `opened_on` and `written_on` are derived rows on the
-        # page, and a client that sends one is overruled, not obeyed.
-        inbox = INBOXES.get(kind)
-        if inbox is not None:
-            fields.setdefault(inbox.author, user.login)
-            fields.setdefault("status", opens_at(kind))
-            fields[inbox.dated] = date.today().isoformat()
-        # Grandfathering protects the corpus that already exists, not the record
-        # being written right now: something created today is held to today's rules.
-        fields.setdefault("created_schema_version", config.schema_version)
-        content = patch_text("---\n---\n", fields, body)
+        content = patch_text(
+            "---\n---\n",
+            in_model_order(
+                kind,
+                opening_fields(kind, fields, config, record_id=record_id, who=user.login),
+            ),
+            body,
+        )
         # The same refusal the save route makes, on the other door. `_reject_bad_types`
         # names numbers, lists and one bool; a title that is a number, a date that is
         # a word, a tag that is null and a reviewer that is an integer all passed it

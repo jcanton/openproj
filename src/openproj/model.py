@@ -10,7 +10,8 @@ from __future__ import annotations
 import io
 import math
 import re
-from collections.abc import Callable, Iterable, Iterator, Sequence
+import secrets
+from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Literal, NamedTuple
@@ -2110,6 +2111,117 @@ INBOXES = {
     "issue": Inbox("reported_by", "opened_on", "pitched_into"),
     "note": Inbox("written_by", "written_on", "became"),
 }
+
+
+def mint_id(kind: str, taken: Collection[str] = ()) -> str:
+    """A new id for this kind, avoiding any already spoken for.
+
+    Never accepted from a caller who is not trusted with a path: an id supplied
+    by a browser is a path supplied by a browser the moment it becomes
+    `<directory>/<id>.md`.
+
+    Six hex characters is 16.7 million and not infinity, and the loser of a
+    collision is a record silently written over by the next one. `taken` is
+    empty for a caller that has no cheap way to enumerate what exists; re-minting
+    costs nothing for one that does.
+    """
+    while True:
+        minted = f"{PREFIX[kind]}-{secrets.token_hex(3)}"
+        if minted not in taken:
+            return minted
+
+
+def unknown_fields(kind: str, fields: Iterable[str]) -> list[str]:
+    """The names this kind's model does not own, sorted.
+
+    A pitch has an appetite and a task has an effort, and the two write paths
+    reach this question from opposite directions: a create form carrying every
+    kind's controls and hiding the ones that do not apply, and a `--set` on a
+    command line. Both write fields to the file before the model ever sees them,
+    so a key the model does not own would sit in the frontmatter unread by
+    anything, with every later reader believing it meant something.
+    """
+    return sorted(set(fields) - set(MODELS[kind].model_fields))
+
+
+def in_model_order(kind: str, fields: dict) -> dict:
+    """The same fields, in the order this kind's model declares them.
+
+    `patch_text` writes keys in the order the mapping hands them over, which
+    without this is whatever order the caller happened to build: a file led by
+    whichever `--set` came first on a command line, or by whichever key a form's
+    JSON serialised first, with `id` wherever it fell. Every record in the corpus
+    opens `id`, `kind`, `title`, and the models declare those three in exactly
+    that order — so the model IS the convention, and reading the order off it
+    beats writing the same list down again here.
+
+    Both write paths go through this, so a record created in the browser and one
+    created from a terminal are the same file. They were not, and nothing would
+    have told anybody: two orders are both valid YAML and both read back
+    identically, so the only thing that noticed was a person reading a diff.
+
+    A field the model does not own is dropped. Both callers have already refused
+    those by name through `unknown_fields`, so there is nothing here to lose —
+    and silently carrying one through would put it in the frontmatter unread,
+    which is the thing that check exists to prevent.
+    """
+    return {field: fields[field] for field in MODELS[kind].model_fields if field in fields}
+
+
+def opening_fields(
+    kind: str,
+    fields: dict,
+    config: Config,
+    *,
+    record_id: str,
+    who: str | None = None,
+    today: date | None = None,
+) -> dict:
+    """The frontmatter of a record five seconds old: what the writer owns, over
+    what the caller asked for.
+
+    One copy, because the two write paths — `POST /api/record` and `openproj new`
+    — differ in everything except this. One has a signed-in login, a commit to
+    read the config at and a compare-and-swap; the other has a working directory
+    and a person at a terminal. What they share is the answer to "what does a new
+    record of this kind arrive with", and that answer being written down twice is
+    exactly the failure this whole change is about: an agent copying a
+    neighbouring record got `prs` wrong because nothing ran the rules at the
+    moment of writing, and two spellings of the defaults would have been the same
+    bug one level up.
+
+    `who` is a default and not a fact — somebody files what a colleague mentioned
+    in a corridor, so a caller may say otherwise, and a caller that does not know
+    (a terminal knows a git identity, and the plan is written in GitHub logins)
+    passes None rather than guessing. The DATE is not a default: `opened_on` and
+    `written_on` are derived rows on the page, and a caller that sends one is
+    overruled rather than obeyed.
+
+    Grandfathering protects the corpus that already exists and never the record
+    being written right now, so the schema version is the repository's own number
+    at the moment of writing: something created today is held to today's rules.
+
+    The caller's mapping is copied, not written through. A function that fills in
+    six defaults and also mutates its argument is two things, and the second one
+    is invisible at the call site.
+
+    Fields and not finished text, so that what a caller does with them afterwards
+    stays the caller's: `openproj new` puts them in the model's declared order
+    before writing, and the create route hands over whatever the form sent. That
+    is a difference worth being able to have — and if the two ever should agree
+    about key order, the place to say so is one line at each call and not a
+    parameter here.
+    """
+    opening = dict(fields)
+    opening["id"] = record_id
+    inbox = INBOXES.get(kind)
+    if inbox is not None:
+        if who is not None:
+            opening.setdefault(inbox.author, who)
+        opening.setdefault("status", opens_at(kind))
+        opening[inbox.dated] = (today or date.today()).isoformat()
+    opening.setdefault("created_schema_version", config.schema_version)
+    return opening
 
 
 def opens_at(kind: str) -> str:

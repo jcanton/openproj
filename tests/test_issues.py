@@ -25,6 +25,7 @@ from openproj.auth import sign_session
 from openproj.index import build_index
 from openproj.model import (
     ISSUE_STATUS,
+    MODELS,
     RUNG,
     Config,
     Issue,
@@ -457,3 +458,34 @@ def test_check_covers_issues_for_the_first_time(tmp_path: Path):
     assert [(p.severity, p.field) for p in validate_all(records_now, config)] == [
         ("blocker", "status")
     ]
+
+
+def test_a_created_record_carries_its_fields_in_the_models_order(
+    client: TestClient, repo_path: Path
+):
+    """`id`, `kind`, `title` first, whatever order the client sent.
+
+    `patch_text` writes keys in the order the mapping hands them over, and the
+    mapping used to be whatever order the form's JSON happened to serialise —
+    so the same record created twice could come out with its keys in two orders,
+    both valid YAML, both reading back identically, and nothing anywhere noticing
+    except a person looking at a diff. `openproj new` builds its mapping from a
+    command line, which is a third order again.
+
+    Both writers go through `model.in_model_order` now, and the model's own
+    declaration order is the corpus's convention: this pins them to it, from the
+    end that sends the fields most out of order.
+    """
+    issue_id = opened(
+        client,
+        "Two extrapolations",
+        git_head(repo_path),
+        tags=["dycore"],
+        reported_by="ann",
+    )
+
+    written = file_at(repo_path, git_head(repo_path), f"issues/{issue_id}.md")
+    keys = re.findall(r"^([a-z_]+):", written, flags=re.MULTILINE)
+
+    assert keys[:3] == ["id", "kind", "title"]
+    assert keys == sorted(keys, key=list(MODELS["issue"].model_fields).index)
