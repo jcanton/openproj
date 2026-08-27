@@ -17,7 +17,14 @@
 .ruff_cache/
 
 # Not part of the running service.
+#
+# `docs/` was here and is not: the Help page reads those files off the disk at
+# render time, so they ARE part of the running service now. The build failed at
+# `COPY docs/` with "file not found in build context or excluded by
+# .dockerignore" — on a commit whose whole test suite was green, because nothing
+# in CI builds an image. `test_the_container_carries_the_documents` reads this
+# file as well as the Dockerfile for exactly that reason: two files decide
+# whether a document reaches production and only one of them was being checked.
 tests/
-docs/
 deploy/RUNBOOK.md
 gcloud_deploy.sh

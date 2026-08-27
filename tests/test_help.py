@@ -216,11 +216,28 @@ def test_the_container_carries_the_documents():
     page that reads files off a disk is a Help page that draws six failures in
     production while every test here passes in a checkout.
     """
-    dockerfile = Path(__file__).resolve().parents[1] / "Dockerfile"
-    text = dockerfile.read_text(encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+    text = (root / "Dockerfile").read_text(encoding="utf-8")
     assert "docs/" in text and "/app/docs/" in text, "docs/ is not copied into the image"
     assert "README.md" in text, "README.md is not copied into the image"
     assert "OPENPROJ_DOCS" in text, "the image does not say where its documentation is"
+
+    # And the other half, which is the half that actually broke. `COPY docs/`
+    # was in the Dockerfile and the build still failed — `.gcloudignore` decides
+    # what is uploaded as the build context, `docs/` was listed there under "not
+    # part of the running service", and it stopped being true the moment the Help
+    # page started reading those files. Nothing in CI builds an image, so a green
+    # suite said nothing about it; this line is what a green suite now says.
+    ignored = [
+        line.strip()
+        for line in (root / ".gcloudignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    for wanted in ("docs/", "docs", "README.md", "*.md", "**/*.md"):
+        assert wanted not in ignored, (
+            f".gcloudignore excludes {wanted!r}, so the documentation never reaches "
+            "the build context and `COPY docs/` fails"
+        )
 
 
 def test_the_separator_in_the_build_row_is_a_character_and_not_an_escape(page: str):
