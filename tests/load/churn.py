@@ -447,7 +447,8 @@ class Watcher:
                         round(time.monotonic() - self.zero, 2),
                         self.phase,
                         "DOC WENT BACK",
-                        f"{peer.login}'s own editor lost {was_doc - doc_run} characters it had typed",
+                        f"{peer.login}'s own editor lost "
+                        f"{was_doc - doc_run} characters it had typed",
                         {
                             "record": peer.record,
                             "was": was_doc,

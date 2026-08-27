@@ -72,10 +72,14 @@ def test_a_mermaid_fence_is_a_code_block_where_there_is_not():
 
 
 def test_every_other_fence_is_left_alone():
+    # Read through the tags rather than for the raw sentence: a fence with a
+    # language on it is syntax-highlighted now, so `not a diagram` reaches the
+    # page as three words in three spans. What this is asking has not changed —
+    # the fence is a fence and its text is all still there.
     for info in ("", "python", "bash", "mermaidish"):
         drawn = str(_markdown(f"```{info}\nnot a diagram\n```\n", ROUTES))
         assert '<pre class="mermaid">' not in drawn, info
-        assert "not a diagram" in drawn, info
+        assert "not a diagram" in re.sub(r"<[^>]+>", "", drawn), info
     # And the info string's FIRST word is what decides, so a fence carrying an
     # attribute after the language is still a diagram.
     assert '<pre class="mermaid">' in str(_markdown("```mermaid title=x\nA-->B\n```\n", ROUTES))

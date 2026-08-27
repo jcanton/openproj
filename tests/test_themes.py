@@ -31,6 +31,7 @@ from openproj.render import (
     render_graph,
     render_table,
 )
+from openproj.render.styles import _CODE_HUES, _readable
 from openproj.themes import FAMILIES, SLOTS, contrast
 
 HEAD = "0" * 40
@@ -83,6 +84,68 @@ def test_the_ink_a_scheme_is_read_in_clears_the_floor():
                 f"{palette.source}: the secondary ink is not quieter than the primary, "
                 "so the page has one level of hierarchy where it draws two"
             )
+
+
+def test_every_scheme_can_be_read_inside_a_code_fence():
+    """The eight syntax hues, on the ground a fence is actually drawn on.
+
+    **This is the measurement that decided the derivation.** The obvious mapping
+    is the nominal one — base08 red for a variable, base0B green for a string, and
+    so on, which is what those slots were put in the format for. Taken straight,
+    over these nine families in both polarities, it put 95 of 144 combinations
+    below AA: Default light's yellow at 1.25 against its own `--surface-2`,
+    Silk's blue at 1.79, Tomorrow's orange at 1.90. A terminal palette's hues are
+    chosen against a terminal's background, and most of these families have a
+    light polarity with a near-white one.
+
+    So `_readable` keeps the hue and takes the lightness, exactly as `_chosen`
+    does for the ink. This asks the result, per family, per polarity, per role —
+    against base01, because `--surface-2` is what a `<pre>` sits on and not
+    base00.
+    """
+    for family in FAMILIES:
+        for polarity, palette in (("light", family.light), ("dark", family.dark)):
+            slots = palette.slots
+            picks = _chosen(slots)
+            ink, ground = slots[picks["fg"]], slots["base01"]
+            for role, slot in _CODE_HUES.items():
+                drawn = _readable(slots[slot], ground, ink)
+                ratio = contrast(drawn, ground)
+                assert ratio >= 4.5, (
+                    f"{family.key} {polarity}: {role} ({slot}) is {ratio:.2f} on the "
+                    f"ground a fence is drawn on"
+                )
+
+
+def test_the_app_s_own_code_palette_is_readable_too():
+    """The app's own colours have no sixteen to derive from, so the eight are
+    written by hand in the shell — which means nothing measures them unless this
+    does.
+
+    Read out of `shell.py` and not out of a rendered page, because a rendered
+    page carries `_scheme_css` as well and its derived `--code-*` values match the
+    same pattern: the first version of this test measured Solarized's blue
+    against the app's grey ground and failed on a colour that was never meant to
+    be drawn there. Which ground a value belongs to is decided by the `--bg` of
+    the block it is written in, which is exactly what the cascade decides too.
+    """
+    source = (Path(__file__).resolve().parents[1] / "src/openproj/render/shell.py").read_text(
+        encoding="utf-8"
+    )
+    grounds = {"#ffffff": "#f5f8f8", "#11181b": "#1c262a"}
+    ground, measured = None, 0
+    for line in source.splitlines():
+        found = re.search(r"--bg: (#[0-9a-f]{6})", line)
+        if found and found.group(1) in grounds:
+            ground = grounds[found.group(1)]
+        for value in re.findall(r"--code-\w+: (#[0-9a-f]{6})", line):
+            assert ground, f"a code colour before any --bg told us its ground: {value}"
+            ratio = contrast(value, ground)
+            assert ratio >= 4.5, f"{value} is {ratio:.2f} on {ground}"
+            measured += 1
+    # Eight hues, two polarities, and the dark block is written twice — once for
+    # `prefers-color-scheme` and once for the explicit `[data-theme="dark"]`.
+    assert measured == 8 * 3, measured
 
 
 def test_the_stylesheet_answers_all_three_states_of_the_switch():

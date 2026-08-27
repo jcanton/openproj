@@ -44,6 +44,10 @@ repos:
       - id: ruff-check
         args: [--fix]
         exclude: &frozen ^(static/|tests/fixtures/|seed/|design/probes/load/)
+      # Run over the whole tree once, in its own commit, the day these hooks
+      # were extended: 97 files of 124 were not format-clean, and a hook that
+      # only touches what you staged would have landed each file's back-format
+      # inside somebody's unrelated diff.
       - id: ruff-format
         exclude: *frozen
 

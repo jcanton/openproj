@@ -13,6 +13,13 @@ dependencies = [
   "networkx>=3.3",
   "jinja2>=3.1",
   "markdown-it-py>=4.2.0",
+  # Syntax highlighting for the code fences, done on the server. The alternative
+  # was a highlighter in the browser, and this repository already refuses that
+  # trade twice over: `static/VENDOR.md` has the arithmetic on what a bundle
+  # costs, and every page here is held to `default-src 'none'`. Pygments emits
+  # spans and nothing else — no script, no fetch, no bytes on any page that has
+  # no fence on it.
+  "pygments>=2.18",
   # Task lists. markdown-it-py's own companion package, and zero browser bytes.
   "mdit-py-plugins>=0.5",
   "pygit2>=1.15",

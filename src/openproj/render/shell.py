@@ -274,6 +274,17 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
   --line: #dce4e5; --line-strong: #859195; --muted: #5a6b70;
   --accent: #0f5c6b; --on-accent: #ffffff;
   --danger: #9a3327; --warn: #8a5308; --ok: #2f7248;
+  /* The code palette, for the app's own colours. A scheme derives these from its
+     base16 hues (`_CODE_HUES`, `_readable`); this palette has no sixteen to
+     derive from, so the eight are written, and they are written rather than
+     borrowed from --danger/--warn/--ok because those are three and this needs
+     eight distinct enough to tell a keyword from a string at a glance. Measured
+     against --surface-2, which is the ground a fence is drawn on: the lowest
+     here is the cyan at 4.75 and every one clears AA. */
+  --code-comment: var(--muted); --code-operator: var(--fg);
+  --code-keyword: #8a3fa0; --code-type: #8a5308; --code-function: #14607f;
+  --code-name: #9a3327; --code-number: #a0522d; --code-string: #2f7248;
+  --code-escape: #0f7b7b; --code-error: #9a3327;
   /* The em dash that means "no value" is *text*, so it owes 4.5:1 and not the
      3.45 it was first given. Whether a field is empty is a fact, not a hint. */
   --empty: #5f7176; --focus: #0f5c6b;
@@ -397,6 +408,10 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
     --line: #263336; --line-strong: #61767c; --muted: #93a6aa;
     --accent: #5cb9ca; --on-accent: #0b1214;
     --danger: #e0796a; --warn: #d9a557; --ok: #6fc095;
+  --code-comment: var(--muted); --code-operator: var(--fg);
+  --code-keyword: #c99ae0; --code-type: #d9a557; --code-function: #6fb7d8;
+  --code-name: #e0796a; --code-number: #e0a878; --code-string: #6fc095;
+  --code-escape: #63c7c7; --code-error: #e0796a;
     --empty: #84969c; --focus: #5cb9ca;
     /* The same ladder, climbed the other way: parked is the darkest rung here
        and done the lightest, so a shape is always the *more* solid the further
@@ -458,6 +473,10 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
   --line: #263336; --line-strong: #61767c; --muted: #93a6aa;
   --accent: #5cb9ca; --on-accent: #0b1214;
   --danger: #e0796a; --warn: #d9a557; --ok: #6fc095;
+  --code-comment: var(--muted); --code-operator: var(--fg);
+  --code-keyword: #c99ae0; --code-type: #d9a557; --code-function: #6fb7d8;
+  --code-name: #e0796a; --code-number: #e0a878; --code-string: #6fc095;
+  --code-escape: #63c7c7; --code-error: #e0796a;
   --empty: #84969c; --focus: #5cb9ca;
   --st-thinking: #448c99; --st-thinking-ink: #101416; --st-thinking-line: #26555d;
   --st-thinking-soft: #182e33; --st-thinking-text: #60becd;

@@ -399,6 +399,7 @@ work was not rendering. It was *compiling templates*:
 ```python
 _ENV = Environment(autoescape=True)
 
+
 def _fragment(template: str, **values: object) -> Markup:
     return Markup(_ENV.from_string(template).render(**values))
 ```

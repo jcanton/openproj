@@ -108,6 +108,12 @@ Two controls in the corner, beside the identity. The light/dark switch is the po
 beside it is the palette — nine base16 families, each a light and a dark, plus the app's own colours,
 which are the absence of a choice rather than a family called "default".
 
+A code fence that names its language is syntax-highlighted, on the server: Pygments produces the
+spans and the page carries a stylesheet, so highlighting costs no fetch, works in the static export,
+and adds nothing to a page with no fence on it. Its eight colours are derived from the scheme's own
+hues rather than taken from them — a palette written for a terminal puts most of those hues below
+readable on a near-white page, which was measured before it was believed.
+
 A scheme is sixteen colours and the app draws with fifty-five, so the other thirty-nine are derived
 once, for every scheme. `themes.py` is a table with a row per palette; adding a family is a row.
 `tests/test_themes.py` measures the result twice — the palette in Python, and what the page paints
