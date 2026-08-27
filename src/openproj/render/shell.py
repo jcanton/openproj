@@ -675,6 +675,35 @@ h1 { font-size: 1.35rem; margin: .2rem 0 .6rem; }
    and a rule that matched siblings by position would then draw a dot with
    nothing on either side of it. `.corner` is excluded because it is a group of
    controls the phone rule parks here and not a fact about the build. */
+/* A mermaid block, in the two states it has. Before the bundle arrives — and for
+   ever if it never does — the element is showing the diagram's source, and it is
+   drawn as the code block it would otherwise have been, so a reader gets the same
+   thing the static export gives them rather than a bare wall of text that looks
+   like a rendering fault. Mermaid stamps `data-processed` on the element it has
+   drawn into, which is what switches the box off.
+
+   In the shell and not in a page's own sheet, because a fence can be in any
+   document this app draws: a record's body, the preview beside it, a deck slide,
+   and the Help page. Written once, where every one of them already is. */
+pre.mermaid { background: var(--surface-2); padding: .6rem .7rem; border-radius: 3px;
+              overflow-x: auto; margin: 0 0 1rem; }
+pre.mermaid[data-processed] { background: none; padding: 0; overflow-x: auto;
+                              text-align: center; }
+/* No `max-width` rule here, and that is a measurement rather than an oversight.
+   The obvious one — `svg { max-width: 100% !important }`, to outrank mermaid's
+   own inline style — was written, and then removed when taking it away changed
+   nothing: mermaid's `useMaxWidth` default writes `max-width: <computed>px` and
+   `width: 100%` onto the `<svg>`, so a drawing laid out at 716px comes out 460 in
+   a 460px column on its own. A rule that does nothing is a rule the next person
+   has to work out the purpose of.
+
+   `overflow-x` above is what is left, and it is for the case mermaid does not
+   cover: a diagram type that turns `useMaxWidth` off draws at its own size, and
+   then the box scrolls rather than the page. */
+pre.mermaid[data-processed] svg { height: auto; }
+/* What a failed load leaves behind, so raw mermaid source is not mistaken for the
+   page working. Drawn by the loader, which is the only thing that knows. */
+.mermaidwhy { color: var(--muted); font-size: 12px; margin: -.7rem 0 1rem; }
 #build { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .5rem; }
 /* The character itself, and never the CSS escape `\\00B7`. This stylesheet is a
    Python triple-quoted string, so a backslash in it is a PYTHON escape first:
@@ -3031,6 +3060,190 @@ setInterval(readPile, PILE_POLL_MS);
 addEventListener('openproj:landed', () => { if (!pile.hidden) readPile(); });
 </script>
 {% endif %}
+{% if mermaid %}
+<script>
+// **The diagrams, and 3.5 MB that only a page with one on it ever pays for.**
+//
+// Fetch-and-inject, and every word of `excalidraw()`'s reasoning in `controls.py`
+// applies here unchanged: the policy's `script-src 'unsafe-inline'` allows a
+// script whose BODY is written in and grants no `'self'` a `src` could be allowed
+// by, while `connect-src 'self'` grants the fetch — so fetch-and-inject is the one
+// door that opens. `response.ok` is checked, because `.text()` on a 404 resolves
+// with the error page's body and this would otherwise inject it.
+//
+// It is not inlined for two reasons and the second is the one that decides it.
+// Bytes: 3,572,661 of them, against a Help page that is 400 KB in total, and most
+// readers of most pages never meet a diagram. And the bundle contains eighty
+// `url(` tokens — SVG filter and marker references built out of template
+// literals — so a page carrying it fails `test_no_page_asks_the_network_for_a_font`,
+// which reads every `url(` on the page and demands `data:` or `#`. That rule is
+// right and the bundle is harmless; the way to have both is for the bundle never
+// to be on a page.
+//
+// This block is emitted only where `_page` found a `pre.mermaid` element, so
+// nothing here runs on a page with no diagram, and the static export never has
+// one — see `_fence` in `markdown.py`. Written as a selector and not as the tag
+// it looks for: the literal in a comment is a literal in the served bytes, and it
+// would make "does this page have a diagram on it" answer yes for every page
+// carrying this loader — a marker that matches its own detector.
+(() => {
+  const BLOCKS = () => document.querySelectorAll('pre.mermaid');
+
+  // The source, stashed before mermaid replaces it with an `<svg>`. A theme
+  // change re-renders, and mermaid re-renders from the element's text — which by
+  // then is the previous drawing's markup. Read once, kept, written back each
+  // time.
+  for (const block of BLOCKS()) block.dataset.src = block.textContent;
+
+  function why(block, said) {
+    // Beside the block rather than inside it: the source stays legible, which is
+    // exactly what the static export shows, and the line says which of the two
+    // this is.
+    //
+    // Built here rather than through the shell's `element` helper, which reads
+    // like the obvious reuse and is not available: that one is a `const` inside
+    // another block, so it is not on the global scope these separate `<script>`
+    // elements actually share. Written the other way it threw a ReferenceError
+    // inside the render loop — which took the diagrams AFTER the failed one down
+    // with it, silently, because the loop is inside an async function nobody
+    // awaits. Measured: one bad fence cost the other two.
+    if (block.nextElementSibling && block.nextElementSibling.className === 'mermaidwhy') return;
+    const note = document.createElement('p');
+    note.className = 'mermaidwhy';
+    note.textContent = said;
+    block.after(note);
+  }
+
+  // Mermaid's `base` theme takes its colours from variables rather than from a
+  // palette of its own, which is the only shape that can follow nine schemes and
+  // two polarities. Read off the root element at render time, so a scheme change
+  // is a re-read rather than a table written down here — the same arrangement
+  // `paint()` on the graph has, and for the same reason: a colour resolved once
+  // at build time is a colour that stops matching the page.
+  function palette() {
+    const style = getComputedStyle(document.documentElement);
+    const token = name => style.getPropertyValue(name).trim();
+    return {
+      background: token('--surface'),
+      primaryColor: token('--surface-2'),
+      primaryTextColor: token('--fg'),
+      primaryBorderColor: token('--line-strong'),
+      secondaryColor: token('--surface-2'),
+      tertiaryColor: token('--surface'),
+      lineColor: token('--line-strong'),
+      textColor: token('--fg'),
+      // A subgraph's box. The app draws a container as a quiet ground with a
+      // drawn edge — the graph page's compounds do the same — so the two views of
+      // one plan do not disagree about what "inside" looks like.
+      clusterBkg: token('--surface'),
+      clusterBorder: token('--line'),
+      titleColor: token('--muted'),
+      edgeLabelBackground: token('--surface'),
+      fontFamily: token('--font-sans'),
+      fontSize: '13px',
+    };
+  }
+
+  let LIBRARY = null;
+  async function mermaidLibrary() {
+    if (LIBRARY) return LIBRARY;
+    const response = await fetch('/static/mermaid.min.js');
+    if (!response.ok) throw new Error(`the bundle answered ${response.status}`);
+    const source = await response.text();
+    const tag = document.createElement('script');
+    tag.textContent = source;
+    // The same marker `excalidraw()` writes, so the editor's script probe reads a
+    // second injected bundle as a known one rather than as a surprise.
+    tag.dataset.injectedBundle = 'mermaid';
+    document.head.appendChild(tag);
+    LIBRARY = window.mermaid;
+    if (!LIBRARY) throw new Error('the bundle ran and defined no mermaid');
+    return LIBRARY;
+  }
+
+  async function draw() {
+    const blocks = [...BLOCKS()];
+    if (!blocks.length) return;
+    let mermaid;
+    try {
+      mermaid = await mermaidLibrary();
+    } catch (error) {
+      // One line per block and then nothing further: a failed fetch is a failed
+      // fetch on every diagram on the page, and the source is still readable
+      // under each of them.
+      for (const block of blocks) why(block, 'The diagram could not be drawn: ' + error.message);
+      return;
+    }
+    // **`securityLevel: 'strict'` and `htmlLabels: false`, said rather than
+    // inherited.** A shaping document is written by anybody who can push to the
+    // plan, and mermaid at `loose` puts that text into the DOM as markup and
+    // honours `click` directives. Strict is mermaid's own default today; a
+    // default is a thing that changes in a minor release, and this one is load
+    // bearing enough to be written down.
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      theme: 'base',
+      themeVariables: palette(),
+      // **`htmlLabels: false` in both places, which is not belt and braces.** Set
+      // on `flowchart` alone it drew five `<foreignObject>` elements anyway,
+      // measured on this page — the top-level key is the one a flowchart's labels
+      // actually read in mermaid 11, and the nested one is what the other diagram
+      // types read. An HTML label is a `<foreignObject>`: it holds real markup
+      // rather than SVG text, it is the surface `securityLevel` is doing the most
+      // work on, and it is the part of an SVG that does not survive the drawing
+      // being copied out of the page or printed onto a deck slide.
+      htmlLabels: false,
+      flowchart: { htmlLabels: false },
+      // **A diagram that will not parse leaves the source, not a picture of a
+      // bomb.** Left at the default, mermaid draws its own error graphic into the
+      // element — a "Syntax error in text" card with an illustration — which is a
+      // second design language on the page, says nothing about which line is
+      // wrong, and replaces the one thing the writer needs to see. With this on,
+      // `run` throws instead, the loop below puts the source back, and the line
+      // beside it says what happened. Measured: without it, a fence reading
+      // `flowchart TD` and `a[["` drew a picture and reported success.
+      suppressErrorRendering: true,
+    });
+    // **One `run` per block, not one for the batch.** A diagram that will not
+    // parse is somebody's typo in a document, and `run` over a list stops being
+    // able to say which one failed — worse, a throw part way through leaves the
+    // diagrams after it undrawn. A file that is not a record costs that file and
+    // nothing else; a fence that is not a diagram costs that fence.
+    for (const block of blocks) {
+      try {
+        block.removeAttribute('data-processed');
+        block.textContent = block.dataset.src;
+        try {
+          await mermaid.run({ nodes: [block] });
+        } catch {}
+        // **Asked of the element, not of the promise.** `suppressErrorRendering`
+        // makes `run` reject, but mermaid has already stamped `data-processed`
+        // and emptied the block by then — measured: a fence reading `a[["` left
+        // an empty box with the attribute set and no error anywhere on the page,
+        // which is the "empty must not look like broken" failure exactly. The
+        // only honest question is whether there is a drawing in there.
+        if (!block.querySelector('svg')) {
+          block.removeAttribute('data-processed');
+          block.textContent = block.dataset.src;
+          why(block, 'This diagram could not be drawn. Its text is below.');
+        }
+      } catch {
+        // The outer net, and it is not theoretical: the first version of `why`
+        // called a helper that is not on this scope, threw a ReferenceError here,
+        // and took every diagram after the failed one down with it — silently,
+        // because this loop is inside an async function nobody awaits.
+      }
+    }
+  }
+
+  draw();
+  // A palette or a polarity change is a re-render, because every colour above was
+  // read off the root element when the drawing was built.
+  addEventListener('themechange', draw);
+})();
+</script>
+{% endif %}
 </body></html>
 """
 
@@ -3207,6 +3420,24 @@ def _page(
         # Only the server has an event stream to listen to. A static page opening a
         # connection to nothing would retry forever in the console.
         live=links.table.startswith("/"),
+        # Whether this page has a diagram on it, and therefore whether it should
+        # carry the loader that fetches 3.5 MB of mermaid.
+        #
+        # Decided here for the reason the nav mark and the unreadable banner are:
+        # a fence can be in a record's body, in the preview beside it, on a deck
+        # slide or on the Help page, and eight entry points is eight places for
+        # the ninth to forget. The page that forgot would draw mermaid source
+        # under a heading and look like a rendering fault.
+        #
+        # **Searching the finished markup for a string, which this file otherwise
+        # refuses to do — so here is why it is safe.** `_ENV` autoescapes, so a
+        # title, a body or a login containing these characters reaches the page as
+        # `&lt;pre class=&#34;mermaid&#34;&gt;`: the literal below cannot be
+        # produced by anything a person typed, only by `_fence` in `markdown.py`.
+        # That is the difference between this and the substitution defect this
+        # repository keeps meeting — nothing is written INTO the page here, and the
+        # question asked is one only the renderer can have answered.
+        mermaid='<pre class="mermaid">' in content,
         # This code's own version, in the footer. Imported from the package
         # rather than passed in by each caller: it is a fact about the build and
         # not about the page, and `pyproject.toml` and `__init__.py` have already

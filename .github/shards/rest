@@ -33,6 +33,7 @@
 # `test_every_test_file_is_in_exactly_one_ci_shard` in tests/test_harness.py is
 # what stops it going on no leg at all.
 tests/test_table.py
+tests/test_mermaid.py
 tests/test_search.py
 tests/test_card.py
 tests/test_cascade.py

@@ -134,6 +134,18 @@ and only a genuine overlap is refused.
 internal tool becomes unbuildable in two years. `tests/test_render.py` asserts no rendered page
 reaches the network.
 
+**Two of the vendored libraries are fetched rather than carried**, and both are megabytes: the
+drawing editor on the first press of the drawing button, and mermaid on a page that turns out to
+have a ```mermaid fence on it. `GET /static/<name>` answers for an allowlist of exactly those two
+names, the page injects what comes back as an inline script — which is what `script-src
+'unsafe-inline'` permits and a `src` attribute is refused for — and neither is ever inlined into a
+page. `static/VENDOR.md` has the arithmetic and the reason each is a route rather than a marker.
+
+**A diagram in a document is a diagram where there is a server, and its source where there is
+not.** `openproj render` writes files opened over `file://`, which have nothing to fetch a bundle
+from, so a fence there stays the code block it always was — the same seam an uploaded image and a
+record link already switch on. Everything else about the two is identical.
+
 **`node` is not needed to build or run it, and is needed to test it fully.** A set of tests runs
 the shipped page scripts against a minimal DOM — the table's rows, the timeline's tooltip, the
 combobox and the cycle roster exist only after a script has run, so nothing in a rendered file
