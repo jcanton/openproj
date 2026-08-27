@@ -282,6 +282,32 @@ machines: `tests/test_coedit.py` needs to stay serial and in order in one proces
 fixture split eight ways is built eight times. Verified rather than assumed — the eight groups
 partition all 2056 tests with no overlap, at 113-124s.
 
+### What it actually did
+
+Run [33117676737](https://github.com/jcanton/openproj/actions/runs/33117676737), the first eight-way
+split. Legs, in seconds of pytest:
+
+| 1   | 2   | 3   | 4   | 5   | 6   | 7   | 8   | total |
+| --- | --- | --- | --- | --- | --- | --- | --- | ----- |
+| 108 | 97  | 88  | 125 | 131 | 104 | 119 | 118 | 890   |
+
+**Worst leg 131s, against the 231s `tests/test_editor.py` alone would force** on any file-level cut
+of this suite — 26.0% of 890s. The gate's pytest time is down 43%, and it is no longer bounded by a
+file.
+
+**The spread is 43s where the simulation said 11s**, and it is worth saying why rather than
+quoting the better number. The table was recorded on a laptop. Against the 193 tests this run timed,
+CI is **0.81×** the laptop in aggregate and **0.56–0.99×** per test: the two machines do not scale
+uniformly, so a split cut from one is systematically slightly wrong on the other.
+
+Rescaling the laptop table by that aggregate factor, keeping the 193 real CI values, was tried and
+**simulates worse — 67s of spread**, because a flat factor mis-scales the 1863 tests that have no CI
+number. A coherent table from one machine beats a mixed one. The fix is a coherent table from the
+RIGHT machine, which is what the `measure` job is: `workflow_dispatch`, one serial run on the
+runner, `--store-durations --clean-durations`, table uploaded as an artifact. It could not be a side
+effect of the split legs — `pytest-split` reads and writes one `--durations-path`, so eight legs
+would race on one file and each `--clean-durations` would strip the seven groups it did not run.
+
 **§ 0b's other findings all still stand.** `-n auto` is still refused for the reason measured there
 (`-n 2` on the editor leg was 27% slower; the cost is process startup and two Chromes contending on
 four cores). The noise is still the same size as any imbalance, so a single run still cannot
