@@ -739,6 +739,9 @@ def _editable_for(record: Record, prefix: str = "field", signed_in: str = "") ->
     ]
 
 
+# The appetite, by the name the model gives it. `detail.py` reads it to decide
+# which field's label gets the tasks-add-up-to note; the table's own
+# column-to-field map is `_COLUMN_FIELD`, which is about columns and lives there.
 _SIZE_FIELD_NAME = "person_weeks"
 
 

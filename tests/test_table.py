@@ -110,7 +110,13 @@ from openproj.web import SESSION_COOKIE, create_app
 # The columns the table draws that nobody may type into. Kept as an expectation
 # rather than computed silently, so that adding a derived column and forgetting to
 # make it read-only fails here instead of in the corpus.
-DERIVED = {"size", "start", "end", "blocked_by", "progress"}
+# Columns with no written field under them at all: what they show is the
+# scheduler's arithmetic and there is nothing to type into.
+DERIVED = {"end", "blocked_by", "progress"}
+# And the two that show a derived value and edit the field beneath it — `size`
+# writes `person_weeks`, `start` writes `assigned_on`. They are not editable
+# under their own names, which is why they still have to be named here.
+SHOWS_DERIVED = {"size", "start"}
 
 
 @pytest.fixture
@@ -280,19 +286,49 @@ def test_the_table_declares_which_columns_a_person_owns(page: str):
 def test_no_derived_column_can_be_edited_at_all(page: str):
     """Structurally absent, exactly as on the detail page.
 
-    A start date typed by hand is a lie the next reschedule contradicts, and the
+    An END date typed by hand is a lie the next reschedule contradicts, and the
     contradiction surfaces as "the tool is wrong" rather than as "somebody typed
-    over a forecast". `size` belongs here too and is the least obvious of the four:
-    what the column shows is `person_weeks` *or an assumed default*, so a control
-    on it would let somebody commit the assumption without meaning to.
+    over a forecast". There is no field under it to write, which is the whole
+    difference between these three columns and the two below.
     """
-    assert set(columns(page)) - set(EDITABLE) - {"id"} <= DERIVED, (
+    assert set(columns(page)) - set(EDITABLE) - {"id"} <= DERIVED | SHOWS_DERIVED, (
         "a new column is neither editable nor known-derived"
     )
     declared = payload(page)["editable"]
-    for field in DERIVED:
-        assert field not in declared, f"{field} is computed and must not be editable"
+    for field in DERIVED | SHOWS_DERIVED:
+        assert field not in declared, f"{field} is a column name and never a field"
         assert field not in controls(page), field
+
+
+def test_the_two_columns_that_show_one_thing_and_edit_another_say_which(page: str):
+    """jcanton, 2026-08-27: "the appetite is not an editable field in the /table
+    (dunno why) make it editable in /table please. start date as well".
+
+    The reason it was not is that neither column IS its field. `size` shows the
+    pitch's appetite, or the task's effort, or the default when neither is set;
+    `start` shows the day the scheduler landed on after the dependencies and the
+    people. Both are forecasts, and a control that wrote back what it was showing
+    would let somebody commit an assumption they never made.
+
+    So the cell shows the forecast and the editor opens on the written field —
+    `_COLUMN_FIELD` is the whole of the mechanism, and it is shipped to the
+    browser rather than spelled twice.
+    """
+    from openproj.render.table import _COLUMN_FIELD
+
+    body = script(page)
+    shipped = json.loads(re.search(r"const COLUMN_FIELD = (\{.*?\});", body).group(1))
+    assert shipped == _COLUMN_FIELD == {"size": "person_weeks", "start": "assigned_on"}
+    # Asked of the FIELD and not the column, which is what makes a product's size
+    # cell refuse without a rule of its own: `unread_fields` already says a rung
+    # that is not sized does not read `person_weeks`.
+    assert "const field = fieldOf(key);" in body
+    assert "reads(row, field)" in body
+    assert 'data-field="${esc(field)}"' in body
+    # And the sentence that stops the empty box reading as a bug.
+    shows = json.loads(re.search(r"const SHOWS = (\{.*?\});", body, re.S).group(1))
+    assert set(shows) == set(_COLUMN_FIELD)
+    assert all(sentence.strip() for sentence in shows.values())
 
 
 def test_the_id_is_shown_and_is_never_a_control(page: str):
@@ -3262,6 +3298,75 @@ def test_the_popup_a_cell_opens_hangs_off_the_body_and_not_off_the_cell(page: st
     assert parents == ["BODY"], parents
 
 
+def test_the_editor_opens_on_the_written_value_and_not_the_forecast(page: str):
+    """**The safety property the whole column-to-field map exists for.**
+
+    The pitch in this corpus has `person_weeks: 3` and no `assigned_on`; the
+    project has `assigned_on: 2026-07-01` and no size of its own. So the pitch's
+    start cell SHOWS a date the scheduler worked out and the field under it is
+    empty — and if the editor opened on what the cell was showing, a
+    double-click and an Enter would write the forecast into the file as though
+    somebody had chosen it. That is the failure this column was closed to editing
+    to avoid, and opening on the stored value is what reopens it safely.
+
+    Driven in Chrome because the rows are built in the browser: nothing about
+    which cell is a control and what its box contains exists in the rendered file.
+    """
+    answer = drive_table(
+        page,
+        "(() => {"
+        "  const byKind = kind => Object.values(DATA.rows).find(r => r.kind === kind).id;"
+        "  const cell = (id, col) =>"
+        '    tbody.querySelector(`tr[data-id="${id}"] td[data-col="${col}"]`);'
+        "  const look = td => ({cls: td.className, field: td.dataset.field || null,"
+        "                       text: td.textContent.trim(), tip: td.getAttribute('title')});"
+        "  const pitch = byKind('pitch'), project = byKind('project');"
+        "  const out = {pitchSize: look(cell(pitch, 'size')),"
+        "               pitchStart: look(cell(pitch, 'start')),"
+        "               projectSize: look(cell(project, 'size')),"
+        "               projectStart: look(cell(project, 'start'))};"
+        "  const boxIn = (id, col) => {"
+        "    openEditor(cell(id, col));"
+        "    const value = cell(id, col).querySelector('input').value;"
+        "    draw();"
+        "    return value;"
+        "  };"
+        "  out.pitchStartBox = boxIn(pitch, 'start');"
+        "  out.pitchSizeBox = boxIn(pitch, 'size');"
+        "  out.projectStartBox = boxIn(project, 'start');"
+        "  return out;"
+        "})()",
+    )
+    got = answer["value"]
+
+    # Both columns are controls now, and each says which field it writes.
+    assert "edit" in got["pitchSize"]["cls"], got["pitchSize"]
+    assert got["pitchSize"]["field"] == "person_weeks"
+    assert "edit" in got["pitchStart"]["cls"], got["pitchStart"]
+    assert got["pitchStart"]["field"] == "assigned_on"
+
+    # The cell shows the forecast.
+    assert got["pitchStart"]["text"], "the start cell drew nothing at all"
+    # The box opens on the field, which is empty: this pitch has no assigned_on.
+    assert got["pitchStartBox"] == "", (
+        f"the editor opened on the forecast {got['pitchStartBox']!r}; typing Enter "
+        "would have written the scheduler's own guess into the file"
+    )
+    # And where the field IS written, that is what the box holds.
+    assert got["projectStartBox"] == "2026-07-01", got["projectStartBox"]
+    assert got["pitchSizeBox"] == "3", got["pitchSizeBox"]
+
+    # A kind that reads neither field is still refused, by the rule that was
+    # already there rather than by one written for this.
+    assert got["projectSize"]["field"] is None, "a project has no appetite to write"
+    assert "edit" not in got["projectSize"]["cls"], got["projectSize"]
+
+    # And the tooltip says what the cell is showing before it says how to change
+    # it, so an empty box does not read as a bug.
+    assert "Shows the appetite" in got["pitchSize"]["tip"], got["pitchSize"]["tip"]
+    assert "Editing sets assigned_on" in got["pitchStart"]["tip"], got["pitchStart"]["tip"]
+
+
 def test_every_control_on_the_create_form_has_a_name(new_page: str):
     """A `<dt>`/`<dd>` pair is a caption to a reader and two unrelated blocks of
     text to everything else, so not one control on this form had a name."""
@@ -3419,9 +3524,15 @@ def test_the_new_row_offers_the_fields_that_kind_has_and_no_others():
     assert fields["pitch"]["size"] == "person_weeks"
     assert fields["task"]["size"] == "person_weeks"
     assert "size" not in fields["project"], "a project has no size of its own"
+    # The two columns that show a derived value and write the one underneath it.
+    # `start` joined `size` here on 2026-08-27: it shows the scheduled day and
+    # writes `assigned_on`, the earliest the work may begin, which is a field a
+    # person owns on every kind the scheduler dates.
+    assert fields["task"]["start"] == "assigned_on"
+    assert "start" not in fields["product"], "a product is never scheduled"
     for kind, columns in fields.items():
         assert "id" not in columns, f"the server mints the id, not the browser ({kind})"
-        for derived in ("start", "end", "blocked_by", "progress"):
+        for derived in ("end", "blocked_by", "progress"):
             assert derived not in columns, f"{derived} is the scheduler's ({kind})"
         for column, field in columns.items():
             assert field in EDITABLE, f"{column} writes to a field nobody owns"
@@ -3430,11 +3541,16 @@ def test_the_new_row_offers_the_fields_that_kind_has_and_no_others():
 def test_the_row_says_which_columns_it_cannot_be_typed_into_and_why(page: str):
     """Two different reasons a cell takes nothing, and a blank cell says neither.
 
-    A project has no Appetite; nobody has a Start, because the scheduler works it
-    out. Both are drawn as cells that cannot be filled in, and each carries the
-    sentence that belongs to it — asked of the map rather than listed in the
-    page, so a column that becomes kind-only later explains itself without this
-    line changing.
+    A project has no Appetite; nobody has an End, because the scheduler works it
+    out from the start and the size. Both are drawn as cells that cannot be
+    filled in, and each carries the sentence that belongs to it — asked of the
+    map rather than listed in the page, so a column that becomes kind-only later
+    explains itself without this line changing.
+
+    `end` and not `start`, which is what this asked before 2026-08-27. `start`
+    stopped being one of these the day the column began writing `assigned_on`;
+    `end` is the one that is genuinely nobody's to type, because there is no
+    field under it at all.
     """
     answer = drive_table(
         page,
@@ -3444,15 +3560,17 @@ def test_the_row_says_which_columns_it_cannot_be_typed_into_and_why(page: str):
         '    const td = tbody.querySelector(`tr.draft td[data-col="${column}"]`);'
         "    return [td.getAttribute('class'), td.getAttribute('title')];"
         "  };"
-        "  return {size: tip('size'), start: tip('start'), title: tip('title')};"
+        "  return {size: tip('size'), end: tip('end'), start: tip('start'),"
+        "          title: tip('title')};"
         "})()",
     )
     got = answer["value"]
 
     assert got["size"][0] == "draft-none"
     assert got["size"][1] == "A project has no appetite"
-    assert got["start"][0] == "draft-none"
-    assert "Derived from" in got["start"][1], "the scheduler's own sentence, not a new one"
+    assert got["end"][0] == "draft-none"
+    assert "Derived from" in got["end"][1], "the scheduler's own sentence, not a new one"
+    assert "edit" in got["start"][0], "a project is scheduled, so it has a start to set"
     assert "edit" in got["title"][0], "and the column it does have is a control"
 
 

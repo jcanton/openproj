@@ -20,7 +20,6 @@ from .shell import STATIC, Links, _page, _titles
 from .styles import _SCROLL_STYLE, _SUGGEST_STYLE
 from .tokens import (
     _KIND_MODELS,
-    _SIZE_FIELD_NAME,
     DRAFT_MARKS,
     EDITABLE,
     HUMAN,
@@ -44,15 +43,42 @@ from .tokens import (
 # its editor open and refused with `undefined`. A cell that will not be edited and
 # will not say why is indistinguishable from a cell that is broken.
 _TABLE_WHY = {
-    "size": "Derived from the pitch appetite or the task effort, and from the default "
-    "when neither is set.",
-    "start": "Derived from assigned_on, from what blocks it, and from what the people "
-    "on it are already doing.",
     "end": "Derived from the start and the appetite.",
     "blocked_by": "Counted from depends_on, minus the ones already done or shelved.",
     "progress": "Counted from the task list in the body. Tick the boxes there.",
 }
 _TABLE_DERIVED = tuple(_TABLE_WHY)
+
+# The two columns that SHOW a derived value and EDIT the written one underneath
+# it. jcanton, 2026-08-27: "the appetite is not an editable field in the /table
+# (dunno why) make it editable in /table please. start date as well".
+#
+# The reason it was not is in `_TABLE_WHY`, where both used to sit: `size` is the
+# pitch's appetite *or* the task's effort *or* the default when neither is set,
+# and `start` is `assigned_on` after the scheduler has moved it for the
+# dependencies and for what the people on it are already doing. Both cells are
+# forecasts, and typing over a forecast is how a plan stops being believed.
+#
+# What makes them editable is that the editor opens on the WRITTEN field and
+# never on the number in the cell. Double-clicking a size cell showing `2 wk`
+# that nobody chose opens an empty box, because `person_weeks` is empty — so
+# there is no assumption to commit by accident, which is the same rule the draft
+# row has followed since it was written (`_editable_for`). Type into it and the
+# cell goes back to being the scheduler's on the next draw.
+#
+# A kind that reads neither field is still refused, and by the mechanism that
+# already existed rather than a new one: `reads()` asks `unread_fields`, which
+# puts `person_weeks` on any rung that is not `sized` and `assigned_on` on any
+# rung that does not schedule. A product's size cell has never been editable and
+# still is not.
+_COLUMN_FIELD = {"size": "person_weeks", "start": "assigned_on"}
+
+# What the tooltip adds on those two, because "double-click to edit appetite" on
+# a cell reading `2 wk` does not explain why the box opens empty.
+_TABLE_SHOWS = {
+    "size": "Shows the appetite, the task effort, or the default when neither is set.",
+    "start": "Shows the scheduled start. Editing sets assigned_on, the earliest it may begin.",
+}
 
 # What this view can be done to, said once, beside the search box. Three gestures
 # in one line because a page that teaches them one at a time teaches the third to
@@ -358,6 +384,15 @@ function stored(row, key) {
 // withholds an editor for — written out again here, a fifth derived column would
 // have arrived with no class and no sentence.
 const WHY = {{ why|tojson }};
+
+// The two columns whose cell shows one thing and edits another — `size` shows the
+// scheduler's number and writes `person_weeks`, `start` shows the scheduled day
+// and writes `assigned_on`. Everything below asks `fieldOf(key)` rather than
+// using the column name as a field name, which is what they were the same thing
+// for every other column.
+const COLUMN_FIELD = {{ fields|tojson }};
+const SHOWS = {{ shows|tojson }};
+const fieldOf = key => COLUMN_FIELD[key] || key;
 
 // Which kind may hold which — `model.PARENT_KINDS`, shipped rather than retyped.
 // It decides three things on this page: which rows grow a handle, which rows
@@ -696,7 +731,12 @@ function cell(row, key, place) {
   const inner = shown(row, key) + glyph;
   const body = treeHtml(rungs)
     + (CLAMPED.has(key) && inner ? `<span class="clamped">${inner}</span>` : inner);
-  const editable = EDITABLE && key in EDITABLE && reads(row, key);
+  // The field this column writes, which is the column itself for all but two.
+  // `reads` is asked about the FIELD and not the column, so a product's size cell
+  // is refused because a product reads no `person_weeks` — the rule that was
+  // already there, reached by the right name.
+  const field = fieldOf(key);
+  const editable = EDITABLE && field in EDITABLE && reads(row, field);
   // One class list rather than three returns. The tags clamp used to be written
   // only into the editable branch, so on a rendered file the column kept the
   // reveal button and showed every tag beside it anyway.
@@ -721,10 +761,13 @@ function cell(row, key, place) {
     // rather than kept on the element, because `draw()` replaces every cell in
     // the table after every save — a class put on a node is gone the next time
     // anything happens, which is exactly when a selection has to survive.
-    PICKED.has(row.id) && key === PICKED_FIELD ? 'picked' : '',
+    PICKED.has(row.id) && field === PICKED_FIELD ? 'picked' : '',
     ground,
   ].filter(Boolean).join(' ');
-  const named = (FIELD_LABELS[key] || key).toLowerCase();
+  // The field's name and not the column's, so the size column's tooltip and the
+  // box it opens both say "appetite" — a control that is called one thing on the
+  // way in and another once it is open is two controls to a reader.
+  const named = (FIELD_LABELS[field] || field).toLowerCase();
   // Three lines at most, in the order of what a reader wants: what is wrong here,
   // what is hidden here, what can be done here. A native `title` takes newlines,
   // so they are three lines and not a run-on sentence.
@@ -746,6 +789,11 @@ function cell(row, key, place) {
                  && (row.reviewers_from || []).length
                  ? 'From the work filed under this record. Editing names reviewers of its own.'
                  : '',
+               // What the cell is showing, on the two columns where that is not
+               // what editing writes. Before the sentence about editing, because
+               // it is the answer to "why is this number here" and the other is
+               // the answer to "how do I change it".
+               editable && SHOWS[key] ? SHOWS[key] : '',
                editable ? 'Double-click to edit ' + named
                         : key === 'id' && EDITABLE ? moveTip(row) : WHY[key] || '']
     .filter(Boolean).join('\\n');
@@ -765,7 +813,7 @@ function cell(row, key, place) {
   // draws a row: one shaped `task-000001"><img src=x onerror=…>` put ten
   // elements into the table body while the text beside them read correctly.
   return `<td data-col="${key}"` +
-    `${editable ? ` data-record="${esc(row.id)}" data-field="${key}"` : ''}` +
+    `${editable ? ` data-record="${esc(row.id)}" data-field="${esc(field)}"` : ''}` +
     `${!editable && key in WHY ? ` data-why="${esc(WHY[key])}"` : ''}` +
     `${rungs ? ` data-rungs="${esc(rungs)}"` : ''}` +
     `${reachable ? ' tabindex="-1"' : ''}` +
@@ -1735,7 +1783,16 @@ function draftRowHtml() {
       return `<td data-col="id" class="draft-id"` +
         ` title="The id and the file are the server's to choose">${draftControls()}</td>`;
     const field = fields[key];
-    const named = (FIELD_LABELS[key] || key).toLowerCase();
+    // TWO NAMES, and they are two because they are drawn in two places. The
+    // tooltip is prose and says what editing will write — `appetite`, not
+    // `size` — so it agrees with the box that then opens. The placeholder is
+    // inside a cell of a column fitted to its own contents, and putting the
+    // field's name there made `size` read `appetite` and `start` read
+    // `assigned on`: both wider than their columns, both wrapping, and the draft
+    // row went from 30px to 50px — a row twice the height of every other row,
+    // which `test_the_draft_rows_marks_are_drawn` measures and caught.
+    const named = (FIELD_LABELS[field || key] || field || key).toLowerCase();
+    const short = (FIELD_LABELS[key] || key).toLowerCase();
     if (!field) {
       // Two different reasons a column takes nothing, and the cell says which:
       // some kind can type into it and this one cannot — a project has no
@@ -1748,7 +1805,7 @@ function draftRowHtml() {
         `${why ? ` title="${esc(why)}"` : ''}></td>`;
     }
     return `<td data-col="${key}" class="edit draft-cell" data-field="${esc(field)}"` +
-      ` data-hint="${esc(named)}" tabindex="-1"` +
+      ` data-hint="${esc(short)}" tabindex="-1"` +
       ` title="${esc('Double-click to edit ' + named)}">${draftShown(field)}</td>`;
   });
   return `<tr class="draft" data-id="${DRAFT_ID}">${cells.join('')}</tr>`;
@@ -4044,7 +4101,7 @@ def _new_row_fields() -> dict[str, dict[str, str]]:
     for kind, model in ((r.name, r.model) for r in KIND_LADDER if r.planned):
         fields = {}
         for column, _ in _TABLE_COLUMNS:
-            field = _SIZE_FIELD_NAME if column == "size" else column
+            field = _COLUMN_FIELD.get(column, column)
             if (
                 field in EDITABLE
                 and field in model.model_fields
@@ -4088,6 +4145,8 @@ def render_table(
         # in the language the rest of this file's drawings are written in.
         marks=DRAFT_MARKS,
         why=_TABLE_WHY,
+        fields=_COLUMN_FIELD,
+        shows=_TABLE_SHOWS,
         # The sentence about this view, in the slot the graph and the timeline
         # already put theirs in — jcanton, 2026-08-25, asking for the table to be
         # "consistent with the timeline and graph pages". It moved out of the row
