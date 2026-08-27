@@ -341,17 +341,29 @@ def _link(
     return self.renderToken(tokens, idx, options, env)
 
 
-# What a heading's id may hold, as an allowlist rather than as a list of
-# characters to strip. A doc heading is prose — `` `## Two populations:
-# `Index.records` and `Index.plan`` `` is a real one — and the set of punctuation
-# that has to leave a fragment is not a set anybody finishes enumerating. So the
-# rule is the other way round: lowercase letters, digits and nothing else, with
-# every run of anything else folded to one hyphen.
-_NOT_SLUG = re.compile(r"[^a-z0-9]+")
-
-
 def _slug(text: str) -> str:
-    return _NOT_SLUG.sub("-", text.lower()).strip("-")
+    """A heading, folded to what a fragment may hold.
+
+    An allowlist rather than a list of characters to strip. A doc heading is
+    prose — `## Two populations: `Index.records` and `Index.plan`` is a real
+    one — and the punctuation that has to leave a fragment is not a set anybody
+    finishes enumerating. So the rule is the other way round: ASCII letters and
+    digits survive, every run of anything else becomes one hyphen.
+
+    Written as a loop and not as `re.sub`, which is what it obviously wants to
+    be. `test_no_page_is_assembled_by_substitution` parses this package as syntax
+    and refuses `.replace`, `.sub` and `.subn` anywhere in it — because a page was
+    once assembled by substituting into finished markup, and a rule with an
+    exception is a rule somebody argues their way past. This call is safe and the
+    check is blunt on purpose; the loop costs six lines and keeps the check blunt.
+    """
+    folded: list[str] = []
+    for character in text.lower():
+        if character.isascii() and character.isalnum():
+            folded.append(character)
+        elif folded and folded[-1] != "-":
+            folded.append("-")
+    return "".join(folded).strip("-")
 
 
 def _heading_text(inline: Token) -> str:

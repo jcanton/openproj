@@ -25,6 +25,7 @@ from typing import NamedTuple
 
 from markupsafe import Markup
 
+from ..index import Index
 from ..vendor import _docs_root
 from .env import _compiled
 from .markdown import _LEADING_HEADING, document_html
@@ -328,13 +329,17 @@ _HELP_STYLE = """
 """
 
 
-def render_help(links: Links = STATIC) -> str:
+def render_help(index: Index, links: Links = STATIC) -> str:
     """Every document this tool ships, on one page, with a contents beside it.
 
-    Takes no `Index`: this page is about the tool and not about a plan, which is
-    why it is the one view that renders identically in the static export and on
-    the server — an exported plan that has outlived the service still carries its
-    own instructions.
+    Nothing on this page comes from the plan — it is about the tool, which is why
+    it renders the same in the static export as on the server and why an exported
+    plan that has outlived the service still carries its own instructions. The
+    `Index` is here for one thing: the shell draws the unreadable-files banner on
+    EVERY page, and `test_every_page_the_renderer_can_draw_carries_the_banner`
+    reads this package's namespace rather than a list of entry points, precisely
+    so the ninth page cannot be the one that forgets. A reader who is on Help
+    while three plan files will not parse is a reader who should be told.
     """
     try:
         root: Path | None = _docs_root()
@@ -361,4 +366,4 @@ def render_help(links: Links = STATIC) -> str:
         )
     body = _compiled(_HELP).render(docs=drawn)
     return _page("openproj — help", body, _SUGGEST_STYLE + _DETAIL_STYLE + _HELP_STYLE,
-                 links, "help")
+                 links, "help", index.unreadable)

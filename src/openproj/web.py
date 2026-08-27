@@ -2217,13 +2217,12 @@ def create_app(
     def help_page() -> HTMLResponse:
         """Every document this tool ships, on one page.
 
-        The only route here that asks the store for nothing at all: this page is
-        about the tool, not about a plan, so there is no commit to read at and no
-        index to build. It takes no `Request` either — nothing on it varies by
-        who is looking, and a reader who is not signed in gets the same page as
-        anybody else, which is the point of documentation.
+        Nothing on it varies by who is looking — a reader who is not signed in
+        gets the same page as anybody else, which is the point of documentation —
+        so it takes no `Request`. It takes the index all the same, for the one
+        thing every page owes: the banner naming plan files that will not parse.
         """
-        return page(render.render_help(render.ROUTES))
+        return page(render.render_help(index_now()[1], render.ROUTES))
 
     @app.get("/people", response_class=HTMLResponse)
     def people(request: Request) -> HTMLResponse:

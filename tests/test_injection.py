@@ -308,6 +308,12 @@ def census_routes(record_ids: tuple[str, ...]) -> dict[str, str]:
         # The inbox views of the landing — the same page held to one kind, so
         # each renders the hostile issue or note rows under its own URL.
         "issues": "/issues", "notes": "/notes",
+        # Help draws documentation and no record, so the two corpora make the
+        # same page and this passes by construction today. Covered rather than
+        # exempted all the same: it renders markdown through the same `_MD` every
+        # shaping document goes through, and the day it draws anything a person
+        # typed, it is already in the census instead of being remembered into it.
+        "help": "/help",
         "new issue": "/new?kind=issue", "new note": "/new?kind=note",
         "new task": "/new?kind=task", "new pitch": "/new?kind=pitch",
         # `/detail` is the whole plan and read-only; a record's own page is the

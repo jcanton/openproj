@@ -2947,8 +2947,15 @@ def test_the_static_export_carries_no_socket(tmp_path: Path):
         page = (out / name).read_text(encoding="utf-8")
         assert "const YJS" not in page, name
         assert "const COEDIT" not in page, name
-        assert "/api/coedit/" not in page, name
         assert "WebSocket" not in page, name
+        # The route's own spelling is the weakest of the four checks and the only
+        # one prose can trip: `help.html` draws `docs/architecture.md`, which
+        # explains co-editing and names `/api/coedit/<id>` in a sentence. The
+        # three above are about the shipped SCRIPT and hold on every page here,
+        # including that one — a page carrying the room has all four, and this
+        # exemption cannot hide one that does.
+        if name != "help.html":
+            assert "/api/coedit/" not in page, name
 
 
 def test_the_served_detail_page_carries_the_room_and_no_other_page_does(client: TestClient):

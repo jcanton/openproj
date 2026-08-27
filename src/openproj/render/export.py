@@ -64,7 +64,7 @@ def render_static(
         # exported page's nav names it. It is also the one page in this list that
         # is not about the plan — an export is what a reader has left when the
         # service is gone, and instructions are the thing they will want first.
-        ("help.html", render_help()),
+        ("help.html", render_help(index)),
     ):
         (out_dir / name).write_text(html, encoding="utf-8")
         written.append(name)

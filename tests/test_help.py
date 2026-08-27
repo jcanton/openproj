@@ -18,11 +18,14 @@ readily as by a heading.
 from __future__ import annotations
 
 import re
+from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
 
+from openproj.index import Index, build_index
+from openproj.model import Unreadable, load_repo
 from openproj.render import ROUTES, STATIC, render_help
 from openproj.render.help import DOCS, _read_doc, _without_title
 from openproj.vendor import _docs_root
@@ -95,8 +98,20 @@ def parsed(page: str) -> _Page:
 
 
 @pytest.fixture
-def page() -> str:
-    return render_help(ROUTES)
+def index(seed_root: Path) -> Index:
+    """The corpus, only so the shell has an `Index` to draw its banner from.
+
+    Nothing on this page comes from a plan, and every assertion below would be
+    the same against an empty one — the index is here because `render_help` takes
+    one, and it takes one because the unreadable-files banner is on every page.
+    """
+    records, config, unreadable = load_repo(seed_root)
+    return build_index(records, config, date(2026, 8, 17), unreadable)
+
+
+@pytest.fixture
+def page(index: Index) -> str:
+    return render_help(index, ROUTES)
 
 
 def test_every_document_the_page_names_is_a_file_in_this_repository():
@@ -184,12 +199,12 @@ def test_the_documents_own_title_line_is_not_drawn_twice(page: str):
     assert labels == [doc.label for doc in DOCS]
 
 
-def test_the_page_is_the_same_in_both_modes(page: str):
+def test_the_page_is_the_same_in_both_modes(page: str, index: Index):
     """The one view that renders identically served and exported: it is about the
     tool and not about a plan, which is why it can be a nav item at all — a nav
     link into a file nobody wrote is a dead link on every other exported page.
     """
-    exported = render_help(STATIC)
+    exported = render_help(index, STATIC)
     assert parsed(exported).sections == parsed(page).sections
     assert 'class="unread"' not in exported
 
@@ -229,6 +244,24 @@ def test_the_build_row_hides_a_fact_that_has_not_arrived(page: str):
     assert "Report issue" in page
     row = re.search(r"<footer id=\"build\">.*?</footer>", page, re.S)
     assert row and " · " not in row.group(0), "a separator was written into the markup"
+
+
+def test_the_banner_is_on_this_page_like_every_other(seed_root: Path):
+    """`render_help` takes an `Index` for this and for nothing else.
+
+    The shell draws the unreadable-files banner on every page, and
+    `test_every_page_the_renderer_can_draw_carries_the_banner` derives the entry
+    points from this package's namespace rather than from a list, precisely so the
+    next page cannot be the one that forgets. A reader who is on Help while three
+    plan files will not parse is a reader who should be told.
+    """
+    from pages import unreadable_in
+
+    records, config, _ = load_repo(seed_root)
+    broken = [Unreadable(path="tasks/task-a00002.md", why="no frontmatter")]
+    index = build_index(records, config, date(2026, 8, 17), broken)
+    named = unreadable_in(render_help(index, ROUTES))
+    assert any("tasks/task-a00002.md" in line for line in named), named
 
 
 def test_the_page_does_not_scroll_sideways_on_a_phone(page: str, tmp_path: Path):
