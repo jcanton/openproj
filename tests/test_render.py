@@ -30,7 +30,7 @@ from openproj.render import (
 )
 
 PAGES = ("index.html", "table.html", "detail.html", "people.html", "cycles.html",
-         "graph.html", "timeline.html", "issues.html", "notes.html")
+         "graph.html", "timeline.html", "issues.html", "notes.html", "help.html")
 
 
 @pytest.fixture

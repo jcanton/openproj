@@ -46,6 +46,13 @@ class Links(BaseModel):
     new: str = ""  # only the server can create; a rendered file has nowhere to post
     cycles: str = "cycles.html"
     cycle: str = "cycles.html#"  # prefix, then the cycle number
+    # Every document this tool ships, on one page. A real file in the export and
+    # not an empty string like `new` and `deck` below: the documentation is about
+    # the tool rather than about a plan, so it is the same page in both modes and
+    # an exported plan that has outlived the service carries its own instructions
+    # with it. It is also the reason it can be a nav item at all — a nav link into
+    # a file nobody wrote is a dead link on every other page of the export.
+    help: str = "help.html"
     # Prefix in front of a repository-relative embed path. Empty in the static
     # export, where a rendered file sits beside the `assets/` and `drawings/`
     # directories it names; `/` when a server is answering for them. It was
@@ -96,7 +103,7 @@ ROUTES = Links(
     records="/", issues="/issues", notes="/notes",
     table="/table", detail="/detail", graph="/graph", timeline="/timeline",
     record="/detail/", new="/new", people="/people",
-    cycles="/cycles", cycle="/cycle/",
+    cycles="/cycles", cycle="/cycle/", help="/help",
     repo="/", deck="/deck/", body="/api/body/",
 )
 
@@ -657,6 +664,28 @@ h1 { font-size: 1.35rem; margin: .2rem 0 .6rem; }
    chosen. */
 .corner { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center;
           gap: .4rem .6rem; min-width: 0; }
+/* The build row, and its separators. A flex row so the phone rule below — which
+   moves the corner in here — is the same layout with a different gap rather than
+   a second one, and so the whitespace between the items is a whitespace-only
+   text node in a flex container, which is not a flex item and draws nothing.
+
+   The dot is `::before` on every item but the first, which is what makes it
+   disappear along with whatever it was separating: `#planhead` is filled by the
+   health poll and is empty until it answers, `:empty` takes it out of the flow,
+   and a rule that matched siblings by position would then draw a dot with
+   nothing on either side of it. `.corner` is excluded because it is a group of
+   controls the phone rule parks here and not a fact about the build. */
+#build { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .5rem; }
+/* The character itself, and never the CSS escape `\\00B7`. This stylesheet is a
+   Python triple-quoted string, so a backslash in it is a PYTHON escape first:
+   `\\0` is octal, and the rule shipped a NUL byte followed by the text `B7`.
+   Chrome read that as the escape for U+0000 — which CSS replaces with U+FFFD —
+   and drew a replacement glyph and two literal characters between the version
+   and the plan's sha, on every page of the app. Found by looking at the footer,
+   not by reading the rule. */
+#build > * + *::before { content: "·"; margin-right: .5rem; }
+#build > .corner::before { content: none; }
+#planhead:empty { display: none; }
 .schemepick { min-width: 0; }
 .schemepick select { max-width: 100%; }
 #who { display: flex; align-items: center; gap: .5rem; color: var(--muted); }
@@ -2521,10 +2550,23 @@ function fitRoom() { roomSlack = 0; settleRoom(4); }
     In the footer because it is reference and not news. It is on every page, out
     of the reading column, and it is the first thing anybody asks for when a
     page behaves unexpectedly. -#}
+{#- Three facts, and the separators between them are the stylesheet's rather than
+    the template's. Written as literal ` · ` text this row said `openproj 0.37.0 ·
+    · Report issue` for the whole of the second or two before the health poll
+    answered, and permanently on any page where it never did — a dangling
+    separator beside an empty box, which reads as a page that failed to draw
+    something rather than as a fact that has not arrived. `#planhead:empty` takes
+    the span out and `* + *::before` takes its dot with it. -#}
 <footer id="build">
   <a href="https://github.com/jcanton/openproj/releases/tag/v{{ version }}">openproj
-    {{ version }}</a>{% if live %} · <span id="planhead" title="the plan's own commit"></span>
-  {% endif %}
+    {{ version }}</a>
+  {%- if live %}<span id="planhead" title="the plan's own commit"></span>{% endif %}
+  {#- jcanton, 2026-08-27, asking for it here and not in the nav: it is the thing
+      you reach for at the moment the page in front of you is wrong, which is the
+      moment you are already reading this row for the version to quote. `issues/new`
+      on the TOOL's repository and never the plan's — a bug in the app is not a
+      record in somebody's plan, and the two repositories stay two. -#}
+  <a href="https://github.com/jcanton/openproj/issues/new">Report issue</a>
 </footer>
 <script>
 // **Sign-in, the plan picker and the theme toggle move to the footer on a
@@ -3014,6 +3056,13 @@ _NAV = (
     # ruling: quick access to what would otherwise be a click on a filter. At
     # the end, where they sat before the records flip retired their own pages.
     ("issues", "Issues"), ("notes", "Notes"),
+    # Last, and after the two inboxes, because it is the one item that is not a
+    # view of the plan: everything to its left answers "what is in the plan" and
+    # this answers "what is this tool". jcanton, 2026-08-27, given the choice
+    # between a nav item and a `?` in the corner beside the sign-in — the corner
+    # already wraps at 500px with three controls in it, and an item here gets the
+    # `aria-current` mark every other page has for free.
+    ("help", "Help"),
 )
 _NAV_KEYS = frozenset(key for key, _ in _NAV)
 # What a record page's back link calls the view it was opened from. The nav's own

@@ -8,8 +8,9 @@ The landing page is **Records**: every record in the plan, one line each, newest
 the search box above it — it is how you get back to the thing you were writing. The tabs are the
 plan seen several ways. **Table** is the plan's records, filterable and searchable, and is where
 most people live. **Graph** is the dependency diagram. **Timeline** is the Gantt. **Cycles** is one
-page per cycle, with what was bet in it and who has room. **People** is who is on what. Clicking
-any record opens its own page, which is where you edit it.
+page per cycle, with what was bet in it and who has room. **People** is who is on what. **Help** is this page
+and the rest of the documentation, on one page inside the app. Clicking any record opens its own
+page, which is where you edit it.
 
 Filters live in the URL, so the view in front of you is a link, and there are no saved views to
 manage.

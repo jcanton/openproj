@@ -34,6 +34,42 @@ def _static_dir() -> Path:
     )
 
 
+def _docs_root() -> Path:
+    """Where `README.md` and `docs/` live, for the Help page to read them from.
+
+    The same shape as `_static_dir` above and for the same reason: the
+    documentation is not part of the wheel either, so an installed layout has to
+    be told where it is. `OPENPROJ_DOCS` names the directory that HOLDS both —
+    the repository root — and not `docs/` itself, because `README.md` is the
+    first thing the Help page draws and it does not live in `docs/`. Naming one
+    and deriving the other with `.parent` would be a path that resolves out of
+    the tree it was given the moment somebody points this at a directory of
+    copied files.
+
+    Both are checked, and a candidate missing either is not a candidate. A root
+    with `docs/` and no `README.md` is a partial copy, and the failure it causes
+    is one section of the Help page silently missing — which is exactly the
+    "empty must not look like broken" case this repository keeps meeting.
+
+    Raising here would take the Help page down with it and no other; `_read_doc`
+    in `render/help.py` is what turns that into a line on the page naming the
+    file, because a help page that 500s is worse than one that says which of its
+    six documents it could not find.
+    """
+    candidates = [
+        Path(os.environ["OPENPROJ_DOCS"]) if "OPENPROJ_DOCS" in os.environ else None,
+        Path(__file__).resolve().parents[2],
+    ]
+    for candidate in candidates:
+        if candidate is not None and (candidate / "docs").is_dir() \
+                and (candidate / "README.md").is_file():
+            return candidate
+    raise RuntimeError(
+        "the documentation (README.md and docs/) is missing. It is not part of the wheel, so "
+        "an installed layout must be told where it is with OPENPROJ_DOCS."
+    )
+
+
 def _inline(name: str) -> str:
     return (_static_dir() / name).read_text(encoding="utf-8")
 

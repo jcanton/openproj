@@ -1,5 +1,14 @@
 # The editor jcanton asked for
 
+> **Read as a record of decisions, not as a map of the code (noted 2026-08-27).** Every
+> `render.py:NNNN` reference below points into a 13,000-line module that no longer exists:
+> `render.py` was split into the `render/` package — `shell.py`, `detail.py`, `editor.py`,
+> `table.py` and the rest, behind a re-exporting `__init__.py` — in pure moves, so every symbol
+> named here still exists under the same name and only the file and the line changed. The line
+> numbers are left as written rather than re-resolved, because they date the decision they sit
+> beside; grep the symbol. This document is deliberately not on the app's Help page: it is an
+> audit and a decision log about this code, for somebody with a checkout.
+
 Written 2026-08-19, rewritten 2026-08-20 when the audit it asked for finished. Nothing
 here is built yet. The audit is the point of this file: six probes measured the
 candidates, three proposals argued from the measurements, a judge chose, and thirteen

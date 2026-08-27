@@ -2213,6 +2213,18 @@ def create_app(
             )
         )
 
+    @app.get("/help", response_class=HTMLResponse)
+    def help_page() -> HTMLResponse:
+        """Every document this tool ships, on one page.
+
+        The only route here that asks the store for nothing at all: this page is
+        about the tool, not about a plan, so there is no commit to read at and no
+        index to build. It takes no `Request` either — nothing on it varies by
+        who is looking, and a reader who is not signed in gets the same page as
+        anybody else, which is the point of documentation.
+        """
+        return page(render.render_help(render.ROUTES))
+
     @app.get("/people", response_class=HTMLResponse)
     def people(request: Request) -> HTMLResponse:
         me = picker_for(request)
