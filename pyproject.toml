@@ -40,7 +40,7 @@ name = "openproj"
 # uploaded, so a missing README is missing until the next release.
 readme = "README.md"
 requires-python = ">=3.12"
-version = "0.39.0"
+version = "0.40.0"
 
 # The one entry point, and what makes `uvx openproj new …` work without anything
 # being installed: uv builds the wheel into a throwaway environment and runs this.
