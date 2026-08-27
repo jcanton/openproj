@@ -7,6 +7,11 @@ __pycache__/
 out/
 .worktrees/
 
+# What `uv build` writes. The release workflow builds these on a runner and
+# uploads them from there; a copy on somebody's laptop is a build artefact, and
+# one committed by accident is a wheel in the repository that nothing rebuilds.
+dist/
+
 # The writer's flock (store.LOCK_FILE). A running server writes its pid into
 # one of these beside the plan it is serving, and a copy of seed/ was carrying a
 # committed one — see the commit that removed it.

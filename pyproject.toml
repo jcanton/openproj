@@ -1,7 +1,11 @@
 [project]
 name = "openproj"
-version = "0.38.2"
+version = "0.39.0"
 description = "Git-backed appetite planning for the icon4py team"
+# The project page on PyPI is this file, and without this line it is blank. It
+# also cannot be fixed in place: a version's metadata is frozen the moment it is
+# uploaded, so a missing README is missing until the next release.
+readme = "README.md"
 license = "BSD-3-Clause"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
@@ -24,6 +28,12 @@ dependencies = [
     "wsproto>=1.2",
 ]
 
+[project.urls]
+Homepage = "https://github.com/jcanton/openproj"
+Source = "https://github.com/jcanton/openproj"
+
+# The one entry point, and what makes `uvx openproj new …` work without anything
+# being installed: uv builds the wheel into a throwaway environment and runs this.
 [project.scripts]
 openproj = "openproj.cli:main"
 

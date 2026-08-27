@@ -1,0 +1,83 @@
+name: Release
+
+# Publish to PyPI, so that `uvx openproj new …` is the whole of what somebody has
+# to type. It already works without this file — `uvx --from
+# git+https://github.com/jcanton/openproj openproj new …` builds the wheel from
+# a public clone in about four seconds — and the difference PyPI buys is only
+# that a person or an agent does not have to know the repository URL to reach
+# the tool. That is a real difference for a command whose whole reason to exist
+# is that nobody should have to look anything up first.
+#
+# On a tag and nothing else. `main` is pushed to many times a day and a version
+# on PyPI cannot be replaced or re-used — deleting a release only burns the
+# number — so the thing that publishes has to be a deliberate act, and a tag is
+# the deliberate act this project already makes.
+on:
+  push:
+    tags: ["v*"]
+  # Publishing by hand, for the first release, and for the day a tag's run is
+  # cancelled by an outage after the tag exists and cannot be pushed again.
+  workflow_dispatch:
+
+# One at a time, and never cancelled mid-flight: `cancel-in-progress` on a job
+# that uploads to an index is a way to produce half a release.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      # Trusted Publishing: PyPI is told to trust *this workflow in this
+      # repository*, and the job exchanges a GitHub OIDC token for a
+      # short-lived upload token at publish time. Nothing long-lived is stored,
+      # so there is no API token in this repository's secrets to leak, to
+      # rotate, or to forget to rotate.
+      #
+      # It needs one thing done by hand, once, by somebody signed in to PyPI:
+      # add a pending publisher at https://pypi.org/manage/account/publishing/
+      # naming project `openproj`, owner `jcanton`, repository `openproj`,
+      # workflow `release.yml`, environment `pypi`. Until that exists this job
+      # fails at the last step with `invalid-publisher`, having built and
+      # checked the distributions perfectly well.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          # 3.12, as in `ci.yml` and the Dockerfile. The wheel is pure Python and
+          # `requires-python = ">=3.12"`, so the building interpreter does not
+          # end up in the artefact — this is here so the whole repository agrees
+          # about one version rather than because this job needs a specific one.
+          python-version: "3.12"
+          enable-cache: true
+
+      # The tag and the version in `pyproject.toml` are two copies of one fact,
+      # and the failure when they disagree is the expensive kind: a `v0.39.0` tag
+      # publishing 0.38.2, with the number now spent and 0.39.0 never on the
+      # index. Checked before anything is built, because after the upload there
+      # is nothing to do about it.
+      - name: The tag and the version must agree
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tagged="${GITHUB_REF_NAME#v}"
+          declared="$(uv run --no-project python -c \
+            'import tomllib,pathlib;print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          if [ "$tagged" != "$declared" ]; then
+            echo "tag $GITHUB_REF_NAME says $tagged and pyproject.toml says $declared" >&2
+            exit 1
+          fi
+          echo "both say $declared"
+
+      - run: uv build
+
+      # Read back before it is published, the refusal every write path in this
+      # project makes. `twine check` is what catches a README that renders as
+      # plain text on the project page — which cannot be fixed in place
+      # afterwards, only in the next version.
+      - run: uvx twine check dist/*
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

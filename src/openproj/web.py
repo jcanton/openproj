@@ -51,7 +51,7 @@ from collections import deque
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import Literal
 from urllib.parse import quote
 
 import httpx
@@ -74,12 +74,16 @@ from .auth import (
 from .index import Index, build_index, cascade_of
 from .model import (
     CONFIG_FILES,
+    DIRECTORY,
     ID_PATTERN,
+    INBOXES,
     KIND_NAMES,
     KINDS,
     MAX_BODY_BYTES,
     MAX_SLIDE_BYTES,
+    MODELS,
     PEOPLE_DIR,
+    PREFIX,
     RUNG,
     Config,
     Cycle,
@@ -90,6 +94,7 @@ from .model import (
     _an,
     edited_by_id,
     loop_made,
+    opens_at,
     parse_cycle_text,
     parse_person_text,
     parse_text,
@@ -462,53 +467,24 @@ STATE_COOKIE = "op_state"
 # disagreed once about the anchors: `validate_all` blessed a trailing-newline id
 # every API write refused.
 #
-# Off the ladder in `model.py`, so a rung added there is a directory here without
-# anybody remembering to come and add one.
-DIRECTORY = {rung.name: rung.directory for rung in KINDS}
-# What a new id starts with, per kind — off the ladder, like `DIRECTORY` beside
-# it. The SEVENTH copy, written out three lines under a map that was already
-# derived: `POST /api/record` with `kind: product` got past the models and fell
-# over here instead.
-PREFIX = {rung.name: rung.prefix for rung in KINDS}
-# And back again: the rung an id names, read off its prefix. The inverse of
-# `PREFIX`, derived beside it, for the two questions a bare id has to answer —
-# which directory its file lives in, and which status vocabulary judges a write
-# to it.
+# `DIRECTORY`, `PREFIX`, `Inbox`, `INBOXES` and `opens_at` are imported from
+# `model.py` and are NOT re-derived here. They were defined on this line until the
+# CLI grew a write path of its own and needed the same five: importing them from
+# this module would have put FastAPI and uvicorn on the import path of `openproj
+# check`, and deriving them a second time in `cli.py` is how a ladder comes to
+# have a rung in one place and not the other. The comment that used to sit here
+# was already counting — "the SEVENTH copy" — which is the argument for moving
+# them rather than for adding an eighth.
+#
+# Re-exported by being imported: every `DIRECTORY[kind]` and `PREFIX[kind]` in
+# this file, and the handful of `from .web import DIRECTORY` elsewhere, read the
+# same objects they always did.
+#
+# The rung an id names, read off its prefix — the inverse of `PREFIX`, and the
+# one of the group that only this file asks for. It answers the two questions a
+# bare id has to: which directory its file lives in, and which status vocabulary
+# judges a write to it.
 KIND_OF_PREFIX = {rung.prefix: rung.name for rung in KINDS}
-
-
-class Inbox(NamedTuple):
-    """What the server owns when an inbox record is created, and the link a
-    promotion writes on it. One row per unplanned rung, because these were the
-    defaults of `POST /api/issue` and `POST /api/note` — the routes this table
-    replaced — and losing them would make the shortest write paths in the tool
-    ask for four fields instead of a title."""
-
-    author: str  # defaults to the signed-in login; the form may say otherwise
-    dated: str   # always the server's: when a record was made is not an opinion
-    link: str    # what /api/promote appends the new record's id to
-
-
-INBOXES = {
-    "issue": Inbox("reported_by", "opened_on", "pitched_into"),
-    "note": Inbox("written_by", "written_on", "became"),
-}
-
-
-def opens_at(kind: str) -> str:
-    """The status a record of this kind is created in, off the model.
-
-    There used to be an `opens` column in the table above, holding `ready` for an
-    issue and `thinking` for a note — the same two words the models already
-    declare as their defaults, written out a second time. Nothing caught that,
-    because the two copies agreed, and they agreed until the day the planned
-    ladder gained a rung at its foot and somebody had to remember there was a
-    second list. A planned record already gets this for free: `POST /api/record`
-    writes no `status` key for one at all, so it opens at whatever the model says
-    on the way back in. This is the same fact for the two rungs that do write the
-    key, asked of the same place.
-    """
-    return str(RUNG[kind].model.model_fields["status"].default)
 
 
 # `MAX_BODY_BYTES` is imported rather than declared: it moved to `model.py` when
@@ -1316,11 +1292,11 @@ def _path_for(store: Store, commit: str, record_id: str) -> str | None:
     return found[0] if found else None
 
 
-# The models by kind, off the ladder. Written out, this was the SIXTH copy of
-# `KINDS` — the one the test that asserts the derivation did not name — so
-# `POST /api/record` with `kind: product` raised KeyError and answered 500 on the
-# only route that can create one.
-MODELS = {rung.name: rung.model for rung in KINDS}
+# `MODELS` is imported from `model.py` with `DIRECTORY` and `PREFIX`; the
+# derivation that stood here was the SIXTH copy of `KINDS` — the one the test that
+# asserts the derivation did not name — so `POST /api/record` with
+# `kind: product` raised KeyError and answered 500 on the only route that can
+# create one.
 
 
 def _as_date(value: str) -> date | None:

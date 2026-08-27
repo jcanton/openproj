@@ -1920,3 +1920,165 @@ def test_a_shutdown_lands_what_is_still_in_the_backlog(
     assert time.monotonic() - started < 10, "the shutdown drain hung"
     assert head(remote_path) == written.commit, "the backlog died with the process"
     assert store.condition().unpushed == 0
+
+
+# --------------------------------------------------------------------------- #
+# 12. The poll: a hand-push reaches a server nobody saved on
+#
+# `sync()` answers "is there anything of OURS to send", and answers it without a
+# round trip when the tracking ref says no. That is right, and it is why a warm
+# instance nobody saves on never notices a hand-push: nothing on the read path
+# fetches, so the tracking ref stays where the boot clone left it, `level` is
+# true against a stale ref, and the pusher — which only ever wakes on a local
+# commit — is never asked. Measured in production on 2026-08-27: a commit pushed
+# from a terminal was on GitHub and `/api/health` still named its parent hours
+# later, while `/detail/<the new record>` answered 404.
+#
+# `catch_up()` asks the other question, and the pusher asks it on a timer.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_hand_push_reaches_a_store_that_has_written_nothing(store: Store, remote_path: Path):
+    """The bug, as one call. Nothing local has changed, so every existing route
+    into the remote declines to look — and the commit is on the remote."""
+    outside = pushed_from_a_terminal(
+        remote_path,
+        {"tasks/task-c00003.md": record(id="task-c00003", title="By hand")},
+        "task-c00003: added from a terminal",
+    )
+    assert store.head() != outside
+
+    assert store.catch_up().state == "landed"
+
+    assert store.head() == outside
+    assert store.read(store.head(), "tasks/task-c00003.md") is not None
+
+
+def test_a_poll_that_finds_nothing_is_idle_and_moves_nothing(store: Store):
+    """The overwhelmingly common pass. `idle` is what stops the caller announcing
+    a landing to every open tab once a minute forever."""
+    before = store.head()
+
+    assert store.catch_up().state == "idle"
+
+    assert store.head() == before
+
+
+def test_the_poll_carries_the_backlog_up_with_it(store: Store, remote_path: Path):
+    """A poll is not a read-only errand: a store with unpushed commits and a
+    remote that moved is exactly the recovery case, and the poll must land the
+    backlog rather than fast-forward over it."""
+    outside = pushed_from_a_terminal(
+        remote_path,
+        {"tasks/task-c00003.md": record(id="task-c00003", title="By hand")},
+        "task-c00003: added from a terminal",
+    )
+    mine = store.write(
+        path=PATH,
+        content=record(status="in_progress"),
+        base_commit=store.head(),
+        author="ann",
+        message="task-c00001: status todo -> wip",
+    )
+    assert mine.pushed is False
+
+    outcome = store.catch_up()
+
+    assert outcome.state == "landed"
+    assert contains(remote_path, outside), "the outsider's commit was rewound"
+    assert store.read(store.head(), "tasks/task-c00003.md") is not None
+    assert parse_text(store.read(store.head(), PATH), PATH).status == "in_progress"
+    assert store.condition().unpushed == 0
+
+
+def test_a_poll_at_an_unreachable_remote_says_so_and_changes_nothing(
+    store: Store, remote_path: Path
+):
+    """Same answer the push path gives, so the caller's backoff is one branch and
+    not two."""
+    before = store.head()
+
+    with unplugged(remote_path):
+        assert store.catch_up().state == "unreachable"
+
+    assert store.head() == before
+
+
+def test_a_store_with_no_remote_polls_without_a_network(local_only: Store):
+    """Local development is the primary deployment for most of Phase 1, and a
+    timer that fires there must cost nothing at all."""
+    before = local_only.head()
+
+    assert local_only.catch_up().state == "idle"
+
+    assert local_only.head() == before
+
+
+def test_the_pusher_notices_a_hand_push_with_no_save_to_wake_it(
+    store: Store, remote_path: Path
+):
+    """The end-to-end property, and the one the production incident is about: a
+    commit arrives on the remote and NOBODY touches the server."""
+    pusher = Pusher(store, idle=0.05)
+    pusher.start()
+    try:
+        outside = pushed_from_a_terminal(
+            remote_path,
+            {"tasks/task-c00003.md": record(id="task-c00003", title="By hand")},
+            "task-c00003: added from a terminal",
+        )
+        deadline = time.monotonic() + 10
+        while store.head() != outside:
+            assert time.monotonic() < deadline, "the poll never ran"
+            time.sleep(0.01)
+    finally:
+        pusher.close()
+
+    assert store.read(store.head(), "tasks/task-c00003.md") is not None
+
+
+def test_the_poll_leaves_a_forked_store_alone(store: Store, remote_path: Path):
+    """A FORK — history rewritten, not merely grown — is a person's to resolve,
+    and until they do there is nothing a round trip can learn. The pass that
+    meets it is the one that discovers it; every timer tick after that must be
+    free, or the poll becomes exactly the backoff loop `_pass` was written not to
+    be, hammering a remote once a minute for as long as the instance lives.
+
+    Not the `diverged` fixture, which is the ORDINARY recoverable race: both
+    sides grew from one commit, `_recover` replays ours onto theirs and answers
+    `landed`. Only a remote that lost a commit this store confirmed it held
+    parks the pusher, so only that shape tests this.
+    """
+    confirmed = store.write(
+        path=PATH,
+        content=record(status="in_progress"),
+        base_commit=store.head(),
+        author="ann",
+        message="task-c00001: status todo -> wip",
+    )
+    assert store.sync().state == "landed"  # the remote provably held it
+    seed = parent(remote_path, confirmed.commit)
+    rewritten = commit_directly(
+        remote_path,
+        {**tree_now(remote_path), "notes.md": "history rewritten\n"},
+        "history rewritten",
+        parents=[seed],
+        ref=None,
+    )
+    pygit2.Repository(str(remote_path)).references[BRANCH].set_target(rewritten)
+
+    said: list = []
+    pusher = Pusher(store, deliver=said.append, idle=0.02)
+    pusher.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not any(one.state == "diverged" for one in said):
+            assert time.monotonic() < deadline, "the pusher never met the fork"
+            time.sleep(0.01)
+        seen = len(said)
+        time.sleep(0.5)  # twenty-five ticks' worth of timer
+    finally:
+        pusher.close()
+
+    assert len(said) == seen, "the poll kept asking a remote only a person can fix"
+    assert head(remote_path) == rewritten  # and nothing was replayed onto it

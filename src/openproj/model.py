@@ -2074,8 +2074,58 @@ def slide_title(title: str, at: int) -> str:
 ID_PATTERN = re.compile(
     r"\A(" + "|".join(re.escape(rung.prefix) for rung in KINDS) + r")-[0-9a-f]{6}\Z"
 )
-_PREFIX_FOR_KIND = {rung.name: rung.prefix for rung in KINDS}
+# The three questions a kind has to answer before a record of it can be written:
+# what its ids start with, where its file goes, and which model reads it. All
+# three are `Rung` columns, and all three are derived HERE rather than wherever
+# somebody happens to need them.
+#
+# `web.py` used to hold its own copies and its own comments counted them — "the
+# SEVENTH copy, written out three lines under a map that was already derived" —
+# and the CLI needing the same three is what finally moved them down. It could
+# not import them from `web.py` without pulling FastAPI, uvicorn and the whole
+# server into `openproj check`, and a fourth derivation to avoid an import is how
+# a ladder gets a rung in one place and not another.
+PREFIX = {rung.name: rung.prefix for rung in KINDS}
+DIRECTORY = {rung.name: rung.directory for rung in KINDS}
+MODELS: dict[str, type[Record]] = {rung.name: rung.model for rung in KINDS}
+_PREFIX_FOR_KIND = PREFIX
 _SIZE_FIELD = {"pitch": "person_weeks", "task": "person_weeks"}
+
+
+class Inbox(NamedTuple):
+    """What a writer owns when an inbox record is created, and the link a
+    promotion writes on it.
+
+    One row per unplanned rung, because these were the defaults of the deleted
+    `POST /api/issue` and `POST /api/note` routes, and losing them would make the
+    shortest write paths in the tool ask for four fields instead of a title.
+    """
+
+    author: str  # defaults to whoever is writing; the caller may say otherwise
+    dated: str   # never the caller's: when a record was made is not an opinion
+    link: str    # what a promotion appends the new record's id to
+
+
+INBOXES = {
+    "issue": Inbox("reported_by", "opened_on", "pitched_into"),
+    "note": Inbox("written_by", "written_on", "became"),
+}
+
+
+def opens_at(kind: str) -> str:
+    """The status a record of this kind is created in, off the model.
+
+    There used to be an `opens` column on the ladder holding `ready` for an issue
+    and `thinking` for a note — the same two words the models already declare as
+    their defaults, written out a second time. Nothing caught that, because the
+    two copies agreed, and they agreed until the day the planned ladder gained a
+    rung at its foot and somebody had to remember there was a second list. A
+    planned record already gets this for free: a writer that sets no `status` key
+    for one leaves it to open at whatever the model says on the way back in. This
+    is the same fact for the two rungs that do write the key, asked of the same
+    place.
+    """
+    return str(MODELS[kind].model_fields["status"].default)
 
 
 def _an(kind: str) -> str:

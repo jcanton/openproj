@@ -12,6 +12,7 @@ import socket
 import subprocess
 import sys
 import time
+from datetime import date
 from pathlib import Path
 
 import pygit2
@@ -585,3 +586,327 @@ def test_a_signal_to_the_entrypoint_reaches_the_server(tmp_path: Path):
     # is -15 and reads exactly like a process that ignored the signal and was
     # killed by it. The two are indistinguishable from the outside, which is why
     # the evidence here is what the server SAID rather than how it exited.
+
+
+# --------------------------------------------------------------------------- #
+# `new`: the write path for somebody without a browser
+#
+# Written after an agent was asked to file an issue against a plan repository and
+# had to reverse-engineer the schema from the three issues already in it — which
+# it did, and got `prs` wrong, because nothing told it that an issue is never
+# scheduled and its `prs` is therefore not read. Every rule that would have said
+# so was already in this codebase; there was just no command that ran them at the
+# moment a record is written rather than some time afterwards.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def plan(tmp_path: Path) -> Path:
+    """A plan repository with nothing in it but its configuration, which is the
+    state `new` has to work in: the first record is the one with no neighbour to
+    copy."""
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "defaults.yaml").write_text(
+        "schema_version: 4\nnominal_availability: 1.0\n", encoding="utf-8"
+    )
+    return tmp_path
+
+
+def written(plan: Path) -> list[Path]:
+    return sorted(p for p in plan.rglob("*.md") if p.is_file())
+
+
+def test_new_writes_a_record_that_check_then_accepts(plan: Path):
+    """The whole command, as one property: what it writes is what the gate CI
+    runs will pass. Anything less and it is a template generator."""
+    assert main(["new", "issue", str(plan), "--title", "Two extrapolations"]) == 0
+
+    assert main(["check", str(plan)]) == 0
+
+
+def test_new_files_a_record_under_its_kinds_directory_and_prefix(plan: Path):
+    """Both come off the rung. An agent guessing them from the corpus is the
+    thing this command exists to stop."""
+    assert main(["new", "issue", str(plan), "--title", "Two extrapolations"]) == 0
+
+    (only,) = written(plan)
+    assert only.parent.name == "issues"
+    assert only.stem.startswith("issue-")
+    assert len(only.stem) == len("issue-") + 6
+
+
+def test_new_stamps_the_repositorys_own_schema_version(plan: Path):
+    """Read from the plan's config, never from a number in this code: a record
+    written today is held to today's rules, and which rules those are is the
+    repository's fact and not the CLI's."""
+    (plan / "config" / "defaults.yaml").write_text(
+        "schema_version: 2\nnominal_availability: 1.0\n", encoding="utf-8"
+    )
+
+    assert main(["new", "note", str(plan), "--title", "A thought"]) == 0
+
+    (only,) = written(plan)
+    assert "created_schema_version: 2" in only.read_text(encoding="utf-8")
+
+
+def test_new_says_a_field_this_kind_does_not_read_is_not_read(plan: Path, capsys):
+    """The exact trap that prompted this command. `prs` is a real field on the
+    model, so nothing refuses it; it is simply never read on a record that is
+    never scheduled. A warning, like `check` gives — the record is written, and
+    the person is told before they commit rather than after.
+    """
+    code = main(
+        ["new", "issue", str(plan), "--title", "Two extrapolations",
+         "--set", "prs=C2SM/icon4py#1359"]
+    )
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "warning" in out
+    assert "prs" in out
+    assert "is not read" in out
+
+
+def test_new_refuses_a_blocker_and_leaves_no_file_behind(plan: Path, capsys):
+    """A record that cannot pass `check` must not reach the disk at all. Writing
+    it and reporting the blocker would put the repository in the state the
+    command was run to avoid, and leave somebody to `rm` their way out of it."""
+    code = main(["new", "task", str(plan), "--title", "Port it", "--status", "ready"])
+
+    assert code == 1
+    assert written(plan) == []
+    assert "blocker" in capsys.readouterr().out
+
+
+def test_new_refuses_a_field_the_kind_does_not_have(plan: Path, capsys):
+    """Not a validation problem — a typo. The field would sit in the frontmatter
+    unread by anything, and every reader of that file would believe it meant
+    something."""
+    code = main(
+        ["new", "issue", str(plan), "--title", "Two extrapolations",
+         "--set", "reportedby=jcanton"]
+    )
+
+    assert code == 1
+    assert written(plan) == []
+    assert "reportedby" in capsys.readouterr().out
+
+
+def test_new_owns_the_date_and_defaults_the_author_on_an_inbox_record(plan: Path):
+    """When a record was made is not an opinion, so the command writes it. Who
+    reported it is a default and not a fact — somebody files what a colleague
+    mentioned in a corridor — so `--set` may say otherwise."""
+    assert main(
+        ["new", "issue", str(plan), "--title", "Two extrapolations",
+         "--set", "reported_by=jcanton"]
+    ) == 0
+
+    (only,) = written(plan)
+    text = only.read_text(encoding="utf-8")
+    assert "reported_by: jcanton" in text
+    assert f"opened_on: '{date.today().isoformat()}'" in text
+
+
+def test_new_answers_in_json_for_something_that_is_not_a_person(plan: Path, capsys):
+    """An agent has to read the id back to say what it filed, and parsing it out
+    of prose is the kind of thing that works until the prose is reworded."""
+    assert main(
+        ["new", "issue", str(plan), "--title", "Two extrapolations", "--json"]
+    ) == 0
+
+    said = json.loads(capsys.readouterr().out)
+    (only,) = written(plan)
+    assert said["id"] == only.stem
+    assert Path(said["path"]) == only.relative_to(plan)
+
+
+def test_two_records_in_a_row_do_not_collide(plan: Path):
+    """Six hex characters is 16.7 million, which is not infinity, and the loser of
+    a collision would be a record silently overwritten by the next one."""
+    assert main(["new", "note", str(plan), "--title", "One"]) == 0
+    assert main(["new", "note", str(plan), "--title", "Two"]) == 0
+
+    assert len(written(plan)) == 2
+
+
+def test_new_can_commit_and_leaves_the_working_tree_clean(plan: Path):
+    """The point of `--commit` is that the next command is `git push` and nothing
+    else. A commit that moves the branch without the index leaves a clone whose
+    `git status` reports the new record as both staged-deleted and untracked,
+    which is a worse place to be than having committed by hand.
+    """
+    repo = pygit2.init_repository(str(plan), initial_head="main")
+    repo.config["user.name"] = "Jacopo"
+    repo.config["user.email"] = "jcanton@example.org"
+
+    assert main(["new", "issue", str(plan), "--title", "Two extrapolations",
+                 "--commit"]) == 0
+
+    (only,) = written(plan)
+    reopened = pygit2.Repository(str(plan))
+    # The record specifically, not the whole tree: the plan's own config is
+    # untracked in this fixture and committing it is not this command's business.
+    assert str(only.relative_to(plan)) not in reopened.status()
+    head = reopened[reopened.references["refs/heads/main"].target]
+    assert head.message.startswith(f"{only.stem}: ")
+    assert head.tree / "issues" / only.name, "the record is not in the commit"
+
+
+def test_new_without_commit_leaves_git_alone(plan: Path):
+    """The default is a file on the disk and nothing else: a person who wants to
+    read it before it becomes a commit must be able to, and an agent that got the
+    title wrong should be able to just edit the file."""
+    pygit2.init_repository(str(plan), initial_head="main")
+
+    assert main(["new", "issue", str(plan), "--title", "Two extrapolations"]) == 0
+
+    assert pygit2.Repository(str(plan)).references.get("refs/heads/main") is None
+
+
+def test_new_works_in_a_directory_that_is_not_a_repository(tmp_path: Path):
+    """`check` and `render` both run against a plain directory, and this is not
+    the command that gets to be different about it."""
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "defaults.yaml").write_text("schema_version: 4\n", encoding="utf-8")
+
+    assert main(["new", "note", str(tmp_path), "--title", "A thought"]) == 0
+
+
+def test_one_set_on_a_list_field_is_a_list_of_one(plan: Path):
+    """What somebody types. Without it the answer is a pydantic type error naming
+    `list_type`, which is correct and no use at all when the fix is a pair of
+    brackets that the shell also wants quoting."""
+    assert main(
+        ["new", "task", str(plan), "--title", "Port it", "--set", "reviewers=merganserly"]
+    ) == 0
+
+    (only,) = written(plan)
+    assert "reviewers:" in only.read_text(encoding="utf-8")
+    assert "- merganserly" in only.read_text(encoding="utf-8")
+
+
+def test_a_repeated_set_builds_the_list_without_brackets(plan: Path):
+    """The other way in, for the caller who would rather not quote YAML at all."""
+    assert main(
+        ["new", "task", str(plan), "--title", "Port it",
+         "--set", "reviewers=merganserly", "--set", "reviewers=jackdawrie"]
+    ) == 0
+
+    (only,) = written(plan)
+    text = only.read_text(encoding="utf-8")
+    assert "- merganserly" in text
+    assert "- jackdawrie" in text
+
+
+def test_new_writes_the_kinds_own_shaping_template(plan: Path):
+    """A pitch that arrives with no headings is a pitch nobody shapes. The
+    template is the team's, and it is the same one the browser's New starts
+    from."""
+    assert main(["new", "pitch", str(plan), "--title", "Port the dycore"]) == 0
+
+    (only,) = written(plan)
+    assert "## Problem" in only.read_text(encoding="utf-8")
+
+
+def test_a_body_file_replaces_the_template(plan: Path):
+    """The agent case: the body is already written somewhere and re-typing it
+    through --set is not a thing anybody should do."""
+    (plan / "body.md").write_text("## Problem\n\nTwo copies of one routine.\n", encoding="utf-8")
+
+    assert main(
+        ["new", "issue", str(plan), "--title", "Two extrapolations",
+         "--body-file", str(plan / "body.md")]
+    ) == 0
+
+    (only,) = (p for p in written(plan) if p.parent.name == "issues")
+    assert "Two copies of one routine." in only.read_text(encoding="utf-8")
+
+
+def test_set_wants_a_field_and_a_value(plan: Path, capsys):
+    """`--set reported_by` with no `=` is a typo, and one that would otherwise be
+    read as a field named `reported_by` with an empty value."""
+    code = main(["new", "issue", str(plan), "--title", "T", "--set", "reported_by"])
+
+    assert code == 1
+    assert written(plan) == []
+    assert "--set" in capsys.readouterr().out
+
+
+def test_tag_and_set_tags_both_land(plan: Path):
+    """`--tag` is documented as sugar for the same field, and sugar that silently
+    drops the thing it is sugar for is the worst of both."""
+    assert main(
+        ["new", "issue", str(plan), "--title", "T", "--set", "tags=[dycore]", "--tag", "port"]
+    ) == 0
+
+    text = written(plan)[0].read_text(encoding="utf-8")
+    assert "- dycore" in text
+    assert "- port" in text
+
+
+@pytest.fixture
+def a_machine_with_no_git_identity(tmp_path: Path):
+    """Take `user.name` and `user.email` away from every config level there is.
+
+    Through `pygit2.settings.search_path` and NOT through `HOME`: libgit2
+    resolves those directories once, when it initialises, so an environment
+    variable set afterwards is read by nothing — the first draft of this passed
+    on a machine with no `~/.gitconfig` and on no other machine. Pointing the
+    three levels above the repository at an empty directory is the supported way
+    to say "this machine has no identity", and it says it the same everywhere.
+
+    Global state, so it is put back on the way out however the test leaves.
+    """
+    levels = (
+        pygit2.enums.ConfigLevel.GLOBAL,
+        pygit2.enums.ConfigLevel.XDG,
+        pygit2.enums.ConfigLevel.SYSTEM,
+    )
+    empty = tmp_path / "no-git-config"
+    empty.mkdir()
+    was = {level: pygit2.settings.search_path[level] for level in levels}
+    for level in levels:
+        pygit2.settings.search_path[level] = str(empty)
+    yield
+    for level, path in was.items():
+        pygit2.settings.search_path[level] = path
+
+
+@pytest.mark.usefixtures("a_machine_with_no_git_identity")
+def test_commit_into_a_repository_with_no_identity_writes_nothing(plan: Path, capsys):
+    """Asked before the record is written, not after. A refusal that arrives once
+    the file is on the disk keeps neither half of the contract: the record exists,
+    the commit does not, and the exit code says the whole thing failed."""
+    pygit2.init_repository(str(plan), initial_head="main")
+
+    code = main(["new", "issue", str(plan), "--title", "T", "--commit"])
+
+    assert code == 1
+    assert written(plan) == []
+    assert "identity" in capsys.readouterr().out
+
+
+def test_commit_in_a_directory_that_is_not_a_repository_writes_nothing(plan: Path, capsys):
+    """`--commit` against a plain directory is a typo, not a request to go looking
+    for a repository somewhere above it."""
+    code = main(["new", "issue", str(plan), "--title", "T", "--commit"])
+
+    assert code == 1
+    assert written(plan) == []
+    assert "not a git repository" in capsys.readouterr().out
+
+
+def test_commit_from_a_plan_nested_in_another_repository_writes_nothing(tmp_path: Path, capsys):
+    """`pygit2.Repository()` searches upwards, so a plan directory inside some
+    other checkout resolves to THAT one — and every path this command computed is
+    relative to the plan. Committing anyway stages a path that does not exist."""
+    pygit2.init_repository(str(tmp_path), initial_head="main")
+    inside = tmp_path / "plan"
+    (inside / "config").mkdir(parents=True)
+    (inside / "config" / "defaults.yaml").write_text("schema_version: 4\n", encoding="utf-8")
+
+    code = main(["new", "issue", str(inside), "--title", "T", "--commit"])
+
+    assert code == 1
+    assert list(inside.rglob("*.md")) == []
+    assert "not the root of one" in capsys.readouterr().out

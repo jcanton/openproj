@@ -28,9 +28,24 @@ import tempfile
 import time
 from datetime import date
 from pathlib import Path
+from typing import get_args, get_origin
+
+from ruamel.yaml import YAML
 
 from .index import build_index
-from .model import Config, edited_by_id, load_repo, validate_all
+from .model import (
+    DIRECTORY,
+    INBOXES,
+    MODELS,
+    PREFIX,
+    Config,
+    edited_by_id,
+    load_repo,
+    opens_at,
+    parse_text,
+    patch_text,
+    validate_all,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -39,6 +54,51 @@ def _parser() -> argparse.ArgumentParser:
 
     check = commands.add_parser("check", help="validate a plan repository")
     check.add_argument("repo", type=Path)
+
+    new = commands.add_parser(
+        "new",
+        help="write a new record into a plan repository",
+        description=(
+            "Mint a record, hold it to every rule `check` holds it to, and write "
+            "it — or refuse and write nothing. The id, the directory and the "
+            "body template all come off the kind, so none of them is a thing to "
+            "guess from the records already there."
+        ),
+    )
+    new.add_argument("kind", choices=sorted(DIRECTORY))
+    new.add_argument("repo", type=Path)
+    new.add_argument("--title", required=True)
+    new.add_argument(
+        "--tag", action="append", default=[], metavar="TAG",
+        help="repeatable; sugar for --set tags=[...]",
+    )
+    new.add_argument(
+        "--status",
+        help="default: the status this kind opens in, which is the one that requires nothing",
+    )
+    new.add_argument(
+        "--as", dest="author", metavar="LOGIN",
+        help="who is filing this, for the kinds that record it (an issue's "
+             "reported_by, a note's written_by). Omitted by default: this "
+             "command knows a git identity and the plan is written in GitHub "
+             "logins, and guessing one from the other names the wrong person.",
+    )
+    new.add_argument(
+        "--set", action="append", default=[], metavar="FIELD=VALUE", dest="assignments",
+        help="repeatable. The value is read as YAML, so 1.5 is a number, "
+             "[a, b] is a list and true is a boolean; repeating a FIELD makes "
+             "its values a list.",
+    )
+    new.add_argument(
+        "--body-file", type=Path, metavar="FILE",
+        help="the shaping document to use instead of this kind's template; - is stdin",
+    )
+    new.add_argument(
+        "--commit", action="store_true",
+        help="commit the new file, authored by your git identity. The next "
+             "command is `git push` and nothing else.",
+    )
+    new.add_argument("--json", action="store_true", help="print the id and path as JSON")
 
     render = commands.add_parser("render", help="write the static pages")
     render.add_argument("repo", type=Path)
@@ -76,6 +136,278 @@ def _parser() -> argparse.ArgumentParser:
     schedule.add_argument("--json", action="store_true")
     schedule.add_argument("--today", type=date.fromisoformat, default=None)
     return parser
+
+
+def _assigned(assignments: list[str]) -> dict:
+    """`--set` pairs, with each value read as YAML and a repeated field made a list.
+
+    YAML rather than a string, because half the fields on a record are not
+    strings: `--set person_weeks=1.5` has to arrive as a number and
+    `--set review_waived=true` as a boolean, and a caller quoting YAML into a
+    shell should get the same answer the file would give. It is also the loader
+    the record is about to be read back through, so a value that survives here
+    and fails there is a type error the model gets to name, not a parse this
+    function has to anticipate.
+
+    `#` does not start a comment mid-token in YAML, which is what lets
+    `--set prs=C2SM/icon4py#1359` — the exact thing somebody will type — arrive
+    whole.
+    """
+    yaml = YAML()
+    fields: dict = {}
+    for pair in assignments:
+        field, sep, raw = pair.partition("=")
+        if not sep:
+            raise ValueError(f"blocker: --set wants FIELD=VALUE, not {pair!r}")
+        value = yaml.load(raw) if raw else ""
+        if field in fields:
+            # Repeating a field is how a list is written without shell-quoting
+            # brackets. The first repeat promotes; the rest append.
+            was = fields[field]
+            fields[field] = [*was, value] if isinstance(was, list) else [was, value]
+        else:
+            fields[field] = value
+    return fields
+
+
+def _takes_a_list(annotation) -> bool:
+    """Does this model field hold a list? True through an optional, too."""
+    if get_origin(annotation) is list:
+        return True
+    return any(get_origin(inside) is list for inside in get_args(annotation))
+
+
+def _shaped_like_the_model(kind: str, fields: dict) -> dict:
+    """The fields in the model's own order, with a scalar widened to a list where
+    the model asks for one.
+
+    **The order.** `patch_text` writes the keys in the order the mapping hands
+    them over, which without this is the order the command line happened to
+    mention them: a file led by whichever `--set` came first, with `id` at the
+    bottom. Every record in the corpus opens `id`, `kind`, `title`, and the
+    models declare those three in exactly that order — so the model IS the
+    convention, and reading the order off it beats writing the same list down a
+    second time here. The keys are all known by the time this runs, so nothing is
+    lost by rebuilding the mapping.
+
+    **The widening.** `--set prs=C2SM/icon4py#1359` is the exact string a person
+    types, and a `prs` that holds a list would otherwise answer with a pydantic
+    type error naming `list_type` — correct, and no help at all when the fix is a
+    pair of brackets the shell also wants quoting. Repeating the field already
+    builds a list, so this is that same rule applied to the first one. It only
+    ever widens, and only in the direction the model asks for; everything else is
+    left exactly as the caller wrote it, for the model to accept or to refuse by
+    name.
+    """
+    known = MODELS[kind].model_fields
+    return {
+        field: [fields[field]]
+        if _takes_a_list(known[field].annotation) and not isinstance(fields[field], list)
+        else fields[field]
+        for field in known
+        if field in fields
+    }
+
+
+def _new(args) -> int:
+    """Mint a record, hold it to every rule, and write it — or write nothing.
+
+    The order is the whole design. The file is built, parsed back, and validated
+    against the plan it is about to join BEFORE anything touches the disk, so a
+    record that `check` would refuse never becomes a file somebody has to `rm`
+    their way out of. That is the difference between this and the recipe it
+    replaces — write the file, then run `check`, then fix it — which leaves the
+    repository in the state the command was run to avoid.
+
+    Warnings are printed and do not stop it, exactly as in `check`, and that is
+    the case this was written for. An agent asked to file an issue against a plan
+    repository copied the schema off the three issues already in it and put a
+    `prs` on one; `prs` is a real field on the model, so nothing refuses it, and
+    an issue is simply never scheduled so its `prs` is never read. The rule
+    existed. Nothing ran it at the moment the record was written.
+
+    Everything that is not the caller's — the id, the directory, the body
+    template, the opening status, the date, the schema version — comes off the
+    kind or off the repository. Those are the six things somebody reverse-
+    engineering a corpus gets wrong, and none of them is a question this command
+    asks.
+    """
+    from .render import TEMPLATES  # jinja2 lives under here; `check` must not pay for it
+
+    kind = args.kind
+    # First, because a refusal here has to write nothing, like every other
+    # refusal in this function — and because "your record is on the disk but the
+    # commit you asked for did not happen" is the one outcome with no good next
+    # step.
+    if args.commit and (refusal := _cannot_commit_in(args.repo)) is not None:
+        print(f"blocker: {refusal}")
+        return 1
+
+    records, config, _ = load_repo(args.repo)
+    try:
+        fields = _assigned(args.assignments)
+    except ValueError as error:
+        print(str(error))
+        return 1
+
+    fields["kind"] = kind
+    fields["title"] = args.title
+    if args.tag:
+        # Added to whatever `--set tags=` said rather than over it. `--tag` is
+        # documented as sugar for the same field, and sugar that silently drops
+        # the thing it is sugar for is the worst of both.
+        already = fields.get("tags", [])
+        fields["tags"] = [*(already if isinstance(already, list) else [already]), *args.tag]
+    if args.status is not None:
+        fields["status"] = args.status
+
+    # Before anything is minted: a field the model does not own would sit in the
+    # frontmatter unread, and every later reader of that file would believe it
+    # meant something. Not a validation problem — a typo, and the only place it
+    # can be caught is here.
+    unknown = sorted(set(fields) - set(MODELS[kind].model_fields))
+    if unknown:
+        print(f"blocker: {kind} has no {', '.join(unknown)}")
+        return 1
+
+    inbox = INBOXES.get(kind)
+    if inbox is not None:
+        if args.author is not None:
+            fields.setdefault(inbox.author, args.author)
+        fields.setdefault("status", opens_at(kind))
+        # Written last, over anything `--set` said: when a record was made is not
+        # an opinion, and `opened_on` and `written_on` are derived rows on the
+        # page rather than fields anybody fills in.
+        fields[inbox.dated] = date.today().isoformat()
+    # Grandfathering protects the corpus that already exists, never the record
+    # being written right now — so this is the repository's number and not one
+    # in this file. A rule added after today may only warn about what is already
+    # in the plan; it blocks this.
+    fields.setdefault("created_schema_version", config.schema_version)
+
+    body = TEMPLATES.get(kind, "")
+    if args.body_file is not None:
+        body = sys.stdin.read() if str(args.body_file) == "-" else args.body_file.read_text(
+            encoding="utf-8"
+        )
+
+    taken = {path.stem for path in args.repo.glob(f"{DIRECTORY[kind]}/*.md")}
+    while True:
+        # Six hex characters is 16.7 million and not infinity, and the loser of a
+        # collision is a record silently overwritten by the next one. Re-minting
+        # is cheaper than the conversation about what happened to it.
+        record_id = f"{PREFIX[kind]}-{secrets.token_hex(3)}"
+        if record_id not in taken:
+            break
+    fields["id"] = record_id
+    content = patch_text("---\n---\n", _shaped_like_the_model(kind, fields), body)
+
+    try:
+        candidate = parse_text(content, record_id)
+    except ValueError as error:
+        print(f"blocker: {record_id}: that would not read back as a record: {error}")
+        return 1
+    problems = sorted(
+        (
+            problem
+            # The neighbours matter: a parent that does not exist, an id already
+            # claimed and a dependency cycle are all facts about the plan rather
+            # than about this file. Files already in the repository that will not
+            # parse are not this record's problem and do not stop it — `check` is
+            # what lists those.
+            for problem in validate_all([*records, candidate], config)
+            if problem.record_id == record_id
+        ),
+        key=lambda p: (p.severity, p.field or ""),
+    )
+    for problem in problems:
+        print(f"{problem.severity}: {record_id}: {problem.field}: {problem.message}")
+    if any(problem.severity == "blocker" for problem in problems):
+        print("nothing written")
+        return 1
+
+    relative = f"{DIRECTORY[kind]}/{record_id}.md"
+    destination = args.repo / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(content, encoding="utf-8")
+
+    committed = _commit_one(args.repo, relative, f"{record_id}: {args.title}") if args.commit \
+        else None
+    if args.json:
+        print(json.dumps({"id": record_id, "path": relative, "commit": committed}))
+    elif committed:
+        print(f"{relative}\ncommitted {committed[:7]} — `git push` when you are ready")
+    else:
+        print(f"{relative}\ngit add {relative} && git commit && git push")
+    return 0
+
+
+def _cannot_commit_in(repo: Path) -> str | None:
+    """Why `--commit` would fail here, asked BEFORE anything is written.
+
+    Asked early because this command's contract is that a refusal writes nothing,
+    and a refusal that arrives after the file is on the disk keeps neither half of
+    it: the record exists, the commit does not, and the exit code says the whole
+    thing failed. Everything checked here is a property of the repository, so it
+    is knowable before the first byte.
+    """
+    import pygit2
+
+    try:
+        handle = pygit2.Repository(str(repo))
+    except pygit2.GitError:
+        return f"{repo} is not a git repository, so there is nothing to commit to"
+    if handle.is_bare or handle.workdir is None:
+        return f"{repo} is a bare repository and has no working copy to write into"
+    if Path(handle.workdir).resolve() != repo.resolve():
+        # `Repository()` searches upwards, so a plan directory nested in some
+        # other repository resolves to THAT one — and every path this command
+        # computed is relative to the plan, not to it. Committing anyway would
+        # stage a path that does not exist.
+        return (
+            f"{repo} is inside the repository at {handle.workdir}, not the root of "
+            "one; commit it from there yourself"
+        )
+    try:
+        # Read for its refusal: `default_signature` is where libgit2 assembles
+        # `user.name` and `user.email` from every config level, and a KeyError
+        # here is the only honest way to ask whether the pair exists.
+        _ = handle.default_signature
+    except KeyError:
+        return (
+            "git has no identity here, so the commit would have no author — set "
+            "`git config user.name` and `git config user.email`"
+        )
+    return None
+
+
+def _commit_one(repo: Path, relative: str, message: str) -> str:
+    """One file, one commit, authored by whoever ran the command.
+
+    Through the index, not around it. `Store` commits by building a tree and
+    moving the branch, which is right for a bare clone with no working copy and
+    wrong here: in an ordinary checkout it leaves a repository whose `git status`
+    reports the new record as staged-for-deletion AND untracked at the same time,
+    which is a worse place to be than never having offered `--commit`.
+
+    The identity is git's, deliberately. A commit somebody makes from their own
+    terminal is theirs, and the server's bot signature belongs on the commits the
+    server makes.
+
+    Every way this can refuse was asked and answered by `_cannot_commit_in`
+    before the record was written, so there is no arm here for a repository that
+    cannot take a commit.
+    """
+    import pygit2
+
+    handle = pygit2.Repository(str(repo))
+    who = handle.default_signature
+    handle.index.read()
+    handle.index.add(relative)
+    handle.index.write()
+    tree = handle.index.write_tree()
+    parents = [] if handle.head_is_unborn else [handle.head.target]
+    return str(handle.create_commit("HEAD", who, who, message, tree, parents))
 
 
 def _check(repo: Path) -> int:
@@ -454,6 +786,8 @@ def main(argv: list[str] | None = None) -> int:
         return int(exit_code.code or 2)
     if args.command == "check":
         return _check(args.repo)
+    if args.command == "new":
+        return _new(args)
     if args.command == "render":
         return _render(args.repo, args.out_dir, args.today)
     if args.command == "serve":
