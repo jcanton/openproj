@@ -163,14 +163,68 @@ def test_step2_a_dependency_cycle_leaves_its_members_and_descendants_unscheduled
     )
 
 
+def test_a_record_nobody_has_sized_gets_no_floor_span_from_a_dependency_cycle_either():
+    """The stalled path wrote its placeholder before anybody asked about the size.
+
+    Two unsized tasks pointing at each other came back at `start=end=today`,
+    `unscheduled=True` — which the table draws as Start 27 Aug / End 27 Aug,
+    styled `derived` exactly like a forecast and sorting to the top of a
+    Start-ascending sort, because only the timeline reads that flag. That is the
+    symptom §2 of the design and the leaf path's own comment both argue at length
+    must never happen, reached by the one route neither of them was guarding.
+    """
+    records = [
+        task("aaa001", size=None, depends_on=["task-aaa002"]),
+        task("aaa002", owner="bo", size=None, depends_on=["task-aaa001"]),
+    ]
+    spans, _ = run(records)
+    assert spans == {}
+
+
+def test_an_unsized_child_caught_in_a_cycle_does_not_pin_its_pitch_to_today():
+    """The other half of the same floor span, one level up.
+
+    The rollup is `min(child.start)`/`max(child.end)` and cannot see
+    `unscheduled`, so a stalled unsized child at today dragged its pitch's start
+    back to today and had its overrun measured against a fabricated end — with
+    nothing on the parent row to mark that any of it was invented.
+    """
+    records = [
+        pitch("bbb001", owner="cy"),
+        task("aaa001", parent="pitch-bbb001", size=None, depends_on=["task-aaa002"]),
+        task("aaa002", owner="bo", size=None, depends_on=["task-aaa001"]),
+        task("aaa003", parent="pitch-bbb001", size=2.0, start_date=date(2026, 9, 7)),
+    ]
+    spans, _ = run(records)
+    assert "task-aaa001" not in spans
+    assert spans["pitch-bbb001"].start == date(2026, 9, 7)
+
+
 def test_step3_done_work_is_a_historical_point_marker_or_no_span_at_all():
     dated = task("aaa001", status="done", start_date=date(2026, 7, 1))
     spans, _ = run([dated, task("aaa002", status="done")])
     july = date(2026, 7, 1)
     assert spans["task-aaa001"] == Span(
-        start=july, end=july, historical=True, budget_weeks=1.0, elapsed_weeks=0.2
+        start=july, end=july, historical=True, budget_weeks=1.0, elapsed_weeks=None
     )
     assert "task-aaa002" not in spans
+
+
+def test_step3_a_done_record_has_no_length_rather_than_a_fifth_of_a_week():
+    """These two dates are one day, because nothing records where work ENDED yet.
+
+    Read back through `_elapsed_weeks` that day was 0.2 — a fifth of a week,
+    which is not a length but today twice, and which the comment beside
+    `Span.elapsed_weeks` names as the thing it must not store. It travelled: a
+    done pitch bet at eight printed "8.0 · 0.2 in tasks" on its own page, and
+    `_rollup_problems` could not fire on a finished bet at any size, because a
+    fifth of a week is inside every box there is.
+
+    §4 of `design/time-model.md` stores an `end_date` somebody typed, and then
+    this becomes a measurement instead of None.
+    """
+    spans, _ = run([task("aaa001", status="done", start_date=date(2026, 7, 1), size=8.0)])
+    assert spans["task-aaa001"].elapsed_weeks is None
 
 
 def test_step3_a_done_parent_stays_historical_even_with_a_live_child():
@@ -237,6 +291,56 @@ def test_step4_an_unsized_child_leaves_its_parent_the_dates_of_the_rest():
     )
 
 
+def test_a_pitch_whose_children_are_all_unsized_is_not_scheduled_as_a_leaf():
+    """Being a container is a property of the plan, not of who came back with a span.
+
+    Every live child used to get one, so an empty `kids` meant "no children" and
+    nothing else. With no default appetite it also means "children, none of them
+    placeable" — and a pitch in that state fell past the rollup into the LEAF
+    path, where it was placed against its own bet and BOOKED its own assignees.
+    That breaks the second invariant in the module docstring: the pitch holds a
+    booking while `Index._charged` skips it as a rollup and charges nobody, so
+    the same person is priced twice by the scheduler and once by the ledger. The
+    sized task below is the visible half — it queued behind a bet that should
+    never have taken a slot.
+    """
+    records = [
+        pitch("bbb001", owner="ann", size=2.0),
+        task("aaa001", parent="pitch-bbb001", size=None),
+        task("aaa002", parent="pitch-bbb001", size=None, owner="bo"),
+        task("aaa003", owner="ann", size=1.0),
+    ]
+    spans, _ = run(records)
+    assert "pitch-bbb001" not in spans, "a container with nothing placeable under it draws nothing"
+    assert spans["task-aaa003"] == Span(
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, elapsed_weeks=1.0
+    )
+
+
+def test_a_task_that_exactly_fills_its_bet_is_level_with_the_box_and_not_over():
+    """The box and the contents are both read in whole working days, or `=` cannot happen.
+
+    `working_days_after` lays 2.5 weeks out as `ceil(12.5)` = thirteen days and
+    `_elapsed_weeks` counts them back as 2.6, so the contents were ALWAYS the
+    ceiling of the box: equal only when the size happened to be a multiple of a
+    fifth of a week, and larger otherwise. `_rollup_problems` fires on strict
+    `>`, so this pitch — bet at 2.5, holding one task bet at 2.5 on the same
+    person, the design's `=` row exactly — warned that it needed 2.6 more than
+    the 2.5 it had. Any fractional availability makes that the normal case.
+    """
+    records = [
+        pitch("bbb001", owner="ann", size=2.5),
+        task("aaa001", parent="pitch-bbb001", owner="ann", size=2.5),
+    ]
+    spans, _ = run(records)
+    box = spans["pitch-bbb001"]
+    assert box.budget_weeks == box.elapsed_weeks == pytest.approx(2.6)
+    # And the leaf agrees with itself, which is where the bias came from: its box
+    # and its contents are the same placement read from two ends.
+    leaf = spans["task-aaa001"]
+    assert leaf.budget_weeks == leaf.elapsed_weeks == pytest.approx(2.6)
+
+
 def test_step5_ordering_is_by_priority_then_id():
     """Order is only observable through capacity: all three want the same worker."""
     records = [task("aaa001"), task("aaa002"), task("aaa003", priority="high")]
@@ -252,7 +356,11 @@ def test_step5_a_cycle_closed_by_a_containment_edge_does_not_raise():
     lexicographical_topological_sort raises NetworkXUnfeasible here and takes the
     whole page down over one bad record."""
     records = [
-        pitch("bbb001", owner="bo"),
+        # Bet at something, because the pitch is what this asserts a span for and
+        # a record nobody has sized gets none — not even the `unscheduled`
+        # placeholder this pair lands on. A pitch IS a bet, so a size on it is the
+        # normal case rather than a prop for the test.
+        pitch("bbb001", owner="bo", size=2.0),
         task("aaa001", parent="pitch-bbb001", depends_on=["pitch-bbb001"]),
     ]
     spans, _ = run(records)
@@ -459,7 +567,10 @@ def test_regression_a_parent_does_not_double_book_the_owner_of_its_only_child():
 
 def test_regression_depending_on_an_ancestor_is_rejected_and_degrades_gracefully():
     child = task("aaa001", parent="pitch-bbb001", depends_on=["pitch-bbb001"])
-    records = [pitch("bbb001", owner="bo"), child]
+    # Sized for the same reason as the containment-cycle test above: the claim
+    # here is that both records still come back, and an unsized one comes back
+    # from nowhere at all.
+    records = [pitch("bbb001", owner="bo", size=2.0), child]
     problems = model.validate_all(records, CONFIG)
     assert any(
         p.record_id == "task-aaa001" and p.field == "depends_on" and p.severity == "blocker"
@@ -908,9 +1019,10 @@ def test_a_done_date_at_the_end_of_the_calendar_costs_its_dependent_and_nothing_
         end=date.max,
         historical=True,
         budget_weeks=1.0,
-        # One working day — the last day of the calendar is a Friday — because a
-        # done record is still a point marker until an end date is stored on it.
-        elapsed_weeks=0.2,
+        # No length: a done record is a point marker until an end date is stored
+        # on it, and one day read back as a fifth of a week was a measurement of
+        # nothing.
+        elapsed_weeks=None,
     )
     assert spans["task-aaa002"].unscheduled
     assert "runs past the end of the calendar" in explanations["task-aaa002"].text
@@ -1025,8 +1137,11 @@ def test_a_loop_that_only_inheritance_closes_costs_those_records_and_no_others()
     failure this scheduler is built to avoid."""
     spans, _ = run(
         [
-            pitch("aaa001", depends_on=["pitch-aaa002"]),
-            pitch("aaa002"),
+            pitch("aaa001", depends_on=["pitch-aaa002"], size=1.0),
+            # Both bet at something: the assertion below is that the deadlocked
+            # records come back marked unscheduled, and an unsized record has no
+            # span to mark.
+            pitch("aaa002", size=1.0),
             task("bbb001", parent="pitch-aaa001", size=1.0, owner="ann"),
             task("bbb002", parent="pitch-aaa002", size=1.0, owner="bo", depends_on=["task-bbb001"]),
             task("ccc001", size=1.0, owner="cy"),

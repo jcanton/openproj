@@ -35,17 +35,10 @@ from .model import (
     under,
     unread_fields,
     validate_all,
+    workers_on,
 )
 from .query import QueryError, evaluate, parse
 from .schedule import Explanation, Span, schedule
-
-
-def _people_on(record: Record) -> list[str]:
-    """Everyone answerable for the work, each once. The same set the scheduler
-    divides a size among, so the page and the timeline cannot disagree."""
-    named = ([record.owner] if record.owner else []) + list(record.assignees)
-    return list(dict.fromkeys(named))
-
 
 COMPUTED_PREDICATES = (
     "blocked",
@@ -124,9 +117,7 @@ class Progress(BaseModel):
         return f"{self.done:g}/{self.total:g} {'wk' if self.unit == 'weeks' else 'items'}"
 
 
-def _weighed(
-    kid: Record, rolled: Callable[[str], Progress | None]
-) -> tuple[float, float] | None:
+def _weighed(kid: Record, rolled: Callable[[str], Progress | None]) -> tuple[float, float] | None:
     """One child's (done, total) weeks, or None when it carries no weeks at all.
 
     **The total is what was BET on that child.** A sized rung carries its own
@@ -418,7 +409,7 @@ class Index(BaseModel):
         for record in self.plan.values():
             if not self.counts_in(record, cycle):
                 continue
-            people = _people_on(record)
+            people = workers_on(record)
             if not people or self.children.get(record.id):
                 continue
             size = size_weeks(record)

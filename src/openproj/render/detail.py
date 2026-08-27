@@ -7,9 +7,9 @@ from collections.abc import Sequence
 
 from markupsafe import Markup, escape
 
-from ..index import Index, _people_on, cascade_of
+from ..index import Index, cascade_of
 from ..model import KINDS as KIND_LADDER
-from ..model import NOTE_STATES, RUNG, Record, checklist, sections, size_weeks
+from ..model import NOTE_STATES, RUNG, Record, checklist, sections, size_weeks, workers_on
 from ..vendor import _ace, _yjs
 from .controls import _REQUIRED_JS, _combobox_html, _control_html
 from .editor import (
@@ -2913,8 +2913,16 @@ def _tasks_add_up_to(index: Index, record: Record) -> float | None:
     `progress` is still the gate, because it is what knows this record HAS tasks
     that count in weeks — a leaf has an `elapsed_weeks` of its own, and printing
     "3.0 in tasks" beside a task's own appetite would be the record agreeing with
-    itself. None as well where the plan holds no span for it: an unsized pitch
-    whose tasks are all unsized is scheduled nowhere, and there is nothing to say.
+    itself. None as well where the plan holds no span for it: a pitch whose tasks
+    are all unsized is scheduled nowhere, and there is nothing to say.
+
+    And None where the span it does hold has no length — an unscheduled one, or a
+    finished one, whose start and end are the same day until §4 of
+    `design/time-model.md` gives a done record an end date somebody typed. That
+    day used to be read back out as a fifth of a week, so every done pitch on the
+    site printed "8.0 · 0.2 in tasks": a number that is not a measurement of
+    anything, under every box there is, beside the one kind of record whose
+    contents are finally a fact rather than a forecast.
     """
     counted = index.progress.get(record.id)
     if counted is None or counted.unit != "weeks":
@@ -2959,7 +2967,7 @@ def _progress_view(index: Index, record: Record) -> dict | None:
                 # the sum of what is under it rather than anything to print
                 # here.
                 "size": "" if size is None else f"{size:g}",
-                "people": ", ".join(_people_on(child)),
+                "people": ", ".join(workers_on(child)),
             }
         )
     return {

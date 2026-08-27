@@ -8,7 +8,7 @@ from functools import lru_cache
 
 from markupsafe import Markup
 
-from ..index import Index, _people_on
+from ..index import Index
 from ..model import (
     Record,
     Slide,
@@ -24,6 +24,7 @@ from ..model import (
     without_checklist,
     without_comments,
     without_emptied_headings,
+    workers_on,
 )
 from .cycles import _proposed
 from .env import _compiled
@@ -1489,7 +1490,7 @@ def slides_of(index: Index, record: Record, links: Links, assets: dict[str, str]
         "priority": record.priority,
         "priority_class": _priority_class(record.priority),
         "priority_glyph": PRIORITY_GLYPH.get(str(record.priority), ""),
-        "people": ", ".join(_people_on(record)),
+        "people": ", ".join(workers_on(record)),
         # Blank where nobody has sized it, and the slide leaves the whole tally
         # out. The `*` that used to hang off this number meant "this is the
         # default, not a bet" — an asterisk with no footnote on a slide projected

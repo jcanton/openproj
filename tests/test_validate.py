@@ -702,6 +702,92 @@ def test_unsized_tasks_drop_out_of_the_rollup_and_the_sized_ones_still_warn():
     assert [p.message for p in said] == [OVER_THE_BOX.format("5.0", "4.0", 1)]
 
 
+def test_a_bet_its_tasks_exactly_fill_is_level_with_the_box_and_says_nothing():
+    """The `=` row of the design's own table, which used to be unreachable.
+
+    `working_days_after` lays 2.5 weeks out as `ceil(12.5)` = thirteen working
+    days and `_elapsed_weeks` reads them back as 2.6, so the contents were always
+    the CEILING of the box: equal only where the size was a multiple of a fifth
+    of a week, larger everywhere else. This rule fires on strict `>`, so a pitch
+    bet at 2.5 holding one task bet at 2.5 on the same person — the tasks filling
+    the box exactly — was told it needed 2.6 more than the 2.5 it had. Any
+    fractional availability puts every bet in that position, so this was not an
+    edge case but the normal one.
+    """
+    records = [
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Q",
+            person_weeks=2.5,
+            assignees=["jackdawrie"],
+        ),
+        Task(
+            id="task-000001",
+            kind="task",
+            title="A",
+            parent="pitch-000001",
+            person_weeks=2.5,
+            assignees=["jackdawrie"],
+        ),
+    ]
+    assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
+
+
+def test_the_sentence_quotes_the_box_after_the_same_rounding_it_compares_with():
+    """A number in the message that the comparison did not use is a message nobody
+    can check. The bet is 2.5 person-weeks on one person, which the scheduler will
+    lay out over thirteen working days — so the box this rule holds the tasks
+    against is 2.6, and 2.6 is what the sentence has to say it is. It said 2.5,
+    which is the stated appetite rather than the box, and a reader adding it up
+    found a warning that fired on numbers that were not over.
+    """
+    records = [
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Q",
+            person_weeks=2.5,
+            assignees=["jackdawrie"],
+        ),
+        Task(
+            id="task-000001",
+            kind="task",
+            title="A",
+            parent="pitch-000001",
+            person_weeks=3.0,
+            assignees=["jackdawrie"],
+        ),
+    ]
+    problem = only(rolled_up(*records), "pitch-000001", field="person_weeks")
+    assert problem.message == OVER_THE_BOX.format("3.0", "2.6", 1)
+
+
+def test_a_pitch_whose_tasks_are_all_unsized_is_not_compared_against_its_own_placement():
+    """It was the tasks that had to fit in the box, and here it was the pitch itself.
+
+    A container is a container by the plan and not by which of its children came
+    back with a span, and that distinction only appeared when the default
+    appetite went: a pitch whose every child is unsized had no child spans to
+    roll up, fell through to the leaf path and was PLACED — so `budget_weeks` and
+    `elapsed_weeks` both described the pitch's own placement, the second being
+    the ceiling of the first, and this rule told somebody to cut scope on a bet
+    holding no measured work at all.
+    """
+    records = [
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Q",
+            person_weeks=2.5,
+            assignees=["jackdawrie"],
+        ),
+        Task(id="task-000001", kind="task", title="A", parent="pitch-000001"),
+        Task(id="task-000002", kind="task", title="B", parent="pitch-000001"),
+    ]
+    assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
+
+
 # --- the seed corpus --------------------------------------------------------
 
 

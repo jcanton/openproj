@@ -2514,9 +2514,7 @@ def reviewers_under(record_id: str, children: dict[str, list[Record]]) -> list[s
     return list(dict.fromkeys(found))
 
 
-def _appetite_problem(
-    record: Record, sentence: str
-) -> Iterator[tuple[str, str | None, str, int]]:
+def _appetite_problem(record: Record, sentence: str) -> Iterator[tuple[str, str | None, str, int]]:
     """The size gate, in the words of the status asking for it.
 
     Two statuses demand an appetite and both ask the same three questions — does
@@ -2590,7 +2588,7 @@ def _status_problems(
             yield "blocker", "owner", "a ready record needs an owner", 1
         # And somebody actually on it. An owner is who answers for the bet, which
         # is not the same question as who is doing the work — the scheduler prices
-        # a record by the people on it (`_people_on`), so a bet with an owner and
+        # a record by the people on it (`workers_on`), so a bet with an owner and
         # nobody assigned is a bet that has been accepted and staffed with nobody.
         # jcanton, 2026-08-22.
         if not record.assignees:

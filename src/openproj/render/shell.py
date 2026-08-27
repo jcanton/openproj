@@ -2128,7 +2128,7 @@ function hillHtml(status) {
 
 function cardHtml(row, extra) {
   // An owner who is also an assignee is one person, not two. The scheduler reads
-  // them that way — `_people_on` dedupes — and a box that says "ann, ann" is a
+  // them that way — `workers_on` dedupes — and a box that says "ann, ann" is a
   // box nobody trusts the rest of.
   const others = (row.assignees || []).filter(who => who && who !== row.owner);
   // `row.weeks` is the timeline's rounded copy and `row.size` the table's, and
