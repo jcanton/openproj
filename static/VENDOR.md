@@ -7,7 +7,9 @@ nobody publishes it in a form a `<script>` block can run; there is a section on 
 below, and the bytes in git are still upstream's. A second — `excalidraw.js` — is not
 inlined and is not upstream's bytes at all: it is this repository's own build, fetched
 by the browser rather than shipped on every page, and "The editor side," below, is
-where the override that permits a build step here is written down.
+where the override that permits a build step here is written down. A third —
+`mermaid.min.js` — is upstream's bytes and is fetched rather than inlined for reasons
+of its own; "Mermaid, and why it is fetched," below.
 
 | file | version | licence | source |
 |---|---|---|---|
@@ -24,6 +26,8 @@ where the override that permits a build step here is written down.
 | `excalidraw.js` | 0.18.1 (React 18.3.1) | MIT (code) + 6×OFL-1.1 + MIT (7 shipped font families) | **our own esbuild output — see "The editor side," below** |
 | `excalidraw-LICENSE.txt` | 0.18.1 | MIT | https://raw.githubusercontent.com/excalidraw/excalidraw/master/LICENSE |
 | `excalidraw-fonts-LICENSE.txt` | — | OFL-1.1 (6 families) + MIT (1) | seven sources, one per family, fetched 2026-08-26 — see "The font licences," below |
+| `mermaid.min.js` | 11.17.2 | MIT | `dist/mermaid.min.js` from https://registry.npmjs.org/mermaid/-/mermaid-11.17.2.tgz |
+| `mermaid-LICENSE.txt` | 11.17.2 | MIT | `LICENSE` from the same tarball |
 
 Not a file: the colour schemes in `src/openproj/themes.py` are data rather than a
 library, and are copied from **tinted-theming/schemes**, spec 0.11, MIT, fetched
@@ -420,6 +424,55 @@ max-age=31536000, immutable` because a vendored file changes only with a release
 (unlike a drawing, where the same header would be a lie), and deliberately not a
 `StaticFiles` mount — this repository has never had one, and a mount takes a path from
 the request where every other route here takes an id and derives the path itself.
+
+## Mermaid, and why it is fetched
+
+`docs/data-model.md` has carried a promotion flowchart as a ```mermaid fence since it
+was written, and until 2026-08-27 the Help page drew it as five lines of source.
+jcanton, that day: *"please vendor mermaid and let's include it and render the block
+nicely"*.
+
+**`dist/mermaid.min.js` is upstream's own UMD build**, out of the npm tarball for the
+reason `ace.js` records: `dist/` is a directory upstream publishes, so a SHA256 over
+those bytes identifies something a person can point at. Verified:
+`sha256(mermaid-11.17.2.tgz)` is
+`6ad2f42c3fc26bbf9e45cbb6d11898972573ea52b33a5f4ff51952899f950ffd`, and the file here
+is byte-identical to `package/dist/mermaid.min.js` inside it.
+
+**3,572,661 B**, and it is **not inlined**. Two reasons, and the second is the one that
+decides it.
+
+- Bytes. `help.html` is 405 KB in total and would be 3.9 MB, on a page whose diagram is
+  five boxes; a record's body may hold a fence and most do not. So it is fetched on
+  demand from `GET /static/mermaid.min.js`, the door `excalidraw.js` already opened, and
+  the fetch happens only on a page that turned out to have a diagram on it.
+- **A page carrying it fails `test_no_page_asks_the_network_for_a_font`.** The bundle
+  holds eighty `url(` tokens — SVG filter, marker and gradient references built out of
+  template literals, `url("+e.svgId+` and `${n}#${m}` among them — and that test reads
+  every `url(` on a page and demands `data:` or `#`. The rule is right and the bundle
+  fetches nothing; the way to have both is for the bundle never to be on a page. This is
+  the same wall `mode-markdown.js` hit, recorded in `docs/EDITOR.md`, and the same answer.
+
+**What it does NOT need, checked rather than assumed.** Zero `eval(` and zero
+`new Function` — so the policy keeps `script-src 'unsafe-inline'` and gains no
+`'unsafe-eval'`, which was the one thing that would have made this a refusal. Zero
+dynamic `import(`, so the UMD bundle is self-contained and fetches no chunk of itself at
+runtime; zero `cdn.`; zero `WebSocket`. The only absolute URLs in it are XML namespaces
+and links in error messages. Measured under this app's exact `<meta>` policy in headless
+Chrome before a line of it was wired up: the data-model flowchart drew five nodes and
+five edges at 371×348.
+
+**`securityLevel: 'strict'` and `flowchart.htmlLabels: false` are written down** in the
+loader rather than left to the library's defaults. A fence in a shaping document is text
+anybody who can push to the plan typed; at `loose` mermaid puts that text into the DOM as
+markup and honours `click` directives. Strict is mermaid's default today, and a default is
+a thing that moves in a minor release.
+
+**The static export has no diagram and that is deliberate.** `openproj render` writes
+files opened over `file://`, where there is no server to fetch a bundle from — so
+`_fence` (`markdown.py`) draws an ordinary code block there, exactly as it did before
+this was vendored, and an exported page's bytes do not move. The prefix decides, which is
+the same seam `_image` and `_link` already switch on.
 
 ## The drawings button's mark, lifted out of the same bundle
 

@@ -302,6 +302,48 @@ def _image(
     return RendererHTML.image(self, tokens, idx, options, env)
 
 
+def _fence(
+    self: RendererHTML, tokens: Sequence[Token], idx: int, options: object, env: dict
+) -> str:
+    """A ```mermaid fence is a diagram where there is a server, and source where
+    there is not.
+
+    jcanton, 2026-08-27: "please vendor mermaid and let's include it and render
+    the block nicely". `docs/data-model.md` has carried a promotion flowchart
+    since it was written and the Help page drew it as five lines of ASCII-ish
+    source.
+
+    **The prefix decides, exactly as it does for `_image` and `_link`.** The
+    bundle is 3.5 MB and is fetched from `/static/mermaid.min.js` rather than
+    inlined (see `static/VENDOR.md`), so a diagram needs a server to ask. The
+    static export has none — its pages are opened over `file://` — and a `<pre>`
+    that sits there empty for ever, or a console full of failed fetches, is worse
+    than the source it replaced. So an exported page keeps the ordinary code
+    block it has always had, and `openproj render` writes the same bytes it did
+    before this rule existed.
+
+    **The content is escaped by `Markup(...).format`, exactly as it would be in a
+    code block.** A mermaid fence in a shaping document is text a member typed,
+    and what reaches the page is text: mermaid parses it in the browser at
+    `securityLevel: 'strict'`, which is the shell's business (see `_MERMAID_JS`)
+    and not this function's. Nothing here builds markup out of it.
+    """
+    token = tokens[idx]
+    # The first word of the info string, which is where a language goes:
+    # ` ```mermaid ` and ` ```mermaid something ` are both mermaid, and
+    # ` ```mermaidish ` is not.
+    language = token.info.strip().split(maxsplit=1)[:1]
+    served = env.get("links", STATIC).table.startswith("/")
+    if language == ["mermaid"] and served:
+        # `<pre>` and not `<div>`: until mermaid has run — and for ever if the
+        # bundle never arrives — this element is showing source, and source in a
+        # `<div>` loses its line breaks. Mermaid replaces the content with an
+        # `<svg>` and stamps `data-processed`, which is what the stylesheet reads
+        # to stop drawing it as a code block.
+        return str(Markup('<pre class="mermaid">{}</pre>\n').format(token.content))
+    return RendererHTML.fence(self, tokens, idx, options, env)
+
+
 def _link(
     self: RendererHTML, tokens: Sequence[Token], idx: int, options: object, env: dict
 ) -> str:
@@ -433,6 +475,7 @@ _MD.core.ruler.push("openproj_pr_refs", _pr_refs)
 _MD.core.ruler.push("openproj_heading_ids", _heading_ids)
 _MD.add_render_rule("image", _image)
 _MD.add_render_rule("link_open", _link)
+_MD.add_render_rule("fence", _fence)
 
 
 def _markdown(text: str, links: Links, assets: dict[str, str] | None = None) -> Markup:

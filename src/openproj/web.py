@@ -624,9 +624,11 @@ IMAGE_TYPES = {
 }
 ASSET_PATTERN = re.compile(r"^[0-9a-f]{16}\.(png|jpg|gif|webp)$")
 
-# `GET /static/{name}` exists for exactly one file so far: the vendored
-# Excalidraw bundle is fetched on the first press of the drawing button rather
-# than carried on every page, so something has to answer that fetch. This is
+# `GET /static/{name}` answers for the two vendored bundles that are fetched
+# rather than carried: Excalidraw on the first press of the drawing button, and
+# mermaid on a page that turns out to have a diagram on it. Both are megabytes
+# that most readers of most pages never meet, and both would fail the page-wide
+# scans if they were inlined — `static/VENDOR.md` has the arithmetic. This is
 # an allowlist of vendored names, not a directory listing — the writable
 # surface is closed by construction (this module's docstring), and a route
 # that took its file name from the request and opened `static/<name>` would
@@ -635,6 +637,7 @@ ASSET_PATTERN = re.compile(r"^[0-9a-f]{16}\.(png|jpg|gif|webp)$")
 # served as; there is no name this dict does not already know about.
 STATIC_ALLOWLIST = {
     "excalidraw.js": "application/javascript",
+    "mermaid.min.js": "application/javascript",
 }
 
 DRAWING_DIR = "drawings"
