@@ -2213,6 +2213,17 @@ def create_app(
             )
         )
 
+    @app.get("/help", response_class=HTMLResponse)
+    def help_page() -> HTMLResponse:
+        """Every document this tool ships, on one page.
+
+        Nothing on it varies by who is looking — a reader who is not signed in
+        gets the same page as anybody else, which is the point of documentation —
+        so it takes no `Request`. It takes the index all the same, for the one
+        thing every page owes: the banner naming plan files that will not parse.
+        """
+        return page(render.render_help(index_now()[1], render.ROUTES))
+
     @app.get("/people", response_class=HTMLResponse)
     def people(request: Request) -> HTMLResponse:
         me = picker_for(request)

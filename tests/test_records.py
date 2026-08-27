@@ -150,7 +150,12 @@ def test_the_nav_says_records_at_the_root_and_table_at_table(tmp_path: Path):
     assert lit(table) == ["Table"]
     labels = [label for label, _, _ in nav_of(landing)]
     assert labels[:2] == ["Records", "Table"]
-    assert labels[-2:] == ["Issues", "Notes"], (
+    assert labels[-1] == "Help", (
+        "Help is the one nav item that is not a view of the plan, so it is last: "
+        "everything to its left answers what is in the plan, and it answers what "
+        "this tool is"
+    )
+    assert labels[-3:-1] == ["Issues", "Notes"], (
         "the inbox views are back in the nav: quick access to what would "
         "otherwise be a click on a filter"
     )

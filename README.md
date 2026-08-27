@@ -24,7 +24,8 @@ with the search box above it. It is how you get back to the thing you were writi
 PM work happens in the tabs, which are the same records seen several ways: **Table** is the one
 people live in, **Graph** is the dependency diagram, where dependencies are drawn and removed in a
 mode of its own, **Timeline** the derived Gantt, **Cycles** one page per cycle with its bets and
-its capacity, **People** who is on what and who is full. Every filter is in the URL, so a view is a
+its capacity, **People** who is on what and who is full, and **Help**, which is this file and the four
+documents below it, drawn on one page inside the app. Every filter is in the URL, so a view is a
 link, and a field can be asked for more than one value at a time — two statuses means either of
 them. Pointing at a row, a node or a bar opens the same card in all three: what the record is, who
 is on it, when it runs, and its shaping document under a rule.
@@ -101,6 +102,10 @@ take `--today`, because half of what they print depends on which day it is.
 | `docs/shape-up.md` | how this maps to what the team kept in HackMD, and where it departs from the book |
 | `AGENTS.md` | the invariants, how to write code here, and how to find the bug that is already here |
 | `deploy/RUNBOOK.md` | the deployment — credentials, the Cloud Run flags, and what is left to do |
+
+The first four of those, and this file, are also the app's **Help** page — the same bytes, read
+off the same files, so there is one copy of every sentence and nothing to keep in step. The last two
+are for somebody with a checkout and stay in the repository.
 
 ## Status
 

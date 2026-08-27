@@ -4,7 +4,8 @@ One markdown file per record: YAML frontmatter, then the shaping document as the
 database — every write is one commit through `store.py` against a bare repository, from the editor,
 from `/api/record`, or from somebody with a terminal — so everything here is either a field in a file
 or something derived from the files, and **nothing derived is ever written back**. `architecture.md`
-has the pages these structures are drawn on; this file is the structures.
+has the pages these structures are drawn on; this file is the structures. Both are on the app's
+**Help** page as well as in the repository, read off the same files.
 
 ## One type, six kinds
 
@@ -86,16 +87,21 @@ named on every page and by `openproj check` with the move that fixes it.
 `drawings/` is a ninth directory, and it is flat for a different reason: it holds no records at all,
 one PNG per drawing, named by the drawing's id (`drawings/draw-a1b2c3.png`) — and unlike `assets/`,
 it is **mutable**, rewritten in place on every edit through `Store.put_drawing`. It is invisible to
-the record model by construction, not by omission. `record_paths_in` (`model.py:244-295`) never gets
-as far as asking whether a drawing's directory is one it wants: the loop's own `if not
-path.endswith(".md")` continue, at `model.py:277-278`, drops every non-markdown path before that
-question is ever put to it. `_plan_files` (`model.py:1611`) only ever `rglob`s `*.md` in the first
-place, and `SEARCH_FIELDS` (`index.py:484-487`) reads record fields and never a blob. Say the
-consequence out loud, because it is the unpleasant one: a mistyped drawing path in a body is a
-**silent broken image** — no banner, no `openproj check` line, nothing sees it because nothing here
-was ever built to look. And `seed/` ships no drawings, because `cli.py`'s `_seed_files` filters to
-`.md` and `.yaml` (`cli.py:163-174`), so a seeded body naming a drawing would name a file that is
-not there.
+the record model by construction, not by omission. `record_paths_in` (`model.py`) never gets as far
+as asking whether a drawing's directory is one it wants: the loop's own `if not
+path.endswith(".md")` continue drops every non-markdown path before that question is ever put to
+it. `_plan_files` (`model.py`) only ever `rglob`s `*.md` in the first place, and `SEARCH_FIELDS`
+(`index.py`) reads record fields and never a blob. Say the consequence out loud, because it is the
+unpleasant one: a mistyped drawing path in a body is a **silent broken image** — no banner, no
+`openproj check` line, nothing sees it because nothing here was ever built to look. And `seed/`
+ships no drawings, because `cli.py`'s `_seed_files` filters to `.md` and `.yaml`, so a seeded body
+naming a drawing would name a file that is not there.
+
+Names and not line numbers, here and everywhere in these documents. Three of the five references
+this paragraph used to carry were already wrong within a fortnight — `_plan_files` had moved from
+1611 to 1593 and `_seed_files` from 163 to 151 — and a stale line number is worse than none,
+because it sends the reader to a line that says something else with every appearance of being the
+right one.
 
 ## Two populations: `Index.records` and `Index.plan`
 

@@ -341,8 +341,96 @@ def _link(
     return self.renderToken(tokens, idx, options, env)
 
 
+def _slug(text: str) -> str:
+    """A heading, folded to what a fragment may hold.
+
+    An allowlist rather than a list of characters to strip. A doc heading is
+    prose — `## Two populations: `Index.records` and `Index.plan`` is a real
+    one — and the punctuation that has to leave a fragment is not a set anybody
+    finishes enumerating. So the rule is the other way round: ASCII letters and
+    digits survive, every run of anything else becomes one hyphen.
+
+    Written as a loop and not as `re.sub`, which is what it obviously wants to
+    be. `test_no_page_is_assembled_by_substitution` parses this package as syntax
+    and refuses `.replace`, `.sub` and `.subn` anywhere in it — because a page was
+    once assembled by substituting into finished markup, and a rule with an
+    exception is a rule somebody argues their way past. This call is safe and the
+    check is blunt on purpose; the loop costs six lines and keeps the check blunt.
+    """
+    folded: list[str] = []
+    for character in text.lower():
+        if character.isascii() and character.isalnum():
+            folded.append(character)
+        elif folded and folded[-1] != "-":
+            folded.append("-")
+    return "".join(folded).strip("-")
+
+
+def _heading_text(inline: Token) -> str:
+    """A heading's words, with its markup taken off.
+
+    `token.content` is the raw markdown — backticks, emphasis and all — and a
+    table of contents entry reading `` `Index.plan` `` with the backticks in it
+    is a fragment somebody has to mentally strip. The children are already
+    tokenised by the time a core rule runs, so the text is there to be read
+    rather than re-parsed: `text` for prose and `code_inline` for a span, which
+    between them are every leaf a heading in these documents has.
+    """
+    return "".join(
+        child.content for child in (inline.children or [])
+        if child.type in ("text", "code_inline")
+    ).strip()
+
+
+def _heading_ids(state: StateCore) -> None:
+    """Ids and one level of demotion, for a document drawn inside another page.
+
+    Off unless `env["anchor"]` says which document this is, so a record body — the
+    other million calls through `_MD` — is parsed by exactly the chain it was
+    before. It is one rule and not a second parser for the reason `_markdown_line`
+    gives: a doc has to render the way every other document here renders, with
+    the same PR rule, the same image allowlist and the same `html: false`.
+
+    **The id is prefixed by the document.** Six documents on one page share one
+    fragment space, and `## The pages` is a heading in two of them; unprefixed,
+    the second one draws an id nothing can reach and the table of contents sends
+    both entries to the first. The counter below covers the rest — a document
+    that repeats a heading within itself, which `EDITOR.md` does.
+
+    **Demoted by one.** The page draws each document under an `<h2>` carrying its
+    name, so the document's own `##` sections belong at `<h3>`; left alone they
+    would be siblings of the heading they sit under, and a heading list — which
+    is how the reader this app's floor is written for navigates — would show six
+    flat documents instead of six with contents. The document's leading `# ` is
+    already gone (`_drop_repeated_title`), so nothing here is demoted out of `h6`
+    in practice; the `min` is there because a `######` in a file somebody writes
+    tomorrow must not produce an `<h7>`, which is not an element.
+    """
+    anchor = state.env.get("anchor")
+    if not anchor:
+        return
+    found = state.env.setdefault("headings", [])
+    seen: dict[str, int] = {}
+    tokens = state.tokens
+    for at, token in enumerate(tokens):
+        if token.type != "heading_open":
+            continue
+        text = _heading_text(tokens[at + 1])
+        level = min(int(token.tag[1:]) + 1, 6)
+        token.tag = tokens[at + 2].tag = f"h{level}"
+        # `or anchor` and not a bare fallback id: a heading of nothing but
+        # punctuation slugs to the empty string, and `anchor + "-"` is a
+        # fragment that reads as a bug in the page rather than as a link.
+        base = f"{anchor}-{_slug(text)}" if _slug(text) else anchor
+        seen[base] = repeats = seen.get(base, 0) + 1
+        identifier = base if repeats == 1 else f"{base}-{repeats}"
+        token.attrSet("id", identifier)
+        found.append({"level": level, "id": identifier, "text": text})
+
+
 _MD.core.ruler.push("openproj_source_lines", _source_lines)
 _MD.core.ruler.push("openproj_pr_refs", _pr_refs)
+_MD.core.ruler.push("openproj_heading_ids", _heading_ids)
 _MD.add_render_rule("image", _image)
 _MD.add_render_rule("link_open", _link)
 
@@ -364,6 +452,28 @@ def _markdown(text: str, links: Links, assets: dict[str, str] | None = None) -> 
     pictures inside it. See `_image` and `_inlined_assets`.
     """
     return Markup(_MD.render(text, {"links": links, "assets": assets or {}}))
+
+
+def document_html(text: str, links: Links, anchor: str) -> tuple[Markup, tuple[dict, ...]]:
+    """A whole document, and the headings it turned out to have.
+
+    The Help page's entry point, and `_markdown`'s sibling rather than its
+    replacement: same parser, same rules, same `html: false`, with `anchor`
+    switching on the one core rule a document inside another page needs. Two
+    functions and not a flag on `_markdown` because the return types differ — a
+    caller that wants a table of contents wants the headings, and every other
+    caller in this package would then be unpacking a tuple to throw half of it
+    away.
+
+    The headings come back as the rule found them, in document order, each with
+    the level it was DEMOTED to — so the caller nests the list without knowing
+    that a `##` in the file is an `<h3>` on the page. Written that way after the
+    first version returned the source level and the page built a table of
+    contents one rung out of step with the document it was for.
+    """
+    env: dict = {"links": links, "assets": {}, "anchor": anchor}
+    html = Markup(_MD.render(text, env))
+    return html, tuple(env.get("headings", ()))
 
 
 def _markdown_line(text: str, links: Links, assets: dict[str, str] | None = None) -> Markup:

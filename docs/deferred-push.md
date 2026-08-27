@@ -1,7 +1,9 @@
 # A save that does not wait for GitHub
 
-Designed 2026-08-24 with jcanton, not yet built. This is the expensive half — the
-reasoning — kept where the next person can read it.
+Designed 2026-08-24 with jcanton and **built since**: `src/openproj/pusher.py` is the thread
+this document argues for. What follows is the expensive half — the reasoning and the measurements —
+kept where the next person can read it, and read it as the design it was rather than as a
+description of what shipped.
 
 ## The number this is about
 

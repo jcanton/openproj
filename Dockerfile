@@ -31,12 +31,20 @@ COPY --from=build /app/.venv /app/.venv
 # it relative to the source layout. OPENPROJ_STATIC says so explicitly anyway.
 COPY --chown=openproj:openproj src/     /app/src/
 COPY --chown=openproj:openproj static/  /app/static/
+# The Help page reads these off the disk at render time, so that the page and
+# GitHub show one copy of every sentence with no build step in between. Left out,
+# /help draws six sections each naming the file it wanted — visible, not a 500,
+# and still wrong. `README.md` is copied beside `docs/` and not into it, because
+# `_docs_root` looks for the directory that holds both.
+COPY --chown=openproj:openproj docs/     /app/docs/
+COPY --chown=openproj:openproj README.md /app/README.md
 COPY --chown=openproj:openproj deploy/boot.py /app/boot.py
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1 \
     OPENPROJ_STATIC=/app/static \
+    OPENPROJ_DOCS=/app \
     OPENPROJ_REPO=/srv/plan.git \
     PORT=8080
 RUN install -d -o openproj -g openproj /srv

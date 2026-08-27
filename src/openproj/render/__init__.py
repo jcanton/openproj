@@ -54,6 +54,7 @@ from .editor import _ACE_SURFACE, _COEDIT, ACE, PLAIN
 from .env import _json
 from .export import render_static
 from .graph import _elements, render_graph
+from .help import DOCS, render_help
 from .hill import (
     _HILL_ALONG,
     _HILL_BOX,
@@ -139,6 +140,8 @@ __all__ = [
     "PRIORITIES",
     "PRIORITY_GLYPH",
     "PROMOTABLE",
+    "DOCS",
+    "render_help",
     "REQUIRED_AT",
     "ROUTES",
     "STATIC",

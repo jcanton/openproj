@@ -30,7 +30,7 @@ from openproj.render import (
 )
 
 PAGES = ("index.html", "table.html", "detail.html", "people.html", "cycles.html",
-         "graph.html", "timeline.html", "issues.html", "notes.html")
+         "graph.html", "timeline.html", "issues.html", "notes.html", "help.html")
 
 
 @pytest.fixture
@@ -4626,7 +4626,13 @@ def _outside_the_floor(page: str) -> str:
 # here rather than harmful, and it is why the floor is written in the shell: a rule
 # that travels has to be switched off wherever it lands, not next to where it was
 # written.
-_CARRIES_MOTION = ("detail.html", "cycles.html")
+#
+# Help is the third and arrived the same way: it draws rendered markdown, and the
+# four rules that style a rendered document — `.doc`, `.doc h2`, `.doc code`,
+# `.doc blockquote` — are written in that sheet. Taking the sheet is what keeps
+# them at one copy; a second declaration scoped to this page is the drift those
+# comments were written to prevent. The fade comes with it and moves nothing.
+_CARRIES_MOTION = ("detail.html", "cycles.html", "help.html")
 
 
 def test_the_app_moves_in_two_places(rendered: Path):
@@ -4658,10 +4664,11 @@ def test_the_app_moves_in_two_places(rendered: Path):
             "transition: opacity .15s, background .15s" in read(rendered, name)
         ), name
     assert 'id="grip"' in read(rendered, "detail.html")
-    assert 'id="grip"' not in read(rendered, "cycles.html"), (
-        "the cycles index grew a grip, so the rule it has been carrying now moves "
-        "something and the floor is doing more than it was measured doing"
-    )
+    for inert in ("cycles.html", "help.html"):
+        assert 'id="grip"' not in read(rendered, inert), (
+            f"{inert} grew a grip, so the rule it has been carrying now moves "
+            "something and the floor is doing more than it was measured doing"
+        )
 
 
 def test_the_graph_does_not_animate_where_css_cannot_stop_it():

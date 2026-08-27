@@ -12,7 +12,9 @@ each other or neither is trusted, so each person's row carries their scheduled e
 their capacity bar — the two come from different subsystems and cannot quietly disagree, and a green
 bar against a timeline running into November is what stops a room trusting the tool. `detail.html`
 is one record on its own page — any of the six kinds — and under the server it is also where a
-record is edited.
+record is edited. `help.html` is this documentation, every file on one page with a contents
+beside it; it is the one view that is about the tool rather than about a plan, which is why it
+renders identically in both modes and why an exported plan carries its own instructions.
 
 Issues and notes are records whose rung says `planned=False`: they are on Records and on their own
 pages, and never in the plan views. The exclusion is not a filter on each page — `Index.plan`
@@ -40,7 +42,7 @@ where the record turned out to have nothing written on it at all, the slide says
 own. A sheet that silently dropped half a section cannot be told from a finished one, and the person
 holding it is the one person who cannot go and check. It takes a cycle number, so
 it has no place in a static export that writes one file per view of the whole plan; it is reached
-from that cycle's own page, and it is deliberately not a seventh tab. It is also the one page that
+from that cycle's own page, and it is deliberately not a tab of its own. It is also the one page that
 carries its images inside itself as `data:` URIs, because it is the one page meant to be handed to
 somebody who was not in the room.
 
@@ -49,9 +51,14 @@ somebody who was not in the room.
 The tool and the plan are separate repositories, and stay separate in production.
 
 ```
-C2SM/openproj        this repo — code, tests, and fixtures. No real plan data.
-C2SM/<name>-plan     the data — markdown records and config. No code.
+jcanton/openproj      this repo — code, tests, and fixtures. No real plan data.
+jcanton/icon4py-plan  the data — markdown records and config. No code.
 ```
+
+Both are under a personal account today and the split is the point rather than the owner;
+`deploy/RUNBOOK.md` says to move them to the C2SM org if the tool is adopted. `--org C2SM` is
+unrelated and stays either way: it is the org whose membership decides who may write, and where
+a repository lives has never been what answered that.
 
 `seed/` and `tests/fixtures/corpus/` live here only because they are a demo and a
 test fixture. Neither is anybody's plan.
@@ -97,16 +104,27 @@ not the disk.
 src/openproj/model.py      schemas, parse, round-trip serialise, validate_all
 src/openproj/schedule.py   the scheduler — a pure function, the product
 src/openproj/index.py      the snapshot every view renders from
-src/openproj/render.py     the pages
+src/openproj/query.py      the search language, shared by the server and the browser
+src/openproj/render/       the pages — a package behind a re-exporting facade
 src/openproj/store.py      the git write layer — bare repo, one writer, scoped CAS
+src/openproj/pusher.py     the deferred push: a commit lands locally, then goes out
 src/openproj/coedit.py     the co-editing rooms — one Y.Text per record, in memory
 src/openproj/web.py        the server: routes, auth, the write endpoints
+src/openproj/auth.py       sign-in: the OAuth dance, the session, who may write
+src/openproj/github.py     what the server asks GitHub — the App token, open PRs
+src/openproj/vendor.py     static/ and docs/ on disk, read once and inlined
 src/openproj/cli.py        check / render / schedule / serve / demo
 src/openproj/themes.py     the colour schemes — sixteen numbers a row, nothing else
 seed/                      the demo corpus
 tests/fixtures/corpus/     the frozen golden corpus the scheduler goldens pin
 static/                    vendored, pinned JS — see static/VENDOR.md
+docs/                      this documentation, and what the app's Help page reads
 ```
+
+`render/` is a package and was one 13,000-line module; `render/__init__.py` re-exports every
+name the rest of the app reads, explicitly and never with a star, so `web.py` and the tests import
+from `openproj.render` exactly as they did. The split was pure moves — the point was that a page
+can be found, not that anything about a page changed.
 
 `store.py` is a bare repository with no index to contend for, one writer behind an `flock`, and
 compare-and-swap scoped to the path being written — so an edit to a different file retries invisibly
@@ -116,7 +134,7 @@ and only a genuine overlap is refused.
 internal tool becomes unbuildable in two years. `tests/test_render.py` asserts no rendered page
 reaches the network.
 
-**`node` is not needed to build or run it, and is needed to test it fully.** Thirty-four tests run
+**`node` is not needed to build or run it, and is needed to test it fully.** A set of tests runs
 the shipped page scripts against a minimal DOM — the table's rows, the timeline's tooltip, the
 combobox and the cycle roster exist only after a script has run, so nothing in a rendered file
 shows what they build. Without `node` on PATH those tests skip, and a suite missing them is green
@@ -125,9 +143,9 @@ have `node` installed.
 
 ## Colour
 
-Two controls in the corner, and they do different jobs. The light/dark switch is the
-polarity. The picker beside it is the palette: nine base16 families, each a light and a
-dark, plus the app's own colours — which are the absence of a choice rather than a
+Two controls in the corner — beside the identity, which is the third thing out there — and
+they do different jobs. The light/dark switch is the polarity. The picker beside it is the
+palette: nine base16 families, each a light and a dark, plus the app's own colours — which are the absence of a choice rather than a
 family called "default", so every page nobody has chosen for is drawn by the stylesheet
 as written.
 
@@ -144,6 +162,12 @@ is nominally the foreground and a terminal scheme is free to make it something n
 paragraph has been set in. `tests/test_themes.py` measures the result twice — the palette
 in Python, and what the page paints in Chrome, at AA for every chip and every fill of
 every family in both polarities.
+
+Below 40rem the three of them are not in the corner at all: `stowCorner` moves the one element
+into the footer, both ways, whenever the width crosses — a relocation and not a second copy,
+because two sign-in buttons in one document is two `#who` fills and a script writing to whichever
+it finds first. They are things you set once and never press again, and a row of their own is the
+most expensive place on a phone to keep them.
 
 ## Co-editing one document
 

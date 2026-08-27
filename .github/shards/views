@@ -26,6 +26,7 @@
 # than on `coedit` because a seat band is drawn by the same rendering path, and
 # because `coedit` had no room for it.
 tests/test_render.py
+tests/test_help.py
 tests/test_seats.py
 tests/test_delete.py
 tests/test_status_gate.py
