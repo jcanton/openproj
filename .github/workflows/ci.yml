@@ -23,6 +23,11 @@ on:
   pull_request:
   push:
     branches: [main]
+  # For the `measure` job at the end of this file, and only for it: the durations
+  # table the eight-way split is cut from can only be made by one serial run on
+  # this hardware, and that is a thing a person asks for rather than a thing that
+  # happens on every push.
+  workflow_dispatch:
 
 # A PR's third push makes the first two runs' answers worthless, and they go on
 # holding a runner while the answer that matters queues behind them. With six
@@ -129,10 +134,24 @@ jobs:
   #    10       98s        110s       98s
   #    12       81s         93s       81s
   #
-  # against the 254s that one file costs today. **Eight, and the worst leg is
-  # 124s against a 122s ideal** — a 2s spread, and about half the current gate.
-  # Ten and twelve keep paying, but by less than a machine's ~12s of setup each
-  # time, and every extra runner is billed on every push.
+  # against the 254s that one file costs today. **Eight**: ten and twelve keep
+  # paying, but by less than a machine's ~12s of setup each time, and every extra
+  # runner is billed on every push.
+  #
+  # **What it actually did, on the first run (33117676737):** legs of 88, 97,
+  # 104, 108, 118, 119, 125 and 131s of pytest, 890s in total. Worst leg 131s
+  # against the **231s** `tests/test_editor.py` alone would force on any file-level
+  # cut of the same suite — the gate's pytest time cut by 43%.
+  #
+  # The spread is 43s where the simulation said 11s, and the reason is stated
+  # rather than explained away: the table is a laptop's, and the two machines do
+  # not scale uniformly. Against the 193 tests this run timed, CI is 0.81x the
+  # laptop in aggregate but 0.56-0.99x per test. Rescaling the table by that
+  # aggregate was tried and simulated WORSE — 67s of spread — because only the 25
+  # slowest per leg have real numbers and a flat factor mis-scales the rest. A
+  # coherent table from one machine beats a mixed one, so the laptop's stands
+  # until a full serial run on this hardware replaces it. That is what the
+  # `measure` job below is for.
   #
   # **`duration_based_chunks`, which is the default, and not `least_duration`.**
   # The greedy one bin-packs and hits the ideal exactly at every N — it is 2s
@@ -172,6 +191,10 @@ jobs:
   # table does not know about, or when the drift alarm in `tests/test_harness.py`
   # fires. Balance is the only thing a stale table costs: an unmeasured test is
   # given the average and still runs, in exactly one group.
+  #
+  # On a laptop that is the command above. On THIS hardware — which is the one
+  # the split is for — it is the `measure` job at the end of this file, run by
+  # hand from the Actions tab.
   suite:
     strategy:
       # One red shard must not cancel the other four. The whole point of a
@@ -311,3 +334,42 @@ jobs:
       - run: |
           [ "${{ needs.suite.result }}" = success ] || exit 1
           [ "${{ needs.lint.result }}" = success ] || exit 1
+
+  # The whole suite, serially, on this hardware, recording every test — and then
+  # the table as an artifact to commit.
+  #
+  # **`workflow_dispatch` only.** It is ~15 minutes on one machine, which is the
+  # thing the eight-way split exists to avoid paying on every push; as a gate it
+  # would be absurd, and as a scheduled job it would burn a quarter-hour a night
+  # to answer a question that changes over weeks. It is run by a person, from the
+  # Actions tab, when the spread is worth a re-cut.
+  #
+  # It exists because the alternative is a table nobody can make correctly. The
+  # legs cannot store their own slices — `pytest-split` reads and writes one
+  # `--durations-path`, so eight legs would race on one file and
+  # `--clean-durations` would have each strip the seven groups it did not run —
+  # so the only coherent measurement is a serial one, and the only machine worth
+  # measuring is this one.
+  measure:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # The suite is ~15 minutes here; the default 360 would let a hang burn six
+    # hours of somebody's afternoon before anyone noticed.
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - run: uv sync --locked --group dev
+      # `--clean-durations` is safe here and nowhere else: this run is the whole
+      # suite, so a test missing from it is a test that no longer exists.
+      - run: uv run pytest -q --store-durations --clean-durations
+      - uses: actions/upload-artifact@v5
+        with:
+          name: test-durations
+          path: .test_durations
