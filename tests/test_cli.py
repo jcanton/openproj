@@ -570,7 +570,7 @@ def test_a_signal_to_the_entrypoint_reaches_the_server(tmp_path: Path):
     # and so would the wrapper dying while the server it started carried on. The
     # claim is that the SERVER ran its shutdown, because that is the hook
     # `app.state.closing` hangs off and therefore the hook every flush in
-    # `docs/deferred-push.md` depends on. uvicorn says so in three lines, and the
+    # `design/deferred-push.md` depends on. uvicorn says so in three lines, and the
     # last of them only appears after lifespan shutdown has completed.
     assert "Application shutdown complete" in said, (
         "the server did not shut down gracefully, so `closing` never set and "

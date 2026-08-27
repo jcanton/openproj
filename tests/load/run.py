@@ -5,7 +5,7 @@
 Builds a plan and a bare `origin`, starts one server on a loopback port in
 8900-8999, drives it with N genuinely simultaneous people of each kind, stops
 everything, and then asks the repository what actually happened. Prints a
-report and writes `docs/probes/load/<scenario>.json`.
+report and writes `design/probes/load/<scenario>.json`.
 
 Scenarios — the difference between them is only WHO IS AIMED AT WHAT, which is
 the question jcanton asked:

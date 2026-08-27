@@ -117,7 +117,7 @@ def page(index: Index) -> str:
 def test_every_document_the_page_names_is_a_file_in_this_repository():
     """`DOCS` is a list of paths and nothing checks them at import time.
 
-    Renaming `docs/EDITOR.md` is a normal thing to do, and without this the only
+    Renaming `design/EDITOR.md` is a normal thing to do, and without this the only
     symptom is a section on a page nobody opens saying it could not be read. The
     root comes from `_docs_root`, so this also fails if the resolution itself
     stops working in a checkout.

@@ -44,7 +44,7 @@ from .tokens import (
 
 # The three views of one document, drawn as one control.
 #
-# **Page chrome, not editor chrome.** `docs/hackmd-observed.md` reads it off the
+# **Page chrome, not editor chrome.** `design/hackmd-observed.md` reads it off the
 # pixels of a real note: it sits in the header, immediately after the note's
 # identity, as a segmented control of three icons with the active one pressed —
 # not as three more buttons in the row that already holds a template picker and a

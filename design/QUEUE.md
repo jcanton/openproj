@@ -42,7 +42,7 @@ and each says why it is still here.
   filters and links.
 
 * **Drawings, in a popup over the editor.** Designed 2026-08-26 and built on the
-  `drawings` branch the same cycle, written up in full at `docs/drawings.md` —
+  `drawings` branch the same cycle, written up in full at `design/drawings.md` —
   read that rather than a summary here, because the rejected shapes carry the
   reasoning and one of them corrupts files. Excalidraw, vendored as our own
   single-file build and fetched on the first press of a button in the
@@ -126,7 +126,7 @@ and each says why it is still here.
   is `default-src 'none'` with no `worker-src` and no `blob:` anywhere in it.
   Rather than offer the tool and have it fail silently the first time somebody
   reaches for it, the mounted editor hides it (`UIOptions.tools.image = false`).
-  jcanton accepted the gap on 2026-08-26; see `docs/drawings.md`, "The spike,
+  jcanton accepted the gap on 2026-08-26; see `design/drawings.md`, "The spike,
   which came first."
 
 * **A record's page and a slide's page disagree about what a signed-out reader
@@ -140,7 +140,7 @@ and each says why it is still here.
   match.
 
 * **A save should not wait for GitHub.** Designed 2026-08-24, written up in full at
-  `docs/deferred-push.md` — read that rather than a summary here, because the
+  `design/deferred-push.md` — read that rather than a summary here, because the
   reasoning is the expensive half and the rejected shapes matter as much as the
   chosen one.
 
@@ -262,7 +262,7 @@ and each says why it is still here.
 * **The review deck**, awaiting jcanton's feedback after a proper read.
 * **The editor.** Handed to a session of its own on 2026-08-19; the decisions,
   the library shortlist and the list of what must not be lost are in
-  `docs/EDITOR.md`.
+  `design/EDITOR.md`.
 
 The rest of this file is the reasoning behind what was built, kept because the
 next person to touch any of it will want to know why it is shaped this way.

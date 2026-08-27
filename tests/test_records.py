@@ -496,7 +496,7 @@ def test_a_lost_payload_degrades_to_an_unfiltered_list_and_says_so(tmp_path: Pat
 
 
 def test_the_time_is_relative_when_recent_and_absolute_past_two_weeks():
-    """The shape read off docs/hackmd-observed.md: `17 hours ago` … `10 days
+    """The shape read off design/hackmd-observed.md: `17 hours ago` … `10 days
     ago`, then a date. Past the threshold the relative form is abandoned, not
     extended, and a stamp from a clock ahead of ours is a date, never a
     countdown."""

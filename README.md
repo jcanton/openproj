@@ -117,6 +117,7 @@ flags and the reasoning.
 | `docs/architecture.md` | the pages, the two repositories, the layout of the code |
 | `docs/shape-up.md` | how this maps to what the team kept in HackMD, and where it departs from the book |
 | `AGENTS.md` | the invariants, how to write code here, and how to find the bug that is already here |
+| `design/` | design records — why a subsystem is the way it is, and what was measured. Not user documentation |
 | `deploy/RUNBOOK.md` | the deployment — credentials, the Cloud Run flags, and what is left to do |
 
 The first four of those, and this file, are also the app's **Help** page — the same bytes, read

@@ -30,8 +30,8 @@ adds a row starts the run that would be the next one. So the number to quote is
 the **range**, 3m02s–3m33s, and the useful fact is that every run has landed
 inside it.*
 
-*Raw tables in `docs/probes/ci-durations.txt` and
-`docs/probes/ci-durations-after-cache.txt`. Section 5 is no longer a prediction:
+*Raw tables in `design/probes/ci-durations.txt` and
+`design/probes/ci-durations-after-cache.txt`. Section 5 is no longer a prediction:
 it is the measurement, including the three places the prediction was wrong.*
 
 jcanton asked: *"we should make testing and CI faster: splitting it as much as it
@@ -131,7 +131,7 @@ compensated with a fitted term, `attributed + 2.5s + 12ms per test`, and the fit
 
 A test that builds a real bare git repo costs an order of magnitude more than one that does not, and
 those are exactly the tests that hide under a 50ms floor. So the threshold went to **zero** and the
-cut was re-made from complete per-file totals: `docs/probes/ci-durations-4core.txt`, 532.3s of rows
+cut was re-made from complete per-file totals: `design/probes/ci-durations-4core.txt`, 532.3s of rows
 over 42 files, 18s unattributed and that 18s is collection and imports.
 
 | cut | critical leg | spread |
@@ -296,7 +296,7 @@ inside it, or is about how many machines run it.
 ## 2. What the suite costs, per category, measured
 
 `--durations=0 --durations-min=0.05` over the full run, in
-`docs/probes/ci-durations.txt`. 1107 rows summing to **1365.28s** of the
+`design/probes/ci-durations.txt`. 1107 rows summing to **1365.28s** of the
 1392.75s, so only ~27 seconds is collection, imports and the 3954 hidden
 sub-50ms durations. Everything below is summed out of that file directly.
 
@@ -697,7 +697,7 @@ imports `test_web`, `test_store`, `test_injection`, `pages`, `browser`;
 by name. A shard missing an import hub fails at collection, not at assertion.
 Every shard is a full checkout and differs only in the selection argument.
 
-**Where to cut.** From `docs/probes/ci-durations-after-cache.txt`, not from the
+**Where to cut.** From `design/probes/ci-durations-after-cache.txt`, not from the
 pre-cache table — the cache moved the boundaries by more than the shard sizes.
 The suite is 675.79s of attributed rows and the five legs balance to within 8%:
 
@@ -874,8 +874,8 @@ lines have done their job and should come out in the commit that lands change 6
 23m12s against 21m27s–22m23s for the six runs before it, so treat the absolute
 numbers as ±5% and the proportions as solid.
 
-Keep the two probe files. `docs/probes/ci-durations.txt` and
-`docs/probes/ci-durations-after-cache.txt` are what the shard lists are cut from,
+Keep the two probe files. `design/probes/ci-durations.txt` and
+`design/probes/ci-durations-after-cache.txt` are what the shard lists are cut from,
 and what the next person re-cuts them from when the suite has grown.
 
 **Measured: about 30 seconds, and `--durations=25` stayed.** Runs 566905 and

@@ -1335,7 +1335,7 @@ table.tight-priority td[data-col="priority"] .chip.pri { padding: .1rem .3rem; }
    are. That is the part that was missing, and it is the part that made this a
    grid that only READ as a table while the two lists happened to be the same
    length — three reported rounds of "the legend is not aligned"
-   (`docs/QUEUE.md` §7.5), each of which this arrangement would have survived.
+   (`design/QUEUE.md` §7.5), each of which this arrangement would have survived.
    Measured, not eyed, in `test_the_legend_is_two_rows_and_the_keys_line_up`. */
 .legends { display: inline-grid;
            grid-template-columns: auto repeat({{ statuses|length }}, max-content);
@@ -2550,7 +2550,7 @@ function fitRoom() { roomSlack = 0; settleRoom(4); }
 {% endif -%}
 {#- The pile banner: the loud middle of the deferred push's escalation, between
     the table's quiet per-row mark and the 503 the store answers past the pile
-    ceiling (docs/deferred-push.md, "Saying it on the page"). In the shell
+    ceiling (design/deferred-push.md, "Saying it on the page"). In the shell
     because the graph, the timeline, the cycles and the record page have no
     mark of their own and rely on it; in flow at the top of <main>, in the
     `.unreadable` strip's own position and shape, because "saves that have not
@@ -2972,7 +2972,7 @@ source.onmessage = event => {
 };
 </script>
 <script>
-// The pile banner (docs/deferred-push.md, "Saying it on the page"): loud when
+// The pile banner (design/deferred-push.md, "Saying it on the page"): loud when
 // the saves already made here are not landing on GitHub, quiet otherwise. It
 // reads the numbers /api/health reports — the reading the store's write gate
 // also refuses on, so this banner and the 503 cannot disagree about the pile.

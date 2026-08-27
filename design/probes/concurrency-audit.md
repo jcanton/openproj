@@ -866,7 +866,7 @@ The edges of this document, so nobody quotes it past them.
 ## 8. How to re-run it
 
 The harness is committed under `tests/load/` and every run writes its raw numbers to
-`docs/probes/load/*.json`. Each driver builds a fresh plan in a temporary directory, starts one
+`design/probes/load/*.json`. Each driver builds a fresh plan in a temporary directory, starts one
 server on a loopback port, drives it, and kills the server and deletes the plan from a `trap` or a
 `finally` — a load harness that leaves a uvicorn holding a flock is worse than no measurement.
 

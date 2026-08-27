@@ -217,7 +217,7 @@ PRIORITY_GLYPH = {
 # that resolves against the system's own fonts and not the page's `@font-face`
 # at all, which is exactly how the tick has been drawing correctly all along.
 # The cost of a character no machine has is one 14px mark drawn as a box, not a
-# broken page — the same bargain `docs/QUEUE.md` §7.2 struck for the priority
+# broken page — the same bargain `design/QUEUE.md` §7.2 struck for the priority
 # blocks, and a sixth character costs nothing the five already shipped do not.
 STATUS_GLYPH = {
     "thinking": "○",        # a place for one: nothing has started
@@ -604,7 +604,7 @@ STATUS_TEACH = {
 
 
 # Where "how long ago" stops being the useful answer and "when" begins.
-# docs/hackmd-observed.md reads the boundary off the pixels: one column runs
+# design/hackmd-observed.md reads the boundary off the pixels: one column runs
 # `17 hours ago` … `10 days ago` and then switches to `2026-07-08` (about 43
 # days before the shot), so the threshold falls somewhere past ten days and
 # before forty-three. Fourteen keeps every relative form the screenshot shows

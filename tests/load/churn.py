@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Connection churn: twenty co-editors, five rooms, and sockets that keep dying.
 
-    uv run python tests/load/churn.py --rtt-ms 300 --out docs/probes/load/coedit-churn.json
+    uv run python tests/load/churn.py --rtt-ms 300 --out design/probes/load/coedit-churn.json
 
 The other scenarios in this directory ask what happens while everybody is
 typing. This one asks what happens at the edges of a session, which on Cloud Run
@@ -1313,7 +1313,7 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--openers", type=int, default=3)
     p.add_argument("--open-every", type=float, nargs=2, default=(0.1, 0.4))
     p.add_argument("--keep", action="store_true")
-    p.add_argument("--out", default="docs/probes/load/coedit-churn.json")
+    p.add_argument("--out", default="design/probes/load/coedit-churn.json")
     args = p.parse_args(argv)
     args.per_room = max(1, args.users // args.rooms)
     args.corpus_note = f"corpus/{args.size}"

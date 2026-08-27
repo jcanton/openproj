@@ -95,6 +95,27 @@ A record that is missing something still saves and still loads; the page says wh
 the record it is wrong on. A rule only *blocks* records written after that rule existed — older ones
 warn instead.
 
+## Editing a record
+
+Clicking a record opens its page, and that page is the editor. It lands on the reading view; the
+writing box and a live preview sit side by side, and the split between them is draggable. The fields
+at the top are the frontmatter and the box below is the shaping document — one form, one **Save**,
+one commit. **Reset** puts everything back to what was on the page when you arrived and leaves you
+in the editor.
+
+The status control is the hill beside the title: drag the ball to the stop you want. Changing a
+record's kind is the chip beside it — a pitch that turns out to be a task does not have to be
+rewritten. **Promote** on an issue or a note writes the pitch, the task or the project it becomes,
+in the same commit that marks the source. **Delete** asks first.
+
+The button beside the image button opens a drawing canvas; what you draw is saved as a PNG in the
+plan repository and referenced from the body, so a sketch on a pitch is versioned with the pitch.
+
+Several people can have the same document open and type in it at once. It still ends as one commit,
+authored by whoever wrote the most of it, with a `Co-authored-by:` for everybody else. If somebody
+committed to the same record while you were writing, the page says so in one line and keeps your
+draft rather than throwing it away.
+
 ## Editing it in git
 
 Both directions are first class. The files are ordinary markdown, a save from the browser is one
@@ -107,6 +128,18 @@ openproj check .        # every rule, exits non-zero only on blockers
 openproj schedule .     # the derived dates, one line per record, with the reason
 openproj render . out/  # the pages as static files
 ```
+
+`openproj render` writes the whole plan as static files, which is the copy to keep when there is no
+service left to serve it. To run the editable server against a plan of your own, point it at a bare
+clone:
+
+```bash
+git clone --bare https://github.com/jcanton/icon4py-plan.git plan.git
+openproj serve --repo plan.git --auth dev
+```
+
+`--auth dev` skips sign-in and is for a local run only. To see the tool with no plan to point it at,
+`openproj demo` serves a bundled corpus offline, in a temporary directory it builds for itself.
 
 ## Writing a record from a terminal
 

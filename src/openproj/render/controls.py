@@ -629,7 +629,7 @@ _COMBOBOX = r"""
 // `test_the_body_is_read_through_one_place_and_nothing_else` holds it there.
 //
 // **Seven operations, and the shape of them is measured rather than guessed.**
-// `docs/EDITOR.md`'s "What the skeptics broke" is the evidence, in full, against
+// `design/EDITOR.md`'s "What the skeptics broke" is the evidence, in full, against
 // a real editor and this repository's own `Room`; three findings decide what is
 // here and what deliberately is not:
 //
@@ -959,7 +959,7 @@ function bodySurface(area) {
 
 
 // The toolbar in the screenshot, in the order and the groups it is drawn in:
-// `docs/hackmd-observed.md`, read off the pixels of a real note.
+// `design/hackmd-observed.md`, read off the pixels of a real note.
 //
 // **This overrules a measurement, and the measurement was not wrong.** `d6997e3`
 // counted the seed and the migrated HackMD corpora — 485 lines carry an inline
@@ -1819,7 +1819,7 @@ function attachGutter(surface, note) {
 
 // Ask 5's control, and the two facts either side of it.
 //
-// The shape is read off the note in `docs/hackmd-observed.md` rather than
+// The shape is read off the note in `design/hackmd-observed.md` rather than
 // invented: a strip along the FOOT of the box, holding `Line 1, Columns 1 — 100
 // Lines`, `Spaces: 4` and `Length: 1369`. The thing worth copying is what
 // `Spaces: 4` IS — two words that state the current value and are themselves the
@@ -2796,7 +2796,7 @@ async function openDrawing(surface, status, entry) {
       teardown();
       return;
     }
-    // Load-bearing twice for the price of once, exactly as `docs/drawings.md`
+    // Load-bearing twice for the price of once, exactly as `design/drawings.md`
     // ("Serving") says: the same string is both the cache token this fetch
     // just revalidated against and the compare-and-swap token the next PUT
     // sends back as `If-Match`.
@@ -2914,7 +2914,7 @@ async function openDrawing(surface, status, entry) {
       if (!entry) {
         // No splice on a re-save, ever: the path is stable, so the second and
         // every later save rewrites the same file and the body is not touched
-        // at all — see "Where the bytes live" in `docs/drawings.md`. Only a
+        // at all — see "Where the bytes live" in `design/drawings.md`. Only a
         // brand-new drawing needs a line written for it to be found by, and
         // it goes in at the caret through `surface.splice`, the same
         // undo-safe boundary `attachUploads` writes an upload's path through.

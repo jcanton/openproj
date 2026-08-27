@@ -1099,7 +1099,7 @@ let WRITING = null;
 // lets a landing clear by name: a frame naming one of these shas as landed has
 // confirmed everything at or before it, and a mark must clear by name because
 // recovery re-mints shas — its own sha may never appear on main while its
-// content lands anyway (docs/deferred-push.md, "Confirmation cannot be 'my sha
+// content lands anyway (design/deferred-push.md, "Confirmation cannot be 'my sha
 // is on main'").
 //
 // And the rows whose commit the pusher PARKED on a branch, row id to branch
@@ -4056,7 +4056,7 @@ def render_table(
         # "There is a server behind this page AND this person may write" — the
         # first half alone shipped, standing in for the second, so a signed-out
         # visitor got role="grid", the combobox, the draft row's `+`, and a 403
-        # for pressing Enter on what all of that offered. `docs/QUEUE.md`
+        # for pressing Enter on what all of that offered. `design/QUEUE.md`
         # predicted this flag would have to split rather than narrow, because
         # "the reader still needs to sort, filter, search and follow links" —
         # measured against the template, that is not so: sorting (the `<thead>`

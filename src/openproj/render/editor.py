@@ -245,7 +245,7 @@ function aceSurface(area, seeded) {
   // own find works on this document and on the rendered pane beside it.
   //
   // This is application code and not upstream behaviour: the bytes are verbatim,
-  // the behaviour deliberately is not, and `docs/EDITOR.md` says why in-editor
+  // the behaviour deliberately is not, and `design/EDITOR.md` says why in-editor
   // find is not being bought.
   for (const name of ['find', 'replace', 'showSettingsMenu',
                       'goToNextError', 'goToPreviousError']) {
@@ -354,7 +354,7 @@ function aceSurface(area, seeded) {
 
   // **Ace's own change deltas, converted at the moment they arrive.** This is
   // the binding, and the whole reason it is not `typed()`'s prefix/suffix walk
-  // is written in `docs/EDITOR.md`: `session.setValue` and `session.replace` are
+  // is written in `design/EDITOR.md`: `session.setValue` and `session.replace` are
   // both remove-then-insert with an EMPTY DOCUMENT between the two events, which
   // no prefix/suffix walk can recover a splice from, and the one measured
   // consequence was a passive tab pushing 97,890 characters up the socket under
@@ -1331,7 +1331,7 @@ const COEDIT = (() => {
       //   that has shipped since rooms existed and it is not touched here.
       // * Ace reports its own deltas, with a position and the lines, per edit.
       //   Diffing its value instead would throw that away and buy back the two
-      //   measured failures `docs/EDITOR.md` records: `:%s/x/y/g` and
+      //   measured failures `design/EDITOR.md` records: `:%s/x/y/g` and
       //   multi-cursor arrive as ONE splice of the whole document, credited to
       //   whoever pressed the key rather than to the characters they typed, and
       //   `typed()` materialises two full code-point arrays per call — 1.90ms on
@@ -1372,7 +1372,7 @@ const COEDIT = (() => {
 
   // What the room has saved that GitHub has not confirmed, in answer order —
   // which is ancestry order, each commit made against the last. Three states
-  // per save, never a boolean (docs/deferred-push.md, "Confirmation cannot be
+  // per save, never a boolean (design/deferred-push.md, "Confirmation cannot be
   // 'my sha is on main'"): the push happens behind the answer now, so
   // `pushed: false` is EVERY save, and the warning that used to hang on it —
   // "saved here, not yet pushed" — fired every time. A warning that always
@@ -1442,7 +1442,7 @@ const COEDIT = (() => {
   });
 
   // The poll fallback, and it is an invariant rather than a comfort
-  // (docs/deferred-push.md, "Confirmation cannot be 'my sha is on main'"):
+  // (design/deferred-push.md, "Confirmation cannot be 'my sha is on main'"):
   // Cloud Run recycles the event stream every 300 seconds and it has NO
   // replay, so the frame carrying a save's verdict can be gone for good — and
   // the parked verdict is the one this room's whole watch list exists to

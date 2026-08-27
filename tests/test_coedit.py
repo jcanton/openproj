@@ -2392,7 +2392,7 @@ def test_a_carriage_return_in_a_room_is_a_thing_the_box_cannot_hold(
     **The browser's copy cannot.** A `<textarea>` normalises `\\r\\n` to `\\n`
     twice over — once in the HTML parser on the way in and once in the `value`
     getter — so the box holds LF whatever it is given. That is a fact about the
-    surface, not about this code, and it is the reason `docs/EDITOR.md` records
+    surface, not about this code, and it is the reason `design/EDITOR.md` records
     that the two editors this decision keeps normalise in OPPOSITE directions.
 
     What this pins is that the two copies still CONVERGE, which is the invariant

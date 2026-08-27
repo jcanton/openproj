@@ -6,7 +6,7 @@ goes away. The durable copy is the git remote, which makes committing without
 pushing indistinguishable from not saving.
 
 Four properties carry this suite, and each is a decision rather than a detail
-(docs/deferred-push.md is the reasoning):
+(design/deferred-push.md is the reasoning):
 
 * **A save answers when the commit lands on this disk.** The push left the
   request path — it was ~1.5s of a ~2s save, all of it GitHub's — and is the
@@ -407,7 +407,7 @@ def test_a_write_that_has_returned_is_in_the_backlog_the_pusher_lands(
     The meaning of this test inverted with the deferred push, on purpose. It
     used to pin "a write that has returned is already in the remote", which was
     the request paying GitHub's ~1.5 seconds inside the writer lock — exactly
-    the cost docs/deferred-push.md removes. What survives is the half a team
+    the cost design/deferred-push.md removes. What survives is the half a team
     can lose sleep over: no writer is TOLD the remote holds its commit before
     it does, and every answered commit is in the backlog the pusher lands,
     under the preemption `preempted` forces so the interleaving is real.
@@ -1016,7 +1016,7 @@ def test_a_write_that_loses_the_race_runs_again_and_lands(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# 8. The write path does not wait for the remote (docs/deferred-push.md)
+# 8. The write path does not wait for the remote (design/deferred-push.md)
 # --------------------------------------------------------------------------- #
 
 
@@ -1108,7 +1108,7 @@ def test_nothing_says_pushed_before_the_remote_actually_holds_the_commit(tmp_pat
 
 
 # --------------------------------------------------------------------------- #
-# 9. sync(): the pusher lands the backlog (docs/deferred-push.md)
+# 9. sync(): the pusher lands the backlog (design/deferred-push.md)
 # --------------------------------------------------------------------------- #
 
 
@@ -1120,7 +1120,7 @@ def test_the_pusher_lands_the_commits_a_save_did_not_wait_for(
     On the quiet day — nobody pushed by hand in between — the commits land with
     their ORIGINAL shas: a client holding an answered sha must find that exact
     sha on the remote, because sha instability is allowed only on the recovery
-    path (docs/deferred-push.md).
+    path (design/deferred-push.md).
     """
     first = store.write(
         path=PATH,
@@ -1187,7 +1187,7 @@ def test_an_unreachable_remote_leaves_the_backlog_for_the_next_pass(
 
 # --------------------------------------------------------------------------- #
 # 10. Recovery: a rejected push replays onto what the remote actually holds
-# (docs/deferred-push.md, "Recovery, when the push is rejected")
+# (design/deferred-push.md, "Recovery, when the push is rejected")
 # --------------------------------------------------------------------------- #
 
 
@@ -1547,7 +1547,7 @@ def test_both_sides_moved_reads_healthy_while_the_remote_still_holds_what_it_hel
     whole suite. So this one parks the store in the disagreeing state and holds
     it there with an outage. Under the old reading `/api/health` answers 503
     for the entire outage-plus-race window, on every ordinary hand-push — the
-    alarm fatigue the spec forbids (docs/deferred-push.md, "Health"), because a
+    alarm fatigue the spec forbids (design/deferred-push.md, "Health"), because a
     flag that goes red on the recoverable case has been learned and ignored by
     the day the remote really loses a commit.
     """
@@ -1740,7 +1740,7 @@ def test_a_commit_made_during_the_recovery_is_parked_at_the_swap_not_dropped(
 
 
 # --------------------------------------------------------------------------- #
-# 11. The thread, and shutdown (docs/deferred-push.md, "The pusher")
+# 11. The thread, and shutdown (design/deferred-push.md, "The pusher")
 # --------------------------------------------------------------------------- #
 
 

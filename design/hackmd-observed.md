@@ -16,7 +16,7 @@ workspace logo and before `+`, `?` and search: a **pencil** (edit only), a **spl
 (edit and preview), an **eye** (preview only). One is selected and drawn as a pressed segment;
 in this shot it is the split.
 
-This contradicts where the plan put it. `docs/EDITOR.md`'s decision table places the tri-state in
+This contradicts where the plan put it. `design/EDITOR.md`'s decision table places the tri-state in
 the existing `bodybar` beside Preview, which is inside the editing surface. HackMD puts it in
 the page's own header, next to the document's identity, because it is a property of how you
 are looking at the document rather than of the text — the same argument this repository makes
@@ -301,7 +301,7 @@ A link to one note cannot answer a question that is a count across many, and
 `hackmd.io/ppDzW8W0QnmS2y8eFyU1Tw?both=` is gated to anything without jcanton's session — fetched
 2026-08-20, it returns the login page.
 
-The route already exists here. `docs/probes/hackmd_probe.py` speaks the HackMD API, and its
+The route already exists here. `design/probes/hackmd_probe.py` speaks the HackMD API, and its
 `inspect` phase already lists a team's notes:
 
     GET /teams/<team>/notes         -> every note's id

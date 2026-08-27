@@ -251,7 +251,7 @@ one editor each — and since 2026-08-20 there is a switch beside the three view
 the choice is on the page rather than only in this file.
 
 The search that ended here follows. Everything in it was fetched, checksummed and run;
-`docs/EDITOR.md` is the long form.
+`design/EDITOR.md` is the long form.
 
 **The rule this leaves behind for whoever revisits it next:** the price was paid for ONE
 ask. If a second editor ever has to be argued for again, the question is not "is it good",
@@ -267,7 +267,7 @@ markdown body. The condition written here for revisiting was "when somebody is a
 by the textarea".
 
 That revisit ran in August 2026, against seven asks for a HackMD-like editor, and the full search is
-`docs/EDITOR.md`. Nobody has produced the measurement this paragraph asked for; what arrived instead
+`design/EDITOR.md`. Nobody has produced the measurement this paragraph asked for; what arrived instead
 was a feature request, which is a legitimate reason for a human to override a recorded rule and is
 not the same thing as evidence that the rule was wrong. The finding, so that the next person
 inherits the search rather than repeating it:
@@ -451,7 +451,7 @@ decides it.
   template literals, `url("+e.svgId+` and `${n}#${m}` among them — and that test reads
   every `url(` on a page and demands `data:` or `#`. The rule is right and the bundle
   fetches nothing; the way to have both is for the bundle never to be on a page. This is
-  the same wall `mode-markdown.js` hit, recorded in `docs/EDITOR.md`, and the same answer.
+  the same wall `mode-markdown.js` hit, recorded in `design/EDITOR.md`, and the same answer.
 
 **What it does NOT need, checked rather than assumed.** Zero `eval(` and zero
 `new Function` — so the policy keeps `script-src 'unsafe-inline'` and gains no

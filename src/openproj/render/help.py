@@ -65,12 +65,12 @@ class Doc(NamedTuple):
 # `AGENTS.md` is deliberately absent. It is written for whoever is changing this
 # code and its whole content is invariants, failure modes and how to find the bug
 # that is already here — a document for a contributor with a checkout, not for a
-# reader of a plan. The same goes for `docs/QUEUE.md` (a work queue),
-# `docs/deferred-push.md` and `docs/drawings.md` (design records for one
-# subsystem each) and `docs/hackmd-observed.md` (research notes taken before the
+# reader of a plan. The same goes for `design/QUEUE.md` (a work queue),
+# `design/deferred-push.md` and `design/drawings.md` (design records for one
+# subsystem each) and `design/hackmd-observed.md` (research notes taken before the
 # tool existed). They stay in the repository, where a contributor already is.
 #
-# **`docs/EDITOR.md` was asked for here and is not, and the reason is not that it
+# **`design/EDITOR.md` was asked for here and is not, and the reason is not that it
 # is long.** It is a document ABOUT this code — a library audit and a dated
 # decision log — and the two rules that hold every page of this app to
 # `default-src 'none'` are substring scans over the whole served page:

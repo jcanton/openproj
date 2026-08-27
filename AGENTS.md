@@ -322,6 +322,11 @@ claim is about pixels, look at the pixels.
 These lived in `docs/` until the documentation was cut back to what a reader of a plan needs. They
 are here because the reason is the whole value: without it each one gets proposed again.
 
+`docs/` is now the user guide and nothing else — quickstart, the practice, the model, the
+architecture. The design records that used to sit beside it are in `design/`, which has its own
+index: the editor's library audit, the drawing subsystem, the deferred push, what HackMD actually
+contained, the work queue, and the probes.
+
 **Asked for at the tailoring pass, 2026-08-16, and declined.** `postponed` as a bet outcome —
 leaving a pitch `ready` says the same thing, and it produced a better idea instead, the notes box on
 the cycle page. Appetite in cycle units — appetite is person-week effort and the assignees divide
@@ -435,7 +440,7 @@ Two things follow for anybody adding tests. A new test FILE has to be named in e
 file — `test_every_test_file_is_in_exactly_one_ci_shard` in `tests/test_harness.py` holds that, and
 it is the reason a file cannot quietly fall out of the gate. And the shard lists drift out of
 balance every time a file grows; rebalancing them is a five-minute job with `--durations` and
-`docs/probes/ci-speed.md` says how.
+`design/probes/ci-speed.md` says how.
 
 This is not a licence to push carelessly. It is a decision about where eight minutes of CPU and
 several gigabytes of RAM should be spent — jcanton, 2026-08-20, on a machine that has already been

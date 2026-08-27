@@ -710,7 +710,7 @@ def test_a_served_table_for_a_reader_offers_no_editor_and_still_reads(
     record button was already cured of. The rule from PR #19, one door further
     in: do not draw a control whose only answer for this person is a refusal.
 
-    `docs/QUEUE.md` predicted the flag would have to split rather than narrow,
+    `design/QUEUE.md` predicted the flag would have to split rather than narrow,
     because the reader still sorts, filters and follows links. It narrows: those
     all live outside the editable branch, which is why the second half of this
     test drives the reader's page and watches them work rather than trusting the
@@ -5142,7 +5142,7 @@ def test_the_check_creates_the_row_on_one_press_with_the_editor_still_open(
 # 9. A row that has not reached GitHub says so
 #
 # Every write answers at once now and the push happens behind it
-# (docs/deferred-push.md, "Saying it on the page"): between the 200 and the
+# (design/deferred-push.md, "Saying it on the page"): between the 200 and the
 # pusher's landing the commit exists only on the instance, whose filesystem on
 # Cloud Run is memory. The row the person is looking at wears a quiet mark for
 # that window, and the mark is cleared by NAME — the pusher's landed frame, or

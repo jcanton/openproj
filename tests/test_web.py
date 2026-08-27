@@ -1593,7 +1593,7 @@ def test_a_creations_answer_says_the_commit_has_not_reached_the_remote(client: T
     """A PATCH has answered `pushed` since the store existed, and the two 201s
     carried no key at all — so the create and promote paths had nothing to hang
     a "saved here, not on GitHub yet" mark on, for the one row the person is
-    certainly looking at (docs/deferred-push.md, "Saying it on the page")."""
+    certainly looking at (design/deferred-push.md, "Saying it on the page")."""
     made = create(client, {"kind": "note", "title": "An idea worth keeping"})
     assert made.status_code == 201, made.text
     assert made.json()["pushed"] is False
@@ -2216,7 +2216,7 @@ def test_a_quiet_days_landing_is_announced_in_its_own_kind_of_frame(tmp_path: Pa
     lacks, plus the tip, the re-minted shas and the parked ones — everything a
     per-row "saved here, not on GitHub yet" mark clears by, since a mark cannot
     wait to see its own sha on main when recovery re-mints shas
-    (docs/deferred-push.md, "Confirmation cannot be 'my sha is on main'").
+    (design/deferred-push.md, "Confirmation cannot be 'my sha is on main'").
 
     Announced on the quiet day too, which is the defect this test was written
     failing against: the frame went out only when a recovery had re-minted or
@@ -4796,7 +4796,7 @@ def test_the_service_says_which_version_it_is_running(client: TestClient):
 # --------------------------------------------------------------------------- #
 # 13. The plan has forked, and the fork is visible without wedging anybody
 #
-# What a fork IS moved with the deferred push (docs/deferred-push.md). Both
+# What a fork IS moved with the deferred push (design/deferred-push.md). Both
 # histories merely growing — a stranded save beside a hand-push — used to raise
 # `StoreDiverged` out of every write route for the life of the container, 26
 # requests over three audit passes all answering 500 while `GET /` said
@@ -4810,7 +4810,7 @@ def test_the_service_says_which_version_it_is_running(client: TestClient):
 # rewrite into ordinary-looking commits — so the pusher parks, and the rest of
 # the section pins what the routes say while it is parked: every write refuses,
 # with the 503 and in the guard's own words. Refusing is not the escalation —
-# the banner and the pile thresholds are piece 4's (docs/deferred-push.md,
+# the banner and the pile thresholds are piece 4's (design/deferred-push.md,
 # "Saying it on the page") — it is the floor under it: a fork is never resolved
 # automatically, no page reads /api/health, and a 200 onto a backlog the parked
 # pusher can never land is a save the first idle recycle silently discards.
@@ -4985,7 +4985,7 @@ def test_every_write_route_refuses_in_words_while_the_plan_is_forked(forked: For
     the way in. A fork is never resolved automatically and no page reads
     /api/health, so the person hears about it here, at the moment they act, in
     the force-push guard's own words plus what to do about them. The pile
-    thresholds and the banner are piece 4's escalation (docs/deferred-push.md,
+    thresholds and the banner are piece 4's escalation (design/deferred-push.md,
     "Saying it on the page"); refusing a fork is the floor under it.
 
     The inventory is checked against the app's own router rather than typed out,
@@ -5215,7 +5215,7 @@ def test_the_other_failures_the_tuple_names_are_answered_too():
 # --------------------------------------------------------------------------- #
 # 14. The pile says so loudly, and then stops taking more
 #
-# The escalation's last rung (docs/deferred-push.md, "Saying it on the page"):
+# The escalation's last rung (design/deferred-push.md, "Saying it on the page"):
 # past FIFTY unpushed commits or TEN MINUTES since anything landed — whichever
 # comes first — every write answers the 503 the forked plan already uses,
 # because on Cloud Run the filesystem is memory and a 200 onto a pile that is
@@ -5266,7 +5266,7 @@ def test_the_fiftieth_stranded_commit_closes_every_write_route(tmp_path: Path):
 
     Written failing against a store that accepted the fifty-first write with a
     2xx: fifty commits is more than a betting table generates in the ten-minute
-    window (docs/deferred-push.md, "Saying it on the page"), so a pile that
+    window (design/deferred-push.md, "Saying it on the page"), so a pile that
     deep is a pusher that is not landing, and every commit accepted onto it is
     one more thing the first idle recycle discards.
     """
@@ -5306,7 +5306,7 @@ def test_a_pile_ten_minutes_stale_closes_the_store_however_small_it_is(tmp_path:
 
     Ten minutes is long enough to ride out a GitHub outage and short enough
     that a wedged pusher is caught inside one working session
-    (docs/deferred-push.md, "Saying it on the page"). And past the ceiling
+    (design/deferred-push.md, "Saying it on the page"). And past the ceiling
     /api/health goes red with the same sentence, because past it the write half
     of this service is genuinely down — a 200 there would be a flag that is
     honest and unread, which is the fork's outage again.

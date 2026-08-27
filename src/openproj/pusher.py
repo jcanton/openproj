@@ -6,7 +6,7 @@ server-side time per push, measured — and a coroutine holding one would hold
 the event loop that answers every page. And CPU is allocated only while a
 request is in flight, so a timer cannot be relied on to fire at all; this
 thread does no timing of its own except to back off, and is otherwise driven
-entirely by the poke a commit makes (docs/deferred-push.md, "Why not batch on
+entirely by the poke a commit makes (design/deferred-push.md, "Why not batch on
 a timer").
 
 The thread owns every conversation with the remote. `sync()` works on a fresh

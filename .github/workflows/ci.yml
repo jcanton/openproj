@@ -32,7 +32,7 @@ concurrency:
   cancel-in-progress: true
 
 # Three job kinds, and the reason there are three is measured in
-# `docs/probes/ci-speed.md`: a job on this repository costs about a dozen seconds
+# `design/probes/ci-speed.md`: a job on this repository costs about a dozen seconds
 # of setup, not the ninety everybody assumes, so buying a whole extra machine is
 # cheaper than any arrangement of processes on one machine.
 #
@@ -45,7 +45,7 @@ concurrency:
 #
 # That did not change the answer and it did change the sums. Five machines still
 # beat processes on one, and the shard cut was re-made from
-# `docs/probes/ci-durations-4core.txt` because the old one had INVERTED: the leg
+# `design/probes/ci-durations-4core.txt` because the old one had INVERTED: the leg
 # order on 2 cores was editor > views > graph > rest > coedit and on 4 cores it
 # is rest > views > coedit > editor > graph. The Chrome-heavy legs took the extra
 # cores and the plain-Python one did not.
@@ -101,7 +101,7 @@ jobs:
   # The suite, cut five ways across five machines.
   #
   # The cut is in `.github/shards/<name>`, one path per line, and it is made from
-  # `docs/probes/ci-durations-4core.txt` — this hardware's table, not either of
+  # `design/probes/ci-durations-4core.txt` — this hardware's table, not either of
   # the 2-core ones, because the legs did not merely shrink when the cores
   # doubled, they changed order. And at `--durations-min=0`, because the 0.05
   # threshold the older tables used hid 37s of the suite, almost none of it
@@ -216,7 +216,7 @@ jobs:
       #
       # `--durations=25` stays after the measurement flags came out. The probe
       # was `--durations=0 --durations-min=0.05`, which is 732 rows and is what
-      # `docs/probes/ci-durations*.txt` hold; 25 is the number that keeps this
+      # `design/probes/ci-durations*.txt` hold; 25 is the number that keeps this
       # line useful without keeping the probe. What decides the critical path is
       # shard BALANCE, and balance drifts every time a test file is added — 25
       # rows per leg is enough to see which file grew and re-cut the lists,

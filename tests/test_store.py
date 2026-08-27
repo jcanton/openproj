@@ -1486,7 +1486,7 @@ def test_a_put_against_a_hand_deleted_drawing_is_refused_honestly(store: Store, 
     handle on the same repository, rather than through `store.remove`:
     `remove` runs through `write_all`'s merge ladder, which reads the file
     back through `read()`'s UTF-8 decode to check it is really gone — the
-    exact crash `docs/drawings.md`'s "A PNG must never touch the merge
+    exact crash `design/drawings.md`'s "A PNG must never touch the merge
     ladder" warns a drawing must never reach, on the read side as much as the
     write side.
     """

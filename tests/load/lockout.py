@@ -256,7 +256,7 @@ def cell(room_where: str, write_where: str, keep: bool) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--out", default=str(ROOT / "docs/probes/load/lockout.json"))
+    parser.add_argument("--out", default=str(ROOT / "design/probes/load/lockout.json"))
     parser.add_argument("--keep", action="store_true")
     args = parser.parse_args()
 

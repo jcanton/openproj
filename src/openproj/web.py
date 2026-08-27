@@ -1521,7 +1521,7 @@ def create_app(
             # save unconfirmed forever: this frame is what clears the "saved
             # here, not on GitHub yet" mark, and a page cannot wait to see its
             # own sha on main instead because recovery re-mints shas
-            # (docs/deferred-push.md, "Confirmation cannot be 'my sha is on
+            # (design/deferred-push.md, "Confirmation cannot be 'my sha is on
             # main'"). The frame's shape is documented at `broadcast`; the
             # (sha, branch) pairs go out as two-element arrays.
             if outcome.state != "landed":
@@ -2567,7 +2567,7 @@ def create_app(
                 "unpushed": state.unpushed,
                 # The pile, in numbers — what the shell's banner reads, and what
                 # re-scopes the alarm to "non-zero and NOT draining" now that
-                # every save is briefly unpushed (docs/deferred-push.md,
+                # every save is briefly unpushed (design/deferred-push.md,
                 # "Health"): the age is what tells a stuck pile from the
                 # ordinary two-second window, and `parked` counts the commits
                 # that reached GitHub but not main.
@@ -2642,7 +2642,7 @@ def create_app(
         # table's poll fallback for its "saved here, not on GitHub yet" marks.
         # The event stream has no replay — Cloud Run recycles it every 300s —
         # so a tab that reconnected has missed the landed frame for good, and
-        # this is where it learns its saves are safe (docs/deferred-push.md,
+        # this is where it learns its saves are safe (design/deferred-push.md,
         # "Confirmation cannot be 'my sha is on main'"). `landed` is the
         # confirmed tip by NAME; `unpushed` at zero says the whole pile has
         # drained, which is the answer that survives the tip having moved past
@@ -3862,7 +3862,7 @@ def create_app(
 
         The frame is for the person who was typing, and it appends the one
         action that works. The audit's four-cell probe
-        (`docs/probes/concurrency-audit.md`, §4 Loss 3) measured why: a conflict
+        (`design/probes/concurrency-audit.md`, §4 Loss 3) measured why: a conflict
         leaves `room.base` where it was, every retry re-runs the same merge
         against the same base with a `mine` that only grows, and the join path's
         absorb is gated on `not room.pending()` — false for exactly the stuck

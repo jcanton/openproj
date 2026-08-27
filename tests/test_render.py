@@ -532,7 +532,7 @@ return {rows, bands: [...new Set(rows.flatMap(r => r.ys))].length};
 
 
 def test_the_legend_is_two_rows_and_the_keys_line_up(rendered: Path, tmp_path: Path):
-    """`docs/QUEUE.md` §7.5: "the legend is not vertically aligned ... third time
+    """`design/QUEUE.md` §7.5: "the legend is not vertically aligned ... third time
     this has been reported; whatever is done here should be a measurement in a
     test, not an eye". This is the eye replaced.
 

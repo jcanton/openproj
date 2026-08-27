@@ -182,7 +182,7 @@ def test_the_plain_box_carries_no_editor_library_at_all(client: TestClient):
     carries Ace carries that name too, and asserting its absence over the default
     page would be asserting that Ace is not there while saying something else.
     What is actually still true is that neither CodeMirror is a dependency here:
-    `docs/EDITOR.md` refuses CM6 on a fifty-one-import linker and CM5 on an
+    `design/EDITOR.md` refuses CM6 on a fifty-one-import linker and CM5 on an
     archived upstream, and the page below has no editor bytes of any kind in it.
 
     The page that DOES carry Ace is held to its own rules in
@@ -1530,7 +1530,7 @@ def test_no_script_ever_assigns_a_textarea_its_value(client: TestClient):
 def test_the_toolbar_is_the_one_in_the_screenshot_and_that_overrules_a_count(
     client: TestClient,
 ):
-    """`docs/hackmd-observed.md` records the toolbar off the pixels of a real
+    """`design/hackmd-observed.md` records the toolbar off the pixels of a real
     HackMD note: four groups, drawn with separators, in a fixed order. jcanton
     asked for "the buttons along the top of the editor" and pointed at that.
 
@@ -1678,7 +1678,7 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
     `attachDrawing`'s own comment. A press dispatches `openproj:draw` on
     `surface.el` carrying the entry (or `null` for "+ drawing"), which
     `openDrawing` hears and answers by opening the popup; `measured_in` cannot
-    drive that mount to completion (see `docs/drawings.md`, "Five helpers, not
+    drive that mount to completion (see `design/drawings.md`, "Five helpers, not
     one"), so what is asserted here is the SYNCHRONOUS half: the popup appears
     and the status strip says the bundle is loading, both true the instant the
     press returns and neither dependent on the fetch this page's `file://`
@@ -7133,7 +7133,7 @@ def test_the_length_and_the_ceiling_are_not_the_same_number_on_a_document_that_i
 # --------------------------------------------------------------------------- #
 # The room's save and the pusher's verdict
 #
-# The push happens behind the answer now (docs/deferred-push.md, "Confirmation
+# The push happens behind the answer now (design/deferred-push.md, "Confirmation
 # cannot be 'my sha is on main'"), so every `saved` frame carries
 # `pushed: false` and the state a save is in is one of three — in flight,
 # landed, stranded — never a boolean.
@@ -7234,7 +7234,7 @@ def test_a_stranded_save_raises_the_alarm_on_a_tab_that_missed_every_frame(clien
     """The alarm above travelled only on the live landed frame, and the spec
     says in as many words that frames are dropped routinely: Cloud Run recycles
     the event stream every 300 seconds and it has NO replay
-    (docs/deferred-push.md, "Confirmation cannot be 'my sha is on main'"). A
+    (design/deferred-push.md, "Confirmation cannot be 'my sha is on main'"). A
     verdict only a frame can deliver is an alarm that fires only if the tab
     happened to be listening at the right moment — and the parked save is
     precisely the one state a person must hear about, because their 200 went
@@ -7917,7 +7917,7 @@ def test_a_reader_of_the_slide_editor_gets_no_surface_and_no_toolbar(
 #
 # `measured_in` cannot drive this page at all: 0 of 6 runs completed mount
 # plus two exports at its usual ~5000ms budget, 3 of 6 at 60000ms, all 6 only
-# at 600000ms, and not cleanly monotonically along the way (`docs/drawings.md`,
+# at 600000ms, and not cleanly monotonically along the way (`design/drawings.md`,
 # "Five helpers, not one"). So nothing below uses it. Every test here drives a
 # real Chrome over DevTools against `live_server`'s real uvicorn — the same
 # shape `tests/test_coedit.py` already uses three times — because that is the
@@ -8020,7 +8020,7 @@ def _png_text_chunks(data: bytes) -> dict[bytes, bytes]:
     `exportToBlob` is supposed to write. The structural claim this backs is
     "the scene really is in the PNG, under this key" — never a byte count,
     because Excalidraw's roughness draws from a random seed and the same scene
-    exported twice does not land on the same size (`docs/drawings.md`, "Five
+    exported twice does not land on the same size (`design/drawings.md`, "Five
     helpers, not one")."""
     assert data[:8] == b"\x89PNG\r\n\x1a\n", "not a PNG at all"
     chunks: dict[bytes, bytes] = {}
@@ -8123,7 +8123,7 @@ def test_the_fetch_and_inject_delivery_is_clean_under_the_real_policy(
     `connect-src 'self'` grants the fetch that reads the bundle's text,
     `script-src 'unsafe-inline'` grants the inline injection — but never
     exercised the pair together: it inlined all 9.1MB into one `file://` page
-    instead of fetching anything (`docs/drawings.md`, "The spike, which came
+    instead of fetching anything (`design/drawings.md`, "The spike, which came
     first"). This is that pair, against a real origin, with the
     forced-failure control every CSP probe in this file carries: a real
     `<script src>` really is refused where the marked inline injection is not,
@@ -8327,7 +8327,7 @@ def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
     live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
     tmp_path: Path,
 ):
-    """The round trip `docs/drawings.md` says is testable today, driven
+    """The round trip `design/drawings.md` says is testable today, driven
     exactly the way it says to drive it: a real Chrome over DevTools, real
     strokes, against a real origin. Three claims, told as one story because
     they are one story —
@@ -8456,7 +8456,7 @@ def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(
     tmp_path: Path,
 ):
     """"The loser is refused, in one sentence, and their strokes are gone" —
-    from the file. `docs/drawings.md` is explicit that a conflict dialog which
+    from the file. `design/drawings.md` is explicit that a conflict dialog which
     also throws away the work it refused is the worse of the two losses, so
     this is what "the popup stays open with the work still in it" means asked
     of a real save against a real conflict, not merely inferred from the code.
