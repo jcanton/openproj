@@ -1,12 +1,8 @@
 # Drawings
 
-Designed and built 2026-08-26 with jcanton. Excalidraw, vendored, opens in a
-popup over the editor; a drawing is a PNG that carries its own editable scene, and
-it lives at a stable path under one top-level directory. Nothing here was speculative
-about the product — every fork below was decided in conversation. A feasibility spike
-ran first against the questions the CSP raised, and settled all but two of them; both
-are resolved where the spike's own answers are, in "The spike, which came first"
-below, rather than restated here.
+Excalidraw opens in a popup over the editor; a drawing is a PNG that carries
+its own editable scene, and it lives at a stable path under one top-level
+directory.
 
 ## What it is
 
@@ -21,13 +17,6 @@ An embed is ordinary image markdown:
 ![sync flow](drawings/draw-a1b2c3.png){width=60}
 ```
 
-No bespoke syntax, and the reason is that a bespoke syntax buys nothing and costs
-everything outside this app. The file genuinely is a PNG genuinely at that path, so
-GitHub renders it, `git show` renders it, and any markdown viewer renders it. This is
-the argument already written at `render/markdown.py:118-119`: a repository-relative
-path so the markdown reads the same in git, on GitHub and in the tool, with only the
-prefix in front of it changing.
-
 The caption is the alt text. There is no naming mechanic and no rename mechanic,
 because there is nothing for one to do: the id is the name, and the caption is text
 somebody types.
@@ -41,7 +30,7 @@ source of truth that can drift from the first.
 
 Not SVG. `web.py:613-614` refuses SVG on purpose — "it is a document that can carry
 script" — and a drawing is not the reason to reverse that. The drawing door accepts
-`image/png` and nothing else, so `IMAGE_TYPES` is not widened either.
+`image/png` and nothing else.
 
 ## Where the bytes live
 
@@ -60,21 +49,6 @@ sentence false about a directory whose `immutable, max-age=31536000` caching
 rest on it being true. A separate directory keeps the two guarantees visibly separate,
 and no existing asset test changes.
 
-**Why not content-addressed, which would have been nearly free.** `put_asset` already
-works; `assets/<sha16>.png` already matches every pattern, already exports, already
-inlines into the deck. The whole feature would have been a save button and a body
-rewrite. But that body rewrite is the problem: content-addressing mints a new path on
-every save, so every save must find the old path in the body and splice the new one
-in — a body write racing the record editor's own save, on the same file, through the
-merge ladder. A stable path makes that race not exist. That is what the extra day
-buys, and it carries the decision on its own. Two smaller things come with it: a menu
-a human can read, and a URL that survives an edit, so the picture in a deck, in an
-export, on GitHub and in a link somebody pasted stays pointed at the same drawing.
-
-What is *not* a difference, against the obvious argument: repository growth. Both
-schemes keep every version of the bytes for ever. Content-addressing keeps old blobs
-at old paths in the tree; a rewritten path keeps them in history. Git holds both.
-
 ## A PNG must never touch the merge ladder
 
 This is the part that corrupts, so it is written down before the code that avoids it.
@@ -87,7 +61,7 @@ Three lines, read and verified:
 2. `store.py:895` — `read` decodes UTF-8, so `_attempt`'s stale-base branch
    (`store.py:1894`) raises `UnicodeDecodeError` on a stored PNG. Also not in
    `WRITE_FAILURES`. Also a traceback.
-3. And the reason those two crashes are the *good* outcome: if anyone ever makes them
+3. And the reason those two crashes are the _good_ outcome: if anyone ever makes them
    go away by decoding latin-1 first, `_split` (`store.py:321-324`) sees no `---` and
    hands the entire binary to `_merge_body`'s line merge, which splits on
    `str.splitlines(True)` boundaries — for binary that includes `\r`, `\x0b`, `\x0c`,
@@ -97,48 +71,6 @@ Three lines, read and verified:
    force-pushed. A file no decoder will open.
 
 So drawings get their own store method, and it never decodes anything.
-
-## `Store.put_drawing`
-
-```python
-def put_drawing(
-    self, path: str, data: bytes, base_blob: str | None, author: str, message: str
-) -> tuple[WriteResult, str]:   # (result, the new blob oid, which is the new ETag)
-```
-
-Assembled almost entirely from parts that already exist:
-
-- `with self._writing:` then `_refuse_forked()` and `_refuse_swamped()`, copied verbatim
-  from `put_asset` (`store.py:1677-1684`) and for its stated reason: while the plan is
-  forked, no route may answer as though this service can take work.
-- `stored = _blob_at(self._repo, self.head(), path)` — `store.py:307`, which is
-  `Store.read` without the decode. Blob-id compare-and-swap, never a decode.
-- `base_blob is None` (a create) and `stored is not None` → refuse. This is the `O_EXCL`
-  the store has nowhere today, and it costs one line because check and write are inside
-  the same lock.
-- `base_blob is not None` and `str(stored) != base_blob` → refuse, with the sentence in
-  "Two people, one drawing" below.
-- `blob = create_blob(data)`, and `if blob == stored:` return without minting. Required,
-  not optional: `store.py:1778-1784` and `store.py:1406-1407` record the same bug being
-  fixed twice — an empty commit on the decision log says a decision was made when none
-  was.
-- otherwise `_insert` → `create_commit(_BRANCH, ...)` → `_finish(head, "committed")`,
-  exactly as `put_asset` does at `store.py:1689-1697`.
-
-**Not a flag on `write_all`.** It would touch five sites — the `dict[str, str | None]`
-signature, `_commit` and its `.encode`, `_attempt`'s already-gone probe and its
-base/current read pair, and `_verdict` — and `_verdict`'s own docstring
-(`store.py:571-574`) says it was extracted so write-time and replay-time conflict
-semantics cannot drift. Widening it *is* the drift. The decision is also per-path, not
-per-call: a flag cannot express one commit holding a `.md` and a `.png`.
-
-Two comments became false the day this shipped, and were corrected in the same commit:
-`put_asset`'s docstring (`store.py:1659-1665`) was scoped to the
-content-addressed half, and `_replay_one`'s `UnicodeDecodeError` arm
-(`store.py:1434-1446`) stopped saying that reaching it means a hand-committed
-binary. A concurrently-edited drawing is now a routine way in, and the consequence is
-the whole commit parking to `refs/openproj/stranded-<sha>` (`store.py:1482`) after a
-200 already went out.
 
 ## The id
 
@@ -159,7 +91,7 @@ incidental guard falling out of `_identity_problems` (`model.py:2858-2872`). A d
 never reaches `validate_all`, so it would inherit no guard at all — and `_attempt`
 short-circuits to an unconditional overwrite whenever `current == base_commit`
 (`store.py:1890-1893`), so no guard means silent data loss. A drawing can afford the
-check records cannot, because the path *is* the id and there is no `<id>--<slug>`
+check records cannot, because the path _is_ the id and there is no `<id>--<slug>`
 ambiguity: the route mints, `put_drawing` refuses over an occupied path under the lock,
 the route re-mints, up to eight times, then 500s. Not theatre — `token_hex(3)` is
 16,777,216 values, and by the birthday bound a corpus of 1,000 drawings already carries
@@ -168,8 +100,8 @@ a minted id is true of a simultaneous pair and not of a growing corpus.
 
 **No slug half, ever**, and the argument is not YAGNI. Records need `_path_for`
 (`web.py:1275-1307`) because humans rename record files in git and the slug drifts.
-That is survivable only because bodies reference records *by id*, through `_link`. A
-drawing embed references it *by path*. So a real rename would have to rewrite every
+That is survivable only because bodies reference records _by id_, through `_link`. A
+drawing embed references it _by path_. So a real rename would have to rewrite every
 body that names the drawing — a body-rewriting feature, which a path finder does not
 make cheaper — and a slugged filename would break GitHub's own rendering of
 `![](drawings/draw-a1b2c3.png)`, which is the whole reason the path is repository-relative.
@@ -234,7 +166,7 @@ The loser is refused, in one sentence, and their strokes are gone:
 There is no third drawing that is both people's intent. This is the argument
 `_merge_body`'s own docstring makes at `store.py:412-416` about CRDTs, and pretending
 otherwise for a PNG would be worse than saying it plainly. Saving the loser's work as a
-*new* drawing was considered and deferred: it mints a second id and splices a second
+_new_ drawing was considered and deferred: it mints a second id and splices a second
 embed into the body, which puts back exactly the body-write race the stable path was
 chosen to remove.
 
@@ -263,7 +195,7 @@ served), and the three byte-identical
 `:2287` and `:2369`, collapsed to `lambda path: store.read_asset(commit, path)`.
 
 The drawings arm is pinned to `\.png` rather than sharing `_ASSET_MEDIA`'s alternation,
-so `_ASSET_MEDIA` stays the single source for the *asset* format list, which is what its
+so `_ASSET_MEDIA` stays the single source for the _asset_ format list, which is what its
 comment at `markdown.py:110-114` asks for. Keys stay consistent by construction, because
 `_image`'s lookup and `_inlined_assets`' map are both built from group(1), and the
 suffix-driven media lookup at `markdown.py:439` still works on a full path.
@@ -366,7 +298,7 @@ mark in this bar, because `test_no_page_reaches_the_network` (`tests/test_render
 forbids fetching one, the same rule every other icon here already obeys.
 
 The menu is `_EMBED_SRC.finditer(surface.text())`, drawings arm only, deduped keeping the
-first occurrence, in match order — which over the raw markdown *is* embed order. Label is
+first occurrence, in match order — which over the raw markdown _is_ embed order. Label is
 the bare id. Recomputed in JS when the menu opens: no server round trip, no stored state,
 nothing to keep in sync. It is the same scan `_inlined_assets` already does at
 `markdown.py:433`.
@@ -609,14 +541,14 @@ asks. The bundle was built, mounted under `default-src 'none'`, and measured:
 5. **Does the unconditional `esm.sh` font fallback stay quiet?** Yes, and the guess
    about it was wrong twice over. There IS an effective disable:
    `ExcalidrawFontFace.createUrls()` short-circuits with `if (t.startsWith("data"))
-   return [t]`, so rewriting the font literals to `data:` URIs means the esm.sh
+return [t]`, so rewriting the font literals to `data:` URIs means the esm.sh
    fallback is never even consulted — verified with DNS blackholed, zero external
    requests. And `font-src data:` does not refuse a `data:` `@font-face` the way it was
    assumed to: those URIs load fine under the existing policy,
    `document.fonts.check('20px Excalifont')` comes back true, and the exported PNG
    carries the real handwriting rather than a system-font substitute.
 6. **Does it touch `localStorage` bare?** The shell wraps every browser-store access
-   because bare access *throws on the property* in private windows and under enterprise
+   because bare access _throws on the property_ in private windows and under enterprise
    policy — nine of twelve bare calls once killed the table before the first row drew.
 7. **Does it mount under `--virtual-time-budget`?** Measured, and answered badly — see
    "Five helpers, not one," below, for the numbers. There is no forced-synchronous-paint
@@ -725,11 +657,11 @@ function over body text; and now, over a real origin, the round trip itself.
   `local:` sentinel it returns for Xiaolai, below, and Excalidraw's own font metadata marks
   Liberation Sans `private:` true, an internal metrics-fallback face never offered in the
   font picker, so the cut changes nothing a person using this tool can choose. What it does
-leave, measured in headless Chrome on 2026-08-26 while chasing an unrelated report: a text
-element puts `"Liberation Sans"` into `document.fonts` with `status: "error"`. It is the
-sentinel failing to resolve, it is silent — nothing reaches the console — and the canvas
-draws in the fallback, which is what a private metrics face is for. Recorded because the
-next person to read `document.fonts` on this page will see it and wonder. The full
+  leave, measured in headless Chrome on 2026-08-26 while chasing an unrelated report: a text
+  element puts `"Liberation Sans"` into `document.fonts` with `status: "error"`. It is the
+  sentinel failing to resolve, it is silent — nothing reaches the console — and the canvas
+  draws in the fallback, which is what a private metrics face is for. Recorded because the
+  next person to read `document.fonts` on this page will see it and wonder. The full
   texts, one per family, are in `static/excalidraw-fonts-LICENSE.txt`; the per-file licence
   requirement `static/VENDOR.md` states applies to all 24.
 - **CJK is out.** Confirmed almost exactly: Xiaolai, 209 files, 12,667,492 B, under

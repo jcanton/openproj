@@ -156,5 +156,3 @@ check is off; when it does name people, somebody who is not on it is a warning a
 **`Problem` and `Unreadable`** — a `Problem` is keyed by record id, so every page hangs it on that
 record's row. An `Unreadable` is keyed by a path: a file that will not parse has no record, which is
 precisely what is wrong with it.
-
-🤖 Written by an agent on behalf of @jcanton
