@@ -1073,6 +1073,67 @@ def test_a_bet_nobody_has_sized_is_counted_where_it_was_bet_and_carried_into_not
     assert index.carried_into(37) == []
 
 
+def test_work_that_has_started_is_counted_where_it_is_running_even_with_no_size():
+    """The other half of the rule above, and the one dropping the `span is None`
+    disjunct overshot.
+
+    Unsized-and-`in_progress` is reachable through the normal path rather than by
+    skipping a rung — the size gate is `ready` only, and §2 of
+    `design/time-model.md` records three such records in icon4py-plan. Such a task
+    has no span, so it fell out of every cycle after the one it was bet in,
+    including the one it is being worked on in right now: no weeks, which is
+    right, and no `· N not sized` beside them either, which is the silent shrink
+    the badge exists to prevent.
+
+    The three records under this pitch are the discriminator. The sized sibling
+    is carried by its dates as it always was; the running one is carried because
+    it started and has not stopped; the `shaping` one has neither and stays in
+    cycle 35 alone, which is what the test above pins from the other direction.
+    """
+    records = [
+        a_pitch(
+            "pitch-b00001",
+            owner="ann",
+            cycle=35,
+            status="in_progress",
+            start_date=date(2026, 6, 1),
+        ),
+        a_task(
+            "task-c00001",
+            parent="pitch-b00001",
+            owner="ann",
+            status="in_progress",
+            start_date=date(2026, 6, 1),
+        ),
+        a_task(
+            "task-c00002",
+            parent="pitch-b00001",
+            owner="ann",
+            person_weeks=8.0,
+            status="in_progress",
+            start_date=date(2026, 6, 1),
+        ),
+        a_task("task-c00003", parent="pitch-b00001", owner="ann", status="shaping"),
+    ]
+    index = build_index(records, _three_cycles(), TODAY)
+
+    # Cycle 35 is where the bet was made, so everything under it is counted there
+    # whatever its state.
+    assert index.unsized_in(35) == {"ann": ["task-c00001", "task-c00003"]}
+    # 13 August is in 36's window, and the running task is running in it.
+    assert index.unsized_in(36) == {"ann": ["task-c00001"]}
+    # 37 has not opened. Nobody has said how long this task takes, so there is no
+    # forecast that reaches into it — and inventing one forwards is exactly the
+    # haunting the disjunct was removed for.
+    assert index.unsized_in(37) == {}
+    # The badge and the bar are one set, drawn from one walk over one gate: the
+    # cycle page names its carryover to explain the weeks, and the record the
+    # badge counts is in that list rather than in a count with nothing behind it.
+    assert index.load(36) == {"ann": 8.0}
+    assert index.carried_into(36) == ["pitch-b00001", "task-c00001", "task-c00002"]
+    assert index.carried_into(37) == []
+
+
 def test_the_scheduler_having_no_answer_is_not_the_same_as_there_being_nothing_to_place():
     """The two states the old `span is None` clause could not tell apart, which is
     why it counted both for ever.

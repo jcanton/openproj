@@ -313,20 +313,46 @@ class Index(BaseModel):
         a window to is a hypothetical, and letting it absorb every running item
         would put the whole plan's load on a page for a cycle that may never run.
 
-        **A record with no span carries into nothing.** The last line read
-        `span is None or (...)`, written when no span meant the scheduler had
-        tried and failed: a rare record, live work in a dated window, and worth
-        counting late rather than losing. It stopped meaning that when the
-        default appetite went. An unsized record now leaves the placer by a
-        `continue` and gets no span at all, which is the normal state of every
-        `shaping` and `thinking` bet — precisely the population `unsized_in`
-        exists to count — so each of them was carried into every dated cycle
-        after its own, for ever. The `· N not sized` badge that exists to explain
-        a shrinking total over-reported on all of them, and `carried_into` listed
-        bets nobody has shaped as carryover into cycles they have nothing to do
-        with. A bet is a fact somebody stated and it counts where it was stated,
-        which the `mine == cycle` line above has already answered; a placement is
-        what says the work is still running, and there is none.
+        **A record with no span carries into nothing it has not started.** The
+        last line read `span is None or (...)`, written when no span meant the
+        scheduler had tried and failed: a rare record, live work in a dated
+        window, and worth counting late rather than losing. It stopped meaning
+        that when the default appetite went. An unsized record now leaves the
+        placer by a `continue` and gets no span at all, which is the normal state
+        of every `shaping` and `thinking` bet — precisely the population
+        `unsized_in` exists to count — so each of them was carried into every
+        dated cycle after its own, for ever. The `· N not sized` badge that exists
+        to explain a shrinking total over-reported on all of them, and
+        `carried_into` listed bets nobody has shaped as carryover into cycles they
+        have nothing to do with. A bet is a fact somebody stated and it counts
+        where it was stated, which the `mine == cycle` line above has already
+        answered.
+
+        **A placement is not the only thing that says work is still running.**
+        Dropping that disjunct outright overshot in the other direction. The size
+        gate is `ready` only, so unsized-and-`in_progress` is reachable by the
+        normal path rather than by skipping a rung — §2 of `design/time-model.md`
+        counts three such records in icon4py-plan — and each of them vanished
+        from the very cycle somebody is working on it in: no weeks, which is
+        right, and no `· N not sized` beside them, which is the silent shrink the
+        badge was added to prevent. `in_progress` plus a start date is what is
+        left when there is no span, and what it can honestly claim is the stretch
+        from that date to today. Not one day further: nobody has said how long
+        this takes, so a forecast would be an invention, and inventing one
+        forwards is precisely the haunting above. `today >= window[0]` is that
+        limit written down — a cycle that has not opened can never pick this up.
+        A record `in_progress` with no start date at all is a blocker at the door;
+        here it is bounded at today, so it counts in the cycle running now and in
+        no earlier one.
+
+        **Only where there is no span at all**, and the sized sibling in
+        `test_work_that_has_started_is_counted_where_it_is_running_even_with_no_size`
+        is the boundary. A record the scheduler placed is answered by its dates,
+        because a status nobody has kept up to date is not a second calendar: a
+        task that ran 22–26 June and is still marked `in_progress` is carried by
+        its span into the cycles that span touches and no others. Reading the
+        status there too would put every stale record into every cycle from its
+        start to today — the same haunting, differently sourced.
 
         **The state that clause was written for no longer reaches it.** A record
         the scheduler genuinely cannot place — a dependency cycle, a duration
@@ -356,9 +382,15 @@ class Index(BaseModel):
         if window is None:
             return False
         span = self.spans.get(record.id)
-        if span is None:
+        if span is not None:
+            return span.start <= window[1] and span.end >= window[0]
+        if record.status != "in_progress":
             return False
-        return span.start <= window[1] and span.end >= window[0]
+        # The one measurement an unsized record has. `or self.today` is a bound
+        # and never a date this returns or draws: with no start date the stretch
+        # collapses to today, which is the cycle the work is demonstrably in.
+        began = record.start_date or self.today
+        return began <= window[1] and self.today >= window[0]
 
     def build_end(self, cycle: int | None) -> date | None:
         """The last day of a cycle's build.
@@ -408,13 +440,17 @@ class Index(BaseModel):
         smaller number arriving with no explanation is exactly the defect this
         pairing prevents.
 
-        **One cycle each, which is the cycle the bet was made in.** Everything
-        that lands in here is a sized-nothing leaf, and a leaf with no size gets
-        no span, so this list and `counts_in`'s carryover arm are two readings of
-        one condition — and they disagreed, the badge counting an unshaped bet
-        into every later cycle while the weeks beside it moved on. An unsized bet
-        has nothing running, so it carries nowhere and is counted once, beside
-        the total it did not contribute to.
+        **Where it was bet, and then wherever it is actually being worked on.**
+        Everything that lands in here is a sized-nothing leaf, and a leaf with no
+        size gets no span, so this list and `counts_in`'s carryover arm are two
+        readings of one condition — which is why it is that method that answers
+        both, and not a second rule written here. A bet nobody has started is
+        counted once, in the cycle it was stated in, and haunts nothing after it;
+        one that is `in_progress` is counted again in each cycle between its start
+        date and today, because that is where somebody's weeks are going. Both of
+        those are `counts_in`'s wording, so the count on a page and the weeks
+        beside it are over one set of records rather than two that agree most of
+        the time.
 
         Keyed by person rather than counted, because the two callers want
         different arithmetic over the same walk: a person's own figure names the
@@ -433,6 +469,14 @@ class Index(BaseModel):
         somebody on it, and not being a rollup of its own children — are what a
         second walk would get subtly wrong, and a person's load disagreeing with
         the count of what is missing from it is worse than either number alone.
+
+        Which is why running-but-unsized work was answered by widening
+        `counts_in` rather than by giving `unsized_in` a question of its own. A
+        badge drawn over a wider set than the bar beside it, and than the
+        carryover list the page prints underneath to explain the bar, is the same
+        disagreement the carryover arm was just fixed for, moved one method along
+        — and a count of records nothing on the page names is a number you cannot
+        act on.
         """
         held: dict[str, float] = {}
         unsized: dict[str, list[str]] = {}

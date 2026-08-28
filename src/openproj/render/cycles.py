@@ -1832,6 +1832,12 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
     # spent on, so it used to be charged the default half a week each. Now it is
     # charged nothing, and a person's bet is that much smaller than it was; the
     # count beside it is what stops that being a number that quietly shrank.
+    #
+    # It is not only shaping work. The size gate is `ready` only, so a task can be
+    # running with no appetite on it, and on the page for the cycle it is running
+    # in that record is the whole of the difference between the bar and the
+    # weeks somebody is actually spending. `counts_in` carries it here by its
+    # start date; `carried` below names it, so the count has something behind it.
     unsized = index.unsized_in(number)
     nominal = index.nominal_availability
     window = index.cycles.get(number)
@@ -2162,12 +2168,12 @@ def _person_load(index: Index, logins: list[str]) -> dict:
     number = _current_cycle(index)
     plan = index.plans.get(number) if number is not None else None
     here = index.load(number) if number is not None else {}
-    # Records this cycle charges nobody for, because nobody has sized them. The
-    # cycle they are in is the only one counted, exactly as the weeks are: a
-    # count drawn from every cycle at once beside a figure drawn from one would
-    # be two answers to one question. Weeks bet elsewhere are summed below and
-    # get no such count — that line is a hint that somebody is busier than this
-    # page says, and a second qualification on a number that is already a
+    # Records this cycle charges nobody for, because nobody has sized them. One
+    # cycle is asked, the one running now, exactly as the weeks above are: a count
+    # drawn from every cycle at once beside a figure drawn from one would be two
+    # answers to one question. Weeks bet elsewhere are summed below and get no
+    # such count — that line is a hint that somebody is busier than this page
+    # says, and a second qualification on a number that is already a
     # qualification is a line nobody finishes reading.
     missing = index.unsized_in(number) if number is not None else {}
     elsewhere: dict[str, float] = {}
