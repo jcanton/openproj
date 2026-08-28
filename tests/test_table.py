@@ -59,7 +59,7 @@ from pathlib import Path
 
 import pygit2
 import pytest
-from browser import chrome, measured_in, pressed_in, screenshot
+from browser import chrome, measured_in, measured_on_a_phone, pressed_in, screenshot
 from fastapi.testclient import TestClient
 from test_store import commit_directly
 from test_web import (
@@ -1234,6 +1234,25 @@ def test_the_fit_is_measured_again_once_the_real_typeface_has_landed(page: str):
 # control is out of flow and the room for it is `padding-right` on the header, so
 # `reviewers` went from 111 to 116 — the first of the four whose header, not its
 # widest cell, is what the column needs.
+#
+# And `start` and `end` are the two the widest cell no longer decides at all.
+# They were written down here at 101, and 101 is not what a browser answers any
+# more: re-measured on the demo corpus, `naturalWidths()` gives these two 74 — a
+# whole date with its century, which is what that pass sees, `tight-dates` being a
+# rule about a column that has already been squeezed.
+#
+# 116 is what goes in, because 116 is the width of the date PICKER they open,
+# reserved in `_TABLE_STYLE` against that same pass. WHICH PAGE is measured now
+# decides between the two numbers, and this is the line that has to say which: the
+# reservation is scoped to `td.edit`, so the served table measures 116 and a
+# rendered file — which opens no editors and marks no cell `edit` — still measures
+# 74. The served page is the one these widths are argued about, and the one every
+# threshold quoted in `_TABLE_STYLE` was measured on. Only `start` and `end` were
+# re-read for that change; the other thirteen were written down against an older
+# corpus and several have drifted since (`id` measures 122 today, `size` 116), so
+# read this dict as the input the fit arithmetic is argued over rather than as a
+# census of what Chrome answers this week. A column drawn narrower than
+# the control it opens is a control with its calendar indicator off the end.
 MEASURED = {
     "id": 110,
     "title": 304,
@@ -1244,8 +1263,8 @@ MEASURED = {
     "reviewers": 116,
     "cycle": 63,
     "size": 81,
-    "start": 101,
-    "end": 101,
+    "start": 116,
+    "end": 116,
     "blocked_by": 87,
     "progress": 96,
     "prs": 80,
@@ -3132,7 +3151,9 @@ def test_a_write_refreshes_the_count_and_the_markers_in_place(page: str):
     something the page can work out — it left the count and the row markers stale
     until somebody reloaded, which is exactly when a count stops being read.
 
-    Only the problems are re-read. Dates are a forecast, and re-forecasting under
+    The problems are re-read after every save, and the ROWS only after one that
+    moved a field a span is derived from — `DERIVES_DATES`, asked of everything
+    being written. Dates are a forecast otherwise, and re-forecasting under
     somebody who is mid-edit is worse than being one reload behind.
     """
     body = script(page)
@@ -3419,6 +3440,470 @@ def test_the_editor_opens_on_the_written_value_and_not_the_forecast(page: str):
     # it, so an empty box does not read as a bug.
     assert "Shows the appetite" in got["taskSize"]["tip"], got["taskSize"]["tip"]
     assert "Editing sets start_date" in got["pitchStart"]["tip"], got["pitchStart"]["tip"]
+
+
+def test_a_date_cell_opens_a_picker_and_every_other_cell_still_opens_a_text_box(page: str):
+    """jcanton, 2026-08-28: "in the tables (all where editable) editing dates opens
+    a normal text box, it should open a date picker as in the records page".
+
+    The detail form, the status question the table itself asks (`askFor`), and the
+    cycle boxes were all `type="date"` already; the cell editor was the one place
+    in the app where a date had to be spelled out as ISO from memory, into a box
+    that would take `next tuesday` and let the server explain.
+
+    Asked of every editable cell rather than of the two named columns, because the
+    rule in `openEditor` is the field's TYPE and this is the assertion that says
+    so: a third dated field arrives here on its own, and a column that quietly
+    stopped being a picker fails without anybody remembering to add it.
+
+    Driven, because the rows do not exist until the page's script has run — and
+    the `type` ATTRIBUTE and not the property: the driver reflects `value`,
+    `hidden` and `name` into properties and nothing else, so `box.type` would be
+    undefined for a box that is drawn perfectly.
+    """
+    answer = drive_table(
+        page,
+        "(() => {"
+        "  const boxes = [];"
+        # Where the cells are, not the cells: `draw()` below replaces every one of
+        # them, so a list of elements is a list of detached ones by the second
+        # turn — and an editor opened in a cell nothing is holding proves nothing
+        # about the table.
+        "  const at = [...tbody.querySelectorAll('td.edit[data-record]')]"
+        "    .map(td => ({id: td.parentNode.dataset.id, col: td.dataset.col}));"
+        "  for (const where of at) {"
+        "    const td = tbody.querySelector("
+        '      `tr[data-id="${where.id}"] td[data-col="${where.col}"]`);'
+        "    openEditor(td);"
+        '    const open = td.querySelector("input, select");'
+        "    boxes.push({field: td.dataset.field, col: where.col, tag: open.tagName,"
+        "                type: open.getAttribute('type'),"
+        "                dataType: open.getAttribute('data-type'),"
+        "                value: open.value});"
+        # And each one is put away before the next is opened: two editors standing
+        # at once is a page nothing here is about.
+        "    draw();"
+        "  }"
+        "  const project = Object.values(DATA.rows).find(r => r.kind === 'project');"
+        "  return {boxes, editable: EDITABLE, stored: project.start_date};"
+        "})()",
+    )
+    got = answer["value"]
+    inputs = [box for box in got["boxes"] if box["tag"] == "INPUT"]
+
+    assert inputs, "no cell opened a typed box at all, so nothing below was asked"
+    dated = [box for box in inputs if got["editable"][box["field"]] == "date"]
+    assert dated, "this corpus has no editable date cell, so the claim is untested"
+    for box in dated:
+        assert box["type"] == "date", f"{box['col']} still opens a text box: {box}"
+        # `data-type` travels beside it and is not a duplicate of it: the
+        # suggestion widget reads `dataset.type` to know a list from a value.
+        assert box["dataType"] == "date", box
+    for box in inputs:
+        if got["editable"][box["field"]] != "date":
+            assert box["type"] == "text", f"{box['col']} was made a picker: {box}"
+
+    # And it opens on the field, in the format the control reads and writes back —
+    # `stored()` already hands back `YYYY-MM-DD`, so nothing converts on the way
+    # in and nothing has to convert on the way out.
+    started = [box for box in dated if box["col"] == "start" and box["value"]]
+    assert started, "no start cell opened on a written date"
+    assert got["stored"] in {box["value"] for box in started}, got["stored"]
+
+
+def test_a_half_written_date_leaves_the_date_that_is_there_alone(page: str):
+    """**The data loss the picker brought with it.**
+
+    `coerce` maps an empty box to `null`, which is right and has to stay right —
+    clearing a date from the table is a thing people do. But a native picker
+    reports `value === ''` for a date it cannot read as well as for one that is
+    not there: type `2026` into the year of an empty day and month, click
+    somewhere else, and the box hands back exactly what a deliberately emptied one
+    does. A text box could not lose anything this way — it sends the garbage and
+    earns a 422 naming the field, which is a refusal somebody can read.
+
+    `validity.badInput` is the browser's own word for that state, and it is the
+    only thing that can tell the slip from the intention. All three are driven
+    here, against the same cell, one after the other: the fumble writes nothing
+    and says so, the same fumble thrown away on Escape writes nothing and says
+    NOTHING, and the clear still commits `null`.
+
+    The Escape leg is the guard's other half — `!abandoned` — and without it the
+    whole condition could be deleted with the suite still green. Escape is an
+    intention rather than a slip and has nothing to report; it reaches the blur
+    handler through its own `draw()`, with the half-written date still in the
+    box, which is exactly the state the badInput branch is looking for.
+
+    The flag is stood up rather than typed. Chrome sets it from a partial edit
+    inside the control's own shadow DOM, which neither this driver nor a script
+    in a headless browser can reach — so what is under test is this page's branch
+    on the answer, and the answer is the browser's.
+    """
+    answer = drive_table(
+        page,
+        "(async () => {"
+        "  const project = Object.values(DATA.rows).find(r => r.kind === 'project').id;"
+        '  const cell = () => tbody.querySelector(`tr[data-id="${project}"] td[data-col="start"]`);'
+        "  const out = {};"
+        "  openEditor(cell());"
+        "  let box = cell().querySelector('input');"
+        "  out.opened = box.value;"
+        "  box.value = '';"
+        "  box.validity = {badInput: true};"
+        "  box.dispatchEvent(new Event('blur'));"
+        f" {SETTLE}"
+        "  out.fumbled = {editing: !!tbody.querySelector('td input'),"
+        "                 said: document.getElementById('state').textContent,"
+        "                 kept: DATA.rows[project].start_date};"
+        # The same fumble, discarded on purpose. The region is emptied first,
+        # because the leg above just filled it and an assertion that reads a
+        # sentence left over from the previous leg proves nothing about this one.
+        "  document.getElementById('state').textContent = '';"
+        "  openEditor(cell());"
+        "  box = cell().querySelector('input');"
+        "  box.value = '';"
+        "  box.validity = {badInput: true};"
+        "  const key = new Event('keydown');"
+        "  key.key = 'Escape';"
+        "  box.dispatchEvent(key);"
+        # The blur the browser fires when `draw()` takes the focused box out of
+        # the document, which is the only way this handler is reached on Escape.
+        "  box.dispatchEvent(new Event('blur'));"
+        f" {SETTLE}"
+        "  out.discarded = {said: document.getElementById('state').textContent,"
+        "                   kept: DATA.rows[project].start_date};"
+        # The same box, emptied on purpose: nothing about it is malformed, so the
+        # field goes. Last, because the re-read this one triggers hands back the
+        # scripted rows and there is nothing to open a cell in afterwards.
+        "  openEditor(cell());"
+        "  box = cell().querySelector('input');"
+        "  box.value = '';"
+        "  box.validity = {badInput: false};"
+        "  box.dispatchEvent(new Event('blur'));"
+        f" {SETTLE}"
+        "  return out;"
+        "})()",
+        replies=[
+            {"status": 200, "json": {"outcome": "committed", "commit": "c0ffee", "conflict": None}},
+            # `start_date` is a field the span is derived from, so the save
+            # re-reads the rows before it re-reads the problems.
+            {"status": 200, "json": {"rows": {}, "problems": []}},
+            {"status": 200, "json": {"problems": []}},
+        ],
+    )
+    got = answer["value"]
+    patches = [call for call in answer["calls"] if call["method"] == "PATCH"]
+
+    assert got["opened"], "the editor did not open on the stored date, so nothing was risked"
+    # The fumble: no commit, no editor left standing, and the row still holds it.
+    assert got["fumbled"]["kept"] == got["opened"], (
+        "a half-written date cleared the stored one — the deletion this guard exists to stop"
+    )
+    assert got["fumbled"]["editing"] is False, (
+        "the box is still standing open, so nothing told the reader it was over"
+    )
+    assert "not changed" in got["fumbled"]["said"], got["fumbled"]["said"]
+    assert "Start" in got["fumbled"]["said"], (
+        f"the announcement does not say which field it is about: {got['fumbled']['said']!r}"
+    )
+
+    # The discard: the same half-written box, thrown away rather than fumbled
+    # into. Nothing was decided, so nothing was written — and nothing is said,
+    # because a slip is a report and an intention is not.
+    assert got["discarded"]["kept"] == got["opened"], (
+        "Escape over a half-written date cleared the stored one"
+    )
+    assert "half-written" not in got["discarded"]["said"], (
+        "Escape was reported as a fumble: "
+        f"{got['discarded']['said']!r} — the `!abandoned` half of the guard is gone"
+    )
+    assert got["discarded"]["said"] == "", (
+        f"an explicit discard said something out loud: {got['discarded']['said']!r}"
+    )
+
+    # The clear: exactly one PATCH, and it is the one that empties the field.
+    assert len(patches) == 1, f"{len(patches)} commits for two fumbles and one clear"
+    assert json.loads(patches[0]["body"])["fields"] == {"start_date": None}, (
+        "clearing a date from the table has to stay possible"
+    )
+
+
+def test_a_date_typed_into_the_start_cell_brings_the_row_back_from_the_server(page: str):
+    """**The save that looked like it had not taken.**
+
+    The Start cell shows `row.start` — the scheduler's span — and writes
+    `start_date`. A save patches the row in place, so the field it wrote moved and
+    the column it is drawn in did not, and the redraw put the OLD forecast back
+    into the cell somebody had just typed a date into, still muted and italic. The
+    commit had landed; nothing on screen said so.
+
+    `DERIVES_DATES` has held `start_date` all along. The question was asked of the
+    status panel's answers alone, which was the same question while the panel was
+    the only way a date reached this page — and the two date columns are pickers
+    now, which is what made typing one straight into the cell the inviting thing
+    to do.
+
+    Two saves, because the gate has to stay a gate: a title is not a field any
+    span is derived from and re-reading the whole plan after every cell edit is
+    the round trip this condition exists to avoid.
+    """
+    answer = drive_table(
+        page,
+        "(async () => {"
+        f"  const where = col => tbody.querySelector('tr[data-id=\"{PROJECT}\"] '"
+        '    + `td[data-col="${col}"]`);'
+        "  await saveCell(where('title'), 'Distributed driver, renamed');"
+        f" {SETTLE}"
+        "  await saveCell(where('start'), '2026-09-15');"
+        f" {SETTLE}"
+        "  return null;"
+        "})()",
+        replies=[
+            {"status": 200, "json": {"outcome": "committed", "commit": "c0ffee", "conflict": None}},
+            {"status": 200, "json": {"problems": []}},
+            {"status": 200, "json": {"outcome": "committed", "commit": "beef", "conflict": None}},
+            {"status": 200, "json": {"rows": {}, "problems": []}},
+            {"status": 200, "json": {"problems": []}},
+        ],
+    )
+
+    assert [call["url"] for call in answer["calls"]] == [
+        f"/api/record/{PROJECT}",
+        "/api/index.json",
+        f"/api/record/{PROJECT}",
+        "/api/table.json",
+        "/api/index.json",
+    ], (
+        "a date typed into the Start cell has to bring the row back from the "
+        "server — the span it draws is the scheduler's and nothing in the browser "
+        f"can work it out: {[call['url'] for call in answer['calls']]}"
+    )
+    patched = [json.loads(call["body"])["fields"] for call in answer["calls"] if call["body"]]
+    assert patched == [
+        {"title": "Distributed driver, renamed"},
+        {"start_date": "2026-09-15"},
+    ], patched
+
+
+# Two questions the driver cannot answer, because both are about where a box ends
+# up: a native picker is 126px of control at this font whatever column it is in,
+# and the two date columns measured 74 before the stylesheet started reserving
+# room for one. Sized to the cell it fits; unsized it hangs out of one — clipped
+# in a stored row, drawn over the neighbouring column in the draft row, which is
+# exempt from that clip. `getBoundingClientRect` answers 100 by 100 for every
+# element in `drive.js`, on purpose, so this belongs in Chrome.
+_DATE_EDITOR_FIT = """
+window.fetch = () => new Promise(() => {});
+const inner = td => {
+  const box = td.getBoundingClientRect();
+  const style = getComputedStyle(td);
+  return {left: box.left + Number.parseFloat(style.paddingLeft),
+          right: box.right - Number.parseFloat(style.paddingRight)};
+};
+const look = td => {
+  openEditor(td);
+  const input = td.querySelector('input');
+  const box = input.getBoundingClientRect();
+  const room = inner(td);
+  // The same control with nothing holding it in, measured inside the same cell so
+  // that `font: inherit` resolves against the same 13px: what the box would be
+  // without the rule, and the number that makes the assertion below mean anything.
+  const free = input.cloneNode(true);
+  free.style.position = 'absolute';
+  free.style.top = '-9999px';
+  free.style.width = 'auto';
+  td.append(free);
+  const unheld = free.getBoundingClientRect().width;
+  free.remove();
+  const round = n => Math.round(n * 100) / 100;
+  // `value` off a control the browser built, which is the only place the question
+  // means anything: `drive.js` reflects whatever `setAttribute('value', …)` was
+  // handed it, unconditionally and with no parsing, so a payload that stopped
+  // being ISO would read back perfectly there. A real `type="date"` sanitises —
+  // it shows an empty box for anything it cannot read as a whole date — and an
+  // empty box on a row that HAS a date commits `start_date: null` on the first
+  // blur, which is the deletion the badInput guard exists to stop.
+  return {type: input.getAttribute('type'), value: input.value, width: round(box.width),
+          past: round(box.right - room.right), before: round(room.left - box.left),
+          unheld: round(unheld), room: round(room.right - room.left),
+          column: Math.round(td.getBoundingClientRect().width),
+          clips: getComputedStyle(td).overflow};
+};
+// A row that really carries a date, and not merely the first editable Start cell:
+// the box a dated row opens is the one the question above is about, and an empty
+// box over an empty field says nothing either way.
+const dated = [...tbody.querySelectorAll('td.edit[data-col="start"][data-record]')]
+  .find(td => (DATA.rows[td.dataset.record] || {}).start_date);
+const out = {stored: dated ? look(dated) : null,
+             holds: dated ? DATA.rows[dated.dataset.record].start_date : null};
+// ONE EDITOR AT A TIME, and each one put away before the next is opened. An open
+// editor is blurred by the opening of another, a blur saves or stages, and both
+// redraw — so the cell being measured is detached in the middle of measuring it,
+// and a detached cell answers 0 by 0 to every question here. That reads as a box
+// that fits inside a cell that is not there. `openDraft` leaves one open on the
+// title, which is why the draft row needs this as much as the stored row does.
+const settle = async () => {
+  document.activeElement.blur();
+  await new Promise(wake => setTimeout(wake, 50));
+};
+await settle();
+openDraft();
+chooseKind('task');
+await settle();
+const draft = tbody.querySelector('tr.draft td.edit[data-col="start"]');
+out.draft = draft && draft.isConnected ? look(draft) : null;
+return out;
+"""
+
+
+def test_the_open_date_editor_fits_the_cell_it_is_drawn_in(page: str, tmp_path: Path):
+    """**The whole reason the date columns are now wider than a date.**
+
+    A native picker draws its calendar indicator hard against its right edge, and
+    it is 126px wide whatever it is put in. In a 74px column the cell's `overflow:
+    hidden` took the right-hand end off it: a picker with no way to open the
+    picker, which is a text box wearing a different placeholder. In the draft row,
+    which is exempt from that clip, the same 68px were drawn over the End column
+    beside it.
+
+    So the box is sized to its cell, and the two date columns reserve the width
+    the box needs — measured, in `_TABLE_STYLE`, and asserted here as the thing
+    that measurement was for. A test that greps the stylesheet would pass on the
+    `box-shadow` that resolved perfectly and painted nothing.
+
+    Both rows are asked, because they fail differently: one clips and one spills.
+
+    And the stored row's box is asked what it is holding, which is a question only
+    a browser can answer: the driver reflects the attribute it was given, a real
+    date control sanitises it. A box that opened EMPTY on a row that has a date
+    would be a `start_date: null` one blur later, with both node tests still green.
+    """
+    got = measured_in(chrome(), page, tmp_path / "datefit.html", 1400, _DATE_EDITOR_FIT)
+
+    for where, box in (("a stored row", got["stored"]), ("the draft row", got["draft"])):
+        assert box, f"{where} has no editable Start cell, so nothing here was asked"
+        assert box["type"] == "date", f"{where} did not open a picker: {box}"
+        # Not vacuous: the control really would not have fitted on its own.
+        assert box["unheld"] > box["room"], (
+            f"{where}'s cell already had room for an unsized picker "
+            f"({box['unheld']}px in {box['room']}px), so this proves nothing"
+        )
+        assert box["past"] <= 0.5, (
+            f"{where}'s picker ends {box['past']}px past the cell — the calendar "
+            "indicator is what is off the end"
+        )
+        assert box["before"] <= 0.5, f"{where}'s picker starts outside its cell: {box}"
+        # And wide enough to read the value it is editing. 100px is the narrowest
+        # box Chrome draws a whole `dd.mm.yyyy` and the indicator in with daylight
+        # between them, measured at 1px steps at 13px Inter.
+        assert box["width"] >= 100, (
+            f"{where}'s picker is {box['width']}px, which hides part of the date "
+            "it is open on"
+        )
+
+    # The draft row is the one that would have spilled rather than clipped, and it
+    # still does not clip: the fix is the box's width, not a second exemption.
+    assert got["draft"]["clips"] == "visible", (
+        "the draft row started clipping its cells, which is a different rule "
+        "than the one this test is about"
+    )
+
+    # And the control opened holding the record's own date, in the one format it
+    # will keep: anything else and a real picker shows an empty box.
+    assert got["holds"], "no stored row carries a start date, so nothing here was asked"
+    assert got["stored"]["value"] == got["holds"], (
+        f"the picker opened on {got['stored']['value']!r} over a record that holds "
+        f"{got['holds']!r} — an empty box on a dated row is a deletion one blur later"
+    )
+
+
+# Every editable column that is not itself frozen, opened one at a time from a
+# table scrolled back to the start, and where its box landed.
+#
+# One editor at a time and each put away before the next, for the reason
+# `_DATE_EDITOR_FIT` gives: an open editor is blurred by the opening of another,
+# and the blur redraws the row the measurement is being taken from. Nothing here
+# types, so most of those blurs take the `input.value === was` branch and write
+# nothing; `size` is the exception, because `stored` hands back the number and a
+# box reads back a string. That is what `fetch` is stubbed for — the write starts
+# and goes nowhere, and no answer below depends on it.
+#
+# The frozen edge is read INSIDE each turn rather than once at the top: the
+# headers' resolved right edge lands on 178.5 at `scrollLeft` 0 and 177 once the
+# table is scrolled, and a bound taken in one state and applied in the other is a
+# 1.5px lie in whichever direction happens to hurt.
+_UNDER_THE_FROZEN_COLUMN = """
+window.fetch = () => new Promise(() => {});
+const scroller = table.parentElement;
+const round = n => Math.round(n * 100) / 100;
+const frozen = () => Math.max(...headers
+  .filter(th => FROZEN.includes(th.dataset.col))
+  .map(th => th.getBoundingClientRect().right));
+const look = col => {
+  scroller.scrollLeft = 0;
+  const cell = tbody.querySelector(`td.edit[data-col="${col}"][data-record]`);
+  // A shed column is `display: none` and still in the markup: its cell answers 0
+  // to every question, which reads as an editor drawn at the far left of the
+  // page rather than as a column that is not on screen at all.
+  if (!cell || !cell.getBoundingClientRect().width) return null;
+  openEditor(cell);
+  const box = cell.querySelector('input, select');
+  const seen = {col, edge: round(frozen()), left: round(box.getBoundingClientRect().left),
+                scrolled: Math.round(scroller.scrollLeft)};
+  box.blur();
+  draw();
+  return seen;
+};
+return {scrolls: scroller.scrollWidth > scroller.clientWidth,
+        boxes: headers.map(th => th.dataset.col)
+          .filter(col => !FROZEN.includes(col))
+          .map(look)
+          .filter(Boolean)};
+"""
+
+
+def test_an_editor_opens_clear_of_the_frozen_column_on_a_phone(page: str, tmp_path: Path):
+    """**A picker is not a place to park a column over.**
+
+    Focusing a control inside a horizontal scroller makes Chrome scroll it into
+    view, and "in view" means inside the scrollport: Chrome knows nothing about
+    the columns that are `position: sticky` INSIDE that scrollport, so the cell it
+    brings to the left edge is the cell it parks underneath them. Measured on this
+    page at 390x844 with the fix taken out: opening a stored row's Start cell put
+    `scrollLeft` at 597 and drew the box from x=144.5 with the frozen Title column
+    running to x=177 — 32.5px, its whole first segment, painted over by a column
+    that is opaque by design. `owner` went under by 16.5px and `end` by 2.5px, so
+    it was never only the one column.
+
+    That was survivable while the cells held text: what was covered was the left
+    end of something being read. A date control focuses and selects its first
+    segment the moment it opens, so what is under there now is the part being
+    typed into — which is what changed this in kind, and why the fix is in
+    `openEditor` and covers every editor rather than in anything about dates.
+
+    Asked at a phone's width, through the override rather than a window, because
+    Chrome will not open a window narrower than 500px — see `measured_on_a_phone`
+    — and 500 is above the one breakpoint these pages have. Asked of every
+    editable column and not of the two date ones: the frozen pair covers whatever
+    is scrolled under it, and a fix that only cleared a picker would leave the
+    same gesture broken one column to the left.
+    """
+    got = measured_on_a_phone(
+        chrome(), {"table": page}, tmp_path / "frozen", _UNDER_THE_FROZEN_COLUMN
+    )
+    table = got["table"]
+
+    # Not vacuous: nothing can be scrolled under a frozen column on a table that
+    # does not scroll, and at a desktop width this one does not.
+    assert table["scrolls"], "the table fits at 390px, so nothing here was asked"
+    assert table["boxes"], "no editable column outside the frozen pair, so nothing was opened"
+    for box in table["boxes"]:
+        assert box["left"] >= box["edge"], (
+            f"the {box['col']} editor opened at x={box['left']} with the frozen "
+            f"column running to x={box['edge']} — {round(box['edge'] - box['left'], 1)}px "
+            "of it is under an opaque column, and on a picker that is the segment "
+            "the control has already selected"
+        )
 
 
 @pytest.fixture
