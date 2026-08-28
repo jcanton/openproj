@@ -601,9 +601,14 @@ FIELD_TEACH = {
     # what somebody does at that moment" test nowhere: 8 meaning eight weeks of
     # one person's time and 8 meaning eight weeks on the wall are different bets,
     # and the scheduler divides by the people on the record to tell them apart.
+    # Both facts in one sentence rather than two: the unit was appended as a
+    # second sentence and took the lesson to 150 characters, which
+    # `test_no_lesson_runs_to_wallpaper` caps at 100 and
+    # `test_the_sentence_follows_the_ball` measures at three wrapped lines in a
+    # 295px column. A lesson nobody finishes reading teaches nothing, and the
+    # budget-not-estimate point is the one that must survive the cut.
     "person_weeks": (
-        "Appetite is a budget, not an estimate: how much this is worth, not how long it will take. "
-        "In person-weeks — the people on this divide it between them."
+        "A budget in person-weeks, not an estimate: what this is worth, not how long it takes."
     ),
     # The circuit breaker, and the one Shape Up idea the scheduler most quietly
     # assumes. A newcomer reading a derived end date otherwise expects a slip to
