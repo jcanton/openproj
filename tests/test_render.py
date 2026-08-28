@@ -2962,10 +2962,20 @@ def test_one_quantity_is_called_appetite_wherever_it_is_read(rendered: Path):
     """APPETITE (WEEKS) on detail, EFFORT (WEEKS) on the create form and WEEKS in
     the table were one number under three names — over two storage fields that are
     one field now. Appetite is still the reader's word; the unit is in the field
-    name because the unit is what D1 got wrong."""
+    name, because the unit is what D1 got wrong.
+
+    **And no longer in the label, which is what this line used to pin.** It read
+    `"Appetite (person-weeks)"`, and the record page draws that `<dt>` over a row
+    that is in person-weeks on a leaf and in CALENDAR weeks on a pitch with tasks
+    under it — the box the bet bought beside the days those tasks occupy. So the
+    label named a unit neither number under it was in. Both readings say their own
+    unit in words now, so the two labels this test holds together are the same
+    word exactly, which is what "called Appetite wherever it is read" was always
+    claiming.
+    """
     from openproj.render import LABELS
 
-    assert LABELS["person_weeks"] == "Appetite (person-weeks)"
+    assert LABELS["person_weeks"] == "Appetite" == LABELS["size"]
     assert "Effort" not in read(rendered, "detail.html")
     index = read(rendered, "table.html")
     header = re.search(r'<th data-col="size"[^>]*>(.*?)</th>', index, re.S).group(1)
@@ -5201,7 +5211,9 @@ def test_a_pitch_draws_its_tasks_as_the_progress_it_has_made(rendered: Path, see
     assert kinds == {"task", "pitch", "project"}, kinds
 
 
-def test_a_pitch_holds_its_tasks_against_the_box_in_the_unit_the_box_is_in(rendered: Path):
+def test_a_pitchs_appetite_row_names_the_bet_the_people_and_what_that_buys(
+    rendered: Path, seed_index: Index
+):
     """An appetite read on its own says nothing about whether the work still fits.
 
     **And two numbers either side of a dot are a comparison, so they have to be
@@ -5211,6 +5223,17 @@ def test_a_pitch_holds_its_tasks_against_the_box_in_the_unit_the_box_is_in(rende
     colour computed from the pair that actually decides anything. The left half
     is the box now, which is that same bet divided by the two people on it, and
     each half says in words which it is.
+
+    **What this test asserted before, and why it was wrong.** It pinned
+    `"2.0 the bet buys · "`, and that half-fixed the row: the two numbers were
+    comparable at last, but they were both CALENDAR weeks under a `<dt>` reading
+    "Appetite (person-weeks)", so the label named the unit of neither figure
+    beneath it — and the 4 the file actually states appeared nowhere in the
+    reading view at all. A reader could see that 2.0 was bought and not what
+    bought it, which is the same defect `_rollup` (`rows.py`) was rewritten out
+    of when its cell printed `bet 4.0 weeks` on a record whose file says 8. So
+    the row names all three now, in that cell's own words rather than a third
+    phrasing of one fact, and the label is plain "Appetite".
 
     The corpus's pitch-5e7b1c was bet at four weeks with two people on it, so the
     box it bought is two calendar weeks, and its tasks as they are actually
@@ -5228,13 +5251,34 @@ def test_a_pitch_holds_its_tasks_against_the_box_in_the_unit_the_box_is_in(rende
     around the same day — the two must not be allowed to drift apart, which is
     the whole reason `_tasks_add_up_to` reads the span rather than counting again.
     """
+    from openproj.render.rows import _rollup
+
     page = read(rendered, "detail.html")
     assert "5.6 in tasks" in page
     assert 'class="overrun">5.6 in tasks' in page, "over the box the bet bought, and said so"
-    # The box, in the same unit as the contents, and named so that the reader is
-    # not asked to work out which of the two numbers is which.
-    assert "2.0 the bet buys · " in page
-    # And the stated appetite is no longer standing where the box goes: this is
+    # All three, in one clause, in the order somebody reads them: what the file
+    # says, who it is divided by, and what that comes to. Recoverable without
+    # opening the record, and the conversion is on the line rather than left for
+    # the reader to work out.
+    assert "Bet 4 over 2 people, which buys 2.0 weeks · " in page
+    # Word for word the table's, and taken OFF the table rather than written down
+    # twice here: the two surfaces are one fact, and a literal copied into this
+    # file would let them drift apart while both tests stayed green.
+    said = _rollup(seed_index, "pitch-5e7b1c")["why"]
+    assert said.startswith("Bet 4 over 2 people, which buys 2.0 weeks;"), said
+    assert said.split(",")[0] + "," in page, said
+    # And the `<dt>` no longer names a unit the value is not in. Both figures on
+    # that line are calendar weeks and the label read "Appetite (person-weeks)",
+    # so no label on this page carries the unit any more — the values do, each in
+    # the one it is actually in. Asserted of every `<dt>` rather than of this one,
+    # because the label is a shared map and the next field to grow a parenthetical
+    # unit would be the same defect on a different row.
+    assert re.search(r"<dt[^>]*>Appetite</dt>", page)
+    assert not re.search(r"<dt[^>]*>[^<]*person-weeks", page)
+    # A leaf has no box and no contents, so its row is the stored field alone —
+    # which IS in person-weeks and now has to say so, since the label stopped.
+    assert "1.0 person-weeks" in page
+    # The stated appetite is also no longer standing where the box goes: this is
     # the exact line the row used to render. Written out in full rather than as a
     # search for `4 · `, which the page answers on its own — a derived end of
     # `2026-09-14 · <span …>overruns cycle 36…` matches that on the same corpus,
@@ -5304,7 +5348,7 @@ def test_a_pitch_with_no_appetite_yet_is_not_accused_of_exceeding_it():
 
 
 def test_the_number_the_page_prints_in_tasks_is_the_number_check_warns_on():
-    """One fact, one implementation, pinned from both ends on the same records.
+    """One fact, one implementation, pinned across all three surfaces that say it.
 
     This repository has been bitten three times by one fact written twice — the
     search blob, the `(none)` sentinel, and `appetite_weeks` reading as three
@@ -5316,16 +5360,32 @@ def test_the_number_the_page_prints_in_tasks_is_the_number_check_warns_on():
     claimed the two "cannot disagree". Both now read `Span.elapsed_weeks`, and a
     test that only pinned one of them would have passed all the way through that.
 
-    Both directions, because the expensive half of the old defect was the silent
-    one: a page shouting in warning colour where the validator says nothing
-    teaches a reader that one of the two is lying, and they will pick the wrong
-    one.
+    **And a test that pinned only the number went on passing through the
+    second half of the same defect.** The arithmetic moved to the span and the
+    GATE did not: the page kept asking `index.progress`, which counts a child
+    only if somebody stated a size for it, while `check` asked the span whether
+    anything underneath had a length. Those two populations were the same set of
+    records until §4 of `design/time-model.md` gave a `done` record a typed
+    `end_date` — the size gate stops at `in_progress`, so a task finished without
+    an appetite is ordinary — and then one bet was described three different ways
+    at once: `check` warned that its tasks needed 4.0 weeks against a 1.0 box,
+    the table's cell said nothing under it had a length yet while carrying that
+    same warning as a mark in the same cell, and the record page drew a bare
+    appetite with no comparison at all. The third plan below is that bet, and it
+    is here because neither shipped corpus contains one.
+
+    So all three are read, on the same records, on the same day: the cell's
+    state, the sentence under Appetite, and what `check` says. Both directions
+    too, because the expensive half of the original defect was the silent one: a
+    page shouting in warning colour where the validator says nothing teaches a
+    reader that one of the two is lying, and they will pick the wrong one.
     """
     from openproj.model import Config, Pitch, Task, validate_all
     from openproj.render import STATIC, _fact_rows
     from openproj.render.detail import _tasks_add_up_to
+    from openproj.render.rows import _rollup
 
-    def family(second_task_held_by: str) -> list:
+    def family(*tasks: dict) -> list:
         return [
             Pitch(
                 id="pitch-000001",
@@ -5334,30 +5394,47 @@ def test_the_number_the_page_prints_in_tasks_is_the_number_check_warns_on():
                 person_weeks=8.0,
                 assignees=["jackdawrie", "merganserly"],
             ),
-            Task(
-                id="task-000001",
-                kind="task",
-                title="A",
-                parent="pitch-000001",
-                person_weeks=4.0,
-                assignees=["jackdawrie"],
-            ),
-            Task(
-                id="task-000002",
-                kind="task",
-                title="B",
-                parent="pitch-000001",
-                person_weeks=0.5,
-                assignees=[second_task_held_by],
+            *(
+                Task(id=f"task-00000{at}", kind="task", title="T", parent="pitch-000001", **task)
+                for at, task in enumerate(tasks, start=1)
             ),
         ]
 
-    # The same three records twice, and the only difference is whose name is on
-    # the half-week task: one person holding both has to do them in turn, two
-    # people do them at once. That is the whole reason the comparison is against
-    # a span rather than a sum, so it is what the agreement is pinned over.
-    for held_by, fits in (("merganserly", True), ("jackdawrie", False)):
-        records = family(held_by)
+    held = {"person_weeks": 4.0, "assignees": ["jackdawrie"]}
+    # The first two plans are the same three records twice, and the only
+    # difference is whose name is on the half-week task: one person holding both
+    # has to do them in turn, two people do them at once. That is the whole
+    # reason the comparison is against a span rather than a sum, so it is what
+    # the agreement is pinned over.
+    plans = {
+        "two people, side by side": (
+            family(held, {"person_weeks": 0.5, "assignees": ["merganserly"]}),
+            True,
+        ),
+        "one person, in turn": (
+            family(held, {"person_weeks": 0.5, "assignees": ["jackdawrie"]}),
+            False,
+        ),
+        # The unsized-but-dated done child. It has no `person_weeks` at all, so
+        # nothing sizes it and it is in no progress rollup; it has two typed
+        # dates, so the days it occupied are a measurement and the pitch above it
+        # ran six weeks against the four its bet bought. Nothing in the bet's own file
+        # changed — this is the same pitch bet at 8.0 over two people — so the
+        # only thing that can make a surface disagree here is which population it
+        # asked about.
+        "a finished task nobody sized": (
+            family(
+                {
+                    "status": "done",
+                    "assignees": ["jackdawrie"],
+                    "start_date": date(2026, 8, 17),
+                    "end_date": date(2026, 9, 25),
+                }
+            ),
+            False,
+        ),
+    }
+    for name, (records, fits) in plans.items():
         index = build_index(records, Config(), date(2026, 8, 17))
         said = [
             p
@@ -5372,16 +5449,31 @@ def test_the_number_the_page_prints_in_tasks_is_the_number_check_warns_on():
             for r in _fact_rows(index, index.plan["pitch-000001"], STATIC)
             if r["label"].startswith("Appetite")
         )
+        cell = _rollup(index, "pitch-000001")
         printed = _tasks_add_up_to(index, index.plan["pitch-000001"])
 
-        assert f"{printed:.1f} in tasks" in row["display"], "the page prints what it computed"
-        assert bool(said) is not fits, f"held by {held_by}"
+        assert printed is not None, f"{name}: its tasks occupy days somebody can count"
+        assert f"{printed:.1f} in tasks" in row["display"], f"{name}: the page prints what it read"
+        # The cell is the third reader, and the one that used to answer "no length
+        # yet" over a warning triangle explaining how long that same work took.
+        assert cell["weeks"] == printed, f"{name}: {cell}"
+        assert cell["text"] == f"{printed:.1f} in tasks", f"{name}: {cell}"
+        assert cell["state"] != "unsized", (
+            f"{name}: the cell says nothing is known about a bet the other two are measuring"
+        )
+        assert bool(said) is not fits, name
         assert ('class="overrun"' in row["display"]) is not fits, (
-            "the colour on the page and the warning in `check` are one verdict"
+            f"{name}: the colour on the page and the warning in `check` are one verdict"
+        )
+        assert (cell["state"] == "over") is not fits, (
+            f"{name}: the tint in the table is that same verdict, {cell['state']}"
         )
         if said:
             assert f"its tasks need {printed:.1f} weeks" in said[0].message, (
-                "the same number, to the digit a person reads"
+                f"{name}: the same number, to the digit a person reads"
+            )
+            assert f"its tasks need {printed:.1f}" in cell["why"], (
+                f"{name}: and the tooltip quotes it in the same words"
             )
 
 

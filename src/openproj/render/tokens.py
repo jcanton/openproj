@@ -452,7 +452,27 @@ LABELS = {
     "depends_on": "Blocked by",
     "tags": "Tags",
     "prs": "PRs",
-    "person_weeks": "Appetite (person-weeks)",
+    # No unit in this one, and it carried "(person-weeks)" until 2026-08-28. The
+    # row it names is two different readings depending on what is filed under the
+    # record: a leaf draws its own stored appetite, which IS in person-weeks, and
+    # a pitch with tasks under it draws the box that bet bought beside the days
+    # those tasks occupy, which are both CALENDAR weeks. So the `<dt>` read
+    # "Appetite (person-weeks)" over `2.0 the bet buys · 5.6 in tasks` — a unit
+    # named for a line neither of whose numbers is in it, on a record whose file
+    # says `person_weeks: 4.0`, which is the same defect the table's own sentence
+    # was rewritten to fix. There is no parenthetical that is true of both
+    # readings, and a `<dt>` is read as belonging to whatever the `<dd>` says.
+    #
+    # The unit did not go, it moved to the two places it is actually needed. Each
+    # value in that row now names its own unit in words — `1.0 person-weeks` on a
+    # leaf, `Bet 4 over 2 people, which buys 2.0 weeks` on a rollup, which is the
+    # table's wording for the same fact — and the EDIT view, where the box under
+    # this label takes person-weeks and nothing else, is covered by
+    # `FIELD_TEACH["person_weeks"]` below: edit-only copy, rendered directly under
+    # that control and announced with it. So a reader is told the unit by the
+    # value and a writer is told it by the control, and the label is left saying
+    # the one thing that is true in both modes and on every rung.
+    "person_weeks": "Appetite",
     "reported_by": "Reported by",
     "written_by": "Written by",
     "pitched_into": "Pitched into",
@@ -573,8 +593,17 @@ def _human(value: object) -> str:
 # reads as an import beside this codebase's own voice — in the team's own words
 # the licence question never arises. The long form is `docs/shape-up.md`.
 FIELD_TEACH = {
+    # The second sentence is here because `LABELS` stopped naming the unit. The
+    # label had to lose it — over a rollup it named the unit of neither number on
+    # the line — and the one moment somebody needs to be told which unit to type
+    # in is the moment they are typing, which is exactly this slot: edit-only,
+    # under the box, in the box's `aria-describedby`. It fails the "does it change
+    # what somebody does at that moment" test nowhere: 8 meaning eight weeks of
+    # one person's time and 8 meaning eight weeks on the wall are different bets,
+    # and the scheduler divides by the people on the record to tell them apart.
     "person_weeks": (
-        "Appetite is a budget, not an estimate: how much this is worth, not how long it will take."
+        "Appetite is a budget, not an estimate: how much this is worth, not how long it will take. "
+        "In person-weeks — the people on this divide it between them."
     ),
     # The circuit breaker, and the one Shape Up idea the scheduler most quietly
     # assumes. A newcomer reading a derived end date otherwise expects a slip to

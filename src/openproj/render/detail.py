@@ -9,7 +9,16 @@ from markupsafe import Markup, escape
 
 from ..index import Index, cascade_of
 from ..model import KINDS as KIND_LADDER
-from ..model import NOTE_STATES, RUNG, Record, checklist, sections, size_weeks, workers_on
+from ..model import (
+    NOTE_STATES,
+    RUNG,
+    Record,
+    checklist,
+    sections,
+    size_weeks,
+    tasks_occupy,
+    workers_on,
+)
 from ..vendor import _ace, _yjs
 from .controls import _REQUIRED_JS, _combobox_html, _control_html
 from .editor import (
@@ -2775,45 +2784,81 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
                 PRIORITY_GLYPH.get(str(record.priority), ""),
                 _human(record.priority),
             )
-        elif name == _SIZE_FIELD_NAME and _tasks_add_up_to(index, record) is not None:
-            # The box the bet bought, and what its tasks propose to put inside it.
-            # Two numbers on one line because they are one question: an appetite
-            # read on its own says nothing about whether the work still fits, and
-            # the answer was only ever visible by adding the tasks up by hand.
+        elif name == _SIZE_FIELD_NAME:
+            # The appetite, and — where there is work filed under this record —
+            # the box that bet bought beside what its tasks propose to put inside
+            # it. One question rather than two numbers: an appetite read on its
+            # own says nothing about whether the work still fits, and the answer
+            # was only ever visible by adding the tasks up by hand.
             #
-            # **Both in calendar weeks, which they were not.** This drew the
-            # field's own text on the left — the appetite, in PERSON-weeks — and
-            # `Span.elapsed_weeks` on the right, in calendar ones, so a pitch bet
-            # at eight with two people on it read "8.0 · 5.6 in tasks": two units
-            # in one line, separated by a dot that says they are comparable, with
-            # the reader left to work out that they are not. Only the colour was
-            # ever computed from the right pair. `budget_weeks` is that same bet
-            # divided by the people on it, which is the box `_rollup_problems`
-            # holds the tasks against, so the two numbers on the line are now the
-            # two numbers the verdict was made from.
+            # **The line carries its own units, because the label no longer
+            # does.** `LABELS["person_weeks"]` said "Appetite (person-weeks)" over
+            # `2.0 the bet buys · 5.6 in tasks`, and both of those are CALENDAR
+            # weeks — the box is the stated bet divided by the people on the
+            # record — so the `<dt>` named the unit of neither number under it,
+            # on a file that says `person_weeks: 4.0`. The label is plain
+            # "Appetite" now and every reading below says in words what it is in.
             #
-            # The person-weeks figure is not printed a third time beside them: it
-            # is this row's own field, and pressing Edit puts it in the box under
-            # here as `8`, which is where a person changes it. Each half says
-            # which it is in words — "the bet buys" against "in tasks" — because
-            # two bare numbers either side of a dot is exactly the reading that
-            # went wrong here.
+            # **The stated bet is named, in the table's words and not a third set
+            # of them.** It used to appear nowhere in the reading view at all: a
+            # reader saw 2.0 and 5.6 and could not recover the 4 that was actually
+            # written down, nor the two people the scheduler divided it by to get
+            # the 2.0 — the very defect `_rollup` (`rows.py`) was rewritten to fix
+            # when its cell printed `bet 4.0 weeks` on a record whose file says 8.
+            # This is the same fact on a second page, so it is the same sentence:
+            # "Bet 4 over 2 people, which buys 2.0 weeks", `:g` on the bet and one
+            # decimal on the box exactly as that cell's own title has them. Two
+            # phrasings of one fact is how this codebase has been bitten before,
+            # and a reader moving between the table and this page should recognise
+            # the sentence rather than have to re-read it.
+            #
+            # `workers_on` and not `assignees`, for the reason both other readers
+            # give: that is the list `_duration_weeks` divided the appetite by to
+            # get the box being quoted, and counting a different set of names here
+            # would explain the number with the wrong one. Nobody on it is one
+            # notional person, which is what that division assumed.
             #
             # Warned about only against a bet somebody actually made. A pitch with
             # no appetite yet is not over it, and `_rollup_problems` says nothing
             # about that case either — a page that shouts where the validator is
-            # silent teaches people that one of the two is lying. That record has
-            # no box, so the left half is the same dash every other empty value
-            # on this page draws.
+            # silent teaches people that one of the two is lying. That record used
+            # to draw the page's empty dash where the box goes, which is a mark
+            # for "this field is blank" standing in for "no bet has been made
+            # here"; it says so in the cell's own words instead.
             total = _tasks_add_up_to(index, record)
-            span = index.spans.get(record.id)
-            budget = span.budget_weeks if span is not None else None
-            over = budget is not None and total > budget
-            display = Markup('{} · <span class="{}">{} in tasks</span>').format(
-                f"{budget:.1f} the bet buys" if budget is not None else empty,
-                "overrun" if over else "quiet",
-                f"{total:.1f}",
-            )
+            if total is None:
+                # Nothing under this record has a length — a leaf, or a pitch
+                # none of whose tasks is sized — so there is no box and no
+                # contents, and what is left is the field itself. Which is in
+                # person-weeks, and now has to say so on its own: this is the row
+                # that lost the unit off its label, and "1.0" under a bare
+                # "Appetite" is a number a reader cannot act on.
+                display = (
+                    Markup("{} person-weeks").format(field["text"])
+                    if field["text"] not in ("", None)
+                    else empty
+                )
+            else:
+                span = index.spans.get(record.id)
+                # The box `_rollup_problems` holds the tasks against, so the
+                # verdict this line is coloured by is made from the two numbers
+                # printed on it. `.get`, because a pitch every one of whose tasks
+                # is unsized is scheduled nowhere at all — that record has no
+                # span, hence no box, and `total` is None above it anyway.
+                budget = span.budget_weeks if span is not None else None
+                stated = size_weeks(record)
+                people = len(workers_on(record)) or 1
+                bet = (
+                    f"Bet {stated:g} over {'1 person' if people == 1 else f'{people} people'}"
+                    if stated is not None
+                    else "No bet on this yet"
+                )
+                over = budget is not None and total > budget
+                display = Markup('{} · <span class="{}">{} in tasks</span>').format(
+                    f"{bet}, which buys {budget:.1f} weeks" if budget is not None else bet,
+                    "overrun" if over else "quiet",
+                    f"{total:.1f}",
+                )
         elif field["type"] == "date":
             # Drawn day-first like every other date on the page; the control
             # under it is an `<input type="date">` and keeps the ISO string,
@@ -3004,46 +3049,64 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
     return rows
 
 
+def _tasks_under(index: Index, record_id: str) -> list[str]:
+    """The children whose work rolls up into this record's own span.
+
+    Shelved ones are not among them, and that is the same list `_progress_of`
+    (`index.py`) rolls up and the same one `validate_all` builds its child map
+    from — parked work is not work anybody is waiting on, and a pitch that has
+    ever shelved a task would otherwise be permanently short of an answer about
+    the tasks it still holds. A child the plan cannot resolve is dropped for the
+    reason every other reader drops one: an id naming nothing is not a task.
+
+    Written once and read by both surfaces that draw this number — the record
+    page through `_tasks_add_up_to` below, the table cell through `_rollup`
+    (`rows.py`) — because a second copy of "which children count" is the second
+    implementation `tasks_occupy` (`model.py`) exists to prevent.
+    """
+    return [
+        child
+        for child in index.children.get(record_id, ())
+        if child in index.plan and index.plan[child].status != "shelved"
+    ]
+
+
 def _tasks_add_up_to(index: Index, record: Record) -> float | None:
     """How long the tasks under this one actually take, or None if it has none.
 
-    The same number `_rollup_problems` compares against the bet, read off the
-    same span, so the sentence on the page and the sentence in `check` cannot
-    disagree about the arithmetic.
+    The number `_rollup_problems` compares against the bet, read off the same
+    span and through the same gate — `tasks_occupy` (`model.py`), which both call
+    and neither restates.
 
-    **That claim was made here before it was true.** This read
+    **That claim was made here twice before it was true, and the second time is
+    why the gate moved into `model.py`.** This first read
     `index.progress[id].total`, which sums what was bet on each child and charged
-    the old default for every unsized one, while `_rollup_problems` summed only
-    the sized ones — so the reading view's number was silently the larger of the
-    two, and the page could show a total the validator was not warning about.
-    Both have moved to `Span.elapsed_weeks`, the working days the tasks
-    underneath actually occupy, and it answers the calendar question rather than
-    the person-week one: two four-week tasks on two people are four weeks here
-    and eight on one person, which is the difference somebody looking at a pitch
-    wants to see. Occupied and not enclosed — a task waiting until November
-    contributes its own two weeks and not the three months before them; see
-    `_occupied_weeks` (`schedule.py`) for the warning that argument came out of.
+    the old default for every unsized one, so the reading view's number was
+    silently larger than the one `check` warned on. The number moved to
+    `Span.elapsed_weeks` and the GATE did not: `index.progress` counts a child
+    only if somebody stated a size for it, `_rollup_problems` asked the span
+    whether anything underneath had a length, and §4 of `design/time-model.md`
+    pulled those two populations apart on the ordinary case of a `done` task
+    with dates and no appetite. Three surfaces then said three different things
+    about one bet. See `tasks_occupy` for which question survived and why.
 
-    `progress` is still the gate, because it is what knows this record HAS tasks
-    that count in weeks — a leaf has an `elapsed_weeks` of its own, and printing
-    "3.0 in tasks" beside a task's own appetite would be the record agreeing with
-    itself. None as well where the plan holds no span for it: a pitch whose tasks
-    are all unsized is scheduled nowhere, and there is nothing to say.
+    The number is the calendar one and not the person-week one: two four-week
+    tasks on two people are four weeks here and eight on one person, which is the
+    difference somebody looking at a pitch wants to see. Occupied and not
+    enclosed — a task waiting until November contributes its own two weeks and
+    not the three months before them; see `_occupied_weeks` (`schedule.py`) for
+    the warning that argument came out of.
 
-    And None where nothing it holds has a length — an unscheduled span, a
-    finished one whose start and end are the same day until §4 of
-    `design/time-model.md` gives a done record an end date somebody typed, or a
-    pitch made entirely of those. That day used to be read back out as a fifth of
-    a week, so every done pitch on the site printed "8.0 · 0.2 in tasks": a
-    number that is not a measurement of anything, under every box there is,
-    beside the one kind of record whose contents are finally a fact rather than a
-    forecast.
+    None where nothing it holds has a length — an unsized child, which gets no
+    span at all, and a finished one written before an end date was asked for,
+    whose start and end are the same day. That day used to be read back out as a
+    fifth of a week, so every done pitch on the site printed "8.0 · 0.2 in
+    tasks": a number that is not a measurement of anything, under every box there
+    is, beside the one kind of record whose contents are finally a fact rather
+    than a forecast. None too where the plan holds no span for this record at
+    all, which is where a pitch whose tasks are every one of them unsized lands.
     """
-    counted = index.progress.get(record.id)
-    if counted is None or counted.unit != "weeks":
-        return None
-    span = index.spans.get(record.id)
-    return span.elapsed_weeks if span is not None else None
+    return tasks_occupy(_tasks_under(index, record.id), index.spans.get(record.id))
 
 
 def _progress_view(index: Index, record: Record) -> dict | None:

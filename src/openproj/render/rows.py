@@ -13,7 +13,7 @@ from ..model import RUNG, size_weeks, unread_fields, workers_on
 # `_tasks_add_up_to` was itself fixed for. `detail` reaches nothing here, so the
 # graph stays acyclic; the day something else needs this number as well, the
 # function moves down here and the record page imports it back.
-from .detail import _tasks_add_up_to
+from .detail import _tasks_add_up_to, _tasks_under
 from .tokens import _SIZE_FIELD_NAME
 
 
@@ -52,8 +52,11 @@ def _rollup(index: Index, record_id: str) -> dict | None:
     prints under Appetite and the cell the table draws are the same fact read
     once. They said different numbers for a while — the page summed
     `index.progress[id].total` while `check` summed only the sized children —
-    and the fix was to make both read `Span.elapsed_weeks`, which this is the
-    third reader of.
+    and then they went on disagreeing about which records had a number at all,
+    because the page kept `index.progress` as its GATE after the arithmetic had
+    moved to the span. Both halves are `tasks_occupy` (`model.py`) now, and
+    `kids` below is the same list the number was computed over rather than a
+    second reading of the child map.
 
     **Having children is what decides whether there is a cell at all, and it
     used to be having a NUMBER.** `_tasks_add_up_to` answers None for a pitch
@@ -125,11 +128,7 @@ def _rollup(index: Index, record_id: str) -> dict | None:
     # has none there and would have had one here.
     if _SIZE_FIELD_NAME in unread_fields(record.kind):
         return None
-    kids = [
-        child
-        for child in index.children.get(record_id, ())
-        if child in index.plan and index.plan[child].status != "shelved"
-    ]
+    kids = _tasks_under(index, record_id)
     if not kids:
         return None
     silent = [

@@ -11,7 +11,7 @@ import io
 import math
 import re
 import secrets
-from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence, Sized
 from datetime import date, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple
@@ -3190,6 +3190,48 @@ def _bet_problems(
     )
 
 
+def tasks_occupy(kids: Sized, span: Span | None) -> float | None:
+    """The working weeks the work under a record occupies, or None where there is none.
+
+    **One question, asked in one place, because three surfaces were asking two.**
+    `check` (`_rollup_problems`, below), the record page's Appetite row and the
+    table's size cell all say what a bet's tasks come to, and they used to reach
+    that number by two different routes: this one, and a gate on
+    `index.progress`, which counts a child only if somebody STATED a size for it.
+    Those two populations were the same set of records until §4 of
+    `design/time-model.md` gave a `done` record a typed `end_date` — the size
+    gate stops at `in_progress`, so a task finished without one is ordinary
+    rather than a corner, and it has a real measured interval and no
+    `person_weeks` at all. A pitch bet at 1.0 holding one such task therefore
+    told a reader three things at once: `check` warned that its tasks needed 4.0
+    weeks, the cell said nothing under it had a length yet while carrying that
+    same warning as a mark, and the record page drew a bare appetite with no
+    comparison on it.
+
+    **The interval is the right question and the stated size is the wrong one**,
+    because the number every one of those surfaces prints is measured off the
+    union of the children's intervals (`_occupied_weeks`, `schedule.py`) and
+    never off anybody's `person_weeks`. Asking who was sized asks a person-weeks
+    question about a calendar answer, and it can only ever agree with it by
+    coincidence. A child with no interval contributes nothing to the number, so
+    it is nothing this gate should be reading either — and the two states that
+    produce one, an unsized record with no span at all and a done record written
+    before the end date existed, are precisely the ones the cell's fourth
+    reading (`?`) exists to say out loud.
+
+    `kids` is read for emptiness alone, which is why it is `Sized` rather than a
+    list of anything in particular: the validator holds its children as records
+    and the index holds them as ids, and neither shape is worth converting to ask
+    "is there work under this record". Having children is what separates a
+    parent's rolled-up contents from a leaf's own length — a leaf's
+    `elapsed_weeks` is itself, and printing it beside its own appetite would be
+    the record agreeing with itself.
+    """
+    if not kids or span is None:
+        return None
+    return span.elapsed_weeks
+
+
 def _rollup_problems(
     record: Record, children: dict[str, list[Record]], spans: Mapping[str, Span] | None
 ) -> Iterator[tuple[str, str | None, str, int]]:
@@ -3252,10 +3294,14 @@ def _rollup_problems(
     rule is the plan's, and it is asked by `Index.load` and by `openproj check`,
     which schedule first.
     """
-    kids = children.get(record.id, [])
     span = spans.get(record.id) if spans is not None else None
-    if not kids or span is None:
+    if span is None:
         return
+    # The contents, through the gate the record page and the table read as well,
+    # so that a bet the validator warns about and a bet the page draws a verdict
+    # on are one population and not two that agree most of the time. See
+    # `tasks_occupy` for the pitch that made them disagree.
+    contents = tasks_occupy(children.get(record.id, []), span)
     # Silent where the parent has no appetite of its own — `budget_weeks` is None
     # for a container and for a pitch nobody has bet on yet, and a bet that was
     # never made cannot be exceeded. Silent too where nothing underneath has a
@@ -3269,9 +3315,9 @@ def _rollup_problems(
     # real interval underneath it and is judged against its box like any other —
     # which is the only reading under which "did this bet fit" can ever be
     # answered about the records that already know.
-    if span.budget_weeks is None or span.elapsed_weeks is None:
+    if contents is None or span.budget_weeks is None:
         return
-    if span.elapsed_weeks <= span.budget_weeks:
+    if contents <= span.budget_weeks:
         return
     # `workers_on` and not `assignees`, because that is the list the scheduler
     # divided the appetite by to get the budget in the first place. Counting a
@@ -3286,7 +3332,7 @@ def _rollup_problems(
     yield (
         "warning",
         _SIZE_FIELD.get(record.kind),
-        f"its tasks need {span.elapsed_weeks:.1f} weeks with the people on them, more than "
+        f"its tasks need {contents:.1f} weeks with the people on them, more than "
         f"the {span.budget_weeks:.1f} the bet buys at {people} — "
         "cut scope, re-bet it, or put more people on it",
         4,
