@@ -2904,11 +2904,13 @@ def _tasks_add_up_to(index: Index, record: Record) -> float | None:
     the old default for every unsized one, while `_rollup_problems` summed only
     the sized ones — so the reading view's number was silently the larger of the
     two, and the page could show a total the validator was not warning about.
-    Both have moved to `Span.elapsed_weeks`, which is the length of the rolled-up
-    span in weeks of work, and it answers the calendar question rather than the
-    person-week one: two four-week tasks on two people are four weeks here and
-    eight on one person, which is the difference somebody looking at a pitch
-    wants to see.
+    Both have moved to `Span.elapsed_weeks`, the working days the tasks
+    underneath actually occupy, and it answers the calendar question rather than
+    the person-week one: two four-week tasks on two people are four weeks here
+    and eight on one person, which is the difference somebody looking at a pitch
+    wants to see. Occupied and not enclosed — a task waiting until November
+    contributes its own two weeks and not the three months before them; see
+    `_occupied_weeks` (`schedule.py`) for the warning that argument came out of.
 
     `progress` is still the gate, because it is what knows this record HAS tasks
     that count in weeks — a leaf has an `elapsed_weeks` of its own, and printing
@@ -2916,13 +2918,14 @@ def _tasks_add_up_to(index: Index, record: Record) -> float | None:
     itself. None as well where the plan holds no span for it: a pitch whose tasks
     are all unsized is scheduled nowhere, and there is nothing to say.
 
-    And None where the span it does hold has no length — an unscheduled one, or a
-    finished one, whose start and end are the same day until §4 of
-    `design/time-model.md` gives a done record an end date somebody typed. That
-    day used to be read back out as a fifth of a week, so every done pitch on the
-    site printed "8.0 · 0.2 in tasks": a number that is not a measurement of
-    anything, under every box there is, beside the one kind of record whose
-    contents are finally a fact rather than a forecast.
+    And None where nothing it holds has a length — an unscheduled span, a
+    finished one whose start and end are the same day until §4 of
+    `design/time-model.md` gives a done record an end date somebody typed, or a
+    pitch made entirely of those. That day used to be read back out as a fifth of
+    a week, so every done pitch on the site printed "8.0 · 0.2 in tasks": a
+    number that is not a measurement of anything, under every box there is,
+    beside the one kind of record whose contents are finally a fact rather than a
+    forecast.
     """
     counted = index.progress.get(record.id)
     if counted is None or counted.unit != "weeks":

@@ -2905,14 +2905,26 @@ def _rollup_problems(
     bought four calendar weeks with two people and the tasks need four and a
     half on the one person holding both. So the box is `Span.budget_weeks` —
     this record's own appetite over the availability of its own people — and the
-    contents is `Span.elapsed_weeks`, the length of the rolled-up span.
+    contents is `Span.elapsed_weeks`, the working days the tasks actually occupy.
 
-    **The span is what makes shared assignees come out right**, and it is why the
-    sum went. Two tasks of four weeks and half a week are four and a half weeks
-    of calendar if one person holds both and four if they run side by side on
-    different people; a sum reports four and a half in both cases and is wrong in
-    one of them. Nothing new had to be taught about parallelism, because `_place`
-    books workers and a contended person already serialises their own work.
+    **The placement is what makes shared assignees come out right**, and it is
+    why the sum went. Two tasks of four weeks and half a week are four and a half
+    weeks of calendar if one person holds both and four if they run side by side
+    on different people; a sum reports four and a half in both cases and is wrong
+    in one of them. Nothing new had to be taught about parallelism, because
+    `_place` books workers and a contended person already serialises their own
+    work.
+
+    **Occupied and not enclosed.** The length of the rolled-up span was the
+    contents until an audit read the sentence this yields against a real record:
+    `pitch-7b3e94` holds two tasks worth six weeks, one of them dated to after
+    the plant shutdown, and `max(child.end) - min(child.start)` charged it twenty
+    weeks against a three-week box — fourteen of them a gap in which nobody was
+    working. Cut scope, re-bet it and put more people on it are the three
+    remedies here, and not one of them shortens a wait, so the number named a
+    cause that was not the cause. `_occupied_weeks` (`schedule.py`) measures the
+    union of the children's intervals instead: the two readings agree wherever
+    the work is continuous, which is every case above.
 
     That also retires a paragraph this docstring used to carry. Only stated sizes
     were compared, and that sentence was true of the parent and false of the
@@ -2943,8 +2955,11 @@ def _rollup_problems(
         return
     # Silent where the parent has no appetite of its own — `budget_weeks` is None
     # for a container and for a pitch nobody has bet on yet, and a bet that was
-    # never made cannot be exceeded. Silent too where the rollup has no length:
-    # that is an unscheduled span, whose two dates stand for "no answer".
+    # never made cannot be exceeded. Silent too where nothing underneath has a
+    # length to occupy: an unscheduled span, whose two dates stand for "no
+    # answer", and a pitch whose every task is finished — a done record is a
+    # point marker until §4 of `design/time-model.md` gives it an end date, and
+    # a bet nothing can be measured against is not a bet that was exceeded.
     if span.budget_weeks is None or span.elapsed_weeks is None:
         return
     if span.elapsed_weeks <= span.budget_weeks:

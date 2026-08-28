@@ -213,7 +213,7 @@ def test_step3_done_work_is_a_historical_point_marker_or_no_span_at_all():
 def test_step3_a_done_record_has_no_length_rather_than_a_fifth_of_a_week():
     """These two dates are one day, because nothing records where work ENDED yet.
 
-    Read back through `_elapsed_weeks` that day was 0.2 — a fifth of a week,
+    Read back as an interval that day was 0.2 — a fifth of a week,
     which is not a length but today twice, and which the comment beside
     `Span.elapsed_weeks` names as the thing it must not store. It travelled: a
     done pitch bet at eight printed "8.0 · 0.2 in tasks" on its own page, and
@@ -321,7 +321,7 @@ def test_a_task_that_exactly_fills_its_bet_is_level_with_the_box_and_not_over():
     """The box and the contents are both read in whole working days, or `=` cannot happen.
 
     `working_days_after` lays 2.5 weeks out as `ceil(12.5)` = thirteen days and
-    `_elapsed_weeks` counts them back as 2.6, so the contents were ALWAYS the
+    `_occupied_weeks` counts them back as 2.6, so the contents were ALWAYS the
     ceiling of the box: equal only when the size happened to be a multiple of a
     fifth of a week, and larger otherwise. `_rollup_problems` fires on strict
     `>`, so this pitch — bet at 2.5, holding one task bet at 2.5 on the same
@@ -339,6 +339,72 @@ def test_a_task_that_exactly_fills_its_bet_is_level_with_the_box_and_not_over():
     # and its contents are the same placement read from two ends.
     leaf = spans["task-aaa001"]
     assert leaf.budget_weeks == leaf.elapsed_weeks == pytest.approx(2.6)
+
+
+def test_a_gap_between_two_tasks_is_not_charged_to_the_bet():
+    """The contents is the union of what the tasks occupy, not the stretch enclosing it.
+
+    A pitch's length used to be `max(child.end) - min(child.start)`, which counts
+    the weeks between one task finishing and the next one starting — weeks in
+    which nobody on this pitch is working. `pitch-7b3e94` in the fixture corpus
+    is the live example: two tasks worth six weeks between them, one deliberately
+    dated to after the plant shutdown, and a warning saying it needed twenty
+    weeks against a three-week box. The sentence that warning carries offers to
+    cut scope, re-bet, or add people, and not one of those recovers a gap.
+
+    Two people here, so the tasks do not queue and the gap is entirely the second
+    one's stated start date.
+    """
+    records = [
+        pitch("bbb001", size=4.0),
+        task("aaa001", parent="pitch-bbb001", owner="ann", size=1.0),
+        task("aaa002", parent="pitch-bbb001", owner="bo", size=1.0, start_date=date(2026, 11, 2)),
+    ]
+    spans, _ = run(records)
+    box = spans["pitch-bbb001"]
+    # The bar does not move: a pitch still runs from its first task to its last,
+    # and the gap is part of how long it is in flight on the wall.
+    assert (box.start, box.end) == (MONDAY, date(2026, 11, 6))
+    assert box.elapsed_weeks == pytest.approx(2.0), "twelve calendar weeks, two of them worked"
+
+
+def test_a_done_task_contributes_nothing_to_what_its_pitch_holds():
+    """A point marker has no length, and the rollup used to read one back off it.
+
+    The done branch above gives a finished record `start=end=start_date` and an
+    `elapsed_weeks` of None on purpose, because nothing records where finished
+    work ended yet. `min(child.start)`/`max(child.end)` read those same two dates
+    straight back out, so the None was undone one level up: a pitch holding a
+    task that started in January was charged for every week since. §4 of
+    `design/time-model.md` gives a done record a real `end_date`, and on that day
+    it starts contributing an interval it can honestly stand behind.
+    """
+    records = [
+        pitch("bbb001", size=4.0),
+        task("aaa001", parent="pitch-bbb001", status="done", start_date=date(2026, 1, 5)),
+        task("aaa002", parent="pitch-bbb001", owner="ann", size=1.0),
+    ]
+    spans, _ = run(records)
+    box = spans["pitch-bbb001"]
+    assert (box.start, box.end) == (date(2026, 1, 5), date(2026, 8, 21))
+    assert box.elapsed_weeks == pytest.approx(1.0), "the live task, and nothing for the done one"
+
+
+def test_a_pitch_whose_tasks_are_all_finished_has_no_contents_to_measure():
+    """None, exactly as each of its children has None, and not a number.
+
+    Zero would be a measurement — the good tint, a bet that took no time — and
+    what is true here is that nothing under this pitch has a length to report.
+    The rollup used to answer with the distance between the two finished tasks'
+    start dates, which is a length nobody forecast and nobody spent.
+    """
+    records = [
+        pitch("bbb001", size=4.0),
+        task("aaa001", parent="pitch-bbb001", status="done", start_date=date(2026, 1, 5)),
+        task("aaa002", parent="pitch-bbb001", status="done", start_date=date(2026, 6, 1)),
+    ]
+    spans, _ = run(records)
+    assert spans["pitch-bbb001"].elapsed_weeks is None
 
 
 def test_step5_ordering_is_by_priority_then_id():

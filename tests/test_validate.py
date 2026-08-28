@@ -160,8 +160,8 @@ def rolled_up(*records: Record, config: Config | None = None) -> list[Problem]:
     record on its way to being written, judged with no schedule — and without
     spans `_rollup_problems` is simply not applied. Every test of that rule goes
     through here instead, because the two numbers it compares are the
-    scheduler's: what the bet buys in calendar weeks, and how long the rolled-up
-    span of the tasks actually is.
+    scheduler's: what the bet buys in calendar weeks, and how many weeks of work
+    the tasks underneath actually occupy.
     """
     settings = config or Config()
     spans, _ = schedule(list(records), settings, PLAN_TODAY)
@@ -674,6 +674,49 @@ def test_the_same_tasks_on_different_people_fit_and_say_nothing():
     assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
 
 
+def test_a_gap_between_the_tasks_is_not_work_and_is_not_warned_about():
+    """The contents is what the tasks occupy, not the stretch that encloses them.
+
+    This was `max(child.end) - min(child.start)`, so a task somebody dated to
+    November put every week between August and November inside the bet. The
+    corpus has one — `pitch-7b3e94`, whose second task waits for the plant
+    shutdown — and it was warned at twenty weeks against a three-week box, of
+    which fourteen were a gap. What makes that worse than a wrong number is the
+    sentence attached to it: cut scope, re-bet it, or put more people on it are
+    the three remedies, and none of them shortens a wait.
+
+    Two people, so nothing queues and the whole distance is the stated date. The
+    bet still buys 2.0 and the tasks still hold 2.0, which is the `=` row.
+    """
+    records = [
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Q",
+            person_weeks=4.0,
+            assignees=["jackdawrie", "merganserly"],
+        ),
+        Task(
+            id="task-000001",
+            kind="task",
+            title="A",
+            parent="pitch-000001",
+            person_weeks=1.0,
+            assignees=["jackdawrie"],
+        ),
+        Task(
+            id="task-000002",
+            kind="task",
+            title="B",
+            parent="pitch-000001",
+            person_weeks=1.0,
+            assignees=["merganserly"],
+            start_date=date(2026, 11, 2),
+        ),
+    ]
+    assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
+
+
 def test_tasks_that_fit_inside_the_bet_say_nothing():
     """Under the appetite is the normal state of a pitch whose tasks are still
     being written, and saying so on every one of them is noise."""
@@ -781,7 +824,7 @@ def test_a_bet_its_tasks_exactly_fill_is_level_with_the_box_and_says_nothing():
     """The `=` row of the design's own table, which used to be unreachable.
 
     `working_days_after` lays 2.5 weeks out as `ceil(12.5)` = thirteen working
-    days and `_elapsed_weeks` reads them back as 2.6, so the contents were always
+    days and `_occupied_weeks` reads them back as 2.6, so the contents were always
     the CEILING of the box: equal only where the size was a multiple of a fifth
     of a week, larger everywhere else. This rule fires on strict `>`, so a pitch
     bet at 2.5 holding one task bet at 2.5 on the same person — the tasks filling

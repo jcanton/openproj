@@ -119,7 +119,7 @@ like one somebody estimated. Shaping and thinking work is unsized by definition 
 `ready` and `in_progress` both demand a size. A pitch with tasks takes its dates and its capacity
 from them, which makes its own appetite the **bet**: what the room agreed to spend, kept as written.
 The comparison against it is calendar against calendar — the bet over the people on it is a number
-of weeks, and the tasks' own rolled-up span is another — so a bet that holds the work as effort can
+of weeks, and the days its tasks occupy are another — so a bet that holds the work as effort can
 still fail to hold it as time, when one person has to do two things in turn. Where the tasks do not
 fit, the page says so and `openproj check` warns; nothing refuses the save, and neither a pitch nor
 a cycle over its capacity is ever a CI failure.

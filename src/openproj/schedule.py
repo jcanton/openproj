@@ -81,20 +81,26 @@ class Span(BaseModel):
     # container, and every pitch nobody has bet on yet — which is why
     # `_rollup_problems` stays silent about both.
     budget_weeks: float | None = None
-    # And the contents, in the same units and through the same rounding: how long
-    # this span actually is, which for a pitch is the rollup of its children and
-    # therefore already knows whether two tasks ran side by side or queued behind
-    # one shared person.
+    # And the contents, in the same units and through the same rounding: the
+    # working days this record actually occupies. For a leaf that is its own
+    # span; for a pitch it is the UNION of the days its children occupy, which
+    # already knows whether two tasks ran side by side or queued behind one
+    # shared person — and which is deliberately not the length of the span above,
+    # because the days between a task finishing and the next one starting are
+    # days nobody is working and no remedy the warning offers can recover. See
+    # `_occupied_weeks`.
     #
-    # None wherever the span has no length yet, which is two cases. An
+    # None wherever there is no length to report, which is three cases. An
     # unscheduled span, whose `start` and `end` are a placeholder for "no answer"
     # rather than dates anybody forecast — a fifth of a week is not a length, it
-    # is today twice. And a `historical` one, which today is a start date twice
-    # for exactly the same reason: nothing records where finished work ended, so
-    # there is no length to report. When §4 of `design/time-model.md` lands and a
-    # done record carries a real `end_date`, this becomes a measurement of what
-    # actually happened rather than a forecast — the one number here that is not
-    # a prediction.
+    # is today twice. A `historical` one, which today is a start date twice for
+    # exactly the same reason: nothing records where finished work ended. And a
+    # parent none of whose children have one, which is the first two seen from
+    # above — a pitch whose every task is finished or unplaceable occupies no
+    # days this can measure. When §4 of `design/time-model.md` lands and a done
+    # record carries a real `end_date`, the second case becomes a measurement of
+    # what actually happened rather than a forecast — the one number here that is
+    # not a prediction — and the third goes with it.
     elapsed_weeks: float | None = None
 
 
@@ -150,10 +156,10 @@ def _budget_weeks(duration: float | None) -> float | None:
 
     The box has to be canonicalised the same way the contents are, or the two are
     not comparable. `working_days_after` lays a duration out as
-    `_working_days(duration) = max(1, ceil(duration * 5))` days and `_elapsed_weeks`
-    counts those days back as `working / 5`, so a span's length is always the
-    CEILING of the duration that produced it — equal to it when `duration * 5` is
-    a whole number and strictly greater whenever it is not.
+    `_working_days(duration) = max(1, ceil(duration * 5))` days and
+    `_occupied_weeks` counts those days back as `working / 5`, so a span's length
+    is always the CEILING of the duration that produced it — equal to it when
+    `duration * 5` is a whole number and strictly greater whenever it is not.
 
     Held against the raw duration, that ceiling is a systematic bias and not a
     rounding error. `_rollup_problems` fires on strict `>`, so a pitch bet at 2.5
@@ -180,11 +186,11 @@ def _budget_weeks(duration: float | None) -> float | None:
     return _working_days(duration) / _WORKING_DAYS_PER_WEEK
 
 
-def _elapsed_weeks(start: date, end: date, config: Config) -> float:
-    """How many weeks of work a span from `start` to `end` inclusive holds.
+def _working_days_between(start: date, end: date, config: Config) -> int:
+    """How many working days a stretch from `start` to `end` inclusive holds.
 
     The inverse of `_working_days`, and it has to be that rather than a calendar
-    subtraction over seven, because the number it produces is compared against
+    subtraction over seven, because the number it feeds is compared against
     `_budget_weeks` — `Span.budget_weeks` against `Span.elapsed_weeks`, in
     `_rollup_problems`. `working_days_after` turns four weeks into twenty working
     days and lands on the Friday of the fourth week, which is twenty-six calendar
@@ -194,25 +200,26 @@ def _elapsed_weeks(start: date, end: date, config: Config) -> float:
     have painted as comfortably inside. Weekends and holidays are not work, and
     the box was never measured in them.
 
-    The `/5` is only half of what makes that comparison sound, and this docstring
-    used to claim it was all of it. The other half is `_budget_weeks`, which puts
-    the box through the same whole-day ceiling `working_days_after` applied to it
-    on the way in — see there for why an uncanonicalised box made `=` unreachable
-    a second way, through the ceil rather than through the divisor.
+    The `/5` — which is `_occupied_weeks`' now, and used to be this function's —
+    is only half of what makes that comparison sound, and this docstring used to
+    claim it was all of it. The other half is `_budget_weeks`, which puts the box
+    through the same whole-day ceiling `working_days_after` applied to it on the
+    way in — see there for why an uncanonicalised box made `=` unreachable a
+    second way, through the ceil rather than through the divisor.
 
     Counted by arithmetic and not by walking, unlike everything else here that
-    steps day by day. A rollup span is bounded by its children and a child's
-    `start_date` is whatever somebody typed, so `9999-12-31` is one hand-edit
-    from two and a half million iterations per span — the same shape as the
-    OverflowError `_runs_past_the_calendar` exists to ask about before the walk
-    rather than after it.
+    steps day by day. A stretch is bounded by what somebody typed as a
+    `start_date`, so `9999-12-31` is one hand-edit from two and a half million
+    iterations per span — the same shape as the OverflowError
+    `_runs_past_the_calendar` exists to ask about before the walk rather than
+    after it.
 
     Holidays land on the same footing they have in `_is_working_day`: subtracted
     only when they fall on a weekday, since a holiday on a Sunday was never a
     working day to lose.
     """
     if end < start:
-        return 0.0
+        return 0
     days = (end - start).days + 1
     weeks, remainder = divmod(days, 7)
     # Whole weeks are five working days each whatever weekday they begin on; only
@@ -221,7 +228,64 @@ def _elapsed_weeks(start: date, end: date, config: Config) -> float:
         1 for step in range(remainder) if days_after(start, weeks * 7 + step).weekday() < 5
     )
     working -= sum(1 for day in config.holidays if start <= day <= end and day.weekday() < 5)
-    return max(0, working) / _WORKING_DAYS_PER_WEEK
+    return max(0, working)
+
+
+def _occupied_weeks(intervals: list[tuple[date, date]], config: Config) -> float | None:
+    """Weeks of work in the UNION of `intervals`, or None where they cover nothing.
+
+    This is what a bet's contents are measured as, and the enclosing interval —
+    `min(child.start)` to `max(child.end)` — is what it used to be. That charged
+    a bet for calendar in which nobody was working. `pitch-7b3e94` in the fixture
+    corpus holds two tasks worth six weeks between them, the second of them dated
+    to after the plant shutdown, so the interval enclosing them ran from August to
+    January and the pitch was warned at twenty weeks against a three-week box.
+    Fourteen of those twenty weeks were a gap, and the sentence the warning
+    carries offers three remedies — cut scope, re-bet, add people — of which none
+    touches a gap. A number that makes the tool name a cause that is not the
+    cause is worse than no number.
+
+    The same mechanism read a length back out of the dates a done record's point
+    marker carries, which are deliberately given no `elapsed_weeks` of their own:
+    a pitch holding one task that started in January was warned at thirty-three
+    weeks. Here a child with no length is a child that contributes no interval,
+    so it drops out of the arithmetic rather than being subtracted from it.
+
+    **Merged and not summed, which is what keeps shared assignees right.** Two
+    tasks on one person serialise — `_place` books workers, so a contended person
+    queues behind themselves — and their intervals abut, so the union is their
+    sum and a bet that does not fit still says so. The same two tasks on two
+    people run side by side, and the union is the longer of the two rather than
+    both added up. Nothing new is taught about parallelism: the placer already
+    modelled it, and a day is counted once because it is one day.
+
+    **Days are added as whole days and divided once at the end**, which is why
+    `_working_days_between` counts days rather than returning weeks. Adding weeks
+    per interval instead puts binary-floating-point noise into a comparison
+    decided on strict `>`: one day and two days are `0.2 + 0.4 =
+    0.6000000000000001` against a box of exactly 0.6, and 640 of the 3481 pairs
+    under twelve weeks land the same way. That is the `=` row of the design's
+    table going unreachable for a third reason, on top of the two `_budget_weeks`
+    records.
+    """
+    days = 0
+    covered_to: date | None = None
+    for start, end in sorted(intervals):
+        if covered_to is not None:
+            if end <= covered_to:
+                continue
+            # Sorted by start, so everything before `covered_to` has been counted
+            # already; only the tail this interval adds is new.
+            start = max(start, days_after(covered_to, 1))
+        days += _working_days_between(start, end, config)
+        covered_to = end
+    # None rather than zero where nothing was occupied at all, because that is
+    # not a bet whose tasks take no time — it is a bet none of whose tasks has a
+    # length to report, and `Span.elapsed_weeks` already spells None as "no
+    # answer" everywhere else it appears. Zero would read as measured, paint the
+    # `▾` good tint on a pitch nobody can say anything about, and answer
+    # `_rollup_problems` that a finished bet fitted its box.
+    return None if covered_to is None else days / _WORKING_DAYS_PER_WEEK
 
 
 def _runs_past_the_calendar(start: date, weeks: float, config: Config) -> bool:
@@ -493,6 +557,17 @@ def schedule(
 
     spans: dict[str, Span] = {}
     explanations: dict[str, Explanation] = {}
+    # The stretches each record's work actually occupies, which for a leaf is one
+    # interval and for a parent is every interval its leaves hold. Kept beside the
+    # spans rather than derived from them because a span is the enclosing pair of
+    # dates and this is the union underneath it — the two differ by every gap in
+    # the plan, and it is the union the bet is judged against (`_occupied_weeks`).
+    #
+    # Carried up level by level rather than merged as it goes, so that a pitch
+    # inside a project contributes the days its own tasks occupy and not the
+    # stretch enclosing them: merging at each level would fold a gap into an
+    # interval and hand it to the grandparent as work.
+    occupied: dict[str, list[tuple[date, date]]] = {}
 
     # Completed work is a historical marker, never a forecast, and never a claim
     # on anyone's future capacity.
@@ -505,12 +580,12 @@ def schedule(
                 budget_weeks=_budget_weeks(_duration_weeks(record, config, live)),
                 # No length, rather than the length of these two dates. They are
                 # the same date: nothing records where finished work ENDED yet,
-                # so this branch marks a point and not a span, and
-                # `_elapsed_weeks` of a point is one working day — 0.2. That
-                # number was read as a real measurement everywhere it went: a
-                # done pitch bet at eight printed "8.0 · 0.2 in tasks" on its own
-                # page, and `_rollup_problems` could never fire on a finished bet
-                # because a fifth of a week is under every box there is. It also
+                # so this branch marks a point and not a span, and a point read
+                # back as an interval is one working day — 0.2. That number was
+                # read as a real measurement everywhere it went: a done pitch bet
+                # at eight printed "8.0 · 0.2 in tasks" on its own page, and
+                # `_rollup_problems` could never fire on a finished bet because a
+                # fifth of a week is under every box there is. It also
                 # falsified the comment beside `Span.elapsed_weeks`, which says
                 # in as many words that a fifth of a week is not a length but
                 # today twice — and then stored exactly that.
@@ -575,6 +650,13 @@ def schedule(
             if not kids:
                 continue
             began, ended = min(k.start for k in kids), max(k.end for k in kids)
+            # The dates still enclose everything underneath: a pitch runs from its
+            # first task to its last, and a gap in the middle is part of how long
+            # it is on the wall. It is only the number the BOX is compared against
+            # that stops being that stretch — a bar drawn over a gap is a true
+            # picture of when this pitch is in flight, while a bet charged for
+            # that gap is a warning naming a cause nobody can act on.
+            occupied[record_id] = [i for k in kid_ids for i in occupied.get(k, ())]
             spans[record_id] = Span(
                 start=began,
                 end=ended,
@@ -587,7 +669,7 @@ def schedule(
                 # these dates are what somebody proposes to put in it, and
                 # neither number means anything without the other beside it.
                 budget_weeks=_budget_weeks(_duration_weeks(record, config, live)),
-                elapsed_weeks=_elapsed_weeks(began, ended, config),
+                elapsed_weeks=_occupied_weeks(occupied[record_id], config),
             )
             continue
 
@@ -648,6 +730,13 @@ def schedule(
             )
             continue
         span, explanation = placed
+        # A leaf occupies exactly the days it was placed over, and this is where
+        # every interval in `occupied` enters the plan — a parent holds only what
+        # it was handed from below. A record that got no span holds nothing here
+        # either, and that is how an unsized task and a done record's point marker
+        # drop out of what their pitch is charged for rather than being filtered
+        # out of it somewhere further up.
+        occupied[record_id] = [(span.start, span.end)]
         spans[record_id] = span.model_copy(
             update={
                 "unowned": not workers,
@@ -664,7 +753,7 @@ def schedule(
                 # with children", which is the one thing a reader of a single span
                 # cannot see.
                 "budget_weeks": _budget_weeks(duration),
-                "elapsed_weeks": _elapsed_weeks(span.start, span.end, config),
+                "elapsed_weeks": _occupied_weeks(occupied[record_id], config),
             }
         )
         if explanation is not None:

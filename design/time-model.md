@@ -182,16 +182,47 @@ Both numbers already exist and neither is new arithmetic:
   the summed availability of its own assignees. Two people at full rate turn 8
   into 4.0; two people at 60% turn it into 6.7, which is the right answer and
   the one the scheduler already gives every leaf.
-- **The contents** is the pitch's rolled-up span, `max(child.end) −
-  min(child.start)`, measured in weeks.
+- **The contents** is the UNION of the intervals its children occupy, measured
+  in working days. Not the interval enclosing them: the days between one task
+  ending and the next one starting belong to no child, and nothing is charged
+  for them.
 
-**Using the span rather than summing the children is what makes shared assignees
-come out right**, and it is why the sum was rejected. Two tasks of four weeks and
-half a week are 4.5 weeks of calendar if one person holds both and 4.0 if they run
-side by side on different people — and the scheduler already knows which, because
-`_place` books workers and a contended person serialises their own work. Summing
-would report 4.5 in both cases and be wrong in one of them; nothing new has to be
-taught about parallelism because the placer already models it.
+**Reading the placement rather than summing the children is what makes shared
+assignees come out right**, and it is why the sum was rejected. Two tasks of four
+weeks and half a week are 4.5 weeks of calendar if one person holds both and 4.0
+if they run side by side on different people — and the scheduler already knows
+which, because `_place` books workers and a contended person serialises their own
+work. Summing would report 4.5 in both cases and be wrong in one of them; nothing
+new has to be taught about parallelism because the placer already models it. The
+union preserves both answers exactly: two tasks on one person abut, so their
+union is their sum, and two tasks on two people overlap, so their union is the
+longer of them. A day is counted once because it is one day.
+
+**The enclosing span was the second reading and it was wrong twice.** It was the
+rollup `max(child.end) − min(child.start)`, and an adversarial review of the
+fixture corpus read the sentence it produces:
+
+- `pitch-7b3e94` holds two tasks worth 6.0 weeks between them, and `task-7d9f52`
+  is dated `2026-12-21` because it waits for the plant shutdown. The enclosing
+  span therefore runs 2026-08-31 → 2027-01-21 and the pitch was warned at **20.0
+  weeks against a 3.0 box**, fourteen of those twenty being a gap. The remedies
+  the sentence offers are cut scope, re-bet, or add people, and not one of them
+  shortens a wait — so the number named a cause that is not the cause, which is
+  worse than reporting nothing.
+- It also undid the rule below about done records. A finished child's span is a
+  point marker with `elapsed_weeks` deliberately None, but `min(child.start)` and
+  `max(child.end)` read those same two dates straight back out, so a pitch
+  holding a task that started in January warned at 33.0.
+
+A child with **no length contributes nothing to the union** — a done record's
+point marker, and an unsized record, which has no span at all. §4 gives a done
+record a stored `end_date`, and at that point it has a real interval and starts
+contributing honestly.
+
+**The parent's span does not change.** A pitch still runs from its first task to
+its last, gap included: that is when it is in flight, and it is what the timeline
+bar and the cycle "until" have always drawn. Only the number the box is compared
+against stops being that stretch.
 
 Unsized children get no span at all (§2), so they drop out of the rollup exactly
 as they drop out of `_rollup_problems`' sized-only sum today — the same
@@ -206,7 +237,7 @@ state below is still needed.
 | any child unsized | muted, not good | `?` |
 
 **The fourth state is not optional.** With the default gone, a pitch holding three
-sized tasks and four unsized ones rolls up a span covering only the three, and
+sized tasks and four unsized ones occupies only the days of the three, and
 would paint green — green for a bet nobody has estimated, which is the exact
 inversion of what the existing warning text says about that same data ("the N
 without a size can only add to that"). Good has to mean *known* to be under.
@@ -235,8 +266,8 @@ every remedy is a decision for a person.
 and the sentence in `check` cannot disagree". It is not: it reads
 `index.progress[id].total`, which charges the default per unsized child, while
 `_rollup_problems` sums only sized ones. Today the reading view's number is
-silently inflated above the one `check` warns on. Both move to the span, and a
-test pins the cell, the reading view and `check` against each other so they
+silently inflated above the one `check` warns on. Both move to the occupied days,
+and a test pins the cell, the reading view and `check` against each other so they
 cannot drift apart again.
 
 ## 4. `end_date`: store the actual, never the estimate
