@@ -719,6 +719,15 @@ if (DATA) for (const title of svg.querySelectorAll('title')) title.remove();
 const FULL_HEIGHT = svg.querySelectorAll('.cycle-rule, .build-rule, .month-rule, .today');
 const TODAY_LABEL = svg.querySelector('.today-label');
 
+// Run on every keystroke, and unlike the graph's it stays that way. The graph
+// delays its ARRANGEMENT now, because the subsequence tier changes the visible
+// set on characters a substring never did and `await elk.layout` is
+// asynchronous, uncancellable and moves every box on the canvas. None of those
+// three is true here: the loop below recomputes each visible bar's `y` from
+// scratch, synchronously, so there is nothing to queue, no order to get wrong
+// and no half-finished chart to be caught in. What it costs is bounded by the
+// bars — measured on `seed/` on 2026-08-28, typing `otherwise` one character at
+// a time over a 23-bar chart: 31 to 79 `setAttribute` calls per keystroke.
 function applyFilter() {
   if (!DATA) return;
   let row = 0;

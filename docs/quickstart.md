@@ -80,6 +80,33 @@ reversing it, so the two can never contradict each other. Any kind may depend on
 can wait on a whole pitch — and a dependency written on a pitch is what every task inside it waits
 for.
 
+## Finding one
+
+Type into the box above any view. It searches the fields a record is known by — id, title, tags, PR
+references and the people on it — and never the shaping document underneath: a nine-hundred-word
+pitch would make every long word in the plan a match for something.
+
+Capitals do not count, and neither do the separators — anywhere, in a bare word and in a
+`field:value` alike. A record called `some_cool_title` is found by `some cool`, `Some Cool`,
+`some-cool`, `somecool` and `title:some.cool`; `tag:bed-heat` and `tag:bedheat` are the same
+question, and so are `id:pitch-0a0001` and `id:pitch0a0001`.
+
+A record is also found by the letters of its name when they sit close together: `smcl` finds
+`some_cool_title`, and `prtng` finds "Porting throughflow". Four letters at least, and it reads only
+the title and the id that way — three letters read loosely can pull back half a plan, and a tag, a login
+or a PR number is something you copy off a screen rather than half-remember. A search made only of
+punctuation, or of so much punctuation that fewer than three letters are left of it — `#`, `C++`,
+`I/O` — matches nothing rather than matching whatever is left of it.
+
+`field:value` narrows to one field — `owner:jackdawrie`, `tag:gpu`, `status:ready`, `cycle:37`. A
+field is still matched whole, so `cycle:3` answers nothing at all rather than standing for every
+cycle whose number starts with a 3, and `status:done` is not a way of asking for every status with
+"done" in it; `title:` and `pr:` are the two that look inside. Two terms beside each other mean
+both; `or`, `not` and brackets are there when you want them. One thing to know about `not`: it
+takes away whatever its word finds, and its word now finds a little more than the letters you
+typed, so `not smcl` hides a little more too. A query the box cannot read matches nothing and says
+why, under the box, while you type the rest of it.
+
 ## Writing one
 
 **New record**, then choose the kind. The body starts as the team's own template, with its guidance

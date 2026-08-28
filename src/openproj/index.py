@@ -38,7 +38,7 @@ from .model import (
     validate_all,
     workers_on,
 )
-from .query import QueryError, evaluate, parse
+from .query import QueryError, evaluate, parse, plain
 from .schedule import Explanation, Span, schedule
 
 COMPUTED_PREDICATES = (
@@ -245,6 +245,10 @@ class Index(BaseModel):
     unreadable: list[Unreadable] = []
     facets: dict[str, list[str]]
     search_blob: dict[str, str]
+    # The second, narrow haystack: `nameable`'s id-and-title string, which is
+    # the only thing the subsequence tier of `bare` (`query.py`) reads. Total
+    # over records for the same reason `search_blob` is.
+    name_blob: dict[str, str]
     # Carried so a renderer needs nothing but the index: the timeline cannot draw
     # cycle boundaries or a today line without them, and it is handed no Config.
     cycles: dict[int, tuple[date, date]]
@@ -779,17 +783,83 @@ SEARCH_FIELDS = (
 
 
 def searchable(record: Record) -> str:
-    """One record's searchable text: every value in `SEARCH_FIELDS`, lowered.
+    """One record's searchable text: every value in `SEARCH_FIELDS`, `plain`ed.
 
     Lowered here rather than at each comparison, because the browser holds this
     string and compares a lowered needle against it; a second `.toLowerCase()`
     per row per keystroke is the same answer computed fifteen thousand times.
+    The same argument decides where the separators go: `plain` (`query.py`) is
+    run once per value here, in `build_index`, and the needle once per query, by
+    `ASKED` in `_FILTER_JS`.
+
+    **What that does NOT say, and used to.** A BARE word costs a keystroke only
+    the two walks — `bare` looking for a substring in this string and, failing
+    that, a subsequence in `nameable`'s. Every `field:value` term is the other
+    case: it is answered against `held`, the row's own unnormalised values, and
+    both branches of it normalise those per row per keystroke — `plain(value)`
+    for the whole-match comparison and again for a `title:` or `pr:` one. There
+    is no blob to carry them in: `held` is what the cell editor writes back and
+    what the menus are built from, and a normalised copy of every field on every
+    row is the page weight this function's last paragraph refuses. The NEEDLE on
+    those paths is hoisted out of the loop, which is the half that was free.
+
+    **The space survives and nothing else does**, which makes it a boundary: one
+    space-delimited chunk is exactly one `SEARCH_FIELDS` value. `some_cool_title`
+    is the one chunk `somecooltitle` and `kilnlab/kiln4py#2318` is
+    `kilnlabkiln4py2318`, so `found`'s walk can stop at a space and a subsequence
+    can never run out of a title and into the owner beside it.
+
+    It is 6% shorter than the raw join over both corpora, so this replaces the
+    blob rather than riding beside it: a second normalised string on every row of
+    /table and the landing would be the page weight this one gives back.
+    """
+    return _joined(record, SEARCH_FIELDS)
+
+
+# The narrow haystack: the two fields the SUBSEQUENCE tier is allowed to read.
+#
+# `bare` (`query.py`) carries the argument and this is only where the list lives.
+# In one line of it: an id and a title are the two things nobody retypes exactly
+# — an id is punctuated and a title is a sentence — and everything else in
+# `SEARCH_FIELDS` is copied off a screen. Letting the loose tier at a login is
+# what made typing `operator` widen the demo plan from 5 rows to 19 on the fourth
+# character and back to 5 on the fifth, 13 of the 14 it gained matching nothing
+# at all but the login `hoopoegrove`.
+NAME_FIELDS = ("id", "title")
+
+
+def nameable(record: Record) -> str:
+    """The names one record goes by: `NAME_FIELDS`, `plain`ed the same way.
+
+    Same shape as `searchable` and the same space between values, because
+    `found`'s walk stops at a space and it is walking this string too — a
+    subsequence must not run out of the id and into the title.
+
+    Two short values per row is what this costs on the wire, and it is small
+    because both are already IN the blob beside it. Measured on 2026-08-28 by
+    rendering `seed/` twice, once with the row key and once without it: /table
+    went 742,391 -> 743,650 bytes, +1,259 over 28 rows, 0.17%; the landing went
+    327,518 -> 329,572, +2,054 over 40 records, 0.63%. That is what buys the
+    tiers their separate haystacks, and `searchable`'s last paragraph is the
+    ruling it has to answer to — a second copy of the WHOLE blob would not have
+    been affordable, and two fields of it is.
+    """
+    return _joined(record, NAME_FIELDS)
+
+
+def _joined(record: Record, fields: tuple[str, ...]) -> str:
+    """The `plain`ed values of `fields`, space-separated, empties dropped.
+
+    One function so the two haystacks cannot drift apart in how they are built:
+    the space between values is a boundary `found` relies on, and a blob built
+    one way beside a blob built another is the two-implementation bug this file
+    already has one of.
     """
     said: list[str] = []
-    for field in SEARCH_FIELDS:
+    for field in fields:
         value = getattr(record, field, None)
         said += value if isinstance(value, list) else [value] if value else []
-    return " ".join(said).lower()
+    return " ".join(plained for value in said if (plained := plain(value)))
 
 
 def _ordered(field: str, values: set[str]) -> list[str]:
@@ -874,6 +944,7 @@ def build_index(
 
     facets: dict[str, set[str]] = defaultdict(set)
     search_blob: dict[str, str] = {}
+    name_blob: dict[str, str] = {}
     progress: dict[str, Progress] = {}
     for_later: list[str] = []
     # The blob is total: the landing list searches every record, and a record
@@ -883,6 +954,7 @@ def build_index(
     # `SEARCH_FIELDS`, which is also what a row carries to the browser.
     for record in records.values():
         search_blob[record.id] = searchable(record)
+        name_blob[record.id] = nameable(record)
     # Progress is computed depth-first and memoised, because a container's weight
     # is what is under it and that is not known when `plan.values()` happens to
     # reach it. The memo doubles as the cycle guard: a record already being
@@ -942,6 +1014,7 @@ def build_index(
         facets={field: _ordered(field, values) for field, values in facets.items()}
         | {"predicate": sorted(COMPUTED_PREDICATES)},
         search_blob=search_blob,
+        name_blob=name_blob,
         cycles=config.cycles,
         plans=config.plans,
         nominal_availability=config.nominal_availability,
@@ -1101,7 +1174,9 @@ def apply_filters(
     matched = []
     for record_id, record in (index.plan if over is None else over).items():
         fields = query_fields(index, record_id)
-        if not evaluate(asked, fields, index.search_blob[record_id], NO_VALUE):
+        if not evaluate(
+            asked, fields, index.search_blob[record_id], index.name_blob[record_id], NO_VALUE
+        ):
             continue
         for field, wanted in filters.items():
             if not wanted:
