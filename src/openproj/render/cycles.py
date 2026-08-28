@@ -7,14 +7,22 @@ from datetime import date
 from markupsafe import Markup
 
 from ..index import Index
-from ..model import Config, Cycle, days_after, is_bettable, size_weeks, without_comments
+from ..model import (
+    Config,
+    Cycle,
+    Record,
+    days_after,
+    is_bettable,
+    size_weeks,
+    without_comments,
+)
 from ..schedule import build_end
 from .controls import _FILTER_JS, _combobox_html, _cycle_numbers, _facets_html
 from .env import _compiled
 from .icons import _ICON_ART, ICONS, icon_svg
 from .markdown import _markdown
 from .shell import ROUTES, STATIC, Links, _page
-from .styles import _DETAIL_STYLE, _SCROLL_STYLE, _SUGGEST_STYLE
+from .styles import _DETAIL_STYLE, _SCROLL_STYLE, _SUGGEST_STYLE, _TREE_STYLE
 from .tokens import PRIORITIES, STATUSES
 
 # Betting table to review meeting for a plan with nothing to copy from. Four
@@ -261,9 +269,12 @@ _CYCLE = """
 <p class="hint betsearch">
   <label for="betfind" class="sr-only">Search the betting table</label>
   <input type="search" id="betfind" placeholder="Search" autocomplete="off">
-  <span>Everything ready or in progress. Ticking one stamps it with cycle
+  <span>Everything ready or in progress, with the tasks each one is made of
+  underneath it. Ticking one stamps it with cycle
   {{ c.number }}; an item already in progress from an earlier cycle keeps the cycle it
-  was bet in, so its overrun keeps counting.</span>
+  was bet in, so its overrun keeps counting. A task has no tick of its own — it is
+  part of the bet above it — and its appetite is typed here because this is where
+  what the bet has to hold is argued about.</span>
 </p>
 {#- Empty is not broken, and a search that matches nothing is the commonest way
     to arrive at an empty table. Drawn inside the table's own body by the script,
@@ -298,12 +309,27 @@ _CYCLE = """
       a reader who arrives at one control out of four hundred, "appetite" without
       "for what" is not a name. -#}
   {% for row in c.candidates %}
-  <tr data-id="{{ row.id }}" class="{{ 'carried' if row.carried else '' }}">
-    <td><input type="checkbox" class="bet" autocomplete="off"
+  {#- `data-rung` and not a class, because it is a value the script rewrites: the
+      search hides rows one at a time, and the last one left visible under a
+      pitch has to become the `└─` whatever it was rendered as. The attribute is
+      the drawing's own state, in the same place `td[data-rungs]` on the table
+      page keeps it. -#}
+  <tr data-id="{{ row.id }}" data-rung="{{ row.rung }}" class="{{ row.classes }}">
+    {#- Empty and not absent on a task's row. Every column below is addressed by
+        position — `betCell` sorts on `row.cells[at]` — so a row one cell short
+        would sort its title against everybody else's kind. It is also what keeps
+        the tree's indent under the header it belongs to. -#}
+    <td>{% if row.bettable %}<input type="checkbox" class="bet" autocomplete="off"
                aria-label="Bet {{ row.title }} into cycle {{ c.number }}"
                {{ 'checked' if row.in_cycle else '' }}
-               {{ 'disabled' if row.carried else '' }}></td>
-    <td><a href="{{ links.record }}{{ row.id }}">{{ row.title }}</a></td>
+               {{ 'disabled' if row.carried else '' }}>{% endif %}</td>
+    {#- The link's own tag stays on one line. Wrapped between `<a` and `href` it
+        is the same markup to a browser and a different string to everything that
+        reads this page as text — which is most of the tests, and two of them
+        matched nothing rather than failing. -#}
+    <td class="betname">{% if row.rung -%}
+      <span class="tree" aria-hidden="true"><span class="rung {{ row.rung }}"></span></span>
+      {%- endif %}<a href="{{ links.record }}{{ row.id }}">{{ row.title }}</a></td>
     <td><span class="chip kind-{{ row.kind }}">{{ row.kind|human }}</span></td>
     {#- Status and priority are CHOSEN, never typed: three words over six rungs is
         a way to write `in progres` into the corpus, and the record page and the
@@ -830,6 +856,44 @@ function betSearch() {
   BETNONE.hidden = shown > 0 || !term;
   if (!BETNONE.hidden) document.getElementById('betterm').textContent = BETFIND.value.trim();
   say(term ? `${shown} of ${betRows().length} shown` : '');
+  betTree();
+}
+
+// Which connector each task draws, decided from the rows that are actually on
+// screen and never from the plan. It is the table page's `connectors()` at the
+// one depth this table has, and it exists for the same reason that one does: the
+// search hides rows, so a `├─` rendered over the last task the term left behind
+// promises a sibling that is not there, and the row above the gap carries a `└─`
+// that is simply untrue.
+//
+// **A task whose bet the search hid is drawn as a row of its own**, with neither
+// connector nor indent. Keeping the pitch on screen as dimmed context was the
+// alternative — it is what the table page does — and it lost here because this
+// table is a FORM: every row it draws carries a tick and three live boxes, and a
+// row somebody did not search for, put back on screen with all of them, is a row
+// that can be typed into by accident. Indenting the task under whatever happens
+// to precede it was never a candidate; a connector between two rows that are not
+// related is a lie about the plan.
+function betTree() {
+  const rows = betRows();
+  // Whether the bet the tasks below belong to is on screen. Rows arrive in tree
+  // order — a bet, then its tasks — so the last row without a connector is the
+  // holder of every row with one until the next such row.
+  let held = true;
+  rows.forEach((row, i) => {
+    if (!row.dataset.rung) { held = !row.hidden; return; }
+    const tree = row.querySelector('.tree .rung');
+    if (!tree) return;
+    // One class for both halves of the drawing, so the indent and the connector
+    // cannot end up disagreeing: a row indented under nothing reads as a child
+    // of the row above it, which is the lie this is drawn to avoid.
+    row.classList.toggle('kid', held);
+    if (!held) return;
+    let last = true;
+    for (let j = i + 1; j < rows.length && rows[j].dataset.rung; j++)
+      if (!rows[j].hidden) { last = false; break; }
+    tree.className = 'rung ' + (last ? 'end' : 'tee');
+  });
 }
 
 BETFIND.addEventListener('input', betSearch);
@@ -878,6 +942,13 @@ function betSort(at, descending) {
   // it. This is the whole reason the sort is done on the live rows rather than
   // by re-rendering the table from data: the data is in the form.
   for (const row of rows) BETS.tBodies[0].append(row);
+  // And the tree goes, because it has stopped being true. Sorted by appetite a
+  // task sits wherever its number falls and the bet it belongs to is somewhere
+  // else entirely, so the indent points at a stranger — the same rule the table
+  // page follows, where the tree is the id sort's and no other column's. There
+  // is no way back to it but a reload, which is also the table page's answer:
+  // the order a tree can be drawn over is the server's own.
+  BETS.classList.add('sorted');
 }
 
 // --- The table follows the plan while the table is going on ------------------
@@ -932,6 +1003,11 @@ async function betRefresh() {
     // has been made and saved — and so a row that arrives already bet in comes
     // back ticked rather than blank.
     BETS.tBodies[0].replaceWith(rows);
+    // The fresh rows arrive in the server's order, which is the order the tree
+    // is drawn over — so whatever sort was applied to the rows that have just
+    // been thrown away no longer describes anything, and the class that hides
+    // the tree while a sort holds goes with them.
+    BETS.classList.remove('sorted');
     betSearch();
     say('The betting table was refreshed — somebody changed the plan');
   } finally {
@@ -979,7 +1055,8 @@ for (const head of BETS.querySelectorAll('th[data-sort]')) {
 {% endif %}
 """
 
-_CYCLE_STYLE = """
+_CYCLE_STYLE = (
+    """
 /* The printed date, hidden wherever the box that edits it is on screen. This
    page draws read value and control together — it has no editing mode to
    switch between — so with the `.iso` echo gone the row still read
@@ -1124,7 +1201,31 @@ input.rate { width: 4rem; }
    popup the assignees and reviewers boxes open, and the popup is parked on the
    body now. Left in, it is a rule with nothing to do and a trap for whoever
    writes the next one: the identical rule on the table's cells is what stole
-   `position: sticky` from the frozen title column. */
+   `position: sticky` from the frozen title column.
+
+   The rule below is that rule narrowed to one column and given something to do,
+   and the difference is the whole reason it is safe. `_TREE_STYLE`'s connectors
+   are absolute boxes and need a positioned ancestor; on the table page that is
+   the title column's own `position: sticky`, and this table freezes nothing, so
+   the name column has to provide one. One cell in one table, which nothing else
+   in any sheet reaches — as against `td`, which reached eight columns of
+   controls and, on the page next door, a column whose positioning was the point.
+
+   The indent is the cell's padding, exactly as it is on the table page, so it is
+   inside the column's own measurement rather than a drawing laid over the word.
+   One level and one step: a bet's contents are its tasks and a task holds
+   nothing, so there is no `d2` here to write. */
+#bets td.betname { position: relative; }
+#bets tr.kid td.betname { padding-left: calc(.5rem + 14px); }
+/* Sorted, the tree is not drawn at all — the same rule the table page follows,
+   and for the same reason it is worth stating rather than assuming: sorted by
+   appetite a task sits wherever its number falls, three rows from the pitch it
+   belongs to, and a connector drawn between two rows that are not related is a
+   lie about the plan. The class goes on the table so one toggle takes every
+   drawing at once, and the indent goes with the connector: a row indented under
+   nothing reads as a child of whatever happens to be above it. */
+#bets.sorted .tree, #bets tr:not(.kid) .tree { display: none; }
+#bets.sorted tr.kid td.betname { padding-left: .5rem; }
 button.drop { border: none; background: none; cursor: pointer; padding: 0 .2rem;
               color: var(--muted); font-size: 13px; line-height: 1; }
 button.drop:hover { color: var(--danger); }
@@ -1183,6 +1284,20 @@ tr.carried td { color: var(--muted); }
 #start { padding: .25rem .8rem; border-color: var(--accent); color: var(--accent); }
 #confirm { margin: .6rem 0 0; font-size: 13px; }
 """
+    # The tree's own drawing, the same one the table page inlines. Concatenated
+    # rather than copied for the reason `_SCROLL_STYLE` is: two tables drawing
+    # the same connector out of two stylesheets is one drawing that can be fixed
+    # on one page and left wrong on the other, and the rules above are the half
+    # of it that really is this table's — the cell it hangs off and the indent.
+    #
+    # This sheet is inlined by the cycles INDEX as well, which draws no table and
+    # no tree, so eight rules ride along there with nothing to reach. That is the
+    # same bargain `_DETAIL_STYLE` already makes — three of the five pages that
+    # inline it ship `#grip`'s fade with no grip to move — and it is cheaper than
+    # a third stylesheet whose only content is the difference between two cycle
+    # pages that are otherwise the same page.
+    + _TREE_STYLE
+)
 
 _CYCLES = """
 {#- Announced, not drawn: the lit nav item says this already. See `.sr-only`. -#}
@@ -1907,6 +2022,83 @@ def _proposed(index: Index, number: int, window: tuple[date, date] | None) -> Cy
     )
 
 
+def _bet_row(record: Record, number: int, rung: str = "") -> dict:
+    """One row of the betting table: a bet, or one of the tasks that make it up.
+
+    One shape for both, because they are the same row. A task's appetite is typed
+    into the same kind of box, its status and priority are picked from the same
+    two lists, and the search reads its words the same way — the differences are
+    that a task is not a thing a cycle can be bet on and that it is drawn under
+    the row it belongs to. Written as two dicts they would have drifted the first
+    time somebody added a column.
+
+    `rung` carries the connector, and it is what says which of the two this is.
+    Empty on a bet, which is drawn at the top level and has nothing to hang off;
+    `tee` or `end` on a task, which is what the table page's `connectors()`
+    computes for a child and what the browser recomputes here whenever the search
+    hides a row.
+    """
+    size = size_weeks(record)
+    # Whether a cycle can be bet on this row at all, which is the one control a
+    # task does not get. Asked of the model rather than of `rung`, so the tick and
+    # the indent stay two facts: `is_bettable` is what decided this record was not
+    # in the loop above, and it is what decides here too.
+    bettable = is_bettable(record)
+    # Bet in an earlier cycle and still running: shown, counted, and not
+    # re-stampable. Overwriting its cycle would move the deadline its overrun is
+    # measured against and forgive the slip.
+    #
+    # A fact about a BET and about nothing else, so a task is never one however
+    # long it has been running: what the class says is "this row's tick is
+    # disabled", and a task has no tick. Unguarded it also dimmed every
+    # in-progress task under a pitch bet in an earlier cycle — `tr.carried td` is
+    # the muting that means "not yours to stamp", drawn over rows that were never
+    # offering to be stamped.
+    carried = (
+        bettable
+        and record.status == "in_progress"
+        and record.cycle is not None
+        and record.cycle < number
+    )
+    return {
+        "id": record.id,
+        "title": record.title,
+        "kind": record.kind,
+        "status": record.status,
+        # The field jcanton asked for at the table: "it's missing priority,
+        # that's very important". A bet is a decision about what matters most
+        # against a fixed appetite, and the one number that says what matters was
+        # on every other view but this one.
+        "priority": record.priority,
+        "size": "" if size is None else f"{size:g}",
+        "size_field": "person_weeks",
+        # `size_hint` was here and filled the empty box with the default this row
+        # would have been charged at — "0.5 assumed", a number somebody could
+        # read off a betting table as though the room had said it. An empty box
+        # now means nobody has bet a size, which is the one thing a betting table
+        # is for settling, so the placeholder says that in the template and needs
+        # no value from here.
+        "assignees": ", ".join(record.assignees),
+        "reviewers": ", ".join(record.reviewers),
+        "rung": rung,
+        # The row's classes, built here rather than by three conditionals in the
+        # markup: written there it produced `class="carried "` on every carried
+        # bet, and a trailing space inside an attribute is the kind of thing a
+        # regex in a test matches on by accident and then stops matching on.
+        "classes": " ".join(
+            one for one in ("carried" if carried else "", "kid" if rung else "") if one
+        ),
+        "bettable": bettable,
+        # A task's cell is EMPTY and not `—`. The em dash means "nobody has bet
+        # this yet", which is a thing that can be fixed by ticking the box on the
+        # same row — and a task has no box, because the bet it is part of is the
+        # row above it. Two different silences, drawn differently.
+        "cycle": (record.cycle if record.cycle is not None else "—") if rung == "" else "",
+        "in_cycle": record.cycle == number,
+        "carried": carried,
+    }
+
+
 def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
     """Everything the cycle page shows, computed once so the markup only lays out.
 
@@ -2070,39 +2262,47 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         # and ticking any of them stamped a second cycle onto one decision.
         if record.status not in order or not is_bettable(record):
             continue
-        size = size_weeks(record)
-        candidates.append(
-            {
-                "id": record_id,
-                "title": record.title,
-                "kind": record.kind,
-                "status": record.status,
-                # The field jcanton asked for at the table: "it's missing
-                # priority, that's very important". A bet is a decision about
-                # what matters most against a fixed appetite, and the one number
-                # that says what matters was on every other view but this one.
-                "priority": record.priority,
-                "size": "" if size is None else f"{size:g}",
-                "size_field": "person_weeks",
-                # `size_hint` was here and filled the empty box with the default
-                # this row would have been charged at — "0.5 assumed", a number
-                # somebody could read off a betting table as though the room had
-                # said it. An empty box now means nobody has bet a size, which is
-                # the one thing a betting table is for settling, so the
-                # placeholder says that in the template and needs no value from
-                # here.
-                "assignees": ", ".join(record.assignees),
-                "reviewers": ", ".join(record.reviewers),
-                "cycle": record.cycle if record.cycle is not None else "—",
-                "in_cycle": record.cycle == number,
-                # Bet in an earlier cycle and still running: shown, counted, and
-                # not re-stampable. Overwriting its cycle would move the deadline
-                # its overrun is measured against and forgive the slip.
-                "carried": record.status == "in_progress"
-                and record.cycle is not None
-                and record.cycle < number,
-            }
+        candidates.append(_bet_row(record, number))
+        # And what is inside the bet, under it. The appetite the room argues
+        # about is the pitch's, but the thing that has to change for it to be met
+        # is a task's — and until now that meant leaving the meeting's own page
+        # for the table or for each record in turn. The rows are the same shape
+        # as the one above them and their appetites are typed the same way; what
+        # they do not have is a tick, because a task is not a thing a cycle is
+        # bet on (`is_bettable`) and stamping one would put a second cycle on one
+        # decision.
+        #
+        # Neither parked nor finished. A shelved task is not in the bet at all,
+        # and a done one is in it and cannot be changed by anybody in the room —
+        # its appetite is history, and no amount of re-sizing it makes the rest
+        # fit. What is left is exactly the work the meeting can move, which
+        # includes the `shaping` and `thinking` tasks nobody has sized: those are
+        # the rows the appetite column is here for.
+        #
+        # This is deliberately NOT the list the table's rollup counts. That
+        # number is what the bet has to hold, finished work included; this is
+        # what the room can do something about. Two questions, and the table
+        # answering both with one list would be the table answering neither.
+        kids = sorted(
+            child
+            for child in index.children.get(record_id, ())
+            if child in index.plan and index.plan[child].status not in ("shelved", "done")
         )
+        for at, child in enumerate(kids):
+            candidates.append(
+                _bet_row(
+                    index.plan[child],
+                    number,
+                    # `end` on the last one drawn and `tee` on the others, which
+                    # is the whole of `connectors()` at one level deep — the only
+                    # depth this table has, because a bet's contents are its
+                    # tasks and a task holds nothing. The browser re-decides it
+                    # whenever the search hides a row, for the reason that
+                    # function exists: a `├─` over a row the filter removed
+                    # promises a sibling that is not there.
+                    rung="end" if at == len(kids) - 1 else "tee",
+                )
+            )
 
     return {
         "number": number,

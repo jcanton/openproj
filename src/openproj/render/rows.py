@@ -5,6 +5,17 @@ from __future__ import annotations
 from ..index import Index, _product_of, _project_of, predicates_of
 from ..model import RUNG, size_weeks, unread_fields
 
+# The record page's own reading of what a pitch's tasks come to, imported rather
+# than repeated. It is the wrong way up as a dependency — this module is the view
+# model three pages share and that one is a page — and it is still the right
+# import: the alternative is a second gate and a second read of the same span
+# beside a comment promising they agree, which is the exact shape of the defect
+# `_tasks_add_up_to` was itself fixed for. `detail` reaches nothing here, so the
+# graph stays acyclic; the day something else needs this number as well, the
+# function moves down here and the record page imports it back.
+from .detail import _tasks_add_up_to
+from .tokens import _SIZE_FIELD_NAME
+
 
 def _reviewers_under(index: Index, record_id: str) -> list[str]:
     """`model.reviewers_under`, over the index's own child map.
@@ -30,6 +41,128 @@ def _reviewers_under(index: Index, record_id: str) -> list[str]:
         found += child.reviewers
         stack += index.children.get(child.id, [])
     return list(dict.fromkeys(found))
+
+
+def _rollup(index: Index, record_id: str) -> dict | None:
+    """What the work under this record occupies, and how that reads against its bet.
+
+    None wherever there is nothing to say: on a rung that reads no appetite at
+    all (see below), on every leaf, and on anything whose children have no length
+    between them. `_tasks_add_up_to` decides that last one and is called rather
+    than re-derived, so the sentence the record page prints under Appetite and
+    the cell the table draws are the same fact read once. They said different
+    numbers for a while — the page summed `index.progress[id].total` while
+    `check` summed only the sized children — and the fix was to make both read
+    `Span.elapsed_weeks`, which this is the third reader of.
+
+    **One value, so that the tint and the mark cannot disagree.** The state below
+    is `Span.budget_weeks` against `Span.elapsed_weeks`, which is exactly the
+    comparison `_rollup_problems` (`model.py`) makes and the ONLY one drawn
+    anywhere on this row: the browser is handed a word and looks up a glyph and a
+    class for it, rather than being handed two numbers and asked to compare them
+    a second time. A second comparison would be a second implementation of the
+    rule this repository has already been bitten four times by writing twice, and
+    it would drift in the worst possible direction — a cell painted green over a
+    warning triangle explaining why the bet does not fit.
+
+    The `over` state is the one that carries no tint of its own, and that is the
+    same argument seen from the other side. `_rollup_problems` fires on exactly
+    `elapsed > budget`, `MARK_COLUMN` routes its `person_weeks` field to this
+    column, and `cell()` grounds a cell carrying a warning in `--sev-warn-soft`.
+    Painting a second warn ground from this state would be a second copy of one
+    colour whose only possible future is to disagree with the first.
+
+    **Four states and not three.** With no default appetite left, a pitch holding
+    three sized tasks and four unsized ones occupies only the days of the three —
+    a real number, under the box, and green would say the bet is known to fit
+    when nobody has estimated more than half of it. So a child that adds nothing
+    to the union takes the reading away rather than flattering it, and the
+    sentence says how many did.
+
+    A child adds nothing when it has no span at all (nobody sized it, §2 of
+    `design/time-model.md`) or a span with no length (a `done` record written
+    before `end_date` was asked for). Both are read off the span rather than off
+    `person_weeks`, because the span is what the number in the cell was measured
+    from — asking the field would let a child that is sized but contributes
+    nothing pass as though it had been counted.
+
+    Shelved children are not in that count, and the list is the same one
+    `_progress_of` rolls up: parked work is not work anybody is waiting on, and
+    counting it would put a permanent `?` on every pitch that has ever shelved a
+    task.
+
+    And a fifth state for the pitch nobody has bet on yet, which the design's
+    table does not enumerate because it is not a reading of the box — there is no
+    box. It says what its tasks come to and offers no verdict: warning-colouring
+    a record `check` is silent about is how a reader learns that one of the two
+    is lying to them.
+    """
+    record = index.plan[record_id]
+    # Only on a rung that reads an appetite at all. A project has work under it
+    # and no `person_weeks` of its own — `_rollup_problems` says so in as many
+    # words, "a project is not bet, its pitches are" — so a number in its
+    # appetite column would be a box nobody bought, in a column the row's own
+    # rule already says it does not hold. `unread_fields` is that rule, and it is
+    # the same list `_row` below empties every other cell of a container by.
+    #
+    # It is also what keeps this cell and the record page saying the same thing:
+    # `_fact_rows` draws an Appetite row out of the model's fields, so a project
+    # has none there and would have had one here.
+    if _SIZE_FIELD_NAME in unread_fields(record.kind):
+        return None
+    contents = _tasks_add_up_to(index, record)
+    if contents is None:
+        return None
+    # A number came back, so there is a span behind it — `_tasks_add_up_to` reads
+    # `elapsed_weeks` off exactly this one.
+    span = index.spans[record_id]
+    box = span.budget_weeks
+    kids = [
+        child
+        for child in index.children.get(record_id, ())
+        if child in index.plan and index.plan[child].status != "shelved"
+    ]
+    silent = [
+        child
+        for child in kids
+        if index.spans.get(child) is None or index.spans[child].elapsed_weeks is None
+    ]
+    if box is None:
+        state = "unbet"
+        why = f"No bet on this yet. Its tasks need {contents:.1f} weeks."
+    else:
+        # The box is quoted as the calendar weeks the bet bought, in the words
+        # `_rollup_problems` uses for it — "the 4.0 the bet buys" — and never as
+        # the stated appetite. The appetite is in person-weeks and this number is
+        # in calendar ones; a sentence putting `bet 8.0` beside `needs 5.6` would
+        # be the comparison the record page made until it was fixed, two units in
+        # one line with the reader left to notice.
+        held = f"bet {box:.1f} weeks, its tasks need {contents:.1f}"
+        if contents > box:
+            state = "over"
+            why = f"{held} — over the box the bet bought."
+        elif silent:
+            state = "unsized"
+            why = (
+                f"{held} — but {len(silent)} of its {len(kids)} have no length yet, "
+                "so that can only grow."
+            )
+        elif contents == box:
+            state = "level"
+            why = f"{held} — exactly the box."
+        else:
+            state = "under"
+            why = f"{held} — inside the box."
+    return {
+        # Two keys for one number, exactly as `progress` and `progress_text`
+        # below are: the number is what a column sorts by, the text is what the
+        # cell prints. `5.6 in tasks` is the record page's own wording for it,
+        # and a test holds the two together.
+        "weeks": contents,
+        "text": f"{contents:.1f} in tasks",
+        "state": state,
+        "why": why,
+    }
 
 
 def _row(index: Index, record_id: str) -> dict:
@@ -90,6 +223,15 @@ def _row(index: Index, record_id: str) -> dict:
         # copy of this row showed 0.5 for a bet nobody had sized while the
         # table's showed nothing. One question, one answer, on every page.
         "size": size,
+        # What the work under this record adds up to, where there is any: the
+        # size column draws THIS instead of the bet on such a row, and refuses to
+        # be edited while it does. A cell showing a derived number and opening an
+        # editor on the stored one asks a person to type at a value they cannot
+        # see, which is the rule the two derived-value columns were closed to
+        # editing for in the first place. The bet is still typed on the record's
+        # own page, and on the betting table, which is where a pitch's tasks are
+        # argued about. See `_rollup`.
+        "rollup": _rollup(index, record_id),
         "start": span.start.isoformat() if span else None,
         "end": span.end.isoformat() if span else None,
         # Every date on this page was computed. Saying so in the payload keeps the

@@ -17,7 +17,7 @@ from .controls import (
 from .env import _compiled
 from .rows import _row
 from .shell import STATIC, Links, _page, _titles
-from .styles import _SCROLL_STYLE, _SUGGEST_STYLE
+from .styles import _SCROLL_STYLE, _SUGGEST_STYLE, _TREE_STYLE
 from .tokens import (
     _KIND_MODELS,
     DRAFT_MARKS,
@@ -71,6 +71,21 @@ _TABLE_DERIVED = tuple(_TABLE_WHY)
 # rung that does not schedule. A product's size cell has never been editable and
 # still is not.
 _COLUMN_FIELD = {"size": "person_weeks", "start": "start_date"}
+
+# How a rollup's size cell reads against the box the bet bought, as one mark per
+# state of `_rollup` (`rows.py`). Colour is the first channel and this is the
+# second, because colour is the one channel a dichromat loses and the difference
+# between "this fits" and "this does not" is the whole reason the cell is drawn.
+#
+# Shipped as a map keyed by the state rather than as a character on every row,
+# which is what `GLYPHS` and `RUNGS` already do with the status and priority
+# marks: a constant repeated once per record is a constant that arrives in the
+# payload four hundred times and can still only ever say one thing.
+#
+# `unbet` has no mark, and that is the state saying so. There is no box to be
+# under, level with or over, so a mark here would be a verdict on a bet nobody
+# has made — the same silence `_rollup_problems` keeps about that record.
+_ROLLUP_GLYPH = {"under": "▾", "level": "=", "over": "▴", "unsized": "?", "unbet": ""}
 
 # What the tooltip adds on those two, because "double-click to edit appetite" on
 # a cell reading `2 wk` does not explain what the number in it is.
@@ -384,6 +399,33 @@ function stored(row, key) {
 // have arrived with no class and no sentence.
 const WHY = {{ why|tojson }};
 
+// The mark each rollup state wears, from `_ROLLUP_GLYPH`.
+const ROLLUP_GLYPH = {{ rollup_glyph|tojson }};
+
+// What this row's work adds up to, where this is the column that draws it.
+// Three things ask — what the cell prints, what ground it takes, and why it
+// cannot be edited — and the column name is written here rather than at each of
+// them, because "the appetite column is the one that can be a rollup" is one
+// fact and a row carrying `rollup` with a cell that ignored it would be a cell
+// showing a bet under a ground describing its tasks.
+const rollupOn = (row, key) => key === 'size' ? row.rollup : null;
+
+// Why THIS cell refuses a double-click, which is the column's sentence for all
+// but one. A size cell over a record with tasks under it draws what those tasks
+// occupy and not the bet, so the reason it cannot be edited is a fact about the
+// row rather than about the column — and the row already carries the sentence,
+// written where the comparison it describes was made.
+//
+// One function and not a second flag, because four things have to agree about
+// it: whether the cell is a control, whether it is drawn as derived, what a
+// double-click answers, and whether the keyboard stops there. They were four
+// reads of `key in WHY`, and a fifth answer that only some of them knew about is
+// how a cell ends up looking editable and refusing to open.
+function whyOf(row, key) {
+  const rollup = rollupOn(row, key);
+  return rollup ? rollup.why : (WHY[key] || '');
+}
+
 // The two columns whose cell shows one thing and edits another — `size` shows the
 // scheduler's number and writes `person_weeks`, `start` shows the scheduled day
 // and writes `start_date`. Everything below asks `fieldOf(key)` rather than
@@ -590,6 +632,28 @@ function shown(row, key) {
   // The stored value is untouched: this is the cell's text, the row still carries
   // the ISO string, and the sort still reads that.
   if (key === 'start' || key === 'end') return value ? shortDate(value) : '';
+  // A record with work under it shows what that work occupies — `5.6 in tasks`,
+  // the record page's own sentence for the same number — and not the bet it was
+  // made at. The bet is not printed beside it: jcanton, 2026-08-27, "the colour
+  // already says whether it is under, level or over, so repeating the bet is a
+  // number for nothing". Nor are the records that make up the sum named, for the
+  // reason the table needs no help saying it: they are the rows directly
+  // underneath, because this is a tree.
+  //
+  // The mark leads, so a column of these reads as one column of verdicts rather
+  // than as numbers with something after them — and it is first inside the cell
+  // for the same reason the status chip's mark is.
+  //
+  // Named, not `aria-hidden` like the chip's mark: there the word beside it says
+  // the same thing, and here the words are `5.6 in tasks`, which is the one half
+  // of this cell that does NOT say whether the bet fits. A reader who cannot see
+  // the tint would otherwise be given the number and no reading of it. The
+  // sentence is the row's own, so the mark, the ground and the tooltip are three
+  // channels of one value rather than three that could come apart.
+  const rollup = rollupOn(row, key);
+  if (rollup)
+    return `<span class="rollmark" role="img" aria-label="${esc(rollup.why)}"` +
+      `>${esc(ROLLUP_GLYPH[rollup.state] || '')}</span>${esc(rollup.text)}`;
   // Unreachable for `reviewers`, which is handled above — kept as one line so
   // the two list columns stay one branch.
   return esc(stored(row, key));
@@ -735,13 +799,30 @@ function cell(row, key, place) {
   // is refused because a product reads no `person_weeks` — the rule that was
   // already there, reached by the right name.
   const field = fieldOf(key);
-  const editable = EDITABLE && field in EDITABLE && reads(row, field);
+  // A cell that has a reason it cannot be edited is not editable, and that is
+  // the whole of the rule rather than a second list beside `EDITABLE`. It is
+  // what makes a rollup's size cell read-only without teaching this page a
+  // second way for a cell to be closed: `whyOf` is the one answer, and the four
+  // reads below take it from there.
+  const why = whyOf(row, key);
+  const rollup = rollupOn(row, key);
+  const editable = EDITABLE && field in EDITABLE && reads(row, field) && !why;
   // One class list rather than three returns. The tags clamp used to be written
   // only into the editable branch, so on a rendered file the column kept the
   // reveal button and showed every tag beside it anyway.
   const classes = [
     editable ? 'edit' : '',
-    !editable && key in WHY ? 'derived' : '',
+    !editable && why ? 'derived' : '',
+    // How this record's contents read against the box its bet bought. The class
+    // is written for every state and the stylesheet paints only what it should:
+    // `under` and `unsized` have a ground of their own, `level` shares the
+    // declaration `.inherited` already carries, `unbet` is drawn plain because
+    // there is no box to read against — and `over` takes the severity fill,
+    // because the warning `_rollup_problems` yields about exactly that
+    // comparison already reaches this cell through `MARK_COLUMN`. A second warn
+    // ground written for it would be a second copy of one colour, and the only
+    // thing two copies of a colour can do is disagree.
+    rollup ? 'roll-' + rollup.state : '',
     CLAMPED.has(key) ? 'clamp' : '',
     // Inherited, not typed. The ground says the value came from the work under
     // this record rather than from its own file, which is the difference between
@@ -794,7 +875,7 @@ function cell(row, key, place) {
                // the answer to "how do I change it".
                editable && SHOWS[key] ? SHOWS[key] : '',
                editable ? 'Double-click to edit ' + named
-                        : key === 'id' && EDITABLE ? moveTip(row) : WHY[key] || '']
+                        : key === 'id' && EDITABLE ? moveTip(row) : why]
     .filter(Boolean).join('\\n');
   // Reachable without a mouse. This table is the app's primary editing surface
   // and it was double-click-only, so half the room could not change a single
@@ -806,14 +887,14 @@ function cell(row, key, place) {
   // The id cell joins them, and it is not editable: it is the one place a move
   // can be started without a mouse, and a gesture that only a mouse can make is
   // a gesture half the room does not have.
-  const reachable = EDITABLE && (editable || key in WHY || key === 'id');
+  const reachable = EDITABLE && (editable || !!why || key === 'id');
   // `row.id` is escaped like anything else here. An id that fails its pattern is
   // a *reported* blocker and not a refusal, so the record still loads and still
   // draws a row: one shaped `task-000001"><img src=x onerror=…>` put ten
   // elements into the table body while the text beside them read correctly.
   return `<td data-col="${key}"` +
     `${editable ? ` data-record="${esc(row.id)}" data-field="${esc(field)}"` : ''}` +
-    `${!editable && key in WHY ? ` data-why="${esc(WHY[key])}"` : ''}` +
+    `${!editable && why ? ` data-why="${esc(why)}"` : ''}` +
     `${rungs ? ` data-rungs="${esc(rungs)}"` : ''}` +
     `${reachable ? ' tabindex="-1"' : ''}` +
     ` class="${classes}"${tip ? ` title="${esc(tip)}"` : ''}>${body}</td>`;
@@ -1034,9 +1115,16 @@ function draw() {
   // heads the status column and `high, low, medium` is not an order anybody
   // means by priority. Everything else really is alphabetical.
   const rank = DATA.choices[sort];
+  // A column sorts by the number it is showing. On `size` those are two
+  // different numbers on a row with work under it — the cell draws what the
+  // tasks occupy and the field holds the bet — and sorting a column of `5.6 in
+  // tasks` by a bet nobody can see puts a row between two others for a reason
+  // that is nowhere on the page. Every other column shows its own field, so this
+  // reaches exactly the rows the cell reads differently on.
+  const shownBy = row => rollupOn(row, sort) ? rollupOn(row, sort).weeks : row[sort];
   const key = rank
     ? row => String(rank.indexOf(row[sort])).padStart(3, '0')
-    : row => String(row[sort] ?? '');
+    : row => String(shownBy(row) ?? '');
   const found = Object.values(DATA.rows).filter(matches);
   // The tree is the id sort's, and no other column's. Sorted by owner, a parent
   // is wherever its owner's name falls and its children are three screens away:
@@ -3516,6 +3604,7 @@ frozenEdge();
 
 _TABLE_STYLE = (
     _SCROLL_STYLE
+    + _TREE_STYLE
     + """
 th[data-sort] { cursor: pointer; user-select: none; }
 /* (0,1,1) over the shared block's bare `th` at (0,0,1): the sorted column keeps
@@ -3591,10 +3680,10 @@ thead [data-col="title"] { box-shadow: inset 0 -1px 0 var(--line); }
    padding at (0,0,2) and the frozen column's (0,1,0), which is the whole of what
    it has to beat: nothing else on this page sets padding on a cell.
 
-   The connectors are borders, not characters. `├─` and `└─` line up only in a
-   monospace face and this column is proportional — and a screen reader announces
-   "box drawings light up and right" before every child's title, which is why the
-   wrapper is `aria-hidden` and holds nothing to read.
+   The drawing itself is `_TREE_STYLE` in `styles.py`, shared with the cycle
+   page's betting table, which grew the same tree for the same reason. What stays
+   here is the pair of facts that are this table's: the indent, and what the
+   absolute boxes are positioned against.
 
    Absolute, against the title cell's own `position: sticky`. That is a real
    dependency and it is worth writing down: sticky is a positioned value, so it
@@ -3602,29 +3691,13 @@ thead [data-col="title"] { box-shadow: inset 0 -1px 0 var(--line); }
    that freezes the column. If that ever stops being sticky the connectors are
    the second thing to go — they would hang off the scroll container and slide
    away from their rows — and this comment is the note that they go together.
-   `top: 0; bottom: 0` is the reason to do it this way at all: the vertical line
-   is then exactly the height of the row it is in, whatever that row holds, which
-   an inline box guessing at a line height cannot promise. */
+   `top: 0; bottom: 0` in the shared block is the reason to do it this way at
+   all: the vertical line is then exactly the height of the row it is in,
+   whatever that row holds, which an inline box guessing at a line height cannot
+   promise. */
 tr.d1 > td[data-col="title"] { padding-left: calc(.5rem + 14px); }
 tr.d2 > td[data-col="title"] { padding-left: calc(.5rem + 28px); }
 tr.d3 > td[data-col="title"] { padding-left: calc(.5rem + 42px); }
-.tree { position: absolute; left: .25rem; top: 0; bottom: 0; display: flex; }
-.tree .rung { position: relative; width: 14px; }
-/* The vertical: full height where the branch carries on past this row, and half
-   of it on the last child drawn, which is the whole difference between `├` and
-   `└`. `blank` draws neither, and it is a rung rather than a margin so that the
-   levels stay in step down the column. */
-.tree .line::before, .tree .tee::before, .tree .end::before {
-  content: ""; position: absolute; left: 6px; top: 0; width: 1px;
-  background: var(--line-strong);
-}
-.tree .line::before, .tree .tee::before { bottom: 0; }
-.tree .end::before { height: 50%; }
-/* The stub, stopping short of the title so the word is not touched by a rule. */
-.tree .tee::after, .tree .end::after {
-  content: ""; position: absolute; left: 6px; top: 50%; width: 6px; height: 1px;
-  background: var(--line-strong);
-}
 /* A row that is not an answer to what was asked, kept because something under it
    is: the pitch over three tasks that matched, so that a filtered table is still
    a plan and not a list of orphans. It is a record like any other — its title
@@ -3685,8 +3758,56 @@ td.refused { background: var(--surface-2); }
    ground is the one that survives a clamped cell showing one name and a `+2`.
    `--st-ready-soft` and not a colour of its own: the five status tints are the
    palette this table already reads in, and this is a tint from it rather than a
-   sixth thing to learn. */
-td.inherited { background: var(--st-ready-soft); }
+   sixth thing to learn.
+
+   `.roll-level` is the same declaration and not a second rule holding the same
+   value, because it is the same sentence: a bet whose tasks fill it exactly is a
+   cell whose number came from the work underneath, and jcanton settled it that
+   way on 2026-08-27 — "the class already means this value came from the work
+   under this record, which is what this is". Purple was the alternative and lost
+   because purple is shaping's hue; a sixth ground meaning what a fifth already
+   means is one visual language becoming two. */
+td.inherited, .roll-level { background: var(--st-ready-soft); }
+/* How the work under a record reads against the box its bet bought, as a ground
+   under `_ROLLUP_GLYPH`'s mark. Two channels, because the fill is the one a
+   dichromat loses and this cell is where "will this fit" is answered.
+
+   THREE STATES AND NOT FOUR. `over` is drawn by `td.sev-cell-warn` above,
+   because `_rollup_problems` fires on exactly the comparison this ground would
+   be describing and `MARK_COLUMN` routes its warning to this column. A
+   `.roll-over` rule would be a second copy of `--sev-warn-soft` whose only
+   possible future is to disagree with the first — a cell painted warn with no
+   sentence to act on, or worse, a green cell over a ⚠.
+
+   `under` takes the ladder's own green rather than `--drop`, which is the other
+   pale green in the palette: `--drop` means "the row in your hand would land
+   here", a thing that is only ever true for the length of a drag, and a cell
+   wearing it permanently teaches that colour a second meaning. The ladder is the
+   palette this table already reads in — see `.inherited` above, which borrows
+   from it one rung up and gives the argument in full.
+
+   `unsized` is the panel tint and NOT a green, which is the whole reason the
+   state exists: a pitch holding three sized tasks and four unsized ones occupies
+   only the days of the three, and painting that green says a bet is known to fit
+   when nobody has estimated half of it. Recessed says "no answer here", which is
+   what it is.
+
+   ONE CLASS EACH AND NO ELEMENT, so these are (0,1,0). Every severity ground is
+   (0,1,1) and every one of them beats these on weight alone, whichever order
+   this sheet ends up in — a blocker on the appetite of a record whose tasks
+   happen to fit must not be painted green. `tr.context > td` at (0,1,2) takes
+   them too, which is the same bargain the severity fills already make there: a
+   row kept only for context keeps the mark and gives up the fill. */
+.roll-under { background: var(--st-done-soft); }
+.roll-unsized { background: var(--surface-2); }
+/* The mark, in the page's own ink and upright inside a cell that is neither.
+   `.derived` in the shell makes every computed cell muted and italic, which is
+   right for the number — it is the scheduler's — and wrong for the one glyph
+   that has to be legible at a glance in the state that most needs reading. An
+   italic `=` at muted weight is the least readable thing this cell could carry.
+   Upright also keeps the four marks the same width apart from each other, which
+   is what makes a column of them scannable. */
+.rollmark { margin-right: .3rem; color: var(--fg); font-style: normal; }
 td.clamp { white-space: nowrap; overflow: hidden; }
 /* A row, so that what gets cut is the value and never the badge. Laid out
    inline, the `+2` is simply the last thing on an overflowing line: a clamped
@@ -4198,6 +4319,7 @@ def render_table(
         # in the language the rest of this file's drawings are written in.
         marks=DRAFT_MARKS,
         why=_TABLE_WHY,
+        rollup_glyph=_ROLLUP_GLYPH,
         fields=_COLUMN_FIELD,
         shows=_TABLE_SHOWS,
         # The sentence about this view, in the slot the graph and the timeline

@@ -6626,6 +6626,177 @@ def test_a_carried_row_may_be_repriced_but_not_re_bet(server_pages: dict[str, st
             )
 
 
+def test_the_betting_table_puts_a_bets_tasks_under_it(
+    server_pages: dict[str, str], seed_index: Index
+):
+    """**Where the contents of a bet is actually changed.**
+
+    The appetite the room argues about is the pitch's; the thing that has to move
+    for it to be met is a task's. Until the tasks were drawn here, saying "that
+    one is really three weeks, not one" at the betting table meant leaving the
+    page it was said on. They sit under their bet, in the tree the table page
+    already draws, and their appetites are typed in the same box.
+
+    What a task does not get is a tick. `is_bettable` is what put the pitch on
+    this table and left the task off it, and it is the same answer here: a cycle
+    is stamped on the bet, and stamping a task too would put a second cycle on
+    one decision.
+
+    Finished and shelved tasks are left out, and for two different reasons that
+    land in the same place. A shelved task is not in the bet. A done one is, and
+    nobody in the room can change it — its appetite is history, and no amount of
+    re-sizing it makes the rest fit. What is left is what the meeting can move,
+    which includes the `shaping` work nobody has sized yet: those are the rows
+    this column is here for.
+    """
+    page = server_pages["cycle"]
+    # This table's own body and no other. The cycle page draws three tables, and
+    # two of them carry `<tr data-id=`; a regex over the whole page reads the
+    # delivered block's rows as bets, which is how the first draft of this passed
+    # over a table it was not looking at.
+    body = re.search(r'<table id="bets".*?<tbody>(.*?)</tbody>', page, re.S)
+    assert body, "the betting table has no body"
+    body = body.group(1)
+    drawn = re.findall(r'<tr data-id="([^"]+)" data-rung="([^"]*)"', body)
+    assert drawn, "the betting table drew no rows at all"
+
+    holder, under = "", {}
+    for record_id, rung in drawn:
+        if rung:
+            under.setdefault(holder, []).append((record_id, rung))
+        else:
+            holder = record_id
+    assert under, "no bet on this table drew anything underneath it"
+
+    for bet, kids in under.items():
+        # Every child of that bet the room can still do something about, in id
+        # order, and nothing else.
+        expected = sorted(
+            one
+            for one in seed_index.children[bet]
+            if one in seed_index.plan and seed_index.plan[one].status not in ("shelved", "done")
+        )
+        assert [one for one, _ in kids] == expected, bet
+        # `└─` on the last one drawn and `├─` on the rest, which is the whole of
+        # the drawing at the one depth a bet has.
+        assert [rung for _, rung in kids] == ["tee"] * (len(kids) - 1) + ["end"], bet
+
+    rows = {
+        record_id: block
+        for record_id, block in re.findall(
+            r'<tr data-id="([^"]+)"(.*?)(?=<tr data-id=|\Z)', body, re.S
+        )
+    }
+    for bet, kids in under.items():
+        assert '<input type="checkbox"' in rows[bet], f"{bet} cannot be bet on"
+        for record_id, _ in kids:
+            block = rows[record_id]
+            assert '<input type="checkbox"' not in block, (
+                f"{record_id} offers a tick of its own, so one decision can be stamped twice"
+            )
+            # The appetite is typed here, which is the whole reason the row is
+            # drawn, and it writes the field the model stores.
+            assert 'data-field="person_weeks"' in block, record_id
+            # And the tree is drawn in the name column, where the indent is the
+            # cell's own padding rather than a drawing laid over the word.
+            assert '<td class="betname"><span class="tree"' in block, record_id
+
+
+def test_the_betting_tables_connectors_follow_what_is_on_screen(
+    server_pages: dict[str, str], tmp_path: Path
+):
+    """The drawing describes the rows that are visible, not the plan.
+
+    The search hides rows, so a `├─` rendered over what turns out to be the last
+    task on screen promises a sibling that is not there — the defect the table
+    page's `connectors()` was written for, met again here by a different route.
+    And a task whose bet the search hid loses the drawing entirely rather than
+    indenting under whatever happens to precede it: a connector between two rows
+    that are not related is a lie about the plan.
+
+    Sorting takes the tree with it for the same reason. Sorted by appetite a task
+    sits wherever its number falls and its bet is somewhere else, so the indent
+    would point at a stranger.
+
+    In Chrome, because two of the three answers are whether something is drawn.
+    `display: none` from a class the script toggles is a claim about pixels, and
+    a resolved stylesheet is not one — this asks the browser what it painted.
+    """
+    from browser import chrome, measured_in
+
+    got = measured_in(
+        chrome(),
+        server_pages["cycle"],
+        tmp_path / "bets-tree.html",
+        1400,
+        """
+        const rows = () => [...BETS.tBodies[0].rows];
+        const drawn = row => getComputedStyle(row.querySelector('.tree')).display;
+        const kid = rows().find(one => one.dataset.rung);
+        const holder = rows()[rows().indexOf(kid) - 1];
+        const family = [];
+        for (let i = rows().indexOf(holder) + 1;
+             i < rows().length && rows()[i].dataset.rung; i++) family.push(rows()[i]);
+        const marks = () => family.map(one => one.querySelector('.tree .rung').className);
+        const out = {siblings: family.length, rendered: marks()};
+
+        // A task the search kept and a bet it did not.
+        BETFIND.value = kid.querySelector('td.betname a').textContent.trim();
+        betSearch();
+        out.holderHidden = holder.hidden;
+        out.kidShown = !kid.hidden;
+        out.orphanDrawn = drawn(kid);
+        out.orphanIndent = getComputedStyle(kid.querySelector('td.betname')).paddingLeft;
+        BETFIND.value = '';
+        betSearch();
+        out.backDrawn = drawn(kid);
+        out.backIndent = getComputedStyle(kid.querySelector('td.betname')).paddingLeft;
+
+        // The last one on screen ends the branch, whichever one that is.
+        family[family.length - 1].hidden = true;
+        betTree();
+        out.afterHiding = marks();
+        family[family.length - 1].hidden = false;
+        betTree();
+
+        // And a sort is not an order a tree can be drawn over.
+        betSort(1, false);
+        out.sortedDrawn = drawn(kid);
+        out.sortedIndent = getComputedStyle(kid.querySelector('td.betname')).paddingLeft;
+        return out;
+        """,
+        height=1400,
+        patience=2500,
+    )
+
+    assert got["siblings"] >= 2, (
+        "this corpus draws no bet with two tasks under it, so nothing here is a test of "
+        "which one ends the branch"
+    )
+    assert got["rendered"] == ["rung tee"] * (got["siblings"] - 1) + ["rung end"], got["rendered"]
+
+    # A task on screen whose bet is not: no connector, no indent, drawn as a row
+    # of its own rather than as a child of the row above it.
+    assert got["kidShown"] and got["holderHidden"], got
+    assert got["orphanDrawn"] == "none", got
+    assert got["orphanIndent"] == got["sortedIndent"], got
+    # And it comes back when the search does.
+    assert got["backDrawn"] != "none", got
+    assert got["backIndent"] != got["orphanIndent"], got
+
+    # The last VISIBLE sibling ends the branch, so the row above the gap stops
+    # promising one that is not there. Two `end`s at the tail: the second is the
+    # row that was hidden, which nothing draws and which is left saying what it
+    # would say if it came back — the function answers about every row rather
+    # than skipping the ones it cannot see, and skipping them would mean deciding
+    # a second time on the way back.
+    assert got["afterHiding"] == ["rung tee"] * (got["siblings"] - 2) + ["rung end", "rung end"], (
+        got["afterHiding"]
+    )
+
+    assert got["sortedDrawn"] == "none", got
+
+
 def test_the_create_form_opens_with_no_date_in_the_box(server_pages: dict[str, str]):
     """jcanton, 2026-08-26: "assigned date default to empty would be better than
     default=today".

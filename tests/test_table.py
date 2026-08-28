@@ -81,7 +81,7 @@ from test_web import (
 )
 
 from openproj.auth import sign_session
-from openproj.index import build_index
+from openproj.index import Index, build_index
 from openproj.model import (
     KIND_NAMES,
     PARENT_KINDS,
@@ -105,6 +105,8 @@ from openproj.render import (
     render_static,
     render_table,
 )
+from openproj.render.rows import _row
+from openproj.render.tokens import _SIZE_FIELD_NAME
 from openproj.web import SESSION_COOKIE, create_app
 
 # The columns the table draws that nobody may type into. Kept as an expectation
@@ -3053,7 +3055,17 @@ def test_an_editable_cell_shows_it_and_a_derived_one_says_why_not(page: str):
     why = json.loads(re.search(r"const WHY = (\{.*?\});", body, re.S).group(1))
     assert set(why) == set(_TABLE_DERIVED)
     assert all(sentence.strip() for sentence in why.values())
-    assert 'data-why="${esc(WHY[key])}"' in body
+    # Through `whyOf` and not out of `WHY` directly, because one column's answer
+    # is a fact about the ROW: a size cell over a record with tasks under it
+    # draws what they occupy, and the reason it cannot be edited is the
+    # comparison that cell is making. Four things read the answer — is this a
+    # control, is it drawn derived, what does a double-click say, does the
+    # keyboard stop here — and a fifth answer only some of them knew about is how
+    # a cell ends up looking editable and refusing to open.
+    assert "function whyOf(row, key) {" in body
+    assert "  const rollup = rollupOn(row, key);" in body
+    assert "  return rollup ? rollup.why : (WHY[key] || '');" in body
+    assert 'data-why="${esc(why)}"' in body
     # Through `announce`, so the refusal reaches somebody who cannot see the bar
     # it is drawn in — and from Enter as well as from a double-click. The
     # sentence is a parameter now, because a row refusing to hold another one is
@@ -3142,7 +3154,7 @@ def test_a_cell_can_be_edited_without_a_mouse(page: str):
     # The id cell joined them, and it is not editable: it is where a move is
     # started without a mouse, and a gesture only a mouse can make is a gesture
     # half the room does not have.
-    assert "const reachable = EDITABLE && (editable || key in WHY || key === 'id');" in body
+    assert "const reachable = EDITABLE && (editable || !!why || key === 'id');" in body
     assert "${reachable ? ' tabindex=\"-1\"' : ''}" in body
     assert "for (const td of all) td.tabIndex = td === at ? 0 : -1;" in body
 
@@ -3312,6 +3324,14 @@ def test_the_editor_opens_on_the_written_value_and_not_the_forecast(page: str):
     somebody had chosen it. That is the failure this column was closed to editing
     to avoid, and opening on the stored value is what reopens it safely.
 
+    The size half is asked of a TASK, and the reason is the answer to the same
+    question one rung up: the pitch holds two tasks, so its size cell draws what
+    they occupy and refuses the editor entirely rather than opening one on a
+    number nobody can see (`test_a_rollup_size_cell_refuses_the_editor_...`).
+    Where the cell is a control at all, the field under it is what the box holds,
+    and `task-c00001` is the corpus record that has one — `person_weeks: 1.5`,
+    written with a comment after it in a hand-formatted file.
+
     Driven in Chrome because the rows are built in the browser: nothing about
     which cell is a control and what its box contains exists in the rendered file.
     """
@@ -3324,7 +3344,10 @@ def test_the_editor_opens_on_the_written_value_and_not_the_forecast(page: str):
         "  const look = td => ({cls: td.className, field: td.dataset.field || null,"
         "                       text: td.textContent.trim(), tip: td.getAttribute('title')});"
         "  const pitch = byKind('pitch'), project = byKind('project');"
-        "  const out = {pitchSize: look(cell(pitch, 'size')),"
+        # By id and not by kind: this corpus holds three tasks and the size half
+        # of this test is about the one whose appetite is written down.
+        f"  const task = '{TASK}';"
+        "  const out = {taskSize: look(cell(task, 'size')),"
         "               pitchStart: look(cell(pitch, 'start')),"
         "               projectSize: look(cell(project, 'size')),"
         "               projectStart: look(cell(project, 'start'))};"
@@ -3335,7 +3358,7 @@ def test_the_editor_opens_on_the_written_value_and_not_the_forecast(page: str):
         "    return value;"
         "  };"
         "  out.pitchStartBox = boxIn(pitch, 'start');"
-        "  out.pitchSizeBox = boxIn(pitch, 'size');"
+        "  out.taskSizeBox = boxIn(task, 'size');"
         "  out.projectStartBox = boxIn(project, 'start');"
         "  return out;"
         "})()",
@@ -3343,8 +3366,8 @@ def test_the_editor_opens_on_the_written_value_and_not_the_forecast(page: str):
     got = answer["value"]
 
     # Both columns are controls now, and each says which field it writes.
-    assert "edit" in got["pitchSize"]["cls"], got["pitchSize"]
-    assert got["pitchSize"]["field"] == "person_weeks"
+    assert "edit" in got["taskSize"]["cls"], got["taskSize"]
+    assert got["taskSize"]["field"] == "person_weeks"
     assert "edit" in got["pitchStart"]["cls"], got["pitchStart"]
     assert got["pitchStart"]["field"] == "start_date"
 
@@ -3357,7 +3380,7 @@ def test_the_editor_opens_on_the_written_value_and_not_the_forecast(page: str):
     )
     # And where the field IS written, that is what the box holds.
     assert got["projectStartBox"] == "2026-07-01", got["projectStartBox"]
-    assert got["pitchSizeBox"] == "3", got["pitchSizeBox"]
+    assert got["taskSizeBox"] == "1.5", got["taskSizeBox"]
 
     # A kind that reads neither field is still refused, by the rule that was
     # already there rather than by one written for this.
@@ -3366,8 +3389,428 @@ def test_the_editor_opens_on_the_written_value_and_not_the_forecast(page: str):
 
     # And the tooltip says what the cell is showing before it says how to change
     # it, so an empty box does not read as a bug.
-    assert "Shows the appetite" in got["pitchSize"]["tip"], got["pitchSize"]["tip"]
+    assert "Shows the appetite" in got["taskSize"]["tip"], got["taskSize"]["tip"]
     assert "Editing sets start_date" in got["pitchStart"]["tip"], got["pitchStart"]["tip"]
+
+
+def rollup_plan(bet: float | None, kids: tuple[tuple[float | None, str], ...]) -> Index:
+    """A pitch and its tasks, all on one person, so the box and the contents are
+    both arithmetic a reader of the test can do in their head.
+
+    One name on everything is what makes that true: `_duration_weeks` divides an
+    appetite by the availability of the people on it, so a bet of 2.0 with one
+    full-time name buys exactly two calendar weeks, and two tasks on that same
+    name queue behind each other and occupy the sum of their own. Two names would
+    make every number here a division nobody reading the assertion can check.
+
+    Derived from the model rather than described: the sizes go in as
+    `person_weeks` and everything else — the spans, the box, the union of the
+    days — is what the scheduler makes of them, which is the arithmetic the cell
+    is drawing.
+    """
+    from openproj.model import Config, Pitch, Task
+
+    records: list = [
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Q",
+            assignees=["ann"],
+            **({"person_weeks": bet} if bet is not None else {}),
+        )
+    ]
+    for at, (size, status) in enumerate(kids, start=1):
+        records.append(
+            Task(
+                id=f"task-00000{at}",
+                kind="task",
+                title="T",
+                parent="pitch-000001",
+                status=status,
+                assignees=["ann"],
+                **({"person_weeks": size} if size is not None else {}),
+            )
+        )
+    return build_index(records, Config(), date(2026, 8, 17))
+
+
+def test_a_size_cell_over_work_reads_that_work_against_the_box_the_bet_bought():
+    """**The five readings the cell can carry, and the sentence for each.**
+
+    A bet is a box and its tasks are what somebody proposes to put in it, so the
+    one thing the appetite column has to answer about a pitch is whether that
+    still fits. The number is the days its tasks occupy — calendar against
+    calendar, because a pitch bet at eight person-weeks with two people on it has
+    bought four calendar weeks and that is the box.
+
+    Four of the five are the design's own table. The fourth is the one that is
+    easy to leave out and is the reason the other three can be trusted: with no
+    default appetite left, a pitch holding one sized task and one nobody has
+    estimated occupies only the days of the first, which is under the box — and
+    green there would say a bet is known to fit when half of it has never been
+    looked at. Good has to mean *known* to be under.
+
+    The fifth is a pitch nobody has bet on yet. It has contents and no box, so it
+    reports the contents and offers no verdict: `_rollup_problems` is silent
+    about that record, and a page shouting where the validator says nothing
+    teaches a reader that one of the two is lying to them.
+    """
+    from openproj.render.table import _ROLLUP_GLYPH
+
+    cases = {
+        "under": (3.0, ((1.0, "ready"),)),
+        "level": (2.0, ((2.0, "ready"),)),
+        "over": (1.0, ((2.0, "ready"),)),
+        # `shaping` and not `ready`, because the size gate reaches `ready`: an
+        # unsized task there is a blocker, and this state is about the work that
+        # is legitimately unsized and still part of the bet.
+        "unsized": (3.0, ((1.0, "ready"), (None, "shaping"))),
+        "unbet": (None, ((1.0, "ready"),)),
+    }
+    read = {}
+    for wanted, (bet, kids) in cases.items():
+        index = rollup_plan(bet, kids)
+        read[wanted] = _row(index, "pitch-000001")["rollup"]
+        # Every one of them is a leaf's cell untouched: a task draws its own
+        # appetite and nothing else, or the column would be a record agreeing
+        # with itself.
+        assert _row(index, "task-000001")["rollup"] is None
+
+    # Each case is named after the reading it is built to produce, so the map is
+    # its own expectation.
+    assert {name: one["state"] for name, one in read.items()} == {name: name for name in cases}, (
+        read
+    )
+    # The number is the days the tasks occupy and not the bet, on every one of
+    # them — including `over`, where the two are furthest apart.
+    assert [one["text"] for one in read.values()] == [
+        "1.0 in tasks",
+        "2.0 in tasks",
+        "2.0 in tasks",
+        "1.0 in tasks",
+        "1.0 in tasks",
+    ], read
+
+    # Colour is the first channel and a mark is the second, because colour is the
+    # one channel a dichromat loses and this cell answers "will this fit".
+    assert {name: _ROLLUP_GLYPH[name] for name in read} == {
+        "under": "\u25be",
+        "level": "=",
+        "over": "\u25b4",
+        "unsized": "?",
+        # No mark, because there is no box to be under, level with or over.
+        "unbet": "",
+    }
+
+    # And the comparison is in words, so the reading is not colour-only. The box
+    # is quoted as the calendar weeks the bet bought and never as the stated
+    # appetite: those are two units, and putting them in one sentence is the
+    # defect the record page was carrying until it was fixed.
+    assert read["over"]["why"] == "bet 1.0 weeks, its tasks need 2.0 — over the box the bet bought."
+    assert read["under"]["why"] == "bet 3.0 weeks, its tasks need 1.0 — inside the box."
+    assert read["level"]["why"] == "bet 2.0 weeks, its tasks need 2.0 — exactly the box."
+    assert read["unsized"]["why"] == (
+        "bet 3.0 weeks, its tasks need 1.0 — but 1 of its 2 have no length yet, "
+        "so that can only grow."
+    )
+    assert read["unbet"]["why"] == "No bet on this yet. Its tasks need 1.0 weeks."
+
+
+def test_a_child_adds_nothing_when_it_has_no_length_and_not_only_when_unsized(tmp_path: Path):
+    """The predicate behind the fourth reading is the SPAN, not `person_weeks`.
+
+    They come apart, and this corpus is where: `task-c00003` is done and was
+    written before an end date was asked for, so it carries an appetite, it is in
+    the progress rollup, and the days it contributes to the union are none. Read
+    off the field, the pitch above it counts three tasks of three and paints a
+    verdict on a number two of them made. Read off the span — which is where the
+    number in the cell came from — it says one of the three adds nothing yet, and
+    what is drawn is a floor.
+
+    Asked of the corpus rather than of a plan built for it, because this is a
+    case somebody has to think of before they can construct it, and the corpus
+    already had it.
+    """
+    from openproj.model import size_weeks
+
+    root = tmp_path / "plan"
+    for name, text in SEED.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text)
+    records, config, _ = load_repo(root)
+    index = build_index(records, config, date(2026, 8, 17))
+
+    assert all(size_weeks(index.plan[one]) is not None for one in index.children[PITCH]), (
+        "every task under this pitch is sized, so a field-based reading would see nothing wrong"
+    )
+    rollup = _row(index, PITCH)["rollup"]
+
+    assert rollup["state"] == "unsized", rollup
+    assert "1 of its 3 have no length yet" in rollup["why"], rollup
+
+
+def test_a_container_that_holds_no_appetite_is_given_no_reading_of_one():
+    """A project has work under it and no bet of its own, and its appetite cell
+    stays as empty as it has always been.
+
+    `_rollup_problems` says this in as many words — "a project is not bet, its
+    pitches are, and its span is their rollup" — so a number in that column would
+    be a box nobody bought, drawn in a column the row's own rule already empties.
+    `unread_fields` is that rule and is asked here rather than restated, so a
+    seventh rung needs no edit.
+
+    It is also what keeps this cell and the record page saying one thing. The
+    record page builds its Appetite row out of the model's fields, and a project
+    has no `person_weeks` field to build it from — so a table drawing `17.4 in
+    tasks` there would be the only surface in the app that thinks a project has
+    an appetite.
+    """
+    records, config, _ = load_repo(Path(__file__).resolve().parents[1] / "seed")
+    index = build_index(records, config, date(2026, 8, 17))
+    containers = [
+        record_id
+        for record_id, record in index.plan.items()
+        if _SIZE_FIELD_NAME in unread_fields(record.kind) and index.children.get(record_id)
+    ]
+
+    assert containers, "the corpus has no container with work under it, so nothing was asked"
+    for record_id in containers:
+        assert _row(index, record_id)["rollup"] is None, record_id
+    # And the rungs that DO read one still get it, or this would pass by drawing
+    # the cell nowhere at all.
+    assert any(_row(index, record_id)["rollup"] for record_id in index.plan)
+
+
+def test_a_rollup_size_cell_refuses_the_editor_it_could_not_honour(page: str):
+    """**A cell that shows a derived number and edits a stored one asks a person
+    to type at a value they cannot see.**
+
+    That is the rule the two derived-value columns were closed to editing for in
+    the first place, and re-opening them was made safe by the editor opening on
+    the written field. It cannot be made safe here: the pitch's size cell no
+    longer shows the pitch's appetite at all, it shows what its tasks occupy, so
+    an editor on `person_weeks` would be a box holding a number that is nowhere
+    on the row. The bet is still typed on the record's own page and at the
+    betting table, which is where a pitch's tasks are argued about.
+
+    The refusal is the mechanism this page already had rather than a second one:
+    the cell carries the reason, a double-click answers with it, and the class
+    says the value is derived. A cell that silently ignores a double-click is
+    indistinguishable from a cell that is broken.
+
+    Driven in node, because the rows are built in the browser: which cell is a
+    control exists in no rendered file.
+    """
+    answer = drive_table(
+        page,
+        "(() => {"
+        "  const at = (id, col) =>"
+        '    tbody.querySelector(`tr[data-id="${id}"] td[data-col="${col}"]`);'
+        "  const look = td => ({cls: td.className, field: td.dataset.field || null,"
+        "                       record: td.dataset.record || null,"
+        "                       why: td.dataset.why || null, tab: td.getAttribute('tabindex'),"
+        "                       text: td.textContent.trim(),"
+        "                       tip: td.getAttribute('title') || ''});"
+        f"  const out = {{pitch: look(at('{PITCH}', 'size')), task: look(at('{TASK}', 'size'))}};"
+        f"  openEditor(at('{PITCH}', 'size'));"
+        f"  out.opened = !!at('{PITCH}', 'size').querySelector('input, select');"
+        "  return out;"
+        "})()",
+    )
+    got = answer["value"]
+
+    # Not a control: no field to write, no record to write it to, and the class
+    # that says the number came from somewhere else.
+    assert got["pitch"]["field"] is None, got["pitch"]
+    assert got["pitch"]["record"] is None, got["pitch"]
+    assert "edit" not in got["pitch"]["cls"], got["pitch"]["cls"]
+    assert "derived" in got["pitch"]["cls"], got["pitch"]["cls"]
+    assert not got["opened"], "the editor opened on a value the cell is not showing"
+    # And it says why, in the same place every other computed cell does — so the
+    # double-click is answered rather than ignored.
+    assert "its tasks need " in got["pitch"]["why"], got["pitch"]["why"]
+    # Still on the keyboard's path. Read-only is not out of reach: the sentence
+    # this cell carries is the one worth arriving at.
+    assert got["pitch"]["tab"] == "-1", got["pitch"]
+
+    # One rung down nothing changed. A task draws its own appetite and edits it.
+    assert got["task"]["field"] == "person_weeks", got["task"]
+    assert "edit" in got["task"]["cls"], got["task"]["cls"]
+
+
+def test_the_rollup_cell_says_what_it_is_showing_and_how_it_reads(page: str):
+    """The cell draws the tasks' number in the record page's own words, the mark
+    for how it reads against the box, and the comparison in a sentence.
+
+    The bet is deliberately not printed beside it — jcanton, 2026-08-27: "the
+    colour already says whether it is under, level or over, so repeating the bet
+    is a number for nothing" — and the records that make up the sum are not named
+    either, because they are the rows directly underneath: the table is a tree.
+
+    The corpus's pitch is `unsized`, and by the case worth having: it holds three
+    tasks, one of them done before `end_date` existed, so what the other two
+    occupy is a floor and the cell says so rather than painting a verdict on it.
+    """
+    answer = drive_table(
+        page,
+        "(() => {"
+        f'  const td = tbody.querySelector(`tr[data-id="{PITCH}"] td[data-col="size"]`);'
+        "  const mark = td.querySelector('.rollmark');"
+        "  return {cls: td.className, text: td.textContent.trim(),"
+        "          first: td.children.length ? td.children[0].className : null,"
+        "          mark: mark ? mark.textContent : null,"
+        "          named: mark ? mark.getAttribute('aria-label') : null,"
+        "          role: mark ? mark.getAttribute('role') : null,"
+        "          tip: td.getAttribute('title') || ''};"
+        "})()",
+    )
+    got = answer["value"]
+
+    # The tasks' number, in the sentence the record page prints under Appetite —
+    # taken off the row rather than written down here, because the union of days
+    # two `ready` tasks occupy is measured from the day the page was rendered and
+    # a number typed into this file would be right until tomorrow. What the
+    # arithmetic comes to is pinned against a fixed date above.
+    #
+    # `in` and not `==`, and that is about the harness rather than about the
+    # cell: `drive.js` keeps an element's OWN text in `textContent` and
+    # synthesises the leading text node from it, so a cell holding a `<span>` and
+    # a text node answers with the text node alone where a browser answers with
+    # both. An equality here would pass in node and fail in Chrome, or the other
+    # way round, and say nothing about the page either time.
+    said = payload(page)["rows"][PITCH]["rollup"]["text"]
+    assert said.endswith(" in tasks"), said
+    assert said in got["text"], (got["text"], said)
+    # And not the bet, which is 3 and is what this cell used to draw.
+    assert "3" not in got["text"].replace(said, ""), got["text"]
+    # The mark is an element of its own and the first thing in the cell, so a
+    # column of these reads as one column of verdicts rather than as numbers with
+    # something after them.
+    assert got["first"] == "rollmark", got
+    # The reading, as a ground and as a mark: two channels, because the fill is
+    # the one a reader with colour blindness does not get.
+    assert "roll-unsized" in got["cls"], got["cls"]
+    assert got["mark"] == "?", got
+    # The mark is named rather than hidden. The words beside it are `2.2 in
+    # tasks`, which is the half of this cell that does NOT say whether the bet
+    # fits, so a reader who cannot see the ground would be given a number and no
+    # reading of it.
+    assert got["role"] == "img", got
+    assert "have no length yet" in (got["named"] or ""), got
+    # The comparison in words, on the cell itself. The box is the calendar weeks
+    # the bet bought — three person-weeks over one name — and not the stated
+    # appetite, which is the same number here only because one person holds it.
+    assert "bet 3.0 weeks, its tasks need " in got["tip"], got["tip"]
+
+
+def test_the_tint_on_a_rollup_cell_and_the_warning_on_it_cannot_disagree(page: str):
+    """**One comparison, drawn once.**
+
+    `_rollup_problems` fires on exactly `elapsed_weeks > budget_weeks`,
+    `MARK_COLUMN` routes its `person_weeks` field to this column, and the cell is
+    grounded in the severity fill because of it. So the `over` state deliberately
+    has no ground of its own: a `.roll-over` rule would be a second copy of
+    `--sev-warn-soft` written beside a second copy of the comparison that decides
+    it, and the only thing two copies of one rule can ever do is disagree — a
+    green cell with a warning triangle in it, or a warned cell with nothing to
+    act on.
+
+    Both halves are asked. The states are pinned against the validator's own
+    output over a corpus holding every reading, and the stylesheet is resolved
+    rather than grepped: a rule being in the sheet says nothing about whether it
+    wins, which is the only thing a reader sees.
+    """
+    from cascade import el, sheet_of
+
+    every = (
+        (1.0, ((2.0, "ready"),)),
+        (3.0, ((1.0, "ready"),)),
+        # A bet its tasks fill exactly. Both sides are read in whole working days
+        # for this to be reachable at all, and it is the case a `>=` written into
+        # either half would paint warn while the other one said nothing.
+        (2.0, ((2.0, "ready"),)),
+        # Over the box AND holding something nobody has sized, which is the pair
+        # that decides the order the states are tried in: the warning fires on
+        # this record, so the cell may not report the reading that has no
+        # warning behind it.
+        (1.0, ((2.0, "ready"), (None, "shaping"))),
+        (None, ((1.0, "ready"),)),
+    )
+    for bet, kids in every:
+        index = rollup_plan(bet, kids)
+        state = _row(index, "pitch-000001")["rollup"]["state"]
+        warned = [
+            problem
+            for problem in index.problems
+            if problem.record_id == "pitch-000001" and "its tasks need" in problem.message
+        ]
+        assert bool(warned) == (state == "over"), (bet, kids, state, warned)
+
+    sheet = sheet_of(page)
+    where = [el("body"), el("main", id="main"), el("div", "table-scroll"), el("table", id="rows")]
+    row = where + [el("tbody"), el("tr")]
+
+    # No rule anywhere in the served sheet reaches `over` — the second copy this
+    # test is written about would be one, whatever it painted — so the ground the
+    # cell is drawn in is the mark's, resolved rather than assumed.
+    assert not [one for one in sheet.rules if "roll-over" in one.selector], [
+        one.selector for one in sheet.rules if "roll-over" in one.selector
+    ]
+    over = row + [el("td", "derived roll-over sev-cell-warn", data_col="size")]
+    assert sheet.value(over, "background") == "var(--sev-warn-soft)", sheet.winner(
+        over, "background"
+    )
+
+    # And a blocker on the appetite of a record whose tasks happen to fit beats
+    # the green, on weight and not on the order this sheet ends up in: the rollup
+    # grounds are one class each, which is the lightest rule that can reach these
+    # cells.
+    fits = row + [el("td", "derived roll-under sev-cell-blocker", data_col="size")]
+    assert sheet.value(fits, "background") == "var(--sev-blocker-soft)", sheet.winner(
+        fits, "background"
+    )
+    # With no problem on it, the reading is what paints.
+    under = row + [el("td", "derived roll-under", data_col="size")]
+    assert sheet.value(under, "background") == "var(--st-done-soft)", sheet.winner(
+        under, "background"
+    )
+    # `level` is `.inherited`'s own declaration and not a second rule holding the
+    # same colour: the class already means "this value came from the work
+    # underneath", which is what a bet its tasks fill exactly is.
+    level = row + [el("td", "derived roll-level", data_col="size")]
+    inherited = row + [el("td", "inherited", data_col="reviewers")]
+    assert sheet.value(level, "background") == sheet.value(inherited, "background")
+    assert sheet.value(level, "background") == "var(--st-ready-soft)"
+
+
+def test_the_number_in_the_size_cell_is_the_number_the_record_page_prints():
+    """One fact, one implementation, pinned from both ends.
+
+    This repository has been bitten four times by one fact written twice, and the
+    fourth was this exact number: the record page read `index.progress[id].total`
+    while `check` summed only the sized children, so the page printed a larger
+    number than the one the validator was warning about. Both read
+    `Span.elapsed_weeks` now, and this cell is the third reader — a table drawing
+    `5.6 in tasks` beside a record page saying `5.1` would be the same defect
+    wearing a new hat, and nothing else on either page would notice.
+    """
+    from openproj.render import STATIC, _fact_rows
+
+    records, config, _ = load_repo(Path(__file__).resolve().parents[1] / "seed")
+    index = build_index(records, config, date(2026, 8, 17))
+    checked = 0
+    for record_id, record in index.plan.items():
+        rollup = _row(index, record_id)["rollup"]
+        appetite = [
+            row
+            for row in _fact_rows(index, record, STATIC)
+            if str(row["label"]).startswith("Appetite")
+        ]
+        if rollup is None or not appetite:
+            continue
+        assert rollup["text"] in str(appetite[0]["display"]), (record_id, rollup, appetite[0])
+        checked += 1
+    assert checked, "no record in the corpus draws this cell, so nothing was pinned"
 
 
 def test_every_control_on_the_create_form_has_a_name(new_page: str):

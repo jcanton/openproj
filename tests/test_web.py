@@ -402,7 +402,7 @@ def index_of(client: httpx.Client) -> dict:
 
 
 def bet_rows(page: str) -> list[tuple[str, str, str]]:
-    """(id, kind, status) per row of the betting table.
+    """(id, kind, status) per BET on the betting table.
 
     Read off the markup each column actually draws, and the two are no longer the
     same shape: kind is still a chip, and status is a `<select class="pick st-…">`
@@ -413,13 +413,28 @@ def bet_rows(page: str) -> list[tuple[str, str, str]]:
     Matched on markup and not on cell text, which is the older lesson here: the
     regex that read `<td>ready</td>` did not fail when the cell grew a chip, it
     matched nothing and left three assertions passing over an empty list.
+
+    **The bets, and not every row.** A pitch's tasks are drawn under it now, so
+    that their appetites can be typed where the bet is argued about, and they are
+    rows of this table like any other — but they carry no tick, they take their
+    cycle from the pitch above them, and they are `shaping` and `thinking` as
+    readily as `ready`, because an unsized task is exactly what the room is there
+    to size. Every caller of this asks a question about the things a cycle can
+    be stamped onto, and `data-rung` is exactly what says which rows those are:
+    empty on a bet, a connector on a task. Read as "every row", the order test
+    below would have been asking whether a plan's tasks are sorted by status,
+    which is not a claim anybody made.
     """
-    return re.findall(
-        r'<tr data-id="([^"]+)"[^>]*>.*?<span class="chip kind-(\w+)">'
-        r'.*?<select class="pick st-(\w+)"',
-        page,
-        re.S,
-    )
+    return [
+        (record_id, kind, status)
+        for record_id, rung, kind, status in re.findall(
+            r'<tr data-id="([^"]+)" data-rung="([^"]*)"[^>]*>.*?<span class="chip kind-(\w+)">'
+            r'.*?<select class="pick st-(\w+)"',
+            page,
+            re.S,
+        )
+        if not rung
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -2900,8 +2915,13 @@ def test_a_carried_item_cannot_be_re_stamped_from_the_cycle_page(
         },
     )
     page = client.get("/cycle/40").text
+    # `[^>]*` between the id and the class, because the row carries the tree's
+    # `data-rung` between them now — a task's connector, and empty on a bet. A
+    # regex naming every attribute in the order they happen to be written stops
+    # matching when one is added, and this one did it silently: it matched
+    # nothing and the assertion below is the only reason anybody found out.
     rows = re.findall(
-        r'<tr data-id="([^"]+)" class="([^"]*)">.*?<input type="checkbox"'
+        r'<tr data-id="([^"]+)"[^>]*class="([^"]*)">.*?<input type="checkbox"'
         r' class="bet"([^>]*)>',
         page,
         re.S,
@@ -3624,11 +3644,21 @@ def test_every_control_on_the_cycle_page_has_a_name(client: TestClient):
     assert "<label" not in setup.split("Builds until")[1]
     assert '<label for="joining"' in page and 'id="joining"' in page
 
-    rows = re.findall(r'<tr data-id="([^"]+)".*?</tr>', page, re.S)
+    # This table's rows and no other's. The page draws three tables and two of
+    # them carry `<tr data-id=`; the delivered block's rows have a title and none
+    # of the controls named below, so a regex over the whole page was asking the
+    # wrong table for a name it never promised.
+    bets = re.search(r'<table id="bets".*?<tbody>(.*?)</tbody>', page, re.S).group(1)
+    rows = re.findall(r'<tr data-id="[^"]+".*?</tr>', bets, re.S)
     assert rows, "the corpus offers nothing to bet"
-    for row in re.findall(r'<tr data-id="[^"]+".*?</tr>', page, re.S):
+    for row in rows:
         title = re.search(r'<a href="[^"]*">([^<]+)</a>', row).group(1)
-        assert f'aria-label="Bet {title} into cycle 37"' in row, title
+        # Only where there is a tick to name. A task is drawn under the bet it is
+        # part of and has none — the cycle is stamped on the bet — so demanding
+        # this label of every row would be demanding a name for a control that is
+        # deliberately not there.
+        if '<input type="checkbox"' in row:
+            assert f'aria-label="Bet {title} into cycle 37"' in row, title
         assert f'aria-label="{title} appetite in weeks"' in row, title
         assert f'aria-label="{title} assignees"' in row, title
         assert f'aria-label="{title} reviewers"' in row, title
