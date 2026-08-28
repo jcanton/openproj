@@ -312,8 +312,28 @@ class Index(BaseModel):
         cycle counts only what was bet into it by name: a number nobody has given
         a window to is a hypothetical, and letting it absorb every running item
         would put the whole plan's load on a page for a cycle that may never run.
-        A record with no span is the other way round — it is live work in a dated
-        window, and silence about it is the failure this method exists to fix.
+
+        **A record with no span carries into nothing.** The last line read
+        `span is None or (...)`, written when no span meant the scheduler had
+        tried and failed: a rare record, live work in a dated window, and worth
+        counting late rather than losing. It stopped meaning that when the
+        default appetite went. An unsized record now leaves the placer by a
+        `continue` and gets no span at all, which is the normal state of every
+        `shaping` and `thinking` bet — precisely the population `unsized_in`
+        exists to count — so each of them was carried into every dated cycle
+        after its own, for ever. The `· N not sized` badge that exists to explain
+        a shrinking total over-reported on all of them, and `carried_into` listed
+        bets nobody has shaped as carryover into cycles they have nothing to do
+        with. A bet is a fact somebody stated and it counts where it was stated,
+        which the `mine == cycle` line above has already answered; a placement is
+        what says the work is still running, and there is none.
+
+        **The state that clause was written for no longer reaches it.** A record
+        the scheduler genuinely cannot place — a dependency cycle, a duration
+        that outruns the calendar — is given `Span(unscheduled=True)` at the
+        floor on both of `schedule`'s branches rather than nothing, so it is
+        still counted, in the cycle today falls in. Nothing is unplaceable and
+        sized any more: having no span means having no length anybody stated.
 
         Carryover is decided by the dates and not by the status. It asked for
         `in_progress`, which dropped a `ready` task sitting under a carried pitch
@@ -336,7 +356,9 @@ class Index(BaseModel):
         if window is None:
             return False
         span = self.spans.get(record.id)
-        return span is None or (span.start <= window[1] and span.end >= window[0])
+        if span is None:
+            return False
+        return span.start <= window[1] and span.end >= window[0]
 
     def build_end(self, cycle: int | None) -> date | None:
         """The last day of a cycle's build.
@@ -385,6 +407,14 @@ class Index(BaseModel):
         weeks somebody actually stated, which is smaller and correct, and a
         smaller number arriving with no explanation is exactly the defect this
         pairing prevents.
+
+        **One cycle each, which is the cycle the bet was made in.** Everything
+        that lands in here is a sized-nothing leaf, and a leaf with no size gets
+        no span, so this list and `counts_in`'s carryover arm are two readings of
+        one condition — and they disagreed, the badge counting an unshaped bet
+        into every later cycle while the weeks beside it moved on. An unsized bet
+        has nothing running, so it carries nowhere and is counted once, beside
+        the total it did not contribute to.
 
         Keyed by person rather than counted, because the two callers want
         different arithmetic over the same walk: a person's own figure names the

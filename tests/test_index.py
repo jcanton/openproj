@@ -934,6 +934,15 @@ def _two_cycles() -> Config:
     )
 
 
+def _three_cycles() -> Config:
+    """`_two_cycles` with the one before them, so a bet can be made in a cycle
+    that is over and then asked about in two that are not."""
+    two = _two_cycles()
+    return two.model_copy(
+        update={"cycles": {35: (date(2026, 4, 27), date(2026, 6, 19)), **two.cycles}}
+    )
+
+
 def test_work_bet_in_an_earlier_cycle_and_still_running_counts_against_this_one():
     """`cycle:` records where a bet was MADE and is never re-stamped (D-C1), which
     is what keeps an overrun accusing. It also means a filter on `cycle == N`
@@ -1012,6 +1021,79 @@ def test_a_pitch_with_children_is_no_more_unsized_than_it_is_charged():
 
     assert index.load(37) == {}
     assert index.unsized_in(37) == {"ann": ["task-c00001"]}
+
+
+def test_a_bet_nobody_has_sized_is_counted_where_it_was_bet_and_carried_into_nothing():
+    """A bet is a fact somebody stated; a placement is what says it is still
+    running. An unsized bet has the first and not the second, so it counts once.
+
+    `counts_in` used to answer True for a record with no span in every dated
+    cycle after the one it was bet into, on the reading that no span meant the
+    scheduler had tried and failed and that losing such a record was worse than
+    counting it late. With no default appetite, no span is instead the normal
+    state of every `shaping` and `thinking` bet — the exact population
+    `unsized_in` exists to count — so this pitch was in the badge on cycle 36,
+    37 and every cycle after them for ever, and `carried_into` named it as
+    carryover in cycles it has nothing to do with. The sized task beside it is
+    the control: real carryover is decided by the dates and still is.
+    """
+    records = [
+        a_pitch("pitch-b00001", owner="ann", cycle=35, status="shaping"),
+        a_task(
+            "task-c00001",
+            owner="ann",
+            person_weeks=1.0,
+            cycle=35,
+            status="in_progress",
+            start_date=date(2026, 6, 22),
+        ),
+    ]
+    index = build_index(records, _three_cycles(), TODAY)
+
+    assert index.unsized_in(35) == {"ann": ["pitch-b00001"]}
+    assert index.unsized_in(36) == {} and index.unsized_in(37) == {}
+    # The task runs 22–26 June, which is inside 36's window and finished long
+    # before 37's opens: the same walk drops it from one and not the other.
+    assert index.carried_into(36) == ["task-c00001"]
+    assert index.carried_into(37) == []
+
+
+def test_the_scheduler_having_no_answer_is_not_the_same_as_there_being_nothing_to_place():
+    """The two states the old `span is None` clause could not tell apart, which is
+    why it counted both for ever.
+
+    A record the scheduler genuinely cannot place — these two wait on each other
+    — is given an `unscheduled` span at today rather than nothing, so it goes on
+    being counted where today is, which is what that clause was written to
+    protect and it no longer needs the clause to do it. Having no span at all now
+    means having no length anybody stated, and that is the pitch.
+    """
+    records = [
+        a_task(
+            "task-c00001",
+            owner="ann",
+            person_weeks=1.0,
+            cycle=35,
+            status="ready",
+            depends_on=["task-c00002"],
+        ),
+        a_task(
+            "task-c00002",
+            owner="ann",
+            person_weeks=1.0,
+            cycle=35,
+            status="ready",
+            depends_on=["task-c00001"],
+        ),
+        a_pitch("pitch-b00001", owner="bo", cycle=35, status="shaping"),
+    ]
+    index = build_index(records, _three_cycles(), TODAY)
+
+    assert index.spans["task-c00001"].unscheduled and index.spans["task-c00002"].unscheduled
+    assert "pitch-b00001" not in index.spans
+    # 13 August is in 36's window, and an unscheduled span is that date twice.
+    assert index.carried_into(36) == ["task-c00001", "task-c00002"]
+    assert index.carried_into(37) == []
 
 
 def test_an_undated_cycle_counts_only_what_was_bet_into_it_by_name():
