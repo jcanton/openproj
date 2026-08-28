@@ -1926,16 +1926,29 @@ function rove(cell, focus) {
 // view, and "in view" to Chrome means inside the scrollport — it knows nothing
 // about the two columns that are `position: sticky` INSIDE that scrollport, so
 // the cell it brings to the left edge is the cell it parks underneath them.
-// Measured on a phone (390x844, `measured_on_a_phone`) on the demo plan: opening
-// a stored row's Start cell put `scrollLeft` at 677 with the frozen Title column
-// running to x=177 and the open box drawn from x=144.5 — 32.5px of the box, its
-// whole first segment, painted over by a column that is opaque by design.
+// Measured on a phone (390x844, `measured_on_a_phone`) on the demo plan with this
+// call taken out: opening a stored row's Start cell put `scrollLeft` at 679 —
+// the table's maximum — with the frozen Title column running to x=177 and the
+// open box drawn from x=142.5, so 34.5px of its left end sat under a column
+// that is opaque by design, and
+// `elementFromPoint` at the box's own left edge answers the title's link rather
+// than the box. `owner` went under by 37.5px and `assignees` by 40.5, so it was
+// never only the one column.
+//
+// Still true, and still this function's job, now that the open date box is wider
+// than its cell: what the box overflows is its RIGHT edge, and this is about its
+// left one. The same run with the call back in clears every one of them: the
+// text boxes open at x=177.5, half a pixel past the edge, and the date box at
+// x=185.5, because a date control sits inside the cell's `.5rem` of padding
+// where a text box starts at the border.
 //
 // It was survivable while the cell held text: what was covered was the left end
 // of a date somebody was reading. A picker's first segment is the one it focuses
-// and selects the moment it opens, so what is now under there is the part being
-// typed into — which is why this is fixed here rather than lived with, and fixed
-// for every editor rather than for dates.
+// and selects the moment it opens — and it is inside the first 44px of the
+// control, which is the width at which a box holding 15.09.2026 still draws
+// `15.` — so what is under there is the part being typed into. That is why this
+// is fixed here rather than lived with, and fixed for every editor rather than
+// for dates.
 //
 // `FROZEN` and not a written-out pair, so that a third frozen column arrives
 // here with the stylesheet. Measured off the HEADER of each, which is where
@@ -4286,81 +4299,74 @@ th .grip:hover::before, th .grip.dragging::before { background: var(--accent); w
 #rows tbody tr.draft > td, #rows tbody tr.adder > td {
   white-space: normal; overflow: visible; text-overflow: clip;
 }
-/* THE BOX A DATE CELL OPENS, WHICH IS A PICKER AND NOT A TEXT BOX. It is the one
-   editor whose own width matters: a native date box takes 126px at this font
-   whatever column it is in, so in the two date columns — 74px on the demo plan —
-   it hung 68px out of its cell. Clipped under the rule two rules up, what went
-   was the right-hand end, which is where Chrome draws the calendar indicator: a
-   picker with no way to open the picker. In the draft and adder rows, which are
-   exempt from that clip, the same 68px was drawn OVER the column beside it.
+/* THE BOX A DATE CELL OPENS, WHICH IS A PICKER AND NOT A TEXT BOX — AND THE ONE
+   EDITOR THAT DOES NOT FIT ITS CELL. A native date box wants 126px at this font,
+   measured in a Start cell at `width: auto` and the same 126 whether it is empty
+   or holding a date; both date columns measure 74 on the demo plan at 1400.
+   There is no width that is both inside the cell and readable. Measured at
+   1px widths in Chrome at 13px Inter, a box holding 15.09.2026 reads `15.` at
+   44px, `15.09` at 58, `15.09.2` at 74 and the whole date with daylight before
+   the indicator at 100 — and 58 is exactly the content box the End column leaves
+   it, its 74px cell carrying `.5rem` of padding each side. Chrome spends what it
+   has on the calendar indicator, the day and the month, so what a cell-sized box
+   loses is the century and the year, which are the two fields somebody opens
+   this to change.
 
-   Sized to the cell, both of those go, and Chrome gives up the date TEXT before
-   it gives up the indicator — measured at 44, 60 and 80px, where the box reads
-   `01.`, `01.07` and `01.07.20` and draws the calendar in every one. So this
-   declaration, and not the width reserved below, is what makes the control
-   reachable at every width the column can be dragged to.
+   So the box keeps the width it asks for and the CELL gets out of its way. That
+   is not a new idea here: `tr.draft > td` and `tr.adder > td` one rule up already
+   turn the clip off so that a control can paint over its neighbour, because a
+   control is not text and has nothing to ellipsise. What is new is that this one
+   is turned off for the length of one edit, on the one cell holding the editor —
+   `:has()` asks exactly that question, and the cell goes back to clipping the
+   moment `draw()` replaces the box with a value again.
 
-   `box-sizing` is measured rather than tidy: this stylesheet has no global
-   border-box reset — it is set per element, on `th, td` and four others — so at
-   `width: 100%` a content-box input is the cell PLUS its own border and padding.
-   Measured: 105px drawn into 100px of cell, five of them back under the clip,
-   which is most of the indicator again.
+   The alternative — a `min-width` on the two date columns in the measuring pass,
+   so that the column was never narrower than the control — was written and taken
+   out again. It widened both columns for every reader whether or not anybody
+   ever opened a date, and the fit spends that width by dropping a column: at
+   1280 the badge test in `test_table.py` lost the clamped column it measures and
+   failed saying there was none. The fit tests are the alarm, and this table is a
+   laptop's.
 
-   The DATE box alone, and the text ones are left as they are on purpose. A text
-   editor's affordance is the caret at its left, so what a narrow column takes off
-   its right end it can spare; and the title cell holds the tree connector the
-   editor is rebuilt beside, where `width: 100%` is 100% of the cell PLUS the
-   rungs — the same overflow by the other route. */
-#rows tbody td.edit > input[type="date"] {
-  width: 100%; box-sizing: border-box; font: inherit;
-}
-/* And the room the two date columns leave for that box, which buys the other
-   half: a date you can READ while you are changing it. Sized to the cell and
-   nothing more, the box in a 74px column shows `01.07` — the century and the
-   year are the two fields somebody opens this to change.
+   **What this costs instead, which is the honest price:** while the editor is
+   open the box covers part of the column to its right, and nothing else. On the
+   demo plan at 1400, Start's box runs 60px into End's 74, and End's runs 60px
+   into `blocked_by`'s 87 — a whole neighbouring value, not a corner of one.
+   Nothing is covered when no editor is open, and the table is the width it was.
 
-   100px is the narrowest box that draws a whole date and the whole indicator with
-   daylight between them, and it is measured at 1px steps in Chrome at 13px Inter
-   the way `CLAMP_FLOOR` was: at 95 and 96 the empty box's `dd.mm.yyyy` loses its
-   last character under the indicator, at 99 the two touch, at 100 they do not.
-   The empty box is the one that decides it — the placeholder is wider than the
-   date it stands in for, and it is what a cell with no date opens on. Plus the
-   `.5rem` of padding a cell has each side: 116.
+   Both declarations are load-bearing and they answer different questions.
+   Measured with `elementFromPoint` over the open box, on a row whose End cell
+   draws `23.09.26` beside the Start editor:
 
-   It costs 42px a column against the 74 they measure without it, and that is a
-   real price paid by every reader whether they edit a date or not. Measured
-   window by window in Chrome on the demo plan, this rule against the same page
-   with it deleted — and on the SERVED page, because a rendered file has no
-   `.edit` cell in it at all and those two columns stay at 74 there: 84px of table
-   moves every shedding threshold up by about ninety. `tags` comes back at 1490
-   where it came back at 1400, and `progress` at 1570 where it came back at 1480.
-   So at 1400 and at 1460 alike the table draws eleven columns where it drew
-   twelve, and the one it gives up is `tags`; `progress` is drawn at neither of
-   those widths, with the rule or without it. The same trade repeats at every
-   threshold above — `reviewers` at 1600, `prs` at 1700 — and by 1800 there is
-   room for all fifteen either way. Below about 1370 there is nothing left to give
-   up and the 84px is paid in sideways scroll instead: measured, this plan scrolls
-   at 1360 with the reservation and only below 1300 without it, so between those
-   two the reservation is what puts the scrollbar there. The alternative was a
-   picker whose value is half hidden while it is open, in the app's primary
-   editing surface.
+   - as shipped, the point over the indicator answers the date INPUT;
+   - with `position: static`, it answers the span drawing End's own date —
+     `overflow: visible` alone
+     lets the box out of the cell, but a non-positioned cell's content paints in
+     the in-flow inline layer and the neighbouring cell's own text paints in that
+     same layer afterwards, so the box goes UNDER the value beside it;
+   - with `overflow: hidden`, it answers that same span, because the box is
+     clipped at the cell's edge and clipped it is the right-hand end that goes,
+     which is where the indicator is.
 
-   `floorFor` gives start and end an infinite floor — they are never squeezed,
-   they are drawn at whatever `naturalWidths` measured — so the way to widen them
-   is to widen what that pass measures, and the pass has a mode of its own to
-   hang this on. Scoped to `.measuring` and not left standing, because a
-   min-width the fixed layout has to fight is a column that refuses the width
-   `applyWidths` handed it while `table.style.width` is still the sum of what was
-   handed out: a sideways scrollbar of exactly the difference, and `--sticky-1`
-   measured off a header that is not where the arithmetic thinks it is. Dragging
-   one of these two narrower than 116 stays possible for the same reason, and the
-   box still holds its cell when it is.
+   `z-index` is deliberately NOT set. The frozen id and title columns are
+   `position: sticky; z-index: 1`, so a cell at `position: relative; z-index:
+   auto` still passes UNDER them: measured on a phone with `clearOfFrozen` taken
+   out, the point at the open box's left edge answers the title column's link,
+   not the box. That is the behaviour to keep — the frozen pair is opaque on
+   purpose, and `clearOfFrozen` scrolls the cell out from under it rather than
+   painting over it.
 
-   On `td.edit` and not on the column, so a plan rendered to files pays none of
-   it: a read-only table opens no editors and marks no cell `edit`. */
-.measuring td.edit[data-col="start"], .measuring td.edit[data-col="end"] {
-  min-width: 116px;
-}
+   `position: relative` here is also the rule the `dd, td.edit { position:
+   relative }` episode warns about, and it is scoped so that it cannot repeat:
+   `:has(> input[type="date"])` reaches only a cell holding a date box, and
+   neither frozen column ever holds one — `id` is not editable and `title` is
+   text. Nothing here can steal `position: sticky` from the title cell. */
+#rows tbody td.edit:has(> input[type="date"]) { overflow: visible; position: relative; }
+/* And the box is drawn at the row's own type rather than the browser's. It is
+   also the font the 126px above was measured at: the UA default is a different
+   metric and so a different intrinsic width. No `width` and no `box-sizing`,
+   which is the whole point — `width: auto` IS the 126px the control asks for. */
+#rows tbody td.edit > input[type="date"] { font: inherit; }
 /* The bar fills the column it is alone in now, rather than trailing a number. */
 #rows td[data-col="progress"] .meter { display: block; width: 100%; min-width: 2.5rem; }
 /* And the century goes when the column is squeezed, which is the one part of a

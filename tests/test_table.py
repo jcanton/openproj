@@ -1234,25 +1234,6 @@ def test_the_fit_is_measured_again_once_the_real_typeface_has_landed(page: str):
 # control is out of flow and the room for it is `padding-right` on the header, so
 # `reviewers` went from 111 to 116 — the first of the four whose header, not its
 # widest cell, is what the column needs.
-#
-# And `start` and `end` are the two the widest cell no longer decides at all.
-# They were written down here at 101, and 101 is not what a browser answers any
-# more: re-measured on the demo corpus, `naturalWidths()` gives these two 74 — a
-# whole date with its century, which is what that pass sees, `tight-dates` being a
-# rule about a column that has already been squeezed.
-#
-# 116 is what goes in, because 116 is the width of the date PICKER they open,
-# reserved in `_TABLE_STYLE` against that same pass. WHICH PAGE is measured now
-# decides between the two numbers, and this is the line that has to say which: the
-# reservation is scoped to `td.edit`, so the served table measures 116 and a
-# rendered file — which opens no editors and marks no cell `edit` — still measures
-# 74. The served page is the one these widths are argued about, and the one every
-# threshold quoted in `_TABLE_STYLE` was measured on. Only `start` and `end` were
-# re-read for that change; the other thirteen were written down against an older
-# corpus and several have drifted since (`id` measures 122 today, `size` 116), so
-# read this dict as the input the fit arithmetic is argued over rather than as a
-# census of what Chrome answers this week. A column drawn narrower than
-# the control it opens is a control with its calendar indicator off the end.
 MEASURED = {
     "id": 110,
     "title": 304,
@@ -1263,8 +1244,8 @@ MEASURED = {
     "reviewers": 116,
     "cycle": 63,
     "size": 81,
-    "start": 116,
-    "end": 116,
+    "start": 101,
+    "end": 101,
     "blocked_by": 87,
     "progress": 96,
     "prs": 80,
@@ -3685,53 +3666,76 @@ def test_a_date_typed_into_the_start_cell_brings_the_row_back_from_the_server(pa
     ], patched
 
 
-# Two questions the driver cannot answer, because both are about where a box ends
-# up: a native picker is 126px of control at this font whatever column it is in,
-# and the two date columns measured 74 before the stylesheet started reserving
-# room for one. Sized to the cell it fits; unsized it hangs out of one — clipped
-# in a stored row, drawn over the neighbouring column in the draft row, which is
-# exempt from that clip. `getBoundingClientRect` answers 100 by 100 for every
-# element in `drive.js`, on purpose, so this belongs in Chrome.
+# WHERE THE OPEN DATE BOX ENDS UP, which the driver cannot answer:
+# `getBoundingClientRect` returns 100 by 100 for every element in `drive.js`, on
+# purpose, and there is no painting there at all — so "is the box on top of the
+# cell beside it" is a question only a browser has an answer to.
+#
+# `elementFromPoint` and not a reading of `overflow` and `position`: those two
+# resolved perfectly on the frozen column's `box-shadow` for a whole round while
+# Chrome painted nothing. What is asked here is what a finger would hit.
 _DATE_EDITOR_FIT = """
 window.fetch = () => new Promise(() => {});
+const round = n => Math.round(n * 100) / 100;
 const inner = td => {
   const box = td.getBoundingClientRect();
   const style = getComputedStyle(td);
   return {left: box.left + Number.parseFloat(style.paddingLeft),
           right: box.right - Number.parseFloat(style.paddingRight)};
 };
+// What is drawn at a point, named the way an assertion can quote it back.
+const at = (x, y) => {
+  const hit = document.elementFromPoint(x, y);
+  if (!hit) return 'nothing';
+  const td = hit.closest ? hit.closest('td') : null;
+  return hit.nodeName + '/' + ((hit.getAttribute && hit.getAttribute('type')) || '-')
+       + '/' + (td ? td.dataset.col : 'no-cell');
+};
 const look = td => {
   openEditor(td);
   const input = td.querySelector('input');
   const box = input.getBoundingClientRect();
   const room = inner(td);
+  const y = (box.top + box.bottom) / 2;
   // The same control with nothing holding it in, measured inside the same cell so
-  // that `font: inherit` resolves against the same 13px: what the box would be
-  // without the rule, and the number that makes the assertion below mean anything.
+  // that `font: inherit` resolves against the same 13px. The box is supposed to BE
+  // this width — that is the rule — so it is both the non-vacuity check and the
+  // assertion that nothing shrank the control to fit.
   const free = input.cloneNode(true);
   free.style.position = 'absolute';
   free.style.top = '-9999px';
   free.style.width = 'auto';
   td.append(free);
-  const unheld = free.getBoundingClientRect().width;
+  const unheld = round(free.getBoundingClientRect().width);
   free.remove();
-  const round = n => Math.round(n * 100) / 100;
-  // `value` off a control the browser built, which is the only place the question
-  // means anything: `drive.js` reflects whatever `setAttribute('value', …)` was
-  // handed it, unconditionally and with no parsing, so a payload that stopped
-  // being ISO would read back perfectly there. A real `type="date"` sanitises —
-  // it shows an empty box for anything it cannot read as a whole date — and an
-  // empty box on a row that HAS a date commits `start_date: null` on the first
-  // blur, which is the deletion the badInput guard exists to stop.
+  // The column the box now runs over: the next one that is actually drawn. A shed
+  // column is `display: none` and still in the markup, and answers 0 to every
+  // question.
+  let next = td.nextElementSibling;
+  while (next && !next.getBoundingClientRect().width) next = next.nextElementSibling;
+  // Along the whole box, left end to right end. The left end is the value; the
+  // right end is the calendar indicator, which is what a clipped box loses first
+  // and what a box painted under its neighbour loses altogether.
+  const across = [box.left + 2, box.left + box.width * 0.25, box.left + box.width * 0.5,
+                  box.left + box.width * 0.75, box.right - 8];
   return {type: input.getAttribute('type'), value: input.value, width: round(box.width),
-          past: round(box.right - room.right), before: round(room.left - box.left),
-          unheld: round(unheld), room: round(room.right - room.left),
-          column: Math.round(td.getBoundingClientRect().width),
-          clips: getComputedStyle(td).overflow};
+          unheld, room: round(room.right - room.left),
+          // Positive on purpose now: the box is MEANT to end past its cell.
+          past: round(box.right - room.right),
+          before: round(room.left - box.left),
+          indicator: at(box.right - 8, y),
+          along: across.map(x => at(x, y)),
+          overNeighbour: next ? box.right - next.getBoundingClientRect().left : null,
+          neighbour: next ? next.dataset.col : null,
+          neighbourInk: next ? next.textContent.trim() : null,
+          // Where the indicator sits, in the neighbour's terms: the assertion below
+          // is only about painting if the point is inside the next column at all.
+          insideNeighbour: next
+            ? box.right - 8 > next.getBoundingClientRect().left : null};
 };
 // A row that really carries a date, and not merely the first editable Start cell:
-// the box a dated row opens is the one the question above is about, and an empty
-// box over an empty field says nothing either way.
+// the box a dated row opens is the one this is about, and an empty box over an
+// empty field says nothing either way.
 const dated = [...tbody.querySelectorAll('td.edit[data-col="start"][data-record]')]
   .find(td => (DATA.rows[td.dataset.record] || {}).start_date);
 const out = {stored: dated ? look(dated) : null,
@@ -3747,6 +3751,12 @@ const settle = async () => {
   await new Promise(wake => setTimeout(wake, 50));
 };
 await settle();
+// And what a Start cell computes when nothing is open in it, which is the state
+// the rule has to get the box out of.
+const closed = tbody.querySelector('td.edit[data-col="start"][data-record]');
+out.closed = closed
+  ? {overflow: getComputedStyle(closed).overflow, position: getComputedStyle(closed).position}
+  : null;
 openDraft();
 chooseKind('task');
 await settle();
@@ -3756,57 +3766,80 @@ return out;
 """
 
 
-def test_the_open_date_editor_fits_the_cell_it_is_drawn_in(page: str, tmp_path: Path):
-    """**The whole reason the date columns are now wider than a date.**
+def test_the_open_date_editor_overflows_its_cell_and_is_drawn_over_the_next(
+    page: str, tmp_path: Path
+):
+    """**The editor does not have to fit the cell. It has to be readable.**
 
-    A native picker draws its calendar indicator hard against its right edge, and
-    it is 126px wide whatever it is put in. In a 74px column the cell's `overflow:
-    hidden` took the right-hand end off it: a picker with no way to open the
-    picker, which is a text box wearing a different placeholder. In the draft row,
-    which is exempt from that clip, the same 68px were drawn over the End column
-    beside it.
+    A native date box wants 126px at this font, and on this page at 1400 the Start
+    column is 74px — 58 of content box once the cell's padding is off. Sized to
+    the cell there is no good answer: measured at 1px widths in Chrome at 13px
+    Inter, a box holding 15.09.2026 reads `15.` at 44px, `15.09` at 58 and the
+    whole date only from 100. Chrome keeps the calendar indicator and throws the
+    century and the year away, which are the two fields somebody opens this to
+    change.
 
-    So the box is sized to its cell, and the two date columns reserve the width
-    the box needs — measured, in `_TABLE_STYLE`, and asserted here as the thing
-    that measurement was for. A test that greps the stylesheet would pass on the
-    `box-shadow` that resolved perfectly and painted nothing.
+    Widening the COLUMN instead was tried and cost a shed column at laptop widths;
+    the fit tests said so. So the box keeps the width it asks for and the cell
+    gets out of its way, the way `tr.draft > td` already lets a control paint over
+    its neighbour. Measured here: the box runs 60px into the End column beside it,
+    over a cell drawing `01.09.26`.
 
-    Both rows are asked, because they fail differently: one clips and one spills.
+    What that promises, and what is asserted here, is four things: the box is the
+    full width the control asks for, it really does end past its cell, every point
+    along it — the value at the left end and the indicator at the right — answers
+    the box itself under `elementFromPoint`, and it still holds the record's own
+    date.
 
-    And the stored row's box is asked what it is holding, which is a question only
-    a browser can answer: the driver reflects the attribute it was given, a real
-    date control sanitises it. A box that opened EMPTY on a row that has a date
-    would be a `start_date: null` one blur later, with both node tests still green.
+    `elementFromPoint` rather than a reading of `overflow` and `position`, because
+    the two ways this fails look identical in the computed style and opposite on
+    screen. Measured on this page with each declaration taken out in turn: with
+    `overflow: hidden` the right-hand end is clipped at the cell's edge, and with
+    `position: static` the whole box paints UNDER the neighbouring cell's own
+    text. Both answer the End cell's span at the indicator instead of the box, and
+    neither moves a resolved value a test could read.
+
+    Both rows are asked. They used to fail differently — the stored row clipped
+    and the draft row spilled — and they are now supposed to do the same thing.
     """
     got = measured_in(chrome(), page, tmp_path / "datefit.html", 1400, _DATE_EDITOR_FIT)
+
+    # The table still clips its cells; the rule is scoped to the one that is open.
+    assert got["closed"] == {"overflow": "hidden", "position": "static"}, got["closed"]
 
     for where, box in (("a stored row", got["stored"]), ("the draft row", got["draft"])):
         assert box, f"{where} has no editable Start cell, so nothing here was asked"
         assert box["type"] == "date", f"{where} did not open a picker: {box}"
-        # Not vacuous: the control really would not have fitted on its own.
-        assert box["unheld"] > box["room"], (
-            f"{where}'s cell already had room for an unsized picker "
-            f"({box['unheld']}px in {box['room']}px), so this proves nothing"
+        # The width the control asks for, and nothing holding it in.
+        assert box["width"] == box["unheld"], (
+            f"{where}'s picker is {box['width']}px where the control asks for "
+            f"{box['unheld']}px — something is sizing it to the cell again"
         )
-        assert box["past"] <= 0.5, (
-            f"{where}'s picker ends {box['past']}px past the cell — the calendar "
-            "indicator is what is off the end"
+        # Not vacuous: it really would not have fitted, so there is something to
+        # be over.
+        assert box["past"] > 0, (
+            f"{where}'s cell already had room for the picker "
+            f"({box['unheld']}px in {box['room']}px), so nothing below is a claim"
         )
         assert box["before"] <= 0.5, f"{where}'s picker starts outside its cell: {box}"
-        # And wide enough to read the value it is editing. 100px is the narrowest
-        # box Chrome draws a whole `dd.mm.yyyy` and the indicator in with daylight
-        # between them, measured at 1px steps at 13px Inter.
-        assert box["width"] >= 100, (
-            f"{where}'s picker is {box['width']}px, which hides part of the date "
-            "it is open on"
+        # And every point along it is the box: not clipped at the cell's edge, not
+        # painted under the column it runs over.
+        assert set(box["along"]) == {"INPUT/date/start"}, (
+            f"{where}'s picker is not what is drawn along its own width: "
+            f"{box['along']} — an end that answers a TD is an end that is either "
+            "clipped away or underneath the cell beside it"
         )
-
-    # The draft row is the one that would have spilled rather than clipped, and it
-    # still does not clip: the fix is the box's width, not a second exemption.
-    assert got["draft"]["clips"] == "visible", (
-        "the draft row started clipping its cells, which is a different rule "
-        "than the one this test is about"
-    )
+        # The right-hand end really is over the next column, which is the half of
+        # the claim `along` cannot make on its own.
+        assert box["insideNeighbour"], (
+            f"{where}'s indicator is still inside its own cell ({box}), so being "
+            "drawn on top of anything was not tested"
+        )
+        assert box["indicator"] == "INPUT/date/start", (
+            f"{where}'s calendar indicator answers {box['indicator']} — it is "
+            f"{round(box['overNeighbour'], 1)}px into the {box['neighbour']} column "
+            f"and that column won"
+        )
 
     # And the control opened holding the record's own date, in the one format it
     # will keep: anything else and a real picker shows an empty box.
@@ -3870,16 +3903,25 @@ def test_an_editor_opens_clear_of_the_frozen_column_on_a_phone(page: str, tmp_pa
     the columns that are `position: sticky` INSIDE that scrollport, so the cell it
     brings to the left edge is the cell it parks underneath them. Measured on this
     page at 390x844 with the fix taken out: opening a stored row's Start cell put
-    `scrollLeft` at 597 and drew the box from x=144.5 with the frozen Title column
-    running to x=177 — 32.5px, its whole first segment, painted over by a column
-    that is opaque by design. `owner` went under by 16.5px and `end` by 2.5px, so
-    it was never only the one column.
+    `scrollLeft` at 599 and drew the box from x=142.5 with the frozen Title column
+    running to x=177 — 34.5px of its left end painted over by a column that is
+    opaque by design, and `elementFromPoint` at the box's own left edge answering
+    the title's link rather than the box. `owner` went under by 16.5px and
+    `assignees` by 39.5, so it was never only the one column. With the call back
+    in every one of them clears it: the text boxes at x=177.5 and the date box at
+    x=185.5, which is the cell's `.5rem` of padding a date control sits inside.
 
     That was survivable while the cells held text: what was covered was the left
     end of something being read. A date control focuses and selects its first
     segment the moment it opens, so what is under there now is the part being
     typed into — which is what changed this in kind, and why the fix is in
     `openEditor` and covers every editor rather than in anything about dates.
+
+    Still this function's job now that the open date box is deliberately WIDER
+    than its cell: what that box overflows is its right edge, and this is about
+    its left one. The box is `position: relative` with no `z-index` for the same
+    reason — it paints over the column to its right and still passes under the
+    frozen pair, which is what leaves anything here to clear.
 
     Asked at a phone's width, through the override rather than a window, because
     Chrome will not open a window narrower than 500px — see `measured_on_a_phone`
