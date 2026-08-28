@@ -1320,11 +1320,21 @@ function missingFor(row, status) {
     .filter(([field, statuses]) => statuses.includes(status))
     .map(([field]) => field)
     .filter(field => EDITABLE[field] && !(field === 'reviewers' && row.review_waived))
-    .filter(field => {
-      const held = row[field];
-      return held === null || held === undefined || held === ''
-        || (Array.isArray(held) && held.length === 0);
-    });
+    .filter(field => !holds(row, field));
+}
+
+// Whether this row has a value for that field at all. Lifted out of the filter
+// above because `saveCells` now asks the same question of a whole selection
+// before it writes one answer across it, and the four ways a field can be unset
+// — absent, null, the empty string, the empty list — are not a list anybody
+// would write out twice and get right twice. An `assignees: []` that read as a
+// value would be a row silently exempted from a gate; an `assignees: []` that
+// read as unset in one copy and as a value in the other would be a row the panel
+// asks about and then refuses to write.
+function holds(row, field) {
+  const value = row[field];
+  return !(value === null || value === undefined || value === ''
+    || (Array.isArray(value) && value.length === 0));
 }
 
 // Fields a span is computed from. Editing one of these from the table changes
@@ -1525,22 +1535,51 @@ async function saveCells(cell, value, extra) {
   // whole selection mechanism exists for — would have met the refusal every
   // single time, about every single row, for ever.
   //
-  // So the panel asks ONCE and the answer is written over the selection, because
-  // "these all finished today" is one fact about the batch. Anything the panel
+  // So the panel asks ONCE and the answer travels to every row that was short of
+  // it, because "these all finished today" is one fact about the batch — and to
+  // those rows only, which is the paragraph below. Anything the panel
   // cannot ask that way still refuses and still names the rows: an owner, an
   // appetite and a reviewer are one fact PER record, and prefilling nine rows
   // with one appetite would commit a number nobody meant, in one commit, on a
   // protected branch. The type is what decides — a date is the shape of thing a
   // batch can share — which is the same rule `askFor` prefills by.
   //
-  // The one answer lands on every selected record, including one that already
-  // held a date, and that is the gesture rather than a bug in it:
-  // `PATCH /api/records` writes one map of fields over a set of ids in one
-  // commit, which is the whole reason the selection exists, and a value per row
-  // would be a commit per row. So the panel says how far the answer reaches in
-  // as many words — "for all 9 selected records" — and somebody who wants to
-  // keep a date they already typed takes that row out of the selection. The
-  // value it replaces is one commit back either way.
+  // **And the one answer only ever lands where there is nothing to overwrite.**
+  // It used to land on every selected record, held value included, on the
+  // argument that the splat IS the gesture — and that argument is true of
+  // `end_date` and was made about every date the gate can ask for. `wanted` is
+  // the UNION of what the rows are missing, so one row with nothing raises the
+  // question for all of them: select nine rows to mark `in_progress`, three of
+  // which were finished in the spring and carry the day they really started,
+  // and the panel prefills today because SOME row is short of a date — and
+  // three real start dates are replaced with today, in one commit, on a
+  // protected branch. `start_date` is history and not a statement about the
+  // selection; "these all finished today" is a coherent thing to mean, "these
+  // all started today" said over a record that started in March is not.
+  //
+  // The rule is universal rather than a list of fields allowed to splat, and
+  // the reason is that `end_date` only LOOKED safe: it is empty on every row at
+  // the moment of the transition, which is a fact about those rows and not
+  // about the field. A recorded end is as much history as a recorded start, and
+  // there is no field whose stored value one box is entitled to correct nine
+  // rows at a time. So a wanted field that any selected row already holds
+  // refuses the batch and names those rows, which is the same shape as the
+  // refusal above and for the same reason: nothing is written until every row
+  // can take the write. Those rows need no answer anyway — the gate they are
+  // being held against is already satisfied for them — so the way out is to set
+  // them on their own, which is a second deliberate commit rather than a lost
+  // gesture.
+  //
+  // The narrower fix, sending the answer to the rows that lack it and the
+  // status to all of them, is two field maps and therefore two PATCHes: the
+  // loop `PATCH /api/records` exists to refuse, where the second write is made
+  // against the commit the first one made and a conflict between them leaves
+  // half a selection written with no way to say which half.
+  //
+  // A warning would not have done. The panel already says how far the answer
+  // reaches — "for all 9 selected records" — and that sentence is what stood
+  // between somebody and the overwrite; it is now true rather than load-bearing,
+  // because every row it reaches is a row that was missing the field.
   if (field === 'status' && !extra) {
     const wanted = [...new Set(ids.flatMap(id => missingFor(DATA.rows[id] || {}, coerced)))];
     const cannot = wanted.filter(name => EDITABLE[name] !== 'date');
@@ -1553,6 +1592,24 @@ async function saveCells(cell, value, extra) {
           + 'Each needs a field it has not got.'
         : `${short.join(', ')} cannot be ${human(coerced)} yet, so nothing was written. `
           + 'Fix those rows, or take them out of the selection.';
+      return;
+    }
+    // Asked of the stored value and not of `missingFor`, which answers a
+    // narrower question: a row of a kind the gate does not reach is "not
+    // missing" a field it holds, and the answer would have been written over
+    // that one too.
+    const clashes = wanted.filter(name => ids.some(id => holds(DATA.rows[id] || {}, name)));
+    if (clashes.length) {
+      const held = ids.filter(id => clashes.some(name => holds(DATA.rows[id] || {}, name)));
+      const named = clashes.length === 1
+        ? `a ${(FIELD_LABELS[clashes[0]] || clashes[0]).toLowerCase()}`
+        : clashes.map(name => (FIELD_LABELS[name] || name).toLowerCase()).join(' and ');
+      box.hidden = false;
+      box.textContent =
+        `${held.join(', ')} already ${held.length === 1 ? 'has' : 'have'} ${named}, and one `
+        + 'answer here is written to every selected record. Nothing was written. Take '
+        + `${held.length === 1 ? 'that row' : 'those rows'} out of the selection and set `
+        + `${held.length === 1 ? 'it' : 'them'} on ${held.length === 1 ? 'its' : 'their'} own.`;
       return;
     }
     if (wanted.length) {

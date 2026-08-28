@@ -3502,18 +3502,84 @@ def test_a_size_cell_over_work_reads_that_work_against_the_box_the_bet_bought():
         "unbet": "",
     }
 
-    # And the comparison is in words, so the reading is not colour-only. The box
-    # is quoted as the calendar weeks the bet bought and never as the stated
-    # appetite: those are two units, and putting them in one sentence is the
-    # defect the record page was carrying until it was fixed.
-    assert read["over"]["why"] == "bet 1.0 weeks, its tasks need 2.0 — over the box the bet bought."
-    assert read["under"]["why"] == "bet 3.0 weeks, its tasks need 1.0 — inside the box."
-    assert read["level"]["why"] == "bet 2.0 weeks, its tasks need 2.0 — exactly the box."
+    # And the comparison is in words, so the reading is not colour-only.
+    #
+    # **The sentence names the bet, the people and what that buys, and it used to
+    # name only the last of the three.** `bet 3.0 weeks` was what these rows said
+    # on a record whose file says `person_weeks: 3` — the same number here only
+    # because one full-time name holds it, and `bet 4.0 weeks` on the corpus pitch
+    # whose file says 8. That sends a reader into the file after a figure written
+    # nowhere in it. The box is still the only number the verdict is made against,
+    # because the appetite is in person-weeks and the days are in calendar ones;
+    # what changed is that the conversion is now on the line instead of assumed.
+    assert read["over"]["why"] == (
+        "Bet 1 over 1 person, which buys 1.0 weeks; its tasks need 2.0 — over the box."
+    )
+    assert read["under"]["why"] == (
+        "Bet 3 over 1 person, which buys 3.0 weeks; its tasks need 1.0 — inside the box."
+    )
+    assert read["level"]["why"] == (
+        "Bet 2 over 1 person, which buys 2.0 weeks; its tasks need 2.0 — exactly the box."
+    )
     assert read["unsized"]["why"] == (
-        "bet 3.0 weeks, its tasks need 1.0 — but 1 of its 2 have no length yet, "
-        "so that can only grow."
+        "Bet 3 over 1 person, which buys 3.0 weeks; its tasks need 1.0 — "
+        "but 1 of its 2 have no length yet, so that can only grow."
     )
     assert read["unbet"]["why"] == "No bet on this yet. Its tasks need 1.0 weeks."
+
+
+def test_a_bet_none_of_whose_tasks_is_sized_still_gets_the_reading_that_says_so():
+    """**The fourth state reaches the record it was written for, which is the
+    worst case and was the one it missed.**
+
+    A pitch holding three sized tasks and four unsized ones got the `?`, because
+    the three that were sized gave it a number to hang the reading on. A pitch
+    whose tasks are ALL unsized got nothing at all: it is scheduled nowhere, so
+    `Span.elapsed_weeks` has nothing to report, `_tasks_add_up_to` answers None,
+    and `_rollup` returned None with it — no mark, no muted ground, no sentence,
+    and the bet drawn plainly in a cell that offered an editor on it. Strictly
+    less is known about that bet than about the one that gets the warning, and
+    the table said strictly more about it.
+
+    So the gate is having work underneath rather than having a number for it, and
+    the missing number is the reading: `?` over "no length yet", with the bet, the
+    people and the fact that nothing has been estimated in the sentence.
+
+    Both plans are asked in one test on purpose. The pair is the whole claim —
+    they are the same state, and a fix that gave the second one its own wording
+    would have made "nobody has sized this" read as two different things
+    depending on how thoroughly nobody had done it.
+    """
+    from openproj.render.table import _ROLLUP_GLYPH
+
+    nothing = rollup_plan(8.0, ((None, "shaping"), (None, "shaping"), (None, "shaping")))
+    some = rollup_plan(8.0, ((1.0, "ready"), (None, "shaping")))
+
+    # The case as it arrives: no span, so no dates and no box either — which is
+    # why the sentence below can name the bet and the people and stops there.
+    assert nothing.spans.get("pitch-000001") is None
+    assert _row(nothing, "pitch-000001")["start"] is None
+
+    read = _row(nothing, "pitch-000001")["rollup"]
+    assert read is not None, "the bet with nothing sized under it is the case the state is for"
+    assert read["state"] == _row(some, "pitch-000001")["rollup"]["state"] == "unsized"
+    assert _ROLLUP_GLYPH[read["state"]] == "?"
+    # No number, and none invented: `0.0 in tasks` would be a measurement of
+    # nothing drawn as a measurement, and the sort key is None for the same
+    # reason — the column puts the row where it puts an unsized leaf rather than
+    # where a bet its own cell no longer shows would fall.
+    assert read["weeks"] is None
+    assert read["text"] == "no length yet"
+    assert "8" not in read["text"], read["text"]
+    # The row still carries the bet, because the gate that asks for one at
+    # `ready` reads this key — it is the cell that stops drawing it.
+    assert _row(nothing, "pitch-000001")["size"] == 8.0
+    # And the sentence says what is known and what is not: the bet as the file
+    # states it, in person-weeks, over the people it is staffed with.
+    assert read["why"] == (
+        "Bet 8 over 1 person. Nothing under it has a length yet, "
+        "so nothing can be said about whether it fits."
+    )
 
 
 def test_a_child_adds_nothing_when_it_has_no_length_and_not_only_when_unsized(tmp_path: Path):
@@ -3698,9 +3764,11 @@ def test_the_rollup_cell_says_what_it_is_showing_and_how_it_reads(page: str):
     assert got["role"] == "img", got
     assert "have no length yet" in (got["named"] or ""), got
     # The comparison in words, on the cell itself. The box is the calendar weeks
-    # the bet bought — three person-weeks over one name — and not the stated
-    # appetite, which is the same number here only because one person holds it.
-    assert "bet 3.0 weeks, its tasks need " in got["tip"], got["tip"]
+    # the bet bought and not the stated appetite — three person-weeks over one
+    # name, which is the same number here only because that name is full-time —
+    # and the sentence carries the conversion rather than leaving a reader to
+    # find a 3.0 the file does not contain.
+    assert "Bet 3 over 1 person, which buys 3.0 weeks; its tasks need " in got["tip"], got["tip"]
 
 
 def test_the_tint_on_a_rollup_cell_and_the_warning_on_it_cannot_disagree(page: str):
@@ -3806,7 +3874,13 @@ def test_the_number_in_the_size_cell_is_the_number_the_record_page_prints():
             for row in _fact_rows(index, record, STATIC)
             if str(row["label"]).startswith("Appetite")
         ]
-        if rollup is None or not appetite:
+        # `weeks is None` is the one reading with no number to pin: nothing under
+        # that record has a length, so the cell says "no length yet" and the
+        # record page draws the appetite field the way it draws any other field
+        # nothing has been computed from. Two different sentences about the same
+        # record, and neither is a number, so there is nothing here for them to
+        # disagree about.
+        if rollup is None or rollup["weeks"] is None or not appetite:
             continue
         assert rollup["text"] in str(appetite[0]["display"]), (record_id, rollup, appetite[0])
         checked += 1
@@ -6799,6 +6873,117 @@ def test_the_bulk_panel_still_refuses_what_it_cannot_ask_for(page: str):
         or "cannot be Done yet" in (answer["value"]["said"])
     ), answer["value"]["said"]
     assert not [call for call in answer["calls"] if call["method"] == "PATCH"]
+
+
+@pytest.fixture
+def reviving_page() -> str:
+    """Two tasks a bulk `in_progress` reads differently: one has never started,
+    and the other started in March and was finished.
+
+    This is the shape the union misses. The panel asks about the UNION of what
+    the selected rows are missing, and the finished row is missing nothing that
+    `in_progress` demands — so it says nothing about `start_date`, is asked
+    nothing, and used to take the answer anyway. Everything else that gate wants
+    is present on both rows, so the refusal that names a field nobody can answer
+    in bulk is out of the way and the date branch is the only one left.
+    """
+    from openproj.render import render_table
+
+    common = dict(
+        kind="task",
+        parent=PITCH,
+        owner="ann",
+        assignees=["ann"],
+        reviewers=["bo"],
+        person_weeks=1.0,
+        prs=["kilnlab/kiln4py#1"],
+    )
+    records = [
+        Pitch(
+            id=PITCH,
+            kind="pitch",
+            title="Verify the aroma transport port",
+            status="ready",
+            owner="ann",
+            assignees=["ann"],
+            reviewers=["bo"],
+            person_weeks=3.0,
+        ),
+        Task(id=TASK, title="Reproduce the seam artefact", status="ready", **common),
+        Task(
+            id=OTHER,
+            title="Downgrade numpy for global sums",
+            status="done",
+            start_date=date(2026, 3, 2),
+            end_date=date(2026, 4, 13),
+            **common,
+        ),
+    ]
+    return render_table(
+        build_index(records, Config(), date(2026, 8, 17)),
+        base_commit="0" * 40,
+        may_write=True,
+    )
+
+
+def test_the_bulk_answer_is_never_written_over_a_row_that_already_holds_one(reviving_page: str):
+    """A start date is history, and one box may not correct nine rows' worth of it.
+
+    Reopening finished work is the reachable version: select two tasks and set
+    them `in_progress`, one of which never started and one of which started on
+    2 March. The panel asked once because SOME row was short of a date, prefilled
+    today because that is nearly always the right answer for the row that is
+    short — and then wrote today over both, destroying a real start date in one
+    commit on a protected branch. `saveCell` could never do it: it asks
+    `missingFor` of the one row it is about, so the single path can only write a
+    field that row has not got.
+
+    The panel is answered here rather than merely counted, because the question
+    is not the defect — what the answer then reaches is — and a test that stopped
+    at "it asked" would pass against a panel that overwrites.
+    """
+    answer = drive_table(
+        reviving_page,
+        "(async () => {" + PICK_BOTH + "  await saveCells(cell, 'in_progress');" + f"  {SETTLE}"
+        "  const panel = document.getElementById('askfor');"
+        "  const shown = !panel.hidden;"
+        "  if (shown) { panel.querySelector('#asked').onclick();" + f" {SETTLE}" + " }"
+        "  return {shown, said: document.getElementById('row-conflict').textContent,"
+        # Read defensively: a save that lands re-reads the rows, so this page's
+        # copy of them is whatever the server sent back. The PATCH body below is
+        # what says what was written; this says what the reader is still shown.
+        f"          kept: (DATA.rows['{OTHER}'] || {{}}).start_date}};"
+        "})()",
+        replies=[
+            {
+                "status": 200,
+                "json": {
+                    "outcome": "committed",
+                    "commit": "b" * 40,
+                    "conflict": None,
+                    "pushed": True,
+                },
+            },
+            {"status": 200, "json": {"rows": {}, "problems": []}},
+            {"status": 200, "json": {"problems": []}},
+        ],
+    )
+
+    wrote = [call for call in answer["calls"] if call["method"] == "PATCH"]
+    assert not wrote, (
+        "one answer was written to every selected record, the row that already had "
+        f"a date included: {json.loads(wrote[0]['body']) if wrote else None}"
+    )
+    assert answer["value"]["shown"] is False, (
+        "it asked for a date one of the two selected rows already holds, and what "
+        "the panel asks for it writes to all of them"
+    )
+    assert answer["value"]["kept"] == "2026-03-02", "the date the record really started"
+
+    said = answer["value"]["said"]
+    assert OTHER in said, f"the refusal has to name the row to act on: {said!r}"
+    assert "start date" in said, f"and the field, in the reader's word for it: {said!r}"
+    assert TASK not in said, f"the row that was missing it is not the problem: {said!r}"
 
 
 def test_the_single_cell_panel_prefills_today_for_the_end_date(finishing_page: str):
