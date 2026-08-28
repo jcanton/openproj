@@ -790,10 +790,25 @@ def test_the_two_matchers_agree_letter_for_letter(index: Index, page: str):
     def here(needle: str, hay: str) -> list:
         return [found(sought(needle), hay), sought(needle), plain(needle)]
 
+    # The pairs travel INSIDE the page rather than in the expression, and that is
+    # not tidiness: Linux caps a single argv entry at 128KB (`MAX_ARG_STRLEN`),
+    # and six thousand pairs of a plan's own words is comfortably past it — the
+    # suite went green on a laptop and answered `OSError: [Errno 7] Argument list
+    # too long: 'node'` on CI, which reads as a broken harness rather than as a
+    # corpus that grew. The page arrives on stdin, and `<script
+    # type=application/json>` is the shape the driver already lifts out of markup
+    # for the pages' own payloads.
+    asked = page.replace(
+        "</body>",
+        '<script type="application/json" id="pairs">'
+        + json.dumps([[n, h] for n, h in pairs])
+        + "</script></body>",
+        1,
+    )
     answer = run_js(
-        page,
-        "(() => " + json.dumps([[n, h] for n, h in pairs]) + ".map(([n, h]) => "
-        "[found(sought(n), h), sought(n), plain(n)]))()",
+        asked,
+        "(() => JSON.parse(document.getElementById('pairs').textContent)"
+        ".map(([n, h]) => [found(sought(n), h), sought(n), plain(n)]))()",
         page=True,
     )
     assert not [e for e in answer["errors"] if e.startswith("expression:")], answer["errors"]
