@@ -16,6 +16,7 @@ from ..model import (
     checklist,
     sections,
     size_weeks,
+    staffing_of,
     tasks_occupy,
     workers_on,
 )
@@ -2812,11 +2813,12 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
             # and a reader moving between the table and this page should recognise
             # the sentence rather than have to re-read it.
             #
-            # `workers_on` and not `assignees`, for the reason both other readers
-            # give: that is the list `_duration_weeks` divided the appetite by to
-            # get the box being quoted, and counting a different set of names here
-            # would explain the number with the wrong one. Nobody on it is one
-            # notional person, which is what that division assumed.
+            # `staffing_of` and not a headcount written out here, for the reason
+            # both other readers give: the box came from dividing the appetite by
+            # the summed AVAILABILITY of the people on it, and "over 2 people"
+            # named a number the arithmetic did not use wherever those two people
+            # are not both full-time. The function is `model.py`'s so that one
+            # wording reaches all three surfaces.
             #
             # Warned about only against a bet somebody actually made. A pitch with
             # no appetite yet is not over it, and `_rollup_problems` says nothing
@@ -2847,9 +2849,9 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
                 # span, hence no box, and `total` is None above it anyway.
                 budget = span.budget_weeks if span is not None else None
                 stated = size_weeks(record)
-                people = len(workers_on(record)) or 1
+                staffing = staffing_of(record, span.staffed_at if span is not None else None)
                 bet = (
-                    f"Bet {stated:g} over {'1 person' if people == 1 else f'{people} people'}"
+                    f"Bet {stated:g} over {staffing}"
                     if stated is not None
                     else "No bet on this yet"
                 )

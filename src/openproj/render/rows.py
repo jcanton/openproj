@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..index import Index, _product_of, _project_of, predicates_of
-from ..model import RUNG, size_weeks, unread_fields, workers_on
+from ..model import RUNG, size_weeks, staffing_of, unread_fields
 
 # The record page's own reading of what a pitch's tasks come to, imported rather
 # than repeated. It is the wrong way up as a dependency — this module is the view
@@ -144,24 +144,26 @@ def _rollup(index: Index, record_id: str) -> dict | None:
     # sentence below can name the bet and the people and stops there.
     span = index.spans.get(record_id)
     box = span.budget_weeks if span is not None else None
-    # The bet as the FILE states it, and the people the scheduler divided it by
+    # The bet as the FILE states it, and the staffing the scheduler divided it by
     # to get the box. Both are named because the box alone is not recoverable
     # from either: this row printed `bet 4.0 weeks` on a record whose file says
     # `person_weeks: 8`, which invites somebody to go looking for a 4 that is
     # written nowhere. The appetite is in person-weeks and the box is in calendar
     # ones, and the sentence has to carry the conversion or it is two units with
     # the reader left to notice — the defect the record page carried in the same
-    # words. `workers_on` and not `assignees`, because that is the list
-    # `_duration_weeks` divided by; `_rollup_problems` counts the same names in
-    # the sentence it yields about this same comparison, and two counts of two
-    # different sets of people explaining one number is how they come apart.
+    # words.
+    #
+    # `staffing_of` and not a headcount written out here, which is what this was:
+    # "Bet 3 over 2 people, which buys 3.0 weeks" names a number the arithmetic
+    # did not use, because the divisor is the summed availability and the two
+    # people on `pitch-7b3e94` are half-available each. The function is
+    # `model.py`'s so that this row, the record page's Appetite line and the
+    # warning `check` prints say it one way — they were unified onto one sentence
+    # on purpose, and a fix in two of the three is the same defect with a smaller
+    # blast radius.
     stated = size_weeks(record)
-    people = len(workers_on(record)) or 1
-    bet = (
-        f"Bet {stated:g} over {'1 person' if people == 1 else f'{people} people'}"
-        if stated is not None
-        else "No bet on this yet"
-    )
+    staffing = staffing_of(record, span.staffed_at if span is not None else None)
+    bet = f"Bet {stated:g} over {staffing}" if stated is not None else "No bet on this yet"
     if contents is None:
         # Nothing underneath has a length, so there is no reading to give — only
         # the bet, and the fact that nobody has estimated what is meant to go in

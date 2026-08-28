@@ -100,6 +100,26 @@ class Span(BaseModel):
     # container, and every pitch nobody has bet on yet — which is why
     # `_rollup_problems` stays silent about both.
     budget_weeks: float | None = None
+    # What the appetite was divided BY to get that box: the summed availability
+    # of the people on this record, which is `sum(rates)` and not `len(people)`
+    # unless everybody is at full rate. It travels here for the same reason the
+    # box does — `_rollup_problems` (`model.py`) has to name it and `model.py`
+    # cannot import this module.
+    #
+    # It is carried because the sentence the three surfaces print was arithmetic
+    # a reader could not reproduce. "Bet 3 over 2 people, which buys 3.0 weeks"
+    # names a HEADCOUNT beside a number that came from dividing by 1.0, because
+    # both people on `pitch-7b3e94` are half-available — and the pitch two rows
+    # up says "4 over 2 people, which buys 2.0", which teaches the reader that the
+    # operation is division and then breaks that reading on the very next row.
+    # Where the two agree the headcount is honest and the short sentence stays;
+    # where they do not, `staffing_of` (`model.py`) says so.
+    #
+    # Never None where there is a box, and not because it is defaulted: it is the
+    # denominator of a division that has already happened, so a span with a
+    # `budget_weeks` has one by construction. Optional only so that the spans that
+    # carry no box at all need not invent it.
+    staffed_at: float | None = None
     # And the contents, in the same units and through the same rounding: the
     # working days this record actually occupies. For a leaf that is its own
     # span; for a pitch it is the UNION of the days its children occupy, which
@@ -216,7 +236,7 @@ def _budget_weeks(duration: float | None) -> float | None:
 
     So both sides are read in the unit the scheduler works in — whole working
     days — and a bet that is exactly filled compares equal. This is the number
-    `_rollup_problems` also QUOTES ("the 4.0 the bet buys at 2"), which is the
+    `_rollup_problems` also QUOTES ("the 4.0 the bet buys over 2 people"), which is the
     other half of the fix: a page that says 2.6 against a stated 2.5 and calls it
     level would be telling a reader the comparison is broken.
 
@@ -397,8 +417,25 @@ def _duration_weeks(record: Record, config: Config, by_id: dict[str, Record]) ->
     size = size_weeks(record)
     if size is None:
         return None
+    return size / _staffed_at(record, config, by_id)
+
+
+def _staffed_at(record: Record, config: Config, by_id: dict[str, Record]) -> float:
+    """The divisor above: how much full-time person there is on this record.
+
+    Its own function because three pages have to be able to NAME it. The sentence
+    they print — "Bet 3 over 2 people, which buys 3.0 weeks" — read as though the
+    headcount were the divisor, and it is only where everybody is at full rate;
+    the number it actually quoted came from dividing by this. So the spans carry
+    it (`Span.staffed_at`) and `staffing_of` (`model.py`) decides whether it needs
+    saying.
+
+    Nobody assigned is one notional person at nominal availability, which is the
+    same fallback this line has always had: zero would be a division by zero, and
+    infinity is not a useful forecast for unowned work.
+    """
     rates = [_availability_of(who, record, config, by_id) for who in workers_on(record)]
-    return size / (sum(rates) or config.nominal_availability or 1.0)
+    return sum(rates) or config.nominal_availability or 1.0
 
 
 def _availability_of(who: str, record: Record, config: Config, by_id: dict[str, Record]) -> float:
@@ -485,6 +522,29 @@ def _overrun_fields(
     return {
         "overruns_cycle": over.cycle if over is not None else None,
         "overruns_cycle_weeks": over.weeks if over is not None else None,
+    }
+
+
+def _box_fields(
+    record: Record, config: Config, by_id: dict[str, Record]
+) -> dict[str, float | None]:
+    """The two `Span` keys one division writes: the box, and what it divided by.
+
+    The same argument `_overrun_fields` makes one function up. A box with no
+    divisor beside it is a box whose sentence cannot say whether the headcount it
+    names is the number the arithmetic used — which is exactly how "Bet 3 over 2
+    people, which buys 3.0 weeks" came to be printed about two people who are
+    half-available each. Written here so that no constructor below can set one
+    without the other.
+
+    None for both on a record with no size of its own: every container, and every
+    pitch nobody has bet on yet. There is no box, so there is nothing the divisor
+    would be explaining.
+    """
+    budget = _budget_weeks(_duration_weeks(record, config, by_id))
+    return {
+        "budget_weeks": budget,
+        "staffed_at": None if budget is None else _staffed_at(record, config, by_id),
     }
 
 
@@ -698,7 +758,7 @@ def schedule(
                 start=record.start_date,
                 end=ended or record.start_date,
                 historical=True,
-                budget_weeks=_budget_weeks(_duration_weeks(record, config, live)),
+                **_box_fields(record, config, live),
                 # With a recorded end, the one number on any span that is a
                 # measurement rather than a forecast: two dates somebody wrote
                 # down, so the working days between them are days that were
@@ -769,7 +829,7 @@ def schedule(
     order, contradictory = _ordering({i: e for i, e in active.items() if i not in stalled}, config)
     floor = _first_working_day(today, config)
     for record_id in stalled | contradictory:
-        budget = _budget_weeks(_duration_weeks(active[record_id], config, live))
+        box = _box_fields(active[record_id], config, live)
         # A record with no duration to lay out gets no span here either. This loop
         # wrote one unconditionally, so it reached `start=end=floor,
         # unscheduled=True` before the question was ever asked below — and two
@@ -795,7 +855,7 @@ def schedule(
         #
         # "Could not be placed" and "there is nothing to place" are two different
         # answers, and only the first of them is worth a pair of dates.
-        if budget is None:
+        if box["budget_weeks"] is None:
             continue
         # The budget travels even here. It is a fact about the bet — what these
         # people at these rates buy — and it is true of a record the scheduler
@@ -809,7 +869,7 @@ def schedule(
         # parent: its own placement is the thing with no answer, while the tasks
         # inside it were placed and the days they take are a fact about the box
         # whatever the scheduler could make of the box's own dates.
-        spans[record_id] = Span(start=floor, end=floor, unscheduled=True, budget_weeks=budget)
+        spans[record_id] = Span(start=floor, end=floor, unscheduled=True, **box)
 
     booked: dict[str, list[tuple[date, date]]] = defaultdict(list)
     for record_id in order:
@@ -860,7 +920,7 @@ def schedule(
                 # comparison in `_rollup_problems` does: the bet is the box and
                 # these dates are what somebody proposes to put in it, and
                 # neither number means anything without the other beside it.
-                budget_weeks=_budget_weeks(_duration_weeks(record, config, live)),
+                **_box_fields(record, config, live),
             )
             continue
 
@@ -913,7 +973,7 @@ def schedule(
                 end=floor,
                 unscheduled=True,
                 unowned=not workers,
-                budget_weeks=_budget_weeks(duration),
+                **_box_fields(record, config, live),
             )
             explanations[record_id] = Explanation(
                 record_id=record_id,
@@ -948,7 +1008,12 @@ def schedule(
                 # ask which kind of span it has, and the answer would be "the ones
                 # with children", which is the one thing a reader of a single span
                 # cannot see.
-                "budget_weeks": _budget_weeks(duration),
+                #
+                # Through `_box_fields` and not `_budget_weeks(duration)`, which
+                # is the same number by a shorter route: the divisor has to travel
+                # beside the box wherever the box goes, and a site that could set
+                # one without the other is a site where they come apart.
+                **_box_fields(record, config, live),
                 "elapsed_weeks": _occupied_weeks(occupied[record_id], config),
             }
         )

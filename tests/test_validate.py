@@ -591,8 +591,13 @@ def test_a_project_is_not_bet_because_it_holds_bets():
     assert cycle_of(records[0], {"proj-000001": records[0]}) is None
 
 
+# The `{}` staffing slot is `staffing_of`'s wording and not a headcount. It was
+# a bare count until 2026-08-28 — "the 3.0 the bet buys at 2" — which reads as
+# the divisor and is only the divisor where everybody is at full rate: the two
+# people on `pitch-7b3e94` are half-available each, so its 3.0 came from
+# dividing by 1.0 while the sentence invited a reader to work out 3 ÷ 2.
 OVER_THE_BOX = (
-    "its tasks need {} weeks with the people on them, more than the {} the bet buys at {} — "
+    "its tasks need {} weeks with the people on them, more than the {} the bet buys over {} — "
     "cut scope, re-bet it, or put more people on it"
 )
 
@@ -637,7 +642,9 @@ def test_tasks_that_do_not_fit_in_the_weeks_the_bet_bought_say_so():
     ]
     problem = only(rolled_up(*records), "pitch-000001", field="person_weeks")
     assert problem.severity == "warning", "every remedy is a decision for a person"
-    assert problem.message == OVER_THE_BOX.format("4.6", "4.0", 2)
+    # "over 2 people" and no rate clause: both are at the nominal full rate, so
+    # the headcount IS the divisor and 8 ÷ 2 = 4.0 is arithmetic the reader can do.
+    assert problem.message == OVER_THE_BOX.format("4.6", "4.0", "2 people")
 
 
 def test_the_same_tasks_on_different_people_fit_and_say_nothing():
@@ -821,7 +828,7 @@ def test_unsized_tasks_drop_out_of_the_rollup_and_the_sized_ones_still_warn():
         Task(id="task-000003", kind="task", title="C", parent="pitch-000001"),
     ]
     said = [p for p in rolled_up(*records) if p.field == "person_weeks"]
-    assert [p.message for p in said] == [OVER_THE_BOX.format("5.0", "4.0", 1)]
+    assert [p.message for p in said] == [OVER_THE_BOX.format("5.0", "4.0", "1 person")]
 
 
 def test_a_bet_its_tasks_exactly_fill_is_level_with_the_box_and_says_nothing():
@@ -882,7 +889,7 @@ def test_the_sentence_quotes_the_box_after_the_same_rounding_it_compares_with():
         ),
     ]
     problem = only(rolled_up(*records), "pitch-000001", field="person_weeks")
-    assert problem.message == OVER_THE_BOX.format("3.0", "2.6", 1)
+    assert problem.message == OVER_THE_BOX.format("3.0", "2.6", "1 person")
 
 
 def test_a_pitch_whose_tasks_are_all_unsized_is_not_compared_against_its_own_placement():
@@ -1041,6 +1048,14 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         # rather than files written wrong on purpose, which is the argument for
         # the rule.
         #
+        # **The two sentences differ, and the pair of them is the argument for
+        # `staffing_of`.** `pitch-5e7b1c` is staffed by two people at the nominal
+        # full rate, so its "over 2 people" is the divisor and 4 ÷ 2 = 2.0 is
+        # arithmetic a reader can do. `pitch-7b3e94` is not, and both sentences
+        # said "at 2" until 2026-08-28 — so the first taught a reader that the
+        # operation is division and the second, one row down, gave them 3 ÷ 2 and
+        # a printed 3.0.
+        #
         # `pitch-6f2d18` was here as a third and is not any more, and the reason
         # is the union rather than a softened rule. Its two tasks overlap on
         # purpose — cycle 37's own record says in as many words that the lowering
@@ -1055,14 +1070,14 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
             "warning",
             "pitch-5e7b1c",
             "person_weeks",
-            OVER_THE_BOX.format("5.6", "2.0", 2),
+            OVER_THE_BOX.format("5.6", "2.0", "2 people"),
             4,
         ),
         (
             "warning",
             "pitch-7b3e94",
             "person_weeks",
-            OVER_THE_BOX.format("6.0", "3.0", 2),
+            OVER_THE_BOX.format("6.0", "3.0", "2 people, 1 full-time between them"),
             4,
         ),
         # `prod-7c2b81` carries `person_weeks`, `depends_on` and `owner` in its

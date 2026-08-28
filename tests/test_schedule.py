@@ -160,7 +160,7 @@ def test_step2_a_dependency_cycle_leaves_its_members_and_descendants_unscheduled
     assert [spans[i].unscheduled for i in caught] == [True, True, True]
     assert spans["task-aaa001"].start == spans["task-aaa001"].end == MONDAY
     assert spans["task-aaa004"] == Span(
-        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, elapsed_weeks=1.0
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
     )
 
 
@@ -209,7 +209,7 @@ def test_step3_done_work_with_no_recorded_end_is_a_point_marker_or_no_span_at_al
     spans, _ = run([dated, task("aaa002", status="done")])
     july = date(2026, 7, 1)
     assert spans["task-aaa001"] == Span(
-        start=july, end=july, historical=True, budget_weeks=1.0, elapsed_weeks=None
+        start=july, end=july, historical=True, budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=None
     )
     assert "task-aaa002" not in spans
 
@@ -241,7 +241,7 @@ def test_step3_a_done_parent_stays_historical_even_with_a_live_child():
 def test_step4_duration_is_the_stated_size_at_nominal_availability():
     spans, _ = run([task("aaa001", size=2.0)])
     assert spans["task-aaa001"] == Span(
-        start=MONDAY, end=date(2026, 8, 28), budget_weeks=2.0, elapsed_weeks=2.0
+        start=MONDAY, end=date(2026, 8, 28), budget_weeks=2.0, staffed_at=1.0, elapsed_weeks=2.0
     )
 
 
@@ -262,7 +262,7 @@ def test_step4_a_record_nobody_has_sized_gets_no_span_at_all():
     # And it books nothing: the sized task starts on the floor rather than after
     # a week of somebody else's invented work.
     assert spans["task-aaa002"] == Span(
-        start=MONDAY, end=date(2026, 8, 28), budget_weeks=2.0, elapsed_weeks=2.0
+        start=MONDAY, end=date(2026, 8, 28), budget_weeks=2.0, staffed_at=1.0, elapsed_weeks=2.0
     )
 
 
@@ -291,7 +291,12 @@ def test_step4_an_unsized_child_leaves_its_parent_the_dates_of_the_rest():
             # at two weeks. `elapsed_weeks` is deliberately NOT neutralised here —
             # the parent's dates are exactly the one sized child's, so its length
             # has to be too, and that is half of what this test is claiming.
+            #
+            # `staffed_at` goes with it, because the two are one division:
+            # `_box_fields` writes both or neither, and a box of None beside a
+            # divisor would be a denominator explaining nothing.
             "budget_weeks": None,
+            "staffed_at": None,
         }
     )
 
@@ -318,7 +323,7 @@ def test_a_pitch_whose_children_are_all_unsized_is_not_scheduled_as_a_leaf():
     spans, _ = run(records)
     assert "pitch-bbb001" not in spans, "a container with nothing placeable under it draws nothing"
     assert spans["task-aaa003"] == Span(
-        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, elapsed_weeks=1.0
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
     )
 
 
@@ -737,7 +742,7 @@ def test_step6_a_past_start_date_does_not_pull_work_into_the_past():
     which would schedule an item whose start date was last week into last week."""
     spans, _ = run([task("aaa001", start_date=date(2026, 8, 13), size=2.0)])
     assert spans["task-aaa001"] == Span(
-        start=MONDAY, end=date(2026, 8, 28), budget_weeks=2.0, elapsed_weeks=2.0
+        start=MONDAY, end=date(2026, 8, 28), budget_weeks=2.0, staffed_at=1.0, elapsed_weeks=2.0
     )
 
 
@@ -767,6 +772,7 @@ def test_step7_one_item_per_worker_at_a_time_but_unowned_work_is_unlimited():
         # Nobody on it is one notional person at the nominal rate, which is what
         # `_duration_weeks` divides by — so an unowned week is still a week.
         budget_weeks=1.0,
+        staffed_at=1.0,
         elapsed_weeks=1.0,
     )
     assert spans["task-aaa002"].start == MONDAY
@@ -777,7 +783,7 @@ def test_step7_assignees_consume_capacity_and_are_not_unowned():
     records = [task("aaa001", owner=None, assignees=["cy"]), task("aaa002", owner="cy")]
     spans, _ = run(records)
     assert spans["task-aaa001"] == Span(
-        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, elapsed_weeks=1.0
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
     )
     assert spans["task-aaa002"].start == date(2026, 8, 24)
 
@@ -794,7 +800,7 @@ def test_step8_a_parent_spans_from_its_first_child_to_its_last():
     # each, on different people, so they run side by side. `_rollup_problems` is
     # the reader, and this is the case where it stays quiet.
     assert spans["pitch-bbb001"] == Span(
-        start=MONDAY, end=date(2026, 8, 28), budget_weeks=4.0, elapsed_weeks=2.0
+        start=MONDAY, end=date(2026, 8, 28), budget_weeks=4.0, staffed_at=1.0, elapsed_weeks=2.0
     )
 
 
@@ -926,7 +932,9 @@ def test_regression_a_parent_does_not_double_book_the_owner_of_its_only_child():
     # Identical down to the two weeks numbers: the pitch was bet at the same size
     # as its only child and holds the same person, so the box and the contents are
     # the same two weeks whichever end you read them from.
-    child = Span(start=MONDAY, end=date(2026, 8, 28), budget_weeks=2.0, elapsed_weeks=2.0)
+    child = Span(
+        start=MONDAY, end=date(2026, 8, 28), budget_weeks=2.0, staffed_at=1.0, elapsed_weeks=2.0
+    )
     assert spans["pitch-bbb001"] == spans["task-aaa001"] == child
 
 
@@ -1451,7 +1459,7 @@ def test_a_record_too_large_for_the_calendar_is_unscheduled_and_says_why():
     assert "runs past the end of the calendar" in explanations["task-aaa001"].text
     # The plan around it is untouched: one absurd number is one absurd row.
     assert spans["task-aaa002"] == Span(
-        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, elapsed_weeks=1.0
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
     )
 
 
@@ -1482,6 +1490,7 @@ def test_a_done_date_at_the_end_of_the_calendar_costs_its_dependent_and_nothing_
         end=date.max,
         historical=True,
         budget_weeks=1.0,
+        staffed_at=1.0,
         # No length: this record states no end date, so it is a point marker, and
         # one day read back as a fifth of a week is a measurement of nothing.
         elapsed_weeks=None,
@@ -1489,7 +1498,7 @@ def test_a_done_date_at_the_end_of_the_calendar_costs_its_dependent_and_nothing_
     assert spans["task-aaa002"].unscheduled
     assert "runs past the end of the calendar" in explanations["task-aaa002"].text
     assert spans["task-aaa003"] == Span(
-        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, elapsed_weeks=1.0
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
     )
 
 
@@ -1511,7 +1520,7 @@ def test_a_worker_booked_to_the_end_of_the_calendar_does_not_spin():
     assert time.monotonic() - started < 5.0
     assert spans["task-aaa002"].unscheduled
     assert spans["task-aaa003"] == Span(
-        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, elapsed_weeks=1.0
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
     )
 
 
@@ -1528,7 +1537,7 @@ def test_a_size_that_is_not_a_number_is_one_bad_row(size: float):
 
     assert spans["task-aaa001"].unscheduled
     assert spans["task-aaa002"] == Span(
-        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, elapsed_weeks=1.0
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
     )
 
 
@@ -1612,7 +1621,7 @@ def test_a_loop_that_only_inheritance_closes_costs_those_records_and_no_others()
 
     assert any(spans[i].unscheduled for i in ("pitch-aaa002", "task-bbb002"))
     assert spans["task-ccc001"] == Span(
-        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, elapsed_weeks=1.0
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
     ), "an unrelated task keeps its dates"
 
 
@@ -1628,7 +1637,7 @@ def test_a_project_with_no_pitches_draws_nothing():
 
     assert "proj-000001" not in spans
     assert spans["task-aaa001"] == Span(
-        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, elapsed_weeks=1.0
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
     )
 
 
@@ -1644,7 +1653,11 @@ def test_a_project_with_pitches_is_still_their_rollup():
     # project carries no appetite of its own, so `budget_weeks` is None on it while
     # its only pitch was bet at a week. The dates and the rolled-up length are the
     # pitch's exactly, which is what "still their rollup" means.
-    assert spans["proj-000001"] == spans["pitch-aaa001"].model_copy(update={"budget_weeks": None})
+    assert spans["proj-000001"] == spans["pitch-aaa001"].model_copy(
+        # And the divisor with it: `_box_fields` writes the box and what it was
+        # divided by together, so a record with no box has neither.
+        update={"budget_weeks": None, "staffed_at": None}
+    )
 
 
 def test_work_in_progress_starts_when_it_started_and_not_today():

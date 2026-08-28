@@ -1984,13 +1984,53 @@ def workers_on(record: Record) -> list[str]:
 
     Here rather than in `schedule.py`, where it was written, because two things
     now ask it. The scheduler divides a size by these people's availabilities to
-    get a duration; `_rollup_problems` names how many of them there are in the
-    sentence it yields, since "the 4.0 the bet buys at 2" is unreadable without
-    the 2. Both readings have to come off the same list or the sentence explains
-    a number computed from a different set of names than the one it counts.
+    get a duration; `staffing_of` below names how many of them there are in the
+    sentence three pages print, since "the 4.0 the bet buys" is unreadable
+    without them. Both readings have to come off the same list or the sentence
+    explains a number computed from a different set of names than the one it
+    counts.
     """
     named = ([record.owner] if record.owner else []) + list(record.assignees)
     return list(dict.fromkeys(named))
+
+
+def staffing_of(record: Record, staffed_at: float | None) -> str:
+    """Who the appetite was divided by, in words a reader can do the division with.
+
+    **The sentence this replaces was arithmetic nobody could reproduce.** All
+    three surfaces that quote the box said "Bet 3 over 2 people, which buys 3.0
+    weeks" — a headcount beside a number that came from dividing by the summed
+    AVAILABILITY of those people, which is 1.0 on `pitch-7b3e94` because both of
+    them are half-available that cycle. `pitch-5e7b1c` two rows above it says "4
+    over 2 people, which buys 2.0", which teaches a reader that the operation is
+    division, and then the next row breaks the lesson. The design sanctioned the
+    wording (§3 of `design/time-model.md`), so this was the design's own gap
+    rather than a slip in one page.
+
+    Where everybody is at full rate the headcount IS the divisor and the short
+    sentence is honest, so it stays: adding "2 people, 2 full-time between them"
+    to every ordinary bet would be a clause that says nothing on almost every row
+    it appeared on, which is how a sentence stops being read. Where they differ,
+    the divisor is named and the reader can divide.
+
+    `staffed_at` is `Span.staffed_at`, the denominator the scheduler actually
+    used. None where the span carries no box — a container, or a pitch nobody has
+    bet on yet — and then there is no division to explain and the headcount alone
+    is all this can honestly say.
+
+    One function and not a phrase per page, because the three of them were
+    deliberately unified onto one sentence and a fix applied to two of them is the
+    same defect with a smaller blast radius. `:g` on the rate rather than the
+    `.1f` used on the weeks: availabilities are figures somebody typed into a
+    cycle and summed, so 0.25 and 0.5 come to 0.75, which `.1f` would round to 0.8
+    and make the division wrong again in the one sentence written to make it
+    right.
+    """
+    people = len(workers_on(record)) or 1
+    named = "1 person" if people == 1 else f"{people} people"
+    if staffed_at is None or abs(staffed_at - people) < 1e-9:
+        return named
+    return f"{named}, {staffed_at:g} full-time between them"
 
 
 # --------------------------------------------------------------------------- #
@@ -3319,21 +3359,23 @@ def _rollup_problems(
         return
     if contents <= span.budget_weeks:
         return
-    # `workers_on` and not `assignees`, because that is the list the scheduler
-    # divided the appetite by to get the budget in the first place. Counting a
-    # different set of names here would explain the number with the wrong one.
-    # Nobody on it is one notional person, which is what `_duration_weeks`
-    # assumed when it computed the budget being quoted.
-    people = len(workers_on(record)) or 1
-    # One decimal on both, and not the `:g` the rest of this module uses on sizes
-    # somebody typed. These two are computed reals — an eight-week bet over two
-    # people at 60% is 6.666666666666667 — and `:g` would put five decimal places
-    # of arithmetic noise into a sentence a person is meant to act on.
+    # Who the appetite was divided by, through `staffing_of` so that this
+    # sentence and the two the pages print name it the same way. It used to be
+    # `len(workers_on(record))` written out here — "the 3.0 the bet buys at 2" —
+    # which is the headcount and not the divisor: `pitch-7b3e94`'s two people are
+    # half-available each, so the 3.0 came from dividing by 1.0 and the sentence
+    # invited a reader to work out 3 ÷ 2 and get a different answer.
+    #
+    # One decimal on the weeks, and not the `:g` the rest of this module uses on
+    # sizes somebody typed. These two are computed reals — an eight-week bet over
+    # two people at 60% is 6.666666666666667 — and `:g` would put five decimal
+    # places of arithmetic noise into a sentence a person is meant to act on.
     yield (
         "warning",
         _SIZE_FIELD.get(record.kind),
         f"its tasks need {contents:.1f} weeks with the people on them, more than "
-        f"the {span.budget_weeks:.1f} the bet buys at {people} — "
+        f"the {span.budget_weeks:.1f} the bet buys over "
+        f"{staffing_of(record, span.staffed_at)} — "
         "cut scope, re-bet it, or put more people on it",
         4,
     )

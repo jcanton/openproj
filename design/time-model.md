@@ -256,10 +256,27 @@ changed.
 
 **One arithmetic, not two.** `_rollup_problems` moves to the calendar comparison
 with the cell, and its sentence with it — "its tasks need 4.5 weeks with the
-people on them, more than the 4.0 the bet buys at 2 — cut scope, re-bet it, or
-put more people on it", which names the third remedy the old sentence could not
-see. It keeps the shape it already has: a warning and never a blocker, because
-every remedy is a decision for a person.
+people on them, more than the 4.0 the bet buys over 2 people — cut scope, re-bet
+it, or put more people on it", which names the third remedy the old sentence
+could not see. It keeps the shape it already has: a warning and never a blocker,
+because every remedy is a decision for a person.
+
+**And the sentence names the number it divided by, not the headcount.** This said
+"buys at 2" and the cell said "Bet 3 over 2 people, which buys 3.0 weeks", which
+is arithmetic a reader cannot reproduce: the divisor is the summed availability
+above, and `pitch-7b3e94`'s two people are half-available each, so the 3.0 came
+from dividing by 1.0. Worse together than apart — `pitch-5e7b1c` reads "4 over 2
+people, which buys 2.0", which teaches the reader that the operation is division,
+and the very next row breaks the lesson.
+
+Where everybody is at full rate the headcount IS the divisor and the short
+sentence is honest, so it stays: a rate clause on every ordinary bet is a clause
+that says nothing on almost every row it appears on. Where they differ, the
+divisor is named — "Bet 3 over 2 people, 1 full-time between them, which buys 3.0
+weeks". One function, `staffing_of` (`model.py`), reaches all three surfaces; the
+scheduler carries the denominator it used on `Span.staffed_at`, beside the box it
+produced, for the same reason `budget_weeks` travels there — `model.py` cannot
+import `schedule.py`.
 
 `_tasks_add_up_to` claims in its docstring to be "the same number
 `_rollup_problems` compares against the appetite … so the sentence on the page

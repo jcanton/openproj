@@ -7,6 +7,7 @@ guesses, and which work is late.
 """
 
 import json
+import math
 import re
 from datetime import date
 from pathlib import Path
@@ -5481,6 +5482,105 @@ def test_the_number_the_page_prints_in_tasks_is_the_number_check_warns_on():
             assert f"its tasks need {printed:.1f}" in cell["why"], (
                 f"{name}: and the tooltip quotes it in the same words"
             )
+
+
+def test_the_box_the_bet_buys_names_the_number_it_was_divided_by():
+    """**The sentence is arithmetic, so a reader has to be able to do it.**
+
+    All three surfaces said "Bet 3 over 2 people, which buys 3.0 weeks" — a
+    HEADCOUNT beside a number that came from dividing by the summed availability,
+    which is 1.0 when both of those people are half-available. The corpus reads
+    worse than that sentence alone does: `pitch-5e7b1c` says "4 over 2 people,
+    which buys 2.0", teaching the reader that the operation is division, and
+    `pitch-7b3e94` breaks the lesson on the next row.
+
+    So where everybody is at full rate the headcount IS the divisor and the short
+    sentence stays; where they are not, the sentence says what it divided by. Both
+    cases are here, and the division is done in the test rather than asserted as a
+    literal — a pinned string cannot tell a sentence that adds up from one that
+    does not.
+
+    All three surfaces together, for the reason the test above this one gives:
+    they were deliberately unified onto one sentence, and a fix applied to two of
+    them is the same defect with a smaller blast radius.
+    """
+    from openproj.model import Config, Cycle, Pitch, Task, validate_all
+    from openproj.render import STATIC, _fact_rows
+    from openproj.render.rows import _rollup
+
+    def plan(availability: dict[str, float]) -> tuple[list, Config]:
+        records = [
+            Pitch(
+                id="pitch-000001",
+                kind="pitch",
+                title="Q",
+                cycle=37,
+                person_weeks=3.0,
+                assignees=["jackdawrie", "merganserly"],
+            ),
+            *(
+                Task(
+                    id=f"task-00000{n}",
+                    kind="task",
+                    title="T",
+                    parent="pitch-000001",
+                    person_weeks=3.0,
+                    assignees=[who],
+                )
+                for n, who in enumerate(("jackdawrie", "merganserly"), start=1)
+            ),
+        ]
+        cycle = Cycle(
+            cycle=37,
+            starts_on=date(2026, 8, 17),
+            reviews_on=date(2026, 9, 14),
+            availability=availability,
+        )
+        return records, Config().with_plans([cycle])
+
+    full = {"jackdawrie": 1.0, "merganserly": 1.0}
+    half = {"jackdawrie": 0.5, "merganserly": 0.5}
+    for name, rates, expected in (
+        # Two full-time people divide a three-week bet into 1.5 weeks, and "over 2
+        # people" is that divisor written out. Nothing is added.
+        ("everybody full-time", full, "Bet 3 over 2 people"),
+        # Two half-time people are one full-time person between them, so the bet
+        # buys three weeks and not one and a half. This is the sentence that used
+        # to read exactly like the one above it.
+        ("everybody at a half", half, "Bet 3 over 2 people, 1 full-time between them"),
+    ):
+        records, config = plan(rates)
+        index = build_index(records, config, date(2026, 8, 17))
+        span = index.spans["pitch-000001"]
+        cell = _rollup(index, "pitch-000001")
+        row = next(
+            r
+            for r in _fact_rows(index, index.plan["pitch-000001"], STATIC)
+            if r["label"].startswith("Appetite")
+        )
+        said = [
+            p
+            for p in validate_all(records, config, index.spans, date(2026, 8, 17))
+            if p.record_id == "pitch-000001" and p.field == "person_weeks"
+        ]
+
+        # The clause is the same words in the cell and on the page, which is what
+        # "one sentence" means.
+        held = f"{expected}, which buys {span.budget_weeks:.1f} weeks"
+        assert cell["why"].startswith(held + ";"), f"{name}: {cell['why']}"
+        assert held + " · " in row["display"], f"{name}: {row['display']}"
+        # And the warning quotes the same box and the same staffing.
+        assert said, f"{name}: two three-week tasks do not fit a three-week bet"
+        assert f"the {span.budget_weeks:.1f} the bet buys over {expected.split('over ')[1]}" in (
+            said[0].message
+        ), f"{name}: {said[0].message}"
+
+        # The arithmetic itself: three person-weeks over the divisor the sentence
+        # names is the box the sentence quotes, up to the whole working days the
+        # scheduler lays a duration out over.
+        divisor = sum(rates.values())
+        assert span.staffed_at == pytest.approx(divisor), name
+        assert span.budget_weeks == pytest.approx(math.ceil(3.0 / divisor * 5) / 5), name
 
 
 def test_the_progress_column_appears_only_once_a_plan_has_a_checklist(seed_index: Index):
