@@ -2594,10 +2594,17 @@ def test_a_problem_marks_the_row_and_the_cell_that_caused_it(page: str):
     """The reason a row is a problem lived in a native `title` on the `<tr>`, and
     a table is not a thing anybody hovers to find out.
 
-    A field the table has no column for — `start_date`, `person_weeks` — still
-    has to be findable, so its complaint falls to the id cell. A glyph on a
-    column nobody can see is a row that says something is wrong and will not say
-    what.
+    A field the table really has no column for — `parent`, which the tree draws
+    instead of a column — still has to be findable, so its complaint falls to the
+    id cell. A glyph on a column nobody can see is a row that says something is
+    wrong and will not say what.
+
+    The routing itself is asserted where it happens, by driving the script over a
+    corpus that carries the problems:
+    `test_a_complaint_about_a_date_lands_on_the_date_cell`. What is checked here
+    is that the map is SHIPPED rather than written out in JavaScript — the two
+    hand-written halves of one mapping are what left the Start and End columns
+    unreachable — and that the fallback under it is still the id cell.
     """
     body = script(page)
 
@@ -2606,7 +2613,7 @@ def test_a_problem_marks_the_row_and_the_cell_that_caused_it(page: str):
     glyph = r'class="sev-mark sev-mark-\$\{SEV_CLASS\[mark\.severity\]\}" role="img"'
     assert re.search(glyph, body)
     assert 'aria-label="${esc(note)}"' in body, "the glyph's name is the message"
-    assert "const MARK_COLUMN = {person_weeks: 'size'," in body
+    assert re.search(r"const MARK_COLUMN = \{\"", body), "the map is data, not a literal"
     assert "keys.includes(problem.field) ? problem.field : 'id'" in body
 
 
@@ -5617,6 +5624,69 @@ def test_a_blocker_that_is_done_is_not_a_blocker(client: TestClient, repo_path: 
     assert blockers_of(TASK) == 1
     assert save(client, OTHER, {"status": "shelved"}).status_code == 200
     assert blockers_of(TASK) == 0
+
+
+def test_a_complaint_about_a_date_lands_on_the_date_cell(client: TestClient, repo_path: Path):
+    """**The cell a mark hangs on is the cell the mark tells you to edit.**
+
+    `MARK_COLUMN` routed `person_weeks` and `depends_on` to their columns and
+    knew nothing about the two dates, while `_COLUMN_FIELD` — the same mapping,
+    written down separately and one direction over — knew `start` was
+    `start_date`. So the table drew a Start column and an End column that no
+    problem about a start or an end could reach: every one of them fell through
+    to `'id'`, under a tooltip whose last line says the fix "is to edit the cell
+    the sentence is on".
+
+    Driven rather than grepped, and asserted on the WHOLE set of marked columns
+    per row rather than on the presence of one. The rows are built in the
+    browser, so which cell carries a glyph exists in no rendered file — and a
+    substring of `MARK_COLUMN` cannot tell a route that works from a route that
+    is written down and then overridden by the fallback beneath it.
+
+    The two problems are the corpus's own: `DRIFTED` is a ready task whose stated
+    start date has gone by, and `DONE` is a done task with no `end_date` (a
+    warning rather than a blocker here only because the seed declares
+    `schema_version: 2`, which is what grandfathering is for). Both are read off
+    the payload rather than typed, so a change to either rule's wording moves
+    this test with it instead of past it.
+    """
+    from test_web import DONE, DRIFTED, DRIFTED_SEED
+
+    commit_directly(repo_path, DRIFTED_SEED, "a task whose date has gone by")
+    page = client.get("/table").text
+    problems = json.loads(
+        re.search(r'<script id="payload" type="application/json">(.*?)</script>', page, re.S).group(
+            1
+        )
+    )["problems"]
+    said = {(p["record_id"], p["field"]): p["drawn"] for p in problems}
+    assert (DRIFTED, "start_date") in said, said
+    assert (DONE, "end_date") in said, said
+
+    answer = drive_table(
+        page,
+        "(() => {"
+        "  const out = {};"
+        "  for (const tr of tbody.querySelectorAll('tr[data-id]')) {"
+        "    const marks = {};"
+        "    for (const td of tr.querySelectorAll('td[data-col]')) {"
+        "      const glyph = td.querySelector('.sev-mark');"
+        "      if (glyph) marks[td.getAttribute('data-col')] ="
+        "        glyph.getAttribute('aria-label');"
+        "    }"
+        "    out[tr.getAttribute('data-id')] = marks;"
+        "  }"
+        "  return out;"
+        "})()",
+    )
+    drawn = answer["value"]
+
+    # The whole set, so that a mark left behind on the id cell fails here too.
+    assert set(drawn[DRIFTED]) == {"assignees", "start"}, drawn[DRIFTED]
+    assert set(drawn[DONE]) == {"prs", "end"}, drawn[DONE]
+    # And it is the validator's own sentence on the cell, not some other row's.
+    assert drawn[DRIFTED]["start"] == said[(DRIFTED, "start_date")]
+    assert drawn[DONE]["end"] == said[(DONE, "end_date")]
 
 
 def test_only_a_cell_with_something_in_the_way_is_tinted(page: str):

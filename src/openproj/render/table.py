@@ -50,6 +50,27 @@ _TABLE_WHY = {
 }
 _TABLE_DERIVED = tuple(_TABLE_WHY)
 
+# Every column of this table whose header is not the name of the field beneath
+# it, written down once and read in both directions below. A column and a field
+# that happen to share a word need no entry: `owner` is `owner` everywhere, and
+# listing the identities would be a list to keep in step with `_TABLE_COLUMNS`.
+#
+# It is one map because it was two, and the two disagreed in exactly the way
+# this repository keeps being bitten by. `_COLUMN_FIELD` knew `start` was
+# `start_date`; the script's `MARK_COLUMN` knew `person_weeks` was `size` and
+# `depends_on` was `blocked_by`, and neither of them knew about the dates. So
+# every problem the validator reports about a start or an end — a start date
+# that has passed, an end missing at `done`, an end before its start, a date
+# outside every cycle this plan has dated — hung its mark on the ID cell, while
+# the tooltip on that mark says the fix "is to edit the cell the sentence is
+# on". The reader was sent to the one cell that cannot be wrong.
+_COLUMN_SHOWS = {
+    "size": "person_weeks",
+    "start": "start_date",
+    "end": "end_date",
+    "blocked_by": "depends_on",
+}
+
 # The two columns that SHOW a derived value and EDIT the written one underneath
 # it. jcanton, 2026-08-27: "the appetite is not an editable field in the /table
 # (dunno why) make it editable in /table please. start date as well".
@@ -70,7 +91,23 @@ _TABLE_DERIVED = tuple(_TABLE_WHY)
 # puts `person_weeks` on any rung that is not `sized` and `start_date` on any
 # rung that does not schedule. A product's size cell has never been editable and
 # still is not.
-_COLUMN_FIELD = {"size": "person_weeks", "start": "start_date"}
+#
+# Derived from the map above rather than listed beside it, and `_TABLE_DERIVED`
+# is the whole of the difference: a column with a sentence in `_TABLE_WHY` has no
+# editor at all — `whyOf` closes the cell before `EDITABLE` is ever consulted —
+# so `end` and `blocked_by` drop out here for the reason they were written into
+# `_TABLE_WHY` in the first place. Listing this pair by hand instead is what
+# would let a sixth column be added above and silently open an editor on a
+# forecast, which is the thing this comment spends four paragraphs refusing.
+_COLUMN_FIELD = {
+    column: field for column, field in _COLUMN_SHOWS.items() if column not in _TABLE_DERIVED
+}
+
+# The same map read the other way: a `Problem` names a FIELD and a mark hangs on
+# a COLUMN, so the browser needs the inverse of what the editors need. Inverted
+# here rather than typed out in the script, because two hand-written halves of
+# one mapping is precisely how the dates came to have a route in and none back.
+_MARK_COLUMN = {field: column for column, field in _COLUMN_SHOWS.items()}
 
 # How a rollup's size cell reads against the box the bet bought, as one mark per
 # state of `_rollup` (`rows.py`). Colour is the first channel and this is the
@@ -320,10 +357,17 @@ const human = value => HUMAN[value] ?? (value ?? '');
 // it at runtime. One column out of step shifts every cell one column left.
 const keys = {{ columns|map(attribute=0)|list|tojson }};
 
-// Which column carries a complaint about a field the table has no column for.
-// Anything still unplaced falls to the id cell, because a row that says
-// something is wrong and will not say what is worse than no marker at all.
-const MARK_COLUMN = {person_weeks: 'size', depends_on: 'blocked_by'};
+// Which column carries a complaint about a field whose column is not called by
+// its name — `_COLUMN_SHOWS` inverted, shipped rather than written out here.
+// This was a literal of two entries and `_COLUMN_FIELD` was a literal of two
+// others, so the table drew a Start column and an End column that no problem
+// about a start or an end could ever reach.
+//
+// A field with no column at all — `parent`, which the tree draws instead, and
+// the inbox fields no planned row carries — still falls to the id cell, because
+// a row that says something is wrong and will not say what is worse than no
+// marker at all.
+const MARK_COLUMN = {{ mark_column|tojson }};
 const SEV_CLASS = {blocker: 'blocker', warning: 'warn'};
 
 let MARKS = {};     // record id -> column -> {severity, messages}
@@ -4312,19 +4356,19 @@ def _new_row_fields() -> dict[str, dict[str, str]]:
     is asked of the same two places rather than written down a third time:
     `EDITABLE` says which fields a person owns at all, and `model_fields` says
     which of them this kind has. A project has no `person_weeks`, so it gets no
-    box under Appetite; `start_date` would be here if the table had a column
-    for it, and the day it does this map grows the entry on its own.
+    box under Appetite.
 
     A column missing from a kind's map is a column that kind cannot be typed into
     — which is three different sentences and all of them true: `id` is the
-    server's, `start` is the scheduler's, and Appetite is a thing a project does
+    server's, `end` is the scheduler's, and Appetite is a thing a project does
     not have. The row draws each of them differently and says which it is.
 
-    `size` is the one column that is not simply its own field, which is why no
-    stored row lets it be typed into (`_TABLE_WHY`) — but a row that does not
-    exist yet has nothing derived standing in its cell, so there is nothing here
-    to commit by accident. Typing 3 into it writes `person_weeks: 3`, and the
-    cell goes back to being the scheduler's the moment the row is a record.
+    `size` and `start` are the columns that are not simply their own field, which
+    is why the derived value in a stored row's cell is never what an editor opens
+    on (`_COLUMN_SHOWS`) — and a row that does not exist yet has nothing derived
+    standing in either cell, so there is nothing here to commit by accident.
+    Typing 3 into Appetite writes `person_weeks: 3`, and the cell goes back to
+    being the scheduler's the moment the row is a record.
     """
     per_kind: dict[str, dict[str, str]] = {}
     # Planned rungs only: the table is a plan view, and its draft row offers
@@ -4380,6 +4424,7 @@ def render_table(
         why=_TABLE_WHY,
         rollup_glyph=_ROLLUP_GLYPH,
         fields=_COLUMN_FIELD,
+        mark_column=_MARK_COLUMN,
         shows=_TABLE_SHOWS,
         # The sentence about this view, in the slot the graph and the timeline
         # already put theirs in — jcanton, 2026-08-25, asking for the table to be
