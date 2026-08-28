@@ -199,6 +199,9 @@ def _record_row(index: Index, record_id: str) -> dict:
         "product": _product_of(record, index.records),
         "predicates": predicates_of(index, record_id),
         "search": index.search_blob[record_id],
+        # See `_row` in `rows.py`: the narrow haystack `bare` reads for a
+        # subsequence, which is the id and the title and nothing else.
+        "name": index.name_blob[record_id],
     }
 
 

@@ -204,6 +204,25 @@ function queryFields(row) {
   return fields;
 }
 
+// Every character that separates one term from the next, written out rather than
+// left to `/\s/` here and `str.isspace()` in `_terms` (`query.py`). Those two
+// disagree in BOTH directions and always have: `/\s/` matches U+FEFF and not
+// U+0085 or U+001C-U+001F, and `str.isspace()` is the exact reverse on all four.
+// It was harmless while a bare word was a substring — nobody found `\ufeffsmcl`
+// on either side — and stopped being harmless when `found` started matching
+// where `includes` did not: paste a query out of a spreadsheet cell carrying a
+// byte-order mark and `\ufefftitle:smcl` is a field query here and a bare word
+// there, so the link and the box answer differently for a character nobody can
+// see. The union of the two, so nothing that used to split stops splitting;
+// splitting more can only narrow, because adjacency is AND.
+//
+// Spelled in escapes and never as the characters themselves: most of these are
+// invisible, so written out they are a line no reviewer can check and no editor
+// can be trusted not to trim. `query.py`'s `_SPACE` is the same list.
+const SPACE = '\t\n\v\f\r \u001c\u001d\u001e\u001f\u0085\u00a0\u1680' +
+  '\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a' +
+  '\u2028\u2029\u202f\u205f\u3000\ufeff';
+
 // `[text, wasQuoted]` per token, with the brackets as their own. Quoting is
 // tracked and not forgotten: `"and"` is a word rather than the operator, and the
 // colon inside `title:"a: b"` belongs to the value. The NUL marks the one colon
@@ -212,10 +231,11 @@ function queryTerms(text) {
   const tokens = [];
   let i = 0;
   while (i < text.length) {
-    if (/\s/.test(text[i])) { i++; continue; }
+    if (SPACE.includes(text[i])) { i++; continue; }
     if (text[i] === '(' || text[i] === ')') { tokens.push([text[i], false]); i++; continue; }
     let buffer = '', quoted = false, colon = -1;
-    while (i < text.length && !/\s/.test(text[i]) && text[i] !== '(' && text[i] !== ')') {
+    while (i < text.length && !SPACE.includes(text[i])
+        && text[i] !== '(' && text[i] !== ')') {
       if (text[i] === '"') {
         const closes = text.indexOf('"', i + 1);
         if (closes < 0) throw new QueryError('a quote is opened and never closed');
@@ -242,10 +262,25 @@ function queryTerm(raw, quoted) {
     const name = raw.slice(0, colon).toLowerCase(), value = raw.slice(colon + 1);
     if (!name || !value)
       throw new QueryError('a field and a value both have to be there, as `field:value`');
+    // Lowered and never `plain`ed. `plain('(none)')` is `'none'` — a status
+    // somebody could have typed — so plaining here would hand `answers` a value
+    // that no longer equals NO_VALUE, and `cycle:"(none)"` would quietly become a
+    // search for cycles containing "none". Only FREE_TEXT values are plained, and
+    // there, below the sentinel test.
     return {field: ALIASES[name] || name, value: value.toLowerCase()};
   }
   if (!raw) throw new QueryError('there is nothing between the quotes');
-  return {word: raw.toLowerCase()};
+  // Normalised once per term, here, and not once per row: `ASKED` below memoises
+  // the whole parse per query string, so a keystroke that does not change the
+  // text normalises nothing.
+  //
+  // `sought` and not `plain`, because stripping the separators out of a needle
+  // can TRUNCATE it as well as empty it: `plain('C++')` is `'c'`, a legal needle
+  // that answered 27 of the demo plan's 28 rows. A word left with nothing, or
+  // with a stub, becomes the empty word, which `bare` answers nothing for — not
+  // a parse error, because somebody typing punctuation is mid-sentence rather
+  // than asking something unreadable.
+  return {word: sought(raw)};
 }
 
 function queryTree(text) {
@@ -316,22 +351,43 @@ function queryTree(text) {
   return node;
 }
 
-function answers(node, fields, text) {
+// `text` is the whole blob a record is known by and `names` is its id and title
+// alone — two haystacks, because only the substring tier may read the first.
+// `bare` in the shell's script carries the argument.
+function answers(node, fields, text, names) {
   if (node === null) return true;
-  if ('word' in node) return text.includes(node.word);
-  if ('not' in node) return !answers(node.not, fields, text);
+  if ('word' in node) return !!bare(node.word, text, names);
+  if ('not' in node) return !answers(node.not, fields, text, names);
   if ('both' in node)
-    return answers(node.both[0], fields, text) && answers(node.both[1], fields, text);
+    return answers(node.both[0], fields, text, names)
+      && answers(node.both[1], fields, text, names);
   if ('either' in node)
-    return answers(node.either[0], fields, text) || answers(node.either[1], fields, text);
+    return answers(node.either[0], fields, text, names)
+      || answers(node.either[1], fields, text, names);
   // A field this plan has not got: nothing, and not everything. Filter state is
   // hand-editable, and a typo that widens a result set is worse than one that
   // visibly empties it.
   if (!(node.field in fields)) return false;
   const held = fields[node.field];
   if (node.value === NO_VALUE) return !held.length;
-  if (FREE_TEXT.includes(node.field)) return held.some(value => value.includes(node.value));
-  return held.includes(node.value);
+  // Normalised here, below the sentinel test rather than at parse time, for the
+  // reason written over `queryTerm`'s field branch — and hoisted out of the
+  // loop, because it is one answer for the whole query while `held` is walked
+  // once per row per keystroke. `text` is not consulted: a `title:` or `pr:`
+  // term has already said which field it means, so nothing can wander.
+  if (FREE_TEXT.includes(node.field)) {
+    const needle = sought(node.value);
+    return held.some(value => found(needle, plain(value)));
+  }
+  // A vocabulary, matched WHOLE — but plained on both sides first, because the
+  // separators stopped counting for a bare word and half a language cannot be
+  // separator-blind. Equality, so it stays whole: `plain('3')` and `plain('30')`
+  // are still two strings, and `cycle:3` still never answers cycle 30. `plain`
+  // and not `sought`, because `sought`'s floor exists to stop a stub WIDENING a
+  // loose search and equality never widens; the guard equality does need is the
+  // empty one, so `tag:#` cannot ask for a tag that plains to nothing.
+  const want = plain(node.value);
+  return !!want && held.some(value => plain(value) === want);
 }
 
 // Parsed once per query and not once per row: the table redraws on every
@@ -364,9 +420,18 @@ function matches(row) {
   // line used to read `row.title + ' ' + row.tags`, which is neither what
   // `apply_filters` searched nor what the placeholder promised: a table that
   // quietly searches less than the link you were sent is a table that lies twice.
+  //
+  // `row.search` arrives `plain`ed as well as lowered — separators already gone,
+  // one space-delimited chunk per field value — and `row.name` beside it is the
+  // same for the id and title alone, which is all the subsequence tier reads.
+  // Both are built once on the server, so a BARE word costs a keystroke nothing
+  // but the two walks. Every `field:value` term is the other case: its haystack
+  // is `held`, the row's own unnormalised values, which `answers` plains per row
+  // — see `searchable`'s docstring in `index.py` for why there is no blob to
+  // carry those in.
   const query = asked();
   if (query.error) return false;
-  if (!answers(query.tree, queryFields(row), row.search || '')) return false;
+  if (!answers(query.tree, queryFields(row), row.search || '', row.name || '')) return false;
   for (const field of FILTERS) {
     const values = wanted(field);
     if (!values.length) continue;
@@ -3240,11 +3305,40 @@ function attachSuggest(input) {
     // than at attach time: this runs when somebody starts typing into the box,
     // which is exactly when the answer is about to be looked at.
     if (input.dataset.suggest === 'prs') widenPullRequests(open);
-    const needle = typed();
+    // The same `found` the table's box uses, so `smcl` finds a record here and
+    // in the Parent picker on that record's own page.
+    //
+    // `said` is what is in the box and `needle` is what can be searched for, and
+    // the split is `betSearch`'s in `cycles.py`, for the reason written there. An
+    // EMPTY BOX owes the reader the vocabulary; a box holding `?` or `[^` owes
+    // them nothing, because `sought` has nothing left to look for. Reading
+    // `!needle` for both is what made typing `?` into the Parent combobox list
+    // eight records in source order with the first preselected, so Enter wrote a
+    // record id nobody had asked for into Parent.
+    //
+    // Every item is plained on every keystroke: `open()` IS the input handler, so
+    // this is per item per character over one source list, and it is not hoisted
+    // because `widenPullRequests` above appends to this very array — a haystack
+    // cached at attach time would be the shorter, older list.
+    const said = typed();
+    const needle = sought(said);
     const matches = source
-      .filter(item => (item.value + ' ' + item.label).toLowerCase().includes(needle))
-      .filter(item => !multi || !tokens().slice(0, -1).includes(item.value))
-      .slice(0, 8);
+      .map(item => ({item, rank: found(needle, plain(item.value) + ' ' + plain(item.label))}))
+      .filter(m => !said || m.rank)
+      .filter(m => !multi || !tokens().slice(0, -1).includes(m.item.value))
+      // Eight are shown, so the cap already throws matches away and the eighth
+      // used to be decided by the id. A substring before a subsequence — the one
+      // place where a weak match can evict a strong one, and the reason `found`
+      // answers a rank rather than yes or no. The rank is the WHOLE key, and
+      // `sort` is stable, so inside a tier the source's own order survives:
+      // that order is not alphabetical everywhere and must not be described as
+      // such — of the six sources `_suggestions` builds, `prs` runs newest
+      // number first inside each repository and `cycles` runs highest number
+      // first, because the reference and the cycle somebody wants are the recent
+      // ones. A tie broken alphabetically would undo both.
+      .sort((a, b) => a.rank - b.rank)
+      .slice(0, 8)
+      .map(m => m.item);
     // Everything but the counter is stored text. For the `records` source the
     // value is an id and the label IS a record title, so before this, opening
     // the Parent list on the detail page inserted whatever the last person to
@@ -3486,10 +3580,25 @@ function attachBodyCompletion(surface) {
       return close();
     }
     settled = null;
-    const needle = token.typed.trim().toLowerCase();
+    // `said` is what was typed and `needle` is what can be searched for — the
+    // same split `attachSuggest` and `betSearch` make, and the same failure it
+    // prevents. `[` with NOTHING after it is the moment this popup exists for,
+    // and the reader is owed every record; `[^`, a footnote, is a needle
+    // `sought` has emptied, and the reader is owed nothing — before this it
+    // popped eight records with the first preselected, so Enter spliced a link
+    // into the document on the way to typing a footnote.
+    const said = token.typed.trim();
+    const needle = sought(said);
     matches = token.source
-      .filter(item => (item.value + ' ' + item.label).toLowerCase().includes(needle))
-      .slice(0, 8);
+      .map(item => ({item, rank: found(needle, plain(item.value) + ' ' + plain(item.label))}))
+      .filter(m => !said || m.rank)
+      // Eight, so the cap throws matches away: substring before subsequence,
+      // and the source's own order inside each tier. The same sort the field
+      // combobox does, because a reader who has learned one of these lists has
+      // learned the other.
+      .sort((a, b) => a.rank - b.rank)
+      .slice(0, 8)
+      .map(m => m.item);
     if (!matches.length) return close();
     const opening = list.hidden;
     // What leads is what the person is typing: a title where a record is being

@@ -738,3 +738,121 @@ def test_two_boxes_that_wait_on_each_other_are_ranked_by_the_majority(tmp_path: 
         f"{got['backward']} arrows read backwards where at most the minority direction should"
     )
     assert got["overlapping"] == [], got["overlapping"][:4]
+
+
+_TYPING = """
+const box = document.getElementById('q');
+const shown = document.getElementById('shown');
+const nap = ms => new Promise(resolve => setTimeout(resolve, ms));
+// Counted here rather than inside the page: what is under test is how many times
+// the drawing is arranged, and `relayout` is the only thing that arranges it.
+let passes = 0;
+const arrange = relayout;
+relayout = (...args) => { passes++; return arrange(...args); };
+
+const type = word => {
+  const counts = [];
+  for (let at = 1; at <= word.length; at++) {
+    box.value = word.slice(0, at);
+    box.dispatchEvent(new Event('input'));
+    counts.push(Number(shown.textContent));
+  }
+  return counts;
+};
+
+// A word typed the way a word is typed, with no pause inside it.
+passes = 0;
+const counts = type(WORD);
+const duringWord = passes;
+await nap(600);
+const afterWord = passes;
+
+// The box cleared: the whole plan comes back, and it is arranged once the hand
+// has stopped rather than not at all.
+passes = 0;
+box.value = '';
+box.dispatchEvent(new Event('input'));
+const beforeSettling = passes;
+await nap(600);
+const afterClearing = passes;
+// Read here and not at the end: the loop below finishes on the whole word,
+// which this corpus matches nothing for.
+const arranged = cy.nodes(':visible').length;
+
+// And the same word with a pause after every character. Each pause is its own
+// pause, so every change of the visible set gets its own arrangement — the wait
+// delays a layout and never drops one.
+passes = 0;
+for (let at = 1; at <= WORD.length; at++) {
+  box.value = WORD.slice(0, at);
+  box.dispatchEvent(new Event('input'));
+  await nap(300);
+}
+return {counts, duringWord, afterWord, beforeSettling, afterClearing, arranged,
+        slow: passes};
+"""
+
+
+def test_the_drawing_is_arranged_once_the_typing_stops_and_not_during_it(
+    index: Index, tmp_path: Path
+):
+    """A search box that rearranges the graph under the hand that is typing.
+
+    `applyFilter` lays out only when the VISIBLE SET changed, which was enough
+    while a bare word was a substring: a substring can only narrow as a word
+    grows, so the set moved once or twice per word and then stopped. The
+    subsequence tier does not behave that way. Typing `otherwise` into this
+    corpus keeps 27, 2, 2, 11, 3, 0, 0, 0, 0 records as the characters go in —
+    the drawing expanded to eleven boxes on the fourth character and collapsed to
+    three on the fifth — and each of those is an `await elk.layout` over the whole
+    visible subgraph, run while the reader is four characters into a nine
+    character word.
+
+    So the ARRANGEMENT waits and the filter does not. Which nodes are faded, how
+    many are shown and whether the empty-canvas box is up are all cheap, and they
+    are what somebody is looking at while they type; the layout is the expensive
+    half and the half that has to hold still. `counts` below is the proof that
+    only one of the two was delayed.
+
+    In Chrome for the reason the rest of this file is: cytoscape and ELK need a
+    real document, and the question is what the drawing did.
+    """
+    page = render_graph(index, ROUTES, base_commit=HEAD)
+    got = measured_in(
+        chrome(),
+        page,
+        tmp_path / "typing.html",
+        1900,
+        _TYPING.replace("WORD", '"otherwise"'),
+        height=820,
+        patience=9000,
+    )
+
+    # The corpus has to actually move under this word, or every count below is
+    # zero for the wrong reason.
+    assert len(set(got["counts"])) >= 3, (
+        f"typing this word never changes what is shown here: {got['counts']}"
+    )
+    # And the filter itself answered on every keystroke, which is the half that
+    # must not be delayed.
+    assert got["counts"][0] != got["counts"][1], got["counts"]
+
+    assert got["duringWord"] == 0, (
+        f"the drawing was arranged {got['duringWord']} times while the word was still "
+        f"being typed: {got['counts']}"
+    )
+    assert got["afterWord"] == 1, (
+        f"{got['afterWord']} arrangements landed after the typing stopped, where the "
+        "collapsed changes are worth exactly one"
+    )
+    assert got["beforeSettling"] == 0 and got["afterClearing"] == 1, got
+    assert got["arranged"] == len(index.plan), (
+        "clearing the box did not bring the plan back"
+    )
+    # Typed slowly, every change of the set is arranged: the timer delays a
+    # layout and never swallows one.
+    assert got["slow"] > got["afterWord"], (
+        f"a word typed with a pause after every character was arranged {got['slow']} "
+        "times, which is no more than typing it at speed — the wait is dropping layouts "
+        "rather than collapsing them"
+    )
