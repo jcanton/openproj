@@ -2819,7 +2819,12 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
                 # finishes first — a login and an id, both free text, both
                 # concatenated into the sentence by the scheduler. The one row on
                 # this page that reads as prose is still two stored values.
-                "display": escape(why.text),
+                #
+                # `drawn` and not `text`: this row sits among the dates the rest
+                # of the page draws day-first, and the scheduler holds the dates
+                # in its sentences as dates precisely so this one reader can ask
+                # for them that way without the CLI's ISO output changing too.
+                "display": escape(why.drawn),
                 "control": "",
                 "gates": (),
                 "derived": True,

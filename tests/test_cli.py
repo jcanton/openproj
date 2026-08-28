@@ -108,6 +108,57 @@ def test_schedule_accepts_an_explicit_today(seed_root: Path, capsys):
     assert payload["spans"]["task-53a9f0"]["start"] == "2026-08-13"
 
 
+# A date the way the files store one, and a date the way the pages read one out.
+# `\b` on the second so that a version or an id ending in digits cannot make one.
+_STORED = re.compile(r"\d{4}-\d{2}-\d{2}")
+_READ_OUT = re.compile(r"\b\d{2}\.\d{2}\.\d{4}\b")
+
+
+def test_the_json_document_holds_one_date_format_and_it_is_the_stored_one(seed_root: Path, capsys):
+    """`--json` is a document a script pipes: `today` is ISO, every span date is
+    ISO, and for one release the explanations beside them were not.
+
+    The scheduler had been made to format its sentences day-first because the
+    record page draws its dates that way, and the sweep took the CLI with it — so
+    a consumer that read a date out of `explanations` got `28.08.2026` from a
+    document in which the same day is `2026-08-28` two keys above. The whole
+    payload is scanned rather than the explanations alone, because the next thing
+    to carry a formatted date into here will not be called `explanations`.
+    """
+    assert main(["schedule", str(seed_root), "--json", "--today", "2026-08-17"]) == 0
+    printed = capsys.readouterr().out
+    payload = json.loads(printed)
+
+    assert payload["explanations"], "a corpus that explains nothing cannot fail this"
+    assert _READ_OUT.findall(printed) == []
+    # Not vacuous: the sentences really do name dates, and they name them ISO.
+    assert [text for text in payload["explanations"].values() if _STORED.search(text)]
+
+
+def test_a_line_of_the_schedule_table_says_its_dates_one_way(seed_root: Path, capsys):
+    """Two columns of ISO and then a sentence that said `28.08.2026`:
+
+        2026-08-28  2026-09-15  task-0a1002  Starts on 28.08.2026: the …
+
+    One line, one day, two spellings sixty characters apart, which invites the
+    reader to work out what the difference is meant to mean. The columns are the
+    span as the model holds it, so the sentence is asked for the same reading.
+
+    Per line rather than over the whole output, because that is the claim: a
+    terminal where half the lines were one format and half the other would pass a
+    scan of the text and still be the defect.
+    """
+    assert main(["schedule", str(seed_root), "--today", "2026-08-17"]) == 0
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+
+    assert lines
+    assert [line for line in lines if _STORED.search(line) and _READ_OUT.search(line)] == []
+    # The columns are three fields wide; a fourth is a sentence. At least one
+    # line has to carry one with a date in it, or nothing above was tested.
+    notes = [parts[3] for line in lines if len(parts := re.split(r"\s{2,}", line)) > 3]
+    assert [note for note in notes if _STORED.search(note)]
+
+
 def test_an_unknown_subcommand_fails_rather_than_doing_something(capsys):
     assert main(["frobnicate"]) == 2
 

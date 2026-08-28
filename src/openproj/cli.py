@@ -790,6 +790,12 @@ def _schedule(repo: Path, as_json: bool, today: date | None) -> int:
                     "today": when.isoformat(),
                     "plan": sorted(index.plan),
                     "spans": {i: json.loads(s.model_dump_json()) for i, s in index.spans.items()},
+                    # `text` and never `drawn`: this is the document a script
+                    # pipes, `today` and every span date in it are ISO, and a
+                    # sentence saying `28.08.2026` in the middle of that is a
+                    # date nothing else here would parse. The pages ask the same
+                    # explanation for `drawn` and get the same wording read out
+                    # the way they draw every other date.
                     "explanations": {i: e.text for i, e in sorted(index.explanations.items())},
                 },
                 indent=1,
@@ -799,6 +805,12 @@ def _schedule(repo: Path, as_json: bool, today: date | None) -> int:
     for record_id in sorted(index.spans, key=lambda i: (index.spans[i].start, i)):
         span = index.spans[record_id]
         note = index.explanations.get(record_id)
+        # The first two columns are the span's own dates, printed as the model
+        # holds them, so the sentence after them is asked for the same format.
+        # It briefly was not, and the line read
+        # `2026-08-28  2026-09-15  task-0a1002  Starts on 28.08.2026: …` — the
+        # same day written both ways with sixty characters between them, which
+        # invites the reader to work out what the difference means.
         print(f"{span.start}  {span.end}  {record_id:16}  {note.text if note else ''}")
     return 0
 

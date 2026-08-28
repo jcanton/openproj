@@ -1081,11 +1081,15 @@ def test_the_timeline_names_every_colour_it_draws(rendered: Path):
 
 def test_every_explanation_reaches_the_reader(rendered: Path, seed_index: Index):
     """The per-date explanation is the trust mechanism, not decoration: the first
-    unexplained surprising date is when people stop believing the timeline."""
+    unexplained surprising date is when people stop believing the timeline.
+
+    `drawn` and not `text`: the page draws the sentence with its dates day-first,
+    like the axis under it, and the same sentence goes to `openproj schedule`
+    with them ISO."""
     body = read(rendered, "timeline.html")
     assert seed_index.explanations
     for record_id, explanation in seed_index.explanations.items():
-        assert explanation.text in body, record_id
+        assert explanation.drawn in body, record_id
 
 
 def test_a_span_less_record_is_listed_but_not_drawn(rendered: Path, seed_index: Index):
@@ -1140,7 +1144,7 @@ def test_the_detail_page_shows_the_derived_dates_and_the_explanation(
 ):
     body = read(rendered, "detail.html")
     record_id, explanation = next(iter(seed_index.explanations.items()))
-    assert explanation.text in body
+    assert explanation.drawn in body
     assert seed_index.spans[record_id].start.isoformat() in body
 
 

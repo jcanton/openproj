@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import date
 
 import networkx as nx
@@ -106,10 +107,72 @@ class Span(BaseModel):
 
 
 class Explanation(BaseModel):
+    """Why a record starts when it does: one sentence, and the dates it names.
+
+    The dates are kept as dates. The sentence is a template with named slots and
+    the values that fill them travel beside it, so one wording comes out ISO for
+    the documents scripts read — `text` — and day-first for the prose people read
+    — `drawn`.
+
+    This used to be a finished string, and `_explain` formatted its dates
+    day-first because the record page draws every other date that way. That is
+    right for the page and wrong for both of the other two readers: it put
+    `28.08.2026` inside `openproj schedule --json`, whose `today` and every span
+    date are ISO, and on the terminal line beside two ISO columns —
+    `2026-08-28  2026-09-15  task-0a1002  Starts on 28.08.2026: …`, one line
+    saying the same kind of thing two ways. A value that carries a format has
+    already chosen for readers it cannot see.
+
+    **Reformatting the finished sentence at the page was the other candidate and
+    it lost twice over.** It means finding dates inside prose by pattern and
+    rewriting the result — the substituting-into-finished-output habit
+    `test_no_page_is_assembled_by_substitution` exists to keep out of these
+    modules — and a pattern is a guess at something the code that wrote the
+    sentence simply knows: which characters were a date. It would also have to be
+    written at each place that draws one, the record page and the timeline's
+    tooltip, while `openproj schedule` and `/api/index.json` want none of it: two
+    copies of a format, to unpick a formatting nothing had to do.
+    """
+
     record_id: str
-    text: str
+    # A literal written in `_explain`, never a string built out of data. It is
+    # handed to `str.format`, so a template assembled around a login or a record
+    # id would let text out of a plan file name a slot of its own — an owner
+    # field of `{0.__class__}` raising IndexError on every page that draws a
+    # schedule. Everything variable is a value in `parts` instead, and `format`
+    # does not look inside those.
+    sentence: str
+    parts: dict[str, str | date] = {}
     blocker_id: str | None = None
     worker_busy_until: date | None = None
+
+    @property
+    def text(self) -> str:
+        """The sentence with its dates the way the files store them: `2026-08-28`.
+
+        `openproj schedule`, its `--json` and `/api/index.json` — the terminal
+        line whose first two columns are `span.start` and `span.end`, and two
+        documents read by scripts in which every other date is ISO.
+        """
+        return self._filled(str)
+
+    @property
+    def drawn(self) -> str:
+        """The sentence with its dates the way the app reads one out: `28.08.2026`.
+
+        The record page and the timeline's tooltip. The definite article is what
+        makes the distinction worth drawing at all: "the 2026-08-10 you set"
+        names a thing, "the 10.08.2026 you set" names a day.
+        """
+        return self._filled(_read_date)
+
+    def _filled(self, read: Callable[[date], str]) -> str:
+        return self.sentence.format(
+            **{
+                key: read(part) if isinstance(part, date) else part
+                for key, part in self.parts.items()
+            }
+        )
 
 
 def _is_working_day(day: date, config: Config) -> bool:
@@ -727,7 +790,12 @@ def schedule(
             )
             explanations[record_id] = Explanation(
                 record_id=record_id,
-                text=f"Not placed: {duration:g} weeks of work runs past the end of the calendar.",
+                sentence="Not placed: {weeks} weeks of work runs past the end of the calendar.",
+                # The one sentence here with no date in it. The size still goes
+                # through `parts` rather than into the template, so that the
+                # claim above `sentence` — a literal, never built out of data —
+                # is true of every construction and not of three out of four.
+                parts={"weeks": f"{duration:g}"},
             )
             continue
         span, explanation = placed
@@ -886,15 +954,14 @@ def _explain(
     there, which is silence at precisely the point where the page contradicts the
     file.
 
-    **Every date here is drawn day-first**, through the same `_read_date` the
-    table, the record page and the cards read theirs out with. These sentences are
-    prose set beside those dates — on the record page, in the timeline's tooltip
-    and in `openproj schedule` — and an ISO date inside one reads as an
-    identifier rather than as a day. It was worst behind a definite article, where
-    "the 2026-08-10 you set" is a thing with a name and "the 10.08.2026 you set" is
-    a date. The two neighbouring sentences are swept with it rather than left
-    speaking the format this function used to: one function saying the same day two
-    ways is worse than either way on its own.
+    **No date here is formatted.** Every one is named in a slot and handed over
+    as a date, and `Explanation` fills the sentence in whichever format the reader
+    it is going to reads every other date in. These sentences went out day-first
+    from this function once, because the record page they are printed on draws its
+    dates that way — and that made `openproj schedule` print a day-first sentence
+    beside its own two ISO columns, and `--json` carry one inside a document whose
+    every other date is ISO. Which format a sentence wants is a fact about the
+    reader, and this function cannot see one.
     """
     if start <= floor:
         if passed is not None:
@@ -902,29 +969,31 @@ def _explain(
                 record_id=record_id,
                 # No `blocker_id` and no `worker_busy_until`: nothing is holding
                 # this up. The constraint is the calendar, and the two fields
-                # beside `text` name the two things that are not it.
-                text=(
-                    f"Starts on {_read_date(start)}: the {_read_date(passed)} you set "
-                    "has passed and work has not begun."
+                # beside the sentence name the two things that are not it.
+                sentence=(
+                    "Starts on {start}: the {passed} you set has passed and work has not begun."
                 ),
+                parts={"start": start, "passed": passed},
             )
         return None
     if busy_until is not None and busy_until >= blocker_ready:
         return Explanation(
             record_id=record_id,
-            text=(
-                f"Cannot start before {_read_date(start)}: "
-                f"{busy_worker} is busy until {_read_date(busy_until)}."
-            ),
+            sentence="Cannot start before {start}: {worker} is busy until {until}.",
+            # `busy_worker` cannot be None here — it and `busy_until` are
+            # assigned in one statement from the same `max`, and this branch has
+            # already asked about the other half. `or ""` because the type does
+            # not know that and `parts` is validated: where the old f-string
+            # would have written the word "None" into the sentence, a None here
+            # would raise, and this module's contract is that it never does.
+            parts={"start": start, "worker": busy_worker or "", "until": busy_until},
             worker_busy_until=busy_until,
         )
     if blocker_id is not None:
         return Explanation(
             record_id=record_id,
-            text=(
-                f"Cannot start before {_read_date(start)}: "
-                f"{blocker_id} finishes on {_read_date(spans[blocker_id].end)}."
-            ),
+            sentence="Cannot start before {start}: {blocker} finishes on {ends}.",
+            parts={"start": start, "blocker": blocker_id, "ends": spans[blocker_id].end},
             blocker_id=blocker_id,
         )
     return None

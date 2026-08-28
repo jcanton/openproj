@@ -245,7 +245,10 @@ def _timeline(
             1,
         )
         explanation = index.explanations.get(record_id)
-        why = explanation.text if explanation else "Starts as soon as it can."
+        # `drawn`, like every other date on this page: the tooltip sits over a
+        # plot whose axis is day-first. `text` is the same sentence with its
+        # dates ISO, and it is what the CLI and `/api/index.json` print.
+        why = explanation.drawn if explanation else "Starts as soon as it can."
         # Everything the drawing says, in words, for the list beside the plot.
         # A fill, a width, a hatch and an outline are four channels a screen
         # reader has none of, and the dates are the record's own rather than the

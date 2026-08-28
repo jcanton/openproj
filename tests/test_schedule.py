@@ -657,8 +657,23 @@ def test_a_blocker_bound_start_is_explained_by_naming_the_blocker():
     _, explanations = run(records)
     assert explanations["task-aaa002"] == Explanation(
         record_id="task-aaa002",
-        text="Cannot start before 24.08.2026: task-aaa001 finishes on 21.08.2026.",
+        sentence="Cannot start before {start}: {blocker} finishes on {ends}.",
+        parts={
+            "start": date(2026, 8, 24),
+            "blocker": "task-aaa001",
+            "ends": date(2026, 8, 21),
+        },
         blocker_id="task-aaa001",
+    )
+    # And the two readings of that one sentence, which is the whole reason the
+    # dates are still dates by the time it gets here.
+    assert (
+        explanations["task-aaa002"].text
+        == "Cannot start before 2026-08-24: task-aaa001 finishes on 2026-08-21."
+    )
+    assert (
+        explanations["task-aaa002"].drawn
+        == "Cannot start before 24.08.2026: task-aaa001 finishes on 21.08.2026."
     )
 
 
@@ -666,8 +681,13 @@ def test_a_worker_bound_start_is_explained_by_naming_the_worker():
     _, explanations = run([task("aaa001"), task("aaa002")])
     assert explanations["task-aaa002"] == Explanation(
         record_id="task-aaa002",
-        text="Cannot start before 24.08.2026: ann is busy until 21.08.2026.",
+        sentence="Cannot start before {start}: {worker} is busy until {until}.",
+        parts={"start": date(2026, 8, 24), "worker": "ann", "until": date(2026, 8, 21)},
         worker_busy_until=date(2026, 8, 21),
+    )
+    assert (
+        explanations["task-aaa002"].drawn
+        == "Cannot start before 24.08.2026: ann is busy until 21.08.2026."
     )
 
 
@@ -684,15 +704,27 @@ def test_a_stated_start_the_floor_overrode_is_the_one_case_that_needs_a_sentence
     blocker, no busy worker — so the two fields that name those stay empty and the
     sentence names the calendar instead.
 
-    Day-first, because the definite article is what exposed it: "the 2026-08-10
-    you set" names a thing, "the 10.08.2026 you set" names a day, and the record
-    page this sentence is printed on draws every other date the second way.
+    The definite article is what makes the format worth choosing at all: "the
+    2026-08-10 you set" names a thing and "the 10.08.2026 you set" names a day.
+    The choice is the reader's, though, and not this sentence's — the record page
+    draws every other date day-first and `openproj schedule` prints its two
+    columns ISO — so what is pinned here is that the date reaches both of them as
+    a date, and reads correctly whichever asks.
     """
     _, explanations = run([task("aaa001", status="ready", start_date=date(2026, 8, 10))])
 
     assert explanations["task-aaa001"] == Explanation(
         record_id="task-aaa001",
-        text="Starts on 17.08.2026: the 10.08.2026 you set has passed and work has not begun.",
+        sentence="Starts on {start}: the {passed} you set has passed and work has not begun.",
+        parts={"start": date(2026, 8, 17), "passed": date(2026, 8, 10)},
+    )
+    assert (
+        explanations["task-aaa001"].drawn
+        == "Starts on 17.08.2026: the 10.08.2026 you set has passed and work has not begun."
+    )
+    assert (
+        explanations["task-aaa001"].text
+        == "Starts on 2026-08-17: the 2026-08-10 you set has passed and work has not begun."
     )
 
 
@@ -709,29 +741,37 @@ def test_a_start_date_a_record_is_already_working_to_is_not_explained_away():
     assert "task-aaa001" not in explanations
 
 
-def test_no_explanation_reads_a_date_out_in_the_format_the_files_store_it_in(seed_root: Path):
+def test_a_sentence_carries_one_format_at_a_time_across_the_whole_corpus(seed_root: Path):
     """The sweep, over every sentence the real corpus produces rather than over
     the three this file names one at a time.
 
     `_explain` writes three sentences and only one of them was flagged in review,
-    which is exactly how a half-swept format survives: the two that were not
-    looked at go on printing `2026-08-21` beside a page whose every other date
-    says `21.08.2026`. Three literals asserted one by one cannot notice a fourth
+    which is exactly how a half-swept format survives: the two nobody looked at go
+    on printing `2026-08-21` beside a page whose every other date says
+    `21.08.2026`. Three literals asserted one by one cannot notice a fourth
     sentence arriving in the old format, and a fourth sentence is the next thing
-    anybody adds here. This scans what the scheduler actually said.
+    anybody adds here.
 
-    ISO is still what the *files* hold and what the API sends — see `_read_date`
-    (`model.py`) — so the claim is narrow on purpose: no ISO date in the prose a
-    person reads. Ids are left alone, and `task-7d9f52` is why the pattern is
-    anchored on digits rather than on hyphens.
+    Both directions, because the first version of this test only had one and the
+    format then swept the wrong way: every sentence went day-first, including the
+    ones printed inside `openproj schedule --json` next to an ISO `today`. So
+    `drawn` may hold no stored date and `text` may hold no drawn one — the same
+    wording, and neither reading mixed. Ids are left alone, and `task-7d9f52` is
+    why the pattern is anchored on digits rather than on hyphens.
     """
     records, config, _ = model.load_repo(seed_root)
     _, explanations = schedule(records, config, MONDAY)
 
     assert explanations, "a corpus that explains nothing cannot fail this"
     stored = re.compile(r"\d{4}-\d{2}-\d{2}")
-    said = {i: e.text for i, e in explanations.items() if stored.search(e.text)}
-    assert said == {}
+    read_out = re.compile(r"\d{2}\.\d{2}\.\d{4}")
+    assert {i: e.drawn for i, e in explanations.items() if stored.search(e.drawn)} == {}
+    assert {i: e.text for i, e in explanations.items() if read_out.search(e.text)} == {}
+    # Neither claim can pass by there being no dates in the corpus's sentences at
+    # all, which is what a pair of "nothing matched" assertions is one edit away
+    # from becoming.
+    assert [i for i, e in explanations.items() if stored.search(e.text)]
+    assert [i for i, e in explanations.items() if read_out.search(e.drawn)]
 
 
 # --------------------------------------------------------------------------- #
