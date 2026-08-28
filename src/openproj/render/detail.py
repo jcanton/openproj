@@ -3060,7 +3060,7 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
                 "label": "Why then",
                 "for": "",
                 # An explanation names the person who is busy and the record that
-                # finishes first — a login and an id, both free text, both
+                # finishes first — a login and a title, both free text, both
                 # concatenated into the sentence by the scheduler. The one row on
                 # this page that reads as prose is still two stored values.
                 #
