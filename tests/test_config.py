@@ -5,15 +5,19 @@ from openproj.model import Config, Problem, load_config
 
 
 def test_problem_carries_the_rule_version_that_introduced_the_rule():
+    """`sentence` is what is stored and `message` is what is read: a Problem is a
+    `Sentence`, so that the three rules comparing dates can hold theirs as dates
+    and each reader can have them ISO or day-first."""
     problem = Problem(
         severity="warning",
         record_id="pitch-1b3f9a",
         field="assignees",
-        message="a ready record needs somebody on it",
+        sentence="a ready record needs somebody on it",
         rule_version=2,
     )
     assert problem.severity == "warning"
     assert problem.rule_version == 2
+    assert problem.message == "a ready record needs somebody on it"
 
 
 def test_config_defaults_stand_alone():

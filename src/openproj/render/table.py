@@ -348,7 +348,9 @@ function regroup(problems) {
     const mark = columns[column]
       || (columns[column] = {severity: problem.severity, messages: []});
     if (problem.severity === 'blocker') mark.severity = 'blocker';
-    mark.messages.push(problem.message);
+    // `drawn`, the day-first form: this hangs on a cell in a table whose own
+    // Start and End columns are drawn that way. Every Problem carries both.
+    mark.messages.push(problem.drawn);
   }
   // Two predicates are read straight off this list (index.py,
   // `_matches_predicate`), so they are the two a save can change. Recomputed
@@ -2150,7 +2152,7 @@ function refused(lines) {
 // about, and there are no named controls on a table.
 function refusalLines(answer, status) {
   const problems = answer.problems || [];
-  return problems.length ? problems.map(problem => problem.message)
+  return problems.length ? problems.map(problem => problem.drawn)
                          : [refusal(answer, status)];
 }
 

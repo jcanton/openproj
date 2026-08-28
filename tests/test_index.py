@@ -1415,6 +1415,144 @@ def test_a_ready_task_carried_into_this_cycle_is_counted_by_its_dates():
     assert index.carried_into(37) == ["pitch-b00001", "task-c00001"]
 
 
+def _blocks_naming(index: Index, record_id: str) -> list[int]:
+    """The cycles whose Delivered block lists this record, lowest first.
+
+    Every assertion below is about how MANY blocks name a record and not merely
+    about one of them containing it, because the defect was a record named by
+    none: asking `record_id in index.delivered_in(35)` passes just as happily
+    with the record listed under all six cycles as with it listed under one.
+    """
+    return sorted(number for number in index.cycles if record_id in index.delivered_in(number))
+
+
+def test_finished_work_ending_between_two_cycles_is_delivered_by_the_nearer_one(seed_root: Path):
+    """The day that fell down the crack between two windows, and was delivered
+    nowhere at all.
+
+    The windows do not tile the calendar. Both shipped corpora leave the month
+    between cycle 35 and cycle 36 unnumbered — the conference and release window
+    — so `window[0] <= end_date <= window[1]`, asked of each cycle in turn, had a
+    third answer nobody had written a branch for. A done record ending in there
+    was refused by `counts_in` for being done, named by no Delivered block, and
+    close enough to the plan that `weeks_outside_every_cycle` said nothing
+    either: a cycle silently losing a person's work, which is the failure §6 of
+    `design/time-model.md` was written to end.
+
+    Two records, one on each side of the middle of that month, because "somewhere
+    rather than nowhere" is met just as well by a rule that always picks the
+    earlier window and would be wrong half the time. Nearest is a claim about
+    each date, and only a pair straddling the midpoint can tell the two apart.
+    """
+    records, config, _ = load_repo(seed_root)
+    # The gap this is about, read off the corpus rather than restated: 35 closes
+    # on 22 May and 36 opens on 22 June, and the day exactly between them is the
+    # 6th of June and a half.
+    assert (config.cycles[35][1], config.cycles[36][0]) == (date(2026, 5, 22), date(2026, 6, 22))
+    records += [
+        a_pitch(
+            "pitch-9f0001",
+            "Ported before the shutdown",
+            owner="ann",
+            cycle=34,
+            person_weeks=2.0,
+            status="done",
+            start_date=date(2026, 5, 4),
+            end_date=date(2026, 6, 3),
+        ),
+        a_pitch(
+            "pitch-9f0002",
+            "Ported after it",
+            owner="ann",
+            cycle=34,
+            person_weeks=2.0,
+            status="done",
+            start_date=date(2026, 5, 4),
+            end_date=date(2026, 6, 15),
+        ),
+        # The ordinary case, kept beside them so the two claims are drawn from
+        # one list: a date inside a window is claimed by containment, which beats
+        # every nearness there is because a day inside a window is nought days
+        # from it.
+        a_pitch(
+            "pitch-9f0003",
+            "Landed inside the window",
+            owner="ann",
+            cycle=36,
+            person_weeks=1.0,
+            status="done",
+            start_date=date(2026, 6, 29),
+            end_date=date(2026, 7, 30),
+        ),
+    ]
+    index = build_index(records, config, TODAY)
+
+    assert _blocks_naming(index, "pitch-9f0001") == [35]
+    assert _blocks_naming(index, "pitch-9f0002") == [36]
+    # And not by the stamp, which is the other candidate §5 rejects: both were
+    # bet in 34, and filing them there would put a June date under a cycle that
+    # closed in March with nothing on the page to say why.
+    assert "pitch-9f0001" not in index.delivered_in(34)
+    # Chronologically, and the whole point of the sort: a record claimed by
+    # nearness ended before its window opened or after it closed, so it lands at
+    # one end of the block rather than in the middle of the cycle's own story.
+    assert index.delivered_in(36)[0] == "pitch-9f0002"
+
+
+def test_a_date_exactly_between_two_windows_goes_to_the_cycle_it_came_out_of():
+    """The tie the rule above has to break, and it breaks towards the earlier
+    window: on the day halfway across an unnumbered gap, the cycle the work was
+    running in when it closed is a better claim than the one it never reached.
+
+    Pinned because `min` over a key is deterministic whatever the key says, so
+    nothing else in the suite would notice this changing sides.
+    """
+    config = CONFIG.model_copy(
+        update={
+            "cycles": {
+                36: (date(2026, 6, 22), date(2026, 8, 14)),
+                # Three days between them, so 16 August is two from each end.
+                37: (date(2026, 8, 18), date(2026, 10, 9)),
+            }
+        }
+    )
+    records = [
+        a_pitch(
+            "pitch-b00001",
+            owner="ann",
+            cycle=36,
+            person_weeks=2.0,
+            status="done",
+            start_date=date(2026, 7, 6),
+            end_date=date(2026, 8, 16),
+        )
+    ]
+    index = build_index(records, config, TODAY)
+
+    assert _blocks_naming(index, "pitch-b00001") == [36]
+
+
+def test_finished_work_with_no_end_date_is_still_claimed_by_the_cycle_it_was_bet_in(
+    seed_index: Index,
+):
+    """The grandfathered case, unmoved by the rule above.
+
+    `end_date` is a blocker at rule version 5 and everything written before that
+    warns instead, so the corpus's five done records carry none. Nothing about
+    them can be tested against a window, near or otherwise, and they stay listed
+    under the stamp their bet was made with — which is the only thing anything
+    knows about when they happened. A nearest-window rule that reached them would
+    have to invent the date it measured from.
+    """
+    assert _blocks_naming(seed_index, "pitch-2a7f3e") == [34], "bet in 34, no end date"
+    assert _blocks_naming(seed_index, "pitch-3c9a41") == [28]
+    # The invariant the change is for, over the whole corpus rather than over the
+    # two records above: everything finished is claimed, and claimed once.
+    for record in seed_index.plan.values():
+        if record.status == "done":
+            assert len(_blocks_naming(seed_index, record.id)) == 1, record.id
+
+
 def test_a_checklist_in_the_body_is_counted_once_into_the_index():
     records = [a_task("task-c00001", body="## Progress\n\n- [x] a\n- [ ] b\n")]
     index = build_index(records, CONFIG, TODAY)

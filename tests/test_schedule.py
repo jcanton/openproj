@@ -414,6 +414,108 @@ def test_a_pitch_whose_tasks_all_finished_undated_has_no_contents_to_measure():
     assert spans["pitch-bbb001"].elapsed_weeks is None
 
 
+def test_a_finished_bet_holds_its_tasks_and_not_its_own_idle_calendar():
+    """The contents of a box are what is in the box, on the historical branch too.
+
+    That branch set `elapsed_weeks` from the record's OWN start and end dates
+    whether or not anything hung underneath, and `_rollup_problems`,
+    `_tasks_add_up_to` and the appetite cell all read that number as its tasks.
+    So this pitch — bet at 8.0, started 5 January, finished 30 June, holding one
+    week of work — was reported as needing 25.4 weeks with the people on it: the
+    127 working days of its own span, five idle months of them, offered under
+    three remedies of which none shortens a wait. That is the enclosing reading
+    §3 of `design/time-model.md` threw out for live pitches, arriving on the
+    finished ones §4b exists to serve, and by the ordinary lifecycle — ready →
+    in_progress → done leaves a record carrying both dates.
+
+    The span itself does not move. Those two dates are when this bet was in
+    flight and they stay its bar and its End column; it is only the number the
+    box is compared against that stops being that stretch.
+    """
+    records = [
+        pitch(
+            "bbb001",
+            size=8.0,
+            status="done",
+            start_date=date(2026, 1, 5),
+            end_date=date(2026, 6, 30),
+        ),
+        task("aaa001", parent="pitch-bbb001", size=1.0),
+    ]
+    box = run(records)[0]["pitch-bbb001"]
+    assert (box.start, box.end) == (date(2026, 1, 5), date(2026, 6, 30))
+    assert box.budget_weeks == pytest.approx(8.0), "the bet is still the bet"
+    assert box.elapsed_weeks == pytest.approx(1.0), "the one task, and none of the months around it"
+
+
+def test_a_finished_bet_over_finished_tasks_is_measured_by_the_tasks():
+    """The same rule where every record involved is done, which is the normal end
+    of a lifecycle rather than the mixed case above.
+
+    Both tasks ran inside the pitch's dates and neither ran for long: 1–5 June
+    and 15–19 June are five working days each, sharing no day, so the union is
+    ten and the pitch holds 2.0 against a bet that bought 8.0. Its own interval
+    is 25.4, and reading that would have said a bet at eight overran by
+    seventeen — a verdict on the one population that already knows what it cost.
+    """
+    records = [
+        pitch(
+            "bbb001",
+            size=8.0,
+            status="done",
+            start_date=date(2026, 1, 5),
+            end_date=date(2026, 6, 30),
+        ),
+        task(
+            "aaa001",
+            parent="pitch-bbb001",
+            status="done",
+            start_date=date(2026, 6, 1),
+            end_date=date(2026, 6, 5),
+        ),
+        task(
+            "aaa002",
+            parent="pitch-bbb001",
+            status="done",
+            start_date=date(2026, 6, 15),
+            end_date=date(2026, 6, 19),
+        ),
+    ]
+    box = run(records)[0]["pitch-bbb001"]
+    assert box.elapsed_weeks == pytest.approx(2.0)
+
+
+def test_a_pitch_with_no_dates_of_its_own_does_not_hide_its_tasks_from_its_project():
+    """A record in the middle that has nothing to contribute contributes nothing,
+    and passes on everything.
+
+    A pitch finished before `end_date` existed and never given a start date gets
+    no span at all — `test_step3_a_done_parent_stays_historical_even_with_a_live_child`
+    pins that — and the contents of a box used to be assembled one level at a
+    time, so it wrote no interval of its own and the week of work still running
+    inside it reached the project as nothing. What a project holds is the days
+    its leaves take, wherever they hang, so this is 2.0: one week under the
+    dateless pitch and one under the pitch beside it, on two people and in two
+    different months.
+
+    Those days are not all inside the project's own dates, and that is a
+    different question with an older answer: a rollup takes `min`/`max` over the
+    children that HAVE spans, so a pitch with none is invisible to the bar
+    whatever hangs beneath it. Charging the project for work it holds is right
+    either way — drawing it is what the missing span costs.
+    """
+    records = [
+        model.Project(id="proj-000001", kind="project", title="M"),
+        pitch("bbb001", parent="proj-000001", status="done"),
+        task("aaa001", parent="pitch-bbb001", size=1.0, start_date=date(2026, 9, 1)),
+        pitch("bbb002", parent="proj-000001"),
+        task("aaa002", parent="pitch-bbb002", owner="bo", size=1.0),
+    ]
+    spans, _ = run(records)
+    assert "pitch-bbb001" not in spans
+    assert spans["proj-000001"].elapsed_weeks == pytest.approx(2.0)
+
+
 # --------------------------------------------------------------------------- #
 # §4b: what a recorded end date makes readable
 # --------------------------------------------------------------------------- #

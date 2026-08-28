@@ -2428,7 +2428,7 @@ async function answerOf(response) {
 function refusal(answer, status) {
   if (status === 409) return answer.conflict || 'somebody else changed this first';
   return answer.detail
-    || (answer.problems || []).map(problem => problem.message).join('; ')
+    || (answer.problems || []).map(problem => problem.drawn).join('; ')
     || 'refused';
 }
 

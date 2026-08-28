@@ -247,13 +247,17 @@ def test_every_page_that_writes_reads_a_conflict_the_same_way(pages, page):
     it is the one page this shim cannot drive end to end — cytoscape wants a
     canvas. What can be asserted is that the helper it now calls is on the page
     and answers correctly, which is the whole of the fix.
+
+    `drawn` and not `message` in the fourth answer: a Problem carries the same
+    sentence in both forms — ISO for the terminal and `/api/index.json`, day-first
+    for a page — and a banner is a page, so this is the key the fold reads.
     """
     answer = drive(
         pages[page],
         f"({{conflict: refusal({json.dumps(CONFLICT)}, 409),"
         " typed: refusal({detail: 'cycle must be a number'}, 422),"
         " nothing: refusal({}, 500),"
-        " problems: refusal({problems: [{message: 'an owner is needed'}]}, 422)})",
+        " problems: refusal({problems: [{drawn: 'an owner is needed'}]}, 422)})",
     )
     got = answer["value"]
 

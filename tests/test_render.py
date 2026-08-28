@@ -5201,8 +5201,16 @@ def test_a_pitch_draws_its_tasks_as_the_progress_it_has_made(rendered: Path, see
     assert kinds == {"task", "pitch", "project"}, kinds
 
 
-def test_a_pitch_says_what_its_tasks_add_up_to_beside_what_it_was_bet_at(rendered: Path):
+def test_a_pitch_holds_its_tasks_against_the_box_in_the_unit_the_box_is_in(rendered: Path):
     """An appetite read on its own says nothing about whether the work still fits.
+
+    **And two numbers either side of a dot are a comparison, so they have to be
+    comparable.** This line drew the field's own text on the left — four
+    PERSON-weeks — and the days its tasks occupy on the right, in calendar ones:
+    `4 · 5.6 in tasks`, two units in a sentence that reads as one, with only the
+    colour computed from the pair that actually decides anything. The left half
+    is the box now, which is that same bet divided by the two people on it, and
+    each half says in words which it is.
 
     The corpus's pitch-5e7b1c was bet at four weeks with two people on it, so the
     box it bought is two calendar weeks, and its tasks as they are actually
@@ -5223,6 +5231,15 @@ def test_a_pitch_says_what_its_tasks_add_up_to_beside_what_it_was_bet_at(rendere
     page = read(rendered, "detail.html")
     assert "5.6 in tasks" in page
     assert 'class="overrun">5.6 in tasks' in page, "over the box the bet bought, and said so"
+    # The box, in the same unit as the contents, and named so that the reader is
+    # not asked to work out which of the two numbers is which.
+    assert "2.0 the bet buys · " in page
+    # And the stated appetite is no longer standing where the box goes: this is
+    # the exact line the row used to render. Written out in full rather than as a
+    # search for `4 · `, which the page answers on its own — a derived end of
+    # `2026-09-14 · <span …>overruns cycle 36…` matches that on the same corpus,
+    # and a test that passes on a date is a test about nothing.
+    assert '4 · <span class="overrun">5.6 in tasks' not in page
 
 
 def test_a_pitch_that_keeps_a_checklist_as_well_as_tasks_is_told_which_one_counts():

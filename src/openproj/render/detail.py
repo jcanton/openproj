@@ -2776,33 +2776,43 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
                 _human(record.priority),
             )
         elif name == _SIZE_FIELD_NAME and _tasks_add_up_to(index, record) is not None:
-            # The bet, and what its tasks propose to put inside it. Two numbers on
-            # one line because they are one question: an appetite read on its own
-            # says nothing about whether the work still fits, and the answer was
-            # only ever visible by adding the tasks up by hand.
+            # The box the bet bought, and what its tasks propose to put inside it.
+            # Two numbers on one line because they are one question: an appetite
+            # read on its own says nothing about whether the work still fits, and
+            # the answer was only ever visible by adding the tasks up by hand.
+            #
+            # **Both in calendar weeks, which they were not.** This drew the
+            # field's own text on the left — the appetite, in PERSON-weeks — and
+            # `Span.elapsed_weeks` on the right, in calendar ones, so a pitch bet
+            # at eight with two people on it read "8.0 · 5.6 in tasks": two units
+            # in one line, separated by a dot that says they are comparable, with
+            # the reader left to work out that they are not. Only the colour was
+            # ever computed from the right pair. `budget_weeks` is that same bet
+            # divided by the people on it, which is the box `_rollup_problems`
+            # holds the tasks against, so the two numbers on the line are now the
+            # two numbers the verdict was made from.
+            #
+            # The person-weeks figure is not printed a third time beside them: it
+            # is this row's own field, and pressing Edit puts it in the box under
+            # here as `8`, which is where a person changes it. Each half says
+            # which it is in words — "the bet buys" against "in tasks" — because
+            # two bare numbers either side of a dot is exactly the reading that
+            # went wrong here.
             #
             # Warned about only against a bet somebody actually made. A pitch with
             # no appetite yet is not over it, and `_rollup_problems` says nothing
             # about that case either — a page that shouts where the validator is
-            # silent teaches people that one of the two is lying.
-            #
-            # Which is why the comparison is against `Span.budget_weeks` and not
-            # against the number printed to the left of it. The bet is stated in
-            # PERSON-weeks and the tasks are measured in calendar ones, so `total
-            # > float(stated)` compared two different units and coloured on the
-            # wrong one; the budget is that same bet divided by the people on it,
-            # which is the box `_rollup_problems` holds the tasks against. The
-            # stated figure is still what is drawn, because this row is the
-            # appetite field in read mode and the field's own value is what a
-            # person edits — the colour, not a third number, is what says whether
-            # it fits.
+            # silent teaches people that one of the two is lying. That record has
+            # no box, so the left half is the same dash every other empty value
+            # on this page draws.
             total = _tasks_add_up_to(index, record)
-            stated = field["text"]
             span = index.spans.get(record.id)
             budget = span.budget_weeks if span is not None else None
             over = budget is not None and total > budget
             display = Markup('{} · <span class="{}">{} in tasks</span>').format(
-                stated or "—", "overrun" if over else "quiet", f"{total:.1f}"
+                f"{budget:.1f} the bet buys" if budget is not None else empty,
+                "overrun" if over else "quiet",
+                f"{total:.1f}",
             )
         elif field["type"] == "date":
             # Drawn day-first like every other date on the page; the control
@@ -3181,7 +3191,14 @@ def _detail_rows(index: Index, links: Links = STATIC, only: str | None = None) -
             # names a parent and `_links` renders it as itself.
             "parent": record.parent,
             "parent_link": _links([record.parent], index, links) if record.parent else "",
-            "problems": [p.message for p in index.problems if p.record_id == record_id],
+            # `drawn` and not `message`: these are drawn as prose on the page,
+            # which is the page that reads a date out day-first everywhere else —
+            # in the fact rows, in the date boxes and in the "Why then" sentence
+            # the scheduler writes about the very date three of these are about.
+            # "the start date 2026-08-10 has passed" sat a few rows above "the
+            # 10.08.2026 you set has passed", the same day said two ways. The ISO
+            # form is `message`, and it is what the terminal and the API take.
+            "problems": [p.drawn for p in index.problems if p.record_id == record_id],
             # Not problems: notes about the shaping document, printed here and
             # nowhere else. See `_shaping_hints`.
             "hints": _shaping_hints(record, bool(index.children.get(record_id))),

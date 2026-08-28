@@ -1839,6 +1839,34 @@ def test_the_past_date_refusal_reads_the_record_and_not_only_the_payload(
     assert git_head(repo_path) == base, "a refusal writes nothing"
 
 
+def test_the_past_date_refusal_names_the_remedies_that_fit_the_write(client: TestClient):
+    """An error says how to fix it, and one sentence cannot fix two writes.
+
+    Moving a record back from `in_progress` to `ready` — the hill ball dragged
+    down a rung, an ordinary correction — was answered with "Pick a date from
+    2026-08-28 on, or set the status to in_progress if it started then", on all
+    four doors. The second remedy is the state the person is deliberately
+    leaving, so the refusal reads as the tool not having understood the gesture,
+    and the remedy that actually fixes it — clear the date, the work has not
+    begun after all — was not named at all.
+
+    The other write is the commoner one and keeps the sentence it had: somebody
+    typing last Monday into a record whose status they are not touching is
+    usually behind on the status rather than wrong about the date.
+    """
+    moved = save(client, TASK, {"status": "ready"})
+    assert moved.status_code == 422, moved.text
+    said = moved.json()["detail"]
+    assert "Clear the start date" in said
+    assert "2026-07-06" in said, "and the date that is standing in the way"
+    assert "in_progress" not in said, "which is the rung this write is leaving"
+
+    typed = save(client, PITCH, {"start_date": "2026-07-01"})
+    assert typed.status_code == 422, typed.text
+    assert "in_progress" in typed.json()["detail"]
+    assert "Clear the start date" not in typed.json()["detail"]
+
+
 def test_a_date_and_the_status_that_makes_it_legal_travel_in_one_payload(client: TestClient):
     """The interaction that decides which record the rule is asked about.
 
@@ -1884,6 +1912,32 @@ def test_an_edit_that_touches_neither_the_date_nor_the_status_is_not_this_refusa
         and one["field"] == "start_date"
         and one["severity"] == "warning"
     ]
+
+
+def test_a_problem_travels_with_its_dates_in_both_the_forms_its_readers_need(
+    client: TestClient, repo_path: Path
+):
+    """One wording, and each reader takes the format it draws dates in.
+
+    This payload is two things at once. It is `/api/index.json`, read by scripts
+    beside spans whose every date is ISO and printed by `openproj check` on a
+    terminal; and it is what the table's cell marks, the record page's problem
+    list and every refusal banner are drawn from, on pages where every other date
+    is day-first. A Problem was a finished string formatted ISO, so the record
+    page said "the start date 2026-07-02 has passed" a few rows above the
+    scheduler's own "the 02.07.2026 you set has passed" — one day, said two ways,
+    in one column. See `Sentence` (`model.py`).
+    """
+    commit_directly(repo_path, DRIFTED_SEED, "a task whose date has gone by")
+
+    problems = client.get("/api/index.json").json()["problems"]
+    drifted = [
+        one for one in problems if one["record_id"] == DRIFTED and one["field"] == "start_date"
+    ]
+
+    assert len(drifted) == 1, drifted
+    assert drifted[0]["message"].startswith("the start date 2026-07-02 has passed")
+    assert drifted[0]["drawn"].startswith("the start date 02.07.2026 has passed")
 
 
 def test_one_drifted_row_does_not_refuse_the_whole_bulk_selection(

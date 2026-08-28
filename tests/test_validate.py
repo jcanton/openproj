@@ -1679,3 +1679,137 @@ def test_the_end_date_is_held_to_the_same_calendar_as_the_start():
     problem = only(check(strayed, config=DATED), TASK_ID, "end_date")
     assert problem.severity == "warning"
     assert problem.message.startswith("2027-09-11 is 56 weeks outside every cycle")
+
+
+# Two dated cycles with a year of undated months between them, which is the shape
+# a plan takes as soon as it has been running a while: `tests/fixtures/corpus`
+# carries exactly this pair — cycle 28, from before the 2026 numbering and kept
+# only so the throughflow records can be placed, and cycle 34 a year later.
+SPACED = Config(
+    cycles={
+        28: (date(2024, 12, 9), date(2025, 1, 31)),
+        34: (date(2026, 2, 2), date(2026, 3, 27)),
+    }
+)
+
+
+def test_a_year_typed_wrong_is_caught_between_two_cycles_and_not_only_beyond_them():
+    """§6's own motivating typo, over a plan with a hole in the middle of it.
+
+    The distance used to be measured against the ENVELOPE of every dated cycle —
+    earliest first day to latest last day — and an envelope weakens to nothing as
+    a plan accumulates cycles. `2025-09-11` typed for `2026-09-11` falls inside
+    the envelope of these two, so the rule said nothing at all, the door answered
+    200, and the record dropped silently out of `counts_in`, out of `Index.load`
+    and out of `carried_into` for every cycle there is — which is the failure §6
+    opens with, surviving the change written to end it. icon4py-plan is a
+    multi-year plan; this is the shape it will be in.
+
+    Twenty-one weeks and not thirty-two: the number is the distance to the
+    NEAREST window, which is the one a person can hold against the year they
+    meant to type.
+    """
+    strayed = task(status="in_progress", start_date=date(2025, 9, 11), person_weeks=1.0)
+    problem = only(check(strayed, config=SPACED), TASK_ID, "start_date")
+    assert summary(problem) == (
+        "warning",
+        "start_date",
+        "2025-09-11 is 21 weeks outside every cycle this plan has dated, so this record "
+        "counts towards none of them: check the year",
+        5,
+    )
+
+
+def test_the_months_between_two_cycles_are_ordinary_days_to_work_in():
+    """What the envelope was written to protect, and what protects it now.
+
+    The gap between two windows is real days that real work runs through — the
+    demo corpus leaves a whole unnumbered month for the conference and release
+    window — so measuring to the nearest window would nag about the ordinary case
+    if the allowance were tight. It is twelve weeks: comfortably wider than any
+    gap a team leaves between cycles it is actually running, and comfortably
+    narrower than the year a mistyped year moves a date by.
+
+    Both ends of the hole, because a different window answers in each case — the
+    first date is measured from cycle 34's first day and the second from cycle
+    28's last, and an implementation that only ever consulted the outer edges of
+    the plan would pass one of these and fail the other.
+    """
+    for day in (date(2026, 1, 5), date(2025, 4, 1)):
+        near = task(status="in_progress", start_date=day, person_weeks=1.0)
+        assert [p for p in check(near, config=SPACED) if p.field == "start_date"] == [], day
+
+
+def test_a_sentence_about_a_date_is_stored_iso_and_drawn_day_first():
+    """One wording, and the reader picks the format — `Sentence` in `model.py`.
+
+    All three rules that name a date, because the record page draws all three in
+    one list, a few rows under the scheduler's "the 10.08.2026 you set has
+    passed" — a sentence about the very date the first of these is about. They
+    said the same day two ways in one column: this validator formatted ISO
+    because a Problem was a string, and the explanation formatted day-first
+    because that is what the page around it does.
+
+    And the ISO half is not incidental. `openproj check` prints these on a
+    terminal, and `/api/index.json` ships them beside spans whose every date is
+    ISO, which is why the stored form stayed the default and `drawn` is what the
+    pages ask for.
+    """
+    passed = only(
+        check(task(start_date=date(2026, 8, 10)), today=date(2026, 8, 28)),
+        TASK_ID,
+        "start_date",
+    )
+    assert passed.message.startswith("the start date 2026-08-10 has passed")
+    assert passed.drawn.startswith("the start date 10.08.2026 has passed")
+
+    backwards = only(
+        check(
+            task(
+                status="done",
+                prs=["x/y#1"],
+                start_date=date(2026, 8, 20),
+                end_date=date(2026, 8, 3),
+                created_schema_version=1,
+            )
+        ),
+        TASK_ID,
+        "end_date",
+    )
+    assert backwards.message == (
+        "the end date 2026-08-03 is before the start date 2026-08-20, "
+        "so this record finished before it began"
+    )
+    assert backwards.drawn == (
+        "the end date 03.08.2026 is before the start date 20.08.2026, "
+        "so this record finished before it began"
+    )
+
+    strayed = only(
+        check(
+            task(status="in_progress", start_date=date(2025, 9, 11), person_weeks=1.0),
+            config=DATED,
+        ),
+        TASK_ID,
+        "start_date",
+    )
+    assert strayed.message.startswith("2025-09-11 is 41 weeks outside")
+    assert strayed.drawn.startswith("11.09.2025 is 41 weeks outside")
+
+
+def test_a_sentence_built_out_of_a_record_is_never_a_format_string():
+    """The rule `Sentence` carries, asked in the medium a plan file can reach.
+
+    Most of the sentences in this file are built out of what somebody committed —
+    an id, a filename, a `depends_on` naming nothing — and only the rules that
+    name a date write a template with slots in it. Formatted unconditionally,
+    `blocked by {oops}` raises KeyError inside `validate_all`, which is every page
+    down for one bad line in one file: the "a record that fails to load takes the
+    other four hundred with it" failure, arriving through the machinery that
+    reports it. So a sentence with no parts is returned exactly as it was built,
+    in both forms.
+    """
+    problem = only(check(task(depends_on=["{oops}"])), TASK_ID, "depends_on")
+
+    assert problem.message == "blocked by {oops}, which does not exist"
+    assert problem.drawn == problem.message

@@ -18,7 +18,15 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import networkx as nx
 from frontmatter.default_handlers import YAMLHandler
-from pydantic import BaseModel, PrivateAttr, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    PrivateAttr,
+    ValidationError,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedSeq
 from ruamel.yaml.error import MarkedYAMLError
@@ -165,18 +173,121 @@ def _read_date(value: object) -> str:
     return f"{parts[2]}.{parts[1]}.{parts[0]}" if len(parts) == 3 else text
 
 
-class Problem(BaseModel):
+class Sentence(BaseModel):
+    """One wording, and the dates it names held as dates rather than as text.
+
+    A template with named slots and the values that fill them, so that the same
+    sentence comes out ISO for the documents scripts read — `text` — and
+    day-first for the prose people read — `drawn`. `Explanation` (`schedule.py`)
+    and `Problem` below are both one of these, and both for the same reason: they
+    are sentences about dates, drawn on pages where every other date is day-first
+    and printed on a terminal where every other date is ISO.
+
+    This was `Explanation`'s alone, and each half of the app that grew a sentence
+    about a date wrote the format it happened to want into it. `_explain`
+    formatted day-first because the record page draws dates that way, which put
+    `28.08.2026` inside `openproj schedule --json` and on a terminal line beside
+    two ISO columns. `validate_all` formatted ISO because a Problem is a string,
+    which put "the start date 2026-08-10 has passed" on the record page a few
+    rows above the explanation's "the 10.08.2026 you set has passed" — two
+    sentences about the same day, saying it two ways, in one column. A value that
+    carries a format has already chosen for readers it cannot see.
+
+    **Reformatting the finished sentence at the page was the other candidate and
+    it lost twice over.** It means finding dates inside prose by pattern and
+    rewriting the result — the substituting-into-finished-output habit
+    `test_no_page_is_assembled_by_substitution` exists to keep out of these
+    modules — and a pattern is a guess at something the code that wrote the
+    sentence simply knows: which characters were a date. It would also have to be
+    written at each place that draws one, while `openproj check`, `openproj
+    schedule` and `/api/index.json` want none of it: two copies of a format, to
+    unpick a formatting nothing had to do.
+    """
+
+    # A literal written at the rule, never a string built out of data. It is
+    # handed to `str.format` whenever there are parts, so a template assembled
+    # around a login, a record id or a title would let text out of a plan file
+    # name a slot of its own — an owner field of `{0.__class__}` raising
+    # IndexError on every page that draws a schedule. Everything variable is a
+    # value in `parts` instead, and `format` does not look inside those.
+    #
+    # Both halves are excluded from `model_dump`, and that is not tidiness: a
+    # Problem is dumped straight into the table's payload and into the 422 a door
+    # answers with, and `parts` holds `date` objects that Jinja's `tojson` cannot
+    # encode — a page that does not render at all rather than a date in the wrong
+    # format. What a reader is owed is a finished sentence, and both finished
+    # forms travel beside it.
+    sentence: str = Field(exclude=True)
+    parts: dict[str, str | date] = Field(default={}, exclude=True)
+
+    @property
+    def text(self) -> str:
+        """The sentence with its dates the way the files store them: `2026-08-28`.
+
+        `openproj check` and `openproj schedule` on the terminal, their `--json`,
+        and `/api/index.json` — documents read by scripts in which every other
+        date is ISO, and terminal lines whose neighbouring columns are spans.
+        """
+        return self._filled(str)
+
+    # A computed field and not a plain property, because this is the form a PAGE
+    # needs and a page is the one reader that is handed these as data rather than
+    # as an object: the table's cell marks and every refusal banner are drawn by
+    # script out of a dumped payload. `text` reaches its own readers as an
+    # attribute, or under `Problem.message` below.
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def drawn(self) -> str:
+        """The sentence with its dates the way the app reads one out: `28.08.2026`.
+
+        The record page, the table, the timeline's tooltip. The definite article
+        is what makes the distinction worth drawing at all: "the 2026-08-10 you
+        set" names a thing, "the 10.08.2026 you set" names a day.
+        """
+        return self._filled(_read_date)
+
+    def _filled(self, read: Callable[[date], str]) -> str:
+        # A sentence with no parts is returned verbatim, and that is the rule and
+        # not a shortcut: most of these are built out of record data — a title, a
+        # path, an id somebody typed — and `"a file named {oops}.md".format()`
+        # raises KeyError on data this repository has to keep parsing. A sentence
+        # that wants a slot brings the value with it.
+        if not self.parts:
+            return self.sentence
+        return self.sentence.format(
+            **{
+                key: read(part) if isinstance(part, date) else part
+                for key, part in self.parts.items()
+            }
+        )
+
+
+class Problem(Sentence):
     """One validation finding, carrying the rule version that introduced it.
 
     `rule_version` is what makes grandfathering possible: a record is only
     blocked by rules that existed when it was created.
+
+    A `Sentence` rather than a finished string, since the three rules that
+    compare dates: a start date that has passed, an end date before the start it
+    is before, and a date outside every cycle this plan has dated. See there for
+    what the two forms are for.
     """
 
     severity: Literal["blocker", "warning"]
     record_id: str
     field: str | None
-    message: str
     rule_version: int
+
+    # `Sentence.text` under the name every reader of a Problem already calls it —
+    # the CLI's two print lines, `/api/index.json`, the table's payload and the
+    # tests. Renaming that half of the wire would have been a rename across four
+    # test files and five scripts to say the same thing, and `message` is the
+    # better word here anyway: an explanation explains, and a problem is reported.
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def message(self) -> str:
+        return self.text
 
 
 class Unreadable(BaseModel):
@@ -2688,48 +2799,68 @@ def ends_before_it_starts(record: Record) -> bool:
     )
 
 
+def _days_outside(value: date, window: tuple[date, date]) -> int:
+    """How many days `value` misses one cycle's window by, and 0 if it is inside it.
+
+    Inclusive at both ends, because a cycle's window is: `config/cycles.yaml`
+    records a first day and a last day, and `_matches_predicate` counts a span
+    that touches either of them as in.
+    """
+    start, end = window
+    if value < start:
+        return (start - value).days
+    if value > end:
+        return (value - end).days
+    return 0
+
+
 def weeks_outside_every_cycle(value: date | None, config: Config) -> float | None:
-    """How far this date falls outside the plan's own cycle windows, or None.
+    """How far this date falls from the nearest cycle window, or None.
 
     None means "nothing to say", and it covers three cases that are worth
     separating from a zero. The date is absent. The plan has dated no cycles at
     all, which is the ordinary state of a repository somebody started this
     morning and is the same "no roster, no check" bargain `_people_problems`
     makes — a tool that refuses dates before anybody has written a cycles file is
-    a tool nobody finishes setting up. Or the date is inside the plan's span of
-    cycles, or within `Config.dates_within_weeks_of_a_cycle` of either end of it,
-    which is every date anybody means to type.
+    a tool nobody finishes setting up. Or the date is inside some cycle's window,
+    or within `Config.dates_within_weeks_of_a_cycle` of one, which is every date
+    anybody means to type.
 
-    **Measured against the whole stretch the cycles cover, not against each
-    window.** The months between two cycles are real days that real work runs
+    **Measured to the NEAREST window, and it used to be measured against the
+    envelope of all of them — earliest first day to latest last day.** That
+    weakens to nothing as a plan accumulates cycles, and it took §6's own
+    motivating typo with it: over `tests/fixtures/corpus`, whose dated cycles run
+    from 2024-12-09 to 2026-08-14 with a whole undated year between cycle 28 and
+    cycle 34, `2025-09-11` typed for `2026-09-11` sat comfortably inside the
+    envelope. So the rule reported nothing, the door answered 200, and the record
+    dropped silently out of `counts_in`, out of `Index.load` and out of
+    `carried_into` for every cycle there is — which is the exact failure §6 opens
+    with, surviving the change written to stop it. icon4py-plan is a multi-year
+    plan; this is the shape it will be in, and the envelope only ever gets weaker.
+
+    The gap the envelope was written to protect is protected by the allowance
+    instead. The months between two cycles are real days that real work runs
     through — the demo corpus leaves a whole unnumbered month for the conference
-    and release window — so a per-window test would refuse the ordinary case. The
-    question this asks is the one a typo fails: is this date anywhere near the
-    period this plan is about.
+    and release window — and twelve weeks is comfortably wider than any gap a
+    team leaves between cycles it is actually running. What no allowance wide
+    enough to be worth having can absorb is a year, which is the one mistake this
+    exists to catch.
 
     The allowance is a configured number of weeks rather than a constant here,
-    because how far past its last dated cycle a plan legitimately reaches is a
-    fact about the team's own planning horizon and not about this tool. The
-    default is wider than a cycle and narrower than the year a mistyped year
-    moves a date by, which is the failure in the comment above.
+    because how far from its cycles a plan legitimately reaches is a fact about
+    the team's own planning horizon and not about this tool. The default is wider
+    than a cycle and narrower than the year a mistyped year moves a date by.
 
     Returns the distance in weeks and not a bool, so that both callers can print
-    it. "41 weeks outside every cycle this plan has dated" and "this date is
+    it. "21 weeks outside every cycle this plan has dated" and "this date is
     outside the plan" are different amounts of help: the first is a number
     somebody can hold against the year they meant to type, and the second is a
     sentence they have to go and check for themselves.
     """
     if value is None or not config.cycles:
         return None
-    earliest = min(window[0] for window in config.cycles.values())
-    latest = max(window[1] for window in config.cycles.values())
     allowed = max(0.0, config.dates_within_weeks_of_a_cycle) * 7
-    if value < earliest:
-        days = (earliest - value).days
-    elif value > latest:
-        days = (value - latest).days
-    else:
-        return None
+    days = min(_days_outside(value, window) for window in config.cycles.values())
     return None if days <= allowed else days / 7
 
 
@@ -3231,8 +3362,16 @@ def _problems_for(
     dep_cycles: set[str],
     spans: Mapping[str, Span] | None,
     today: date,
-) -> Iterator[tuple[str, str | None, str, int]]:
-    """Yield (severity_before_grandfathering, field, message, rule_version)."""
+) -> Iterator[tuple[str, str | None, str | Sentence, int]]:
+    """Yield (severity_before_grandfathering, field, message, rule_version).
+
+    The message is a plain string wherever the rule names no date, and a
+    `Sentence` — a wording plus the dates that fill it — wherever it names one.
+    Both, rather than a `Sentence` at all forty-odd yield sites: a rule with no
+    date in its sentence has nothing to hold as a date, and wrapping every
+    f-string in a constructor to say so would be ceremony over a distinction that
+    is real. `validate_all` makes the one out of the other.
+    """
     if not record.title.strip():
         yield "blocker", "title", "title must not be empty", 1
     if not ID_PATTERN.match(record.id):
@@ -3349,9 +3488,16 @@ def _problems_for(
         yield (
             "warning",
             "start_date",
-            f"the start date {record.start_date} has passed and the work has not begun, "
-            "so this is scheduled from today instead: move the date, or say the work "
-            "has started",
+            # A `Sentence` and not an f-string: this one is drawn on the record
+            # page directly above `Explanation.drawn`'s "the 10.08.2026 you set
+            # has passed", which is the very date it is about, and the two used
+            # to name the same day two ways in one column.
+            Sentence(
+                sentence="the start date {start} has passed and the work has not begun, "
+                "so this is scheduled from today instead: move the date, or say the work "
+                "has started",
+                parts={"start": record.start_date},
+            ),
             5,
         )
     # The two date-versus-date rules, both of which the door refuses as well.
@@ -3370,8 +3516,11 @@ def _problems_for(
         yield (
             "blocker",
             "end_date",
-            f"the end date {record.end_date} is before the start date "
-            f"{record.start_date}, so this record finished before it began",
+            Sentence(
+                sentence="the end date {end} is before the start date {start}, "
+                "so this record finished before it began",
+                parts={"end": record.end_date, "start": record.start_date},
+            ),
             1,
         )
     # And a date that is nowhere near this plan, which IS a warning, and for the
@@ -3389,8 +3538,16 @@ def _problems_for(
             yield (
                 "warning",
                 field,
-                f"{getattr(record, field)} is {away:.0f} weeks outside every cycle this plan "
-                "has dated, so this record counts towards none of them: check the year",
+                Sentence(
+                    sentence="{value} is {away} weeks outside every cycle this plan has "
+                    "dated, so this record counts towards none of them: check the year",
+                    # The distance is a finished string and the date is not. A
+                    # number is read the same way in both halves of the app —
+                    # there is one format for a date here and none for a count of
+                    # weeks — so rounding it at the rule keeps `{away:.0f}` in the
+                    # one place that knows it is weeks.
+                    parts={"value": getattr(record, field), "away": f"{away:.0f}"},
+                ),
                 5,
             )
     yield from _people_problems(record, config)
@@ -3524,7 +3681,10 @@ def _identity_problems(records: list[Record]) -> Iterator[Problem]:
                 severity="blocker",
                 record_id=record.id,
                 field="id",
-                message=(
+                # No parts, and no date to hold as one: this sentence is built
+                # out of a record id and a filename, both of them text somebody
+                # committed, so it is returned verbatim rather than formatted.
+                sentence=(
                     f"this record says it is {record.id} and its file is named "
                     f"{Path(record._source).name} — until they agree, a save can land "
                     "on the wrong file"
@@ -3537,7 +3697,7 @@ def _identity_problems(records: list[Record]) -> Iterator[Problem]:
                 severity="blocker",
                 record_id=record.id,
                 field="id",
-                message=(
+                sentence=(
                     f"{', '.join(sorted(others))} claims this id too, so which record "
                     "this is depends on which half of the app you ask"
                 ),
@@ -3609,12 +3769,18 @@ def validate_all(
             record, config, by_id, children, parent_cycles, dep_cycles, spans, today
         ):
             grandfathered = rule_version > record.created_schema_version
+            # A rule that named no date yielded a finished string; one that named
+            # a date yielded the wording and the dates apart. Both become the
+            # same kind of Problem here, so that nothing downstream has to ask
+            # which kind of rule reported it.
+            said = message if isinstance(message, Sentence) else Sentence(sentence=message)
             problems.append(
                 Problem(
                     severity="warning" if grandfathered else severity,
                     record_id=record.id,
                     field=field,
-                    message=message,
+                    sentence=said.sentence,
+                    parts=said.parts,
                     rule_version=rule_version,
                 )
             )

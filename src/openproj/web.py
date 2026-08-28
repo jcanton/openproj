@@ -1151,17 +1151,39 @@ def _reject_a_start_date_this_write_puts_in_the_past(
     `fields`. The parsed candidate is the one place the new status and the old
     date are true at the same time, which is why this is called after `parse_text`
     rather than beside its siblings above.
+
+    **The remedies are the write's, and there are two writes here.** One sentence
+    served both and it was wrong about the commoner one. Somebody typing a date
+    into a record whose status they are not touching is usually behind on the
+    status rather than wrong about the date — "I started this on Monday" — and
+    `in_progress` is the remedy that fits. Somebody MOVING the status is the
+    opposite case: dragging the hill ball from `in_progress` back to `ready` is an
+    ordinary correction, and it was answered with "or set the status to
+    in_progress if it started then", which is the state they are deliberately
+    leaving, while clearing the date — the fix — was not named at all. An error
+    that names a remedy the person has just rejected reads as the tool not having
+    understood the gesture, and this one said it on all four doors.
+
+    The status is not quoted back. Three of the four doors run `_reject_bad_status`
+    before this and the room runs none, so the word can be anything a payload
+    carries — and naming the CONTROL rather than its value is the better sentence
+    anyway, by the rule that copy names what a person touched.
     """
     if not start_date_has_passed(candidate, today):
         return
     if "start_date" not in fields and before is not None and start_date_has_passed(before, today):
         return
-    raise HTTPException(
-        422,
-        f"start_date: {candidate.start_date} has already passed, and this record says "
-        f"the work has not begun. Pick a date from {today} on, or set the status to "
-        "in_progress if it started then.",
-    )
+    if "status" in fields:
+        said = (
+            "the status you are setting says the work has not begun. "
+            f"Clear the start date, or pick one from {today} on."
+        )
+    else:
+        said = (
+            "this record says the work has not begun. "
+            f"Pick a date from {today} on, or set the status to in_progress if it started then."
+        )
+    raise HTTPException(422, f"start_date: {candidate.start_date} has already passed, and {said}")
 
 
 def _reject_dates_this_write_cannot_mean(

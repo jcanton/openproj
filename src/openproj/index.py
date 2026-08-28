@@ -354,12 +354,28 @@ class Index(BaseModel):
         status there too would put every stale record into every cycle from its
         start to today — the same haunting, differently sourced.
 
-        **The state that clause was written for no longer reaches it.** A record
-        the scheduler genuinely cannot place — a dependency cycle, a duration
-        that outruns the calendar — is given `Span(unscheduled=True)` at the
-        floor on both of `schedule`'s branches rather than nothing, so it is
-        still counted, in the cycle today falls in. Nothing is unplaceable and
-        sized any more: having no span means having no length anybody stated.
+        **The state that clause was written for is nearly gone, and what is left
+        of it has no weeks in it.** A record the scheduler tried to place and
+        could not — a duration that outruns the calendar — is given
+        `Span(unscheduled=True)` at the floor rather than nothing, so it is still
+        counted, in the cycle today falls in. The other branch, the one for a
+        dependency cycle, `continue`s wherever there is no duration to lay out,
+        and that is two populations: a leaf nobody has sized, which is the case
+        above arriving by a second route, and every CONTAINER, since a project
+        carries no size field at all and `_duration_weeks` is None for one
+        however complete it is. So a project caught in a dependency cycle has no
+        span here, and this said for a while that nothing did.
+
+        What that costs is carryover, and only for a rung with no weeks to carry.
+        The stamp answers on its own for the cycle a record was bet into — the
+        `mine == cycle` line below returns True with no span in it — so a span is
+        what decides whether an EARLIER bet is still running in this one, and
+        what a spanless container is missing from is later cycles' carryover
+        lists and nothing else. No bar and no percentage moves with it, because
+        `_charged` skips anything holding children as a rollup and never charged
+        it in the first place. That is the same landing an empty project already
+        has, and the alternative is the invented pair of dates §2 of
+        `design/time-model.md` argues against at length.
 
         Carryover is decided by the dates and not by the status. It asked for
         `in_progress`, which dropped a `ready` task sitting under a carried pitch
@@ -503,7 +519,7 @@ class Index(BaseModel):
         )
 
     def delivered_in(self, cycle: int) -> list[str]:
-        """Ids of the finished work this cycle's window can claim, earliest first.
+        """Ids of the finished work this cycle can claim, earliest first.
 
         **The counterpart to `counts_in`, and deliberately not a widening of it.**
         `counts_in` returns False for `done` on its first line and is the only
@@ -524,6 +540,33 @@ class Index(BaseModel):
         and reading the stamp would file it under the cycle it slipped out of.
         The date somebody wrote down is the only thing that says when work
         landed, which is why §4 made it a stored field rather than a derived one.
+
+        **Every finished record with an end date is delivered somewhere, because
+        the windows do not tile the calendar.** This was `window[0] <= end_date
+        <= window[1]` asked of the queried cycle and nothing else, which has a
+        third answer nobody had written a branch for: a done record whose end
+        date is in no window at all took the dated arm, matched no cycle, and
+        appeared in no Delivered block anywhere. Both shipped corpora have a real
+        gap for it to fall into — the unnumbered month between cycles 35 and 36,
+        the conference and release window that `weeks_outside_every_cycle`'s
+        docstring names — and that date is inside `dates_within_weeks_of_a_cycle`
+        of the plan, so no warning fired either, while `counts_in` had already
+        refused the record for being done. A cycle silently losing a person's
+        work is the failure §6 exists to end, and it was living inside the block
+        written to report what a cycle produced. So a date in no window is
+        claimed by the window it is nearest to; see `_claiming_cycle`.
+
+        **Nearest, and not the cycle the bet was stamped with.** That was the
+        other candidate and it loses twice. It is the reading the paragraph above
+        rejects — a bet made in 34 and finished in the gap before 36 would be
+        filed under 34, the cycle it slipped out of — and it is the choice that
+        cannot show itself: a row under cycle 34 printing an end date from June
+        gives the reader nothing to work with. Nearest puts the row against the
+        window it sits just outside, and that window is printed at the top of the
+        same page as Starts on and Cool-down ends, so the date in the row is
+        readable against it. The sort below keeps such a row at the head or the
+        foot of the block rather than in the middle of it, which is the rest of
+        what a reader needs to see that it is there by nearness.
 
         **A done record with no end date is listed under the cycle it was bet
         in.** Nothing about it can be tested against a window, and there are
@@ -551,14 +594,21 @@ class Index(BaseModel):
         the work somebody actually did all cycle — which is the complaint at the
         top of §5, and dropping either half of it answers half the complaint.
         """
-        window = self.cycles.get(cycle)
         dated: list[Record] = []
         undated: list[Record] = []
         for record in self.plan.values():
             if record.status != "done":
                 continue
-            if record.end_date is not None:
-                if window is not None and window[0] <= record.end_date <= window[1]:
+            # `and self.cycles`: a plan that has dated no cycle at all — the
+            # ordinary state of a repository somebody started this morning, and
+            # the same bargain `weeks_outside_every_cycle` strikes — has no
+            # window for a date to be near, so its finished work falls to the
+            # stamp arm below with the undated records rather than to no arm at
+            # all. Which is this method's whole rule: everything finished is
+            # claimed by some cycle, or by none only because nothing is left to
+            # claim it by.
+            if record.end_date is not None and self.cycles:
+                if self._claiming_cycle(record.end_date) == cycle:
                     dated.append(record)
             elif cycle_of(record, self.plan) == cycle:
                 undated.append(record)
@@ -567,9 +617,57 @@ class Index(BaseModel):
         # position no date put them in. Two sorted lists rather than one key with
         # a placeholder date in it: a placeholder that never decides anything is
         # still a date somebody has to read past to see that it does not.
+        #
+        # It also does the reader one favour for free: a record claimed by
+        # nearness rather than by containment ended before this window opened or
+        # after it closed, so it sorts to the head or the foot of the block and
+        # never into the middle of the cycle's own story.
         dated.sort(key=lambda record: (record.end_date, record.id))
         undated.sort(key=lambda record: record.id)
         return [record.id for record in dated + undated]
+
+    def _claiming_cycle(self, day: date) -> int:
+        """Which dated cycle a finished record's end date is filed under.
+
+        The window that holds the day, and where no window does, the window it is
+        nearest to. Only `delivered_in` asks, and it has already checked that
+        `self.cycles` is non-empty: a plan that has dated nothing gets no answer
+        here rather than a poor one.
+
+        Distance is to the window and not to its midpoint — a day is zero from a
+        window it is inside, and otherwise as many days as lie between it and the
+        nearer end of one. Written as one `min` over a key rather than as a
+        containment pass followed by a nearness pass, because a day inside a
+        window is zero away from it and beats every day outside one by that
+        alone; two passes would be two places to keep that precedence true.
+
+        Ties go to the earlier window: a day exactly halfway across an unnumbered
+        month is filed under the cycle the work was running in when that cycle
+        ended, rather than under the one it never reached. The same clause
+        decides the other tie nothing forbids — a hand-written `cycles.yaml` may
+        overlap two windows, and a day inside both is claimed by the earlier of
+        them instead of being listed under both, which is the one answer this
+        method may not give.
+
+        Deliberately not `weeks_outside_every_cycle`, which is the neighbouring
+        arithmetic and answers a different question. That one measures against
+        the whole stretch the plan's cycles cover, and says so at length: a date
+        in the gap between two windows is an ordinary date and warning about it
+        would refuse the ordinary case. This one has to name a single cycle, so
+        it is the one place that must look at each window in turn.
+        """
+
+        def distance(number: int) -> tuple[int, date, int]:
+            start, end = self.cycles[number]
+            if start <= day <= end:
+                away = 0
+            elif day < start:
+                away = (start - day).days
+            else:
+                away = (day - end).days
+            return away, start, number
+
+        return min(self.cycles, key=distance)
 
 
 def _project_of(record: Record, by_id: dict[str, Record]) -> str | None:

@@ -3128,7 +3128,12 @@ def test_the_grouping_of_problems_is_written_once(page: str):
     carried = payload(page)
 
     assert isinstance(carried["problems"], list)
-    assert {"severity", "record_id", "field", "message"} <= set(carried["problems"][0])
+    # `drawn` beside `message`: one sentence in the two forms its two kinds of
+    # reader need — ISO for `/api/index.json` and the terminal, day-first for the
+    # cell marks this page hangs on a table whose Start and End columns are drawn
+    # that way. The script reads `drawn`, so its absence would be a mark saying
+    # `undefined`.
+    assert {"severity", "record_id", "field", "message", "drawn"} <= set(carried["problems"][0])
     assert "problems" not in next(iter(carried["rows"].values())), "one list, not one per row"
     # The two predicates that read the problem list are recomputed with it.
     assert "row.predicates.push('missing_required_fields');" in script(page)
@@ -4260,18 +4265,23 @@ def test_what_the_server_refuses_a_row_with_is_shown_beside_it(page: str):
             {
                 "status": 422,
                 "json": {
+                    # `drawn` beside `message`, because a Problem carries both
+                    # and a page draws the day-first one: neither of these
+                    # sentences names a date, so here they are the same string.
                     "problems": [
                         {
                             "severity": "blocker",
                             "record_id": "pitch-000000",
                             "field": "owner",
                             "message": "a ready record needs an owner",
+                            "drawn": "a ready record needs an owner",
                         },
                         {
                             "severity": "blocker",
                             "record_id": "pitch-000000",
                             "field": "assignees",
                             "message": "a ready record needs somebody on it",
+                            "drawn": "a ready record needs somebody on it",
                         },
                     ]
                 },
@@ -5830,6 +5840,7 @@ def test_a_refused_create_gives_the_check_back(page: str):
                             "record_id": "task-a1b2c3",
                             "severity": "blocker",
                             "message": "a task needs an owner before it can be ready",
+                            "drawn": "a task needs an owner before it can be ready",
                         },
                     ]
                 },

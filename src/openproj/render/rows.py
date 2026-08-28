@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..index import Index, _product_of, _project_of, predicates_of
-from ..model import RUNG, size_weeks, unread_fields
+from ..model import RUNG, size_weeks, unread_fields, workers_on
 
 # The record page's own reading of what a pitch's tasks come to, imported rather
 # than repeated. It is the wrong way up as a dependency — this module is the view
@@ -47,13 +47,26 @@ def _rollup(index: Index, record_id: str) -> dict | None:
     """What the work under this record occupies, and how that reads against its bet.
 
     None wherever there is nothing to say: on a rung that reads no appetite at
-    all (see below), on every leaf, and on anything whose children have no length
-    between them. `_tasks_add_up_to` decides that last one and is called rather
-    than re-derived, so the sentence the record page prints under Appetite and
-    the cell the table draws are the same fact read once. They said different
-    numbers for a while — the page summed `index.progress[id].total` while
-    `check` summed only the sized children — and the fix was to make both read
-    `Span.elapsed_weeks`, which this is the third reader of.
+    all (see below) and on every leaf. `_tasks_add_up_to` is what answers the
+    number and is called rather than re-derived, so the sentence the record page
+    prints under Appetite and the cell the table draws are the same fact read
+    once. They said different numbers for a while — the page summed
+    `index.progress[id].total` while `check` summed only the sized children —
+    and the fix was to make both read `Span.elapsed_weeks`, which this is the
+    third reader of.
+
+    **Having children is what decides whether there is a cell at all, and it
+    used to be having a NUMBER.** `_tasks_add_up_to` answers None for a pitch
+    none of whose tasks has a length, and returning None with it took the fourth
+    state away from the one plan it was written about: a bet over three `shaping`
+    tasks has nothing sized under it at all, which is strictly worse than the
+    three-sized-and-four-unsized case that did get the `?`, and it drew its bet
+    plainly with no mark, no muted ground and no sentence. So the gate is `kids`
+    — the work under this record — and the missing number is a reading rather
+    than a reason to say nothing. Shelved children are not in that list, so a
+    pitch whose every task is parked still falls out here exactly as it did when
+    the number was the gate: `_progress_of` leaves shelved work out of the
+    rollup, so there was never a number for one of those either.
 
     **One value, so that the tint and the mark cannot disagree.** The state below
     is `Span.budget_weeks` against `Span.elapsed_weeks`, which is exactly the
@@ -77,7 +90,9 @@ def _rollup(index: Index, record_id: str) -> dict | None:
     a real number, under the box, and green would say the bet is known to fit
     when nobody has estimated more than half of it. So a child that adds nothing
     to the union takes the reading away rather than flattering it, and the
-    sentence says how many did.
+    sentence says how many did. The same state covers the case where EVERY child
+    adds nothing, and there the cell has no number to print at all — `?` over "no
+    length yet", which is the whole of what is known about that bet.
 
     A child adds nothing when it has no span at all (nobody sized it, §2 of
     `design/time-model.md`) or a span with no length (a `done` record written
@@ -110,56 +125,97 @@ def _rollup(index: Index, record_id: str) -> dict | None:
     # has none there and would have had one here.
     if _SIZE_FIELD_NAME in unread_fields(record.kind):
         return None
-    contents = _tasks_add_up_to(index, record)
-    if contents is None:
-        return None
-    # A number came back, so there is a span behind it — `_tasks_add_up_to` reads
-    # `elapsed_weeks` off exactly this one.
-    span = index.spans[record_id]
-    box = span.budget_weeks
     kids = [
         child
         for child in index.children.get(record_id, ())
         if child in index.plan and index.plan[child].status != "shelved"
     ]
+    if not kids:
+        return None
     silent = [
         child
         for child in kids
         if index.spans.get(child) is None or index.spans[child].elapsed_weeks is None
     ]
-    if box is None:
-        state = "unbet"
-        why = f"No bet on this yet. Its tasks need {contents:.1f} weeks."
+    contents = _tasks_add_up_to(index, record)
+    # `.get`, because a pitch whose children are ALL unsized is scheduled
+    # nowhere: the rollup branch of `_schedule` takes `min`/`max` over the spans
+    # its children came back with and `continue`s when there are none. That
+    # record has no box either — `budget_weeks` travels on the span — so the
+    # sentence below can name the bet and the people and stops there.
+    span = index.spans.get(record_id)
+    box = span.budget_weeks if span is not None else None
+    # The bet as the FILE states it, and the people the scheduler divided it by
+    # to get the box. Both are named because the box alone is not recoverable
+    # from either: this row printed `bet 4.0 weeks` on a record whose file says
+    # `person_weeks: 8`, which invites somebody to go looking for a 4 that is
+    # written nowhere. The appetite is in person-weeks and the box is in calendar
+    # ones, and the sentence has to carry the conversion or it is two units with
+    # the reader left to notice — the defect the record page carried in the same
+    # words. `workers_on` and not `assignees`, because that is the list
+    # `_duration_weeks` divided by; `_rollup_problems` counts the same names in
+    # the sentence it yields about this same comparison, and two counts of two
+    # different sets of people explaining one number is how they come apart.
+    stated = size_weeks(record)
+    people = len(workers_on(record)) or 1
+    bet = (
+        f"Bet {stated:g} over {'1 person' if people == 1 else f'{people} people'}"
+        if stated is not None
+        else "No bet on this yet"
+    )
+    if contents is None:
+        # Nothing underneath has a length, so there is no reading to give — only
+        # the bet, and the fact that nobody has estimated what is meant to go in
+        # it. No count of the silent children, unlike the partial state below:
+        # they are all of them, and "1 of its 1 have no length yet" is a sentence
+        # about one task written as arithmetic.
+        state = "unsized"
+        text = "no length yet"
+        why = (
+            f"{bet}. Nothing under it has a length yet, "
+            "so nothing can be said about whether it fits."
+        )
     else:
-        # The box is quoted as the calendar weeks the bet bought, in the words
-        # `_rollup_problems` uses for it — "the 4.0 the bet buys" — and never as
-        # the stated appetite. The appetite is in person-weeks and this number is
-        # in calendar ones; a sentence putting `bet 8.0` beside `needs 5.6` would
-        # be the comparison the record page made until it was fixed, two units in
-        # one line with the reader left to notice.
-        held = f"bet {box:.1f} weeks, its tasks need {contents:.1f}"
-        if contents > box:
-            state = "over"
-            why = f"{held} — over the box the bet bought."
-        elif silent:
-            state = "unsized"
-            why = (
-                f"{held} — but {len(silent)} of its {len(kids)} have no length yet, "
-                "so that can only grow."
-            )
-        elif contents == box:
-            state = "level"
-            why = f"{held} — exactly the box."
+        text = f"{contents:.1f} in tasks"
+        if box is None:
+            state = "unbet"
+            why = f"{bet}. Its tasks need {contents:.1f} weeks."
         else:
-            state = "under"
-            why = f"{held} — inside the box."
+            # Three facts in one clause, in the order somebody reads them: what
+            # was bet, over how many people, and what that buys. The last is the
+            # only one of the three the comparison is made against, and it is
+            # quoted in the words `_rollup_problems` uses for it — "the 4.0 the
+            # bet buys" — so the warning in `check` and the sentence on this row
+            # name the same number the same way.
+            held = f"{bet}, which buys {box:.1f} weeks; its tasks need {contents:.1f}"
+            if contents > box:
+                state = "over"
+                why = f"{held} — over the box."
+            elif silent:
+                state = "unsized"
+                why = (
+                    f"{held} — but {len(silent)} of its {len(kids)} have no length yet, "
+                    "so that can only grow."
+                )
+            elif contents == box:
+                state = "level"
+                why = f"{held} — exactly the box."
+            else:
+                state = "under"
+                why = f"{held} — inside the box."
     return {
         # Two keys for one number, exactly as `progress` and `progress_text`
         # below are: the number is what a column sorts by, the text is what the
         # cell prints. `5.6 in tasks` is the record page's own wording for it,
         # and a test holds the two together.
+        #
+        # None on both where nothing under this has a length. The column sorts
+        # such a row where it sorts an unsized leaf — `shownBy` reads this key
+        # and `String(null ?? '')` is the empty string — which is the right
+        # company for it, and the alternative was sorting a row by a bet its own
+        # cell no longer shows.
         "weeks": contents,
-        "text": f"{contents:.1f} in tasks",
+        "text": text,
         "state": state,
         "why": why,
     }
@@ -223,10 +279,12 @@ def _row(index: Index, record_id: str) -> dict:
         # copy of this row showed 0.5 for a bet nobody had sized while the
         # table's showed nothing. One question, one answer, on every page.
         "size": size,
-        # What the work under this record adds up to, where there is any: the
-        # size column draws THIS instead of the bet on such a row, and refuses to
-        # be edited while it does. A cell showing a derived number and opening an
-        # editor on the stored one asks a person to type at a value they cannot
+        # How the work under this record reads against the box its bet bought,
+        # on every row that has work under it — including the one where nothing
+        # underneath has a length yet, which carries the reading and no number.
+        # The size column draws THIS instead of the bet on such a row, and
+        # refuses to be edited while it does. A cell showing a derived number and
+        # opening an editor on the stored one asks a person to type at a value they cannot
         # see, which is the rule the two derived-value columns were closed to
         # editing for in the first place. The bet is still typed on the record's
         # own page, and on the betting table, which is where a pitch's tasks are

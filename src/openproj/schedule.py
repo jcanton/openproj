@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Mapping
 from datetime import date
 from typing import NamedTuple
 
@@ -41,7 +41,7 @@ from .model import (
     RUNG,
     Config,
     Record,
-    _read_date,
+    Sentence,
     ancestors,
     cycle_of,
     days_after,
@@ -109,8 +109,17 @@ class Span(BaseModel):
     # days nobody is working and no remedy the warning offers can recover. See
     # `_occupied_weeks`.
     #
+    # **Whose days, is decided by whether the record holds children and never by
+    # which branch produced the span.** A leaf reports its own; anything with
+    # children reports what is under it, finished records included — a bet that
+    # ran from January to June holding one week of work holds one week, and the
+    # five idle months belong to the dates above and to no reading of this. The
+    # historical branch used to answer with the record's own interval whether or
+    # not it held anything, and `check`, the reading view and the appetite cell
+    # all called that number "its tasks".
+    #
     # None wherever there is no length to report, which is two cases now and was
-    # three. An unscheduled span, whose `start` and `end` are a placeholder for
+    # three. An unscheduled LEAF, whose `start` and `end` are a placeholder for
     # "no answer" rather than dates anybody forecast — a fifth of a week is not a
     # length, it is today twice. And a parent none of whose children have one,
     # which is the first case seen from above.
@@ -118,7 +127,7 @@ class Span(BaseModel):
     # The third was a `historical` span, and it went with §4 of
     # `design/time-model.md`: a done record's dates were its start date twice,
     # for want of anywhere to record where finished work ended, and there is an
-    # `end_date` now. So on a finished record this is the one number on any span
+    # `end_date` now. So on a finished leaf this is the one number on any span
     # that was MEASURED rather than forecast — working days between two dates
     # somebody wrote down — and the parents of finished work get a length back
     # with it. A record written before the gate existed still carries no end and
@@ -126,73 +135,23 @@ class Span(BaseModel):
     elapsed_weeks: float | None = None
 
 
-class Explanation(BaseModel):
+class Explanation(Sentence):
     """Why a record starts when it does: one sentence, and the dates it names.
 
-    The dates are kept as dates. The sentence is a template with named slots and
-    the values that fill them travel beside it, so one wording comes out ISO for
-    the documents scripts read — `text` — and day-first for the prose people read
-    — `drawn`.
+    A `Sentence` (`model.py`), which is where the argument for holding the dates
+    as dates is written and where `text` and `drawn` are. This class is what a
+    scheduling sentence carries on top of the wording: which record it is about,
+    and the two things a reader may want to follow from it.
 
-    This used to be a finished string, and `_explain` formatted its dates
-    day-first because the record page draws every other date that way. That is
-    right for the page and wrong for both of the other two readers: it put
-    `28.08.2026` inside `openproj schedule --json`, whose `today` and every span
-    date are ISO, and on the terminal line beside two ISO columns —
-    `2026-08-28  2026-09-15  task-0a1002  Starts on 28.08.2026: …`, one line
-    saying the same kind of thing two ways. A value that carries a format has
-    already chosen for readers it cannot see.
-
-    **Reformatting the finished sentence at the page was the other candidate and
-    it lost twice over.** It means finding dates inside prose by pattern and
-    rewriting the result — the substituting-into-finished-output habit
-    `test_no_page_is_assembled_by_substitution` exists to keep out of these
-    modules — and a pattern is a guess at something the code that wrote the
-    sentence simply knows: which characters were a date. It would also have to be
-    written at each place that draws one, the record page and the timeline's
-    tooltip, while `openproj schedule` and `/api/index.json` want none of it: two
-    copies of a format, to unpick a formatting nothing had to do.
+    The machinery was written here first, and it moved when `Problem` needed the
+    same two forms for the same reason — a validator sentence naming a start date
+    was drawn ISO on the record page, a few rows above this one's day-first
+    reading of that same date.
     """
 
     record_id: str
-    # A literal written in `_explain`, never a string built out of data. It is
-    # handed to `str.format`, so a template assembled around a login or a record
-    # id would let text out of a plan file name a slot of its own — an owner
-    # field of `{0.__class__}` raising IndexError on every page that draws a
-    # schedule. Everything variable is a value in `parts` instead, and `format`
-    # does not look inside those.
-    sentence: str
-    parts: dict[str, str | date] = {}
     blocker_id: str | None = None
     worker_busy_until: date | None = None
-
-    @property
-    def text(self) -> str:
-        """The sentence with its dates the way the files store them: `2026-08-28`.
-
-        `openproj schedule`, its `--json` and `/api/index.json` — the terminal
-        line whose first two columns are `span.start` and `span.end`, and two
-        documents read by scripts in which every other date is ISO.
-        """
-        return self._filled(str)
-
-    @property
-    def drawn(self) -> str:
-        """The sentence with its dates the way the app reads one out: `28.08.2026`.
-
-        The record page and the timeline's tooltip. The definite article is what
-        makes the distinction worth drawing at all: "the 2026-08-10 you set"
-        names a thing, "the 10.08.2026 you set" names a day.
-        """
-        return self._filled(_read_date)
-
-    def _filled(self, read: Callable[[date], str]) -> str:
-        return self.sentence.format(
-            **{
-                key: read(part) if isinstance(part, date) else part
-                for key, part in self.parts.items()
-            }
-        )
 
 
 def _is_working_day(day: date, config: Config) -> bool:
@@ -681,16 +640,26 @@ def schedule(
 
     spans: dict[str, Span] = {}
     explanations: dict[str, Explanation] = {}
-    # The stretches each record's work actually occupies, which for a leaf is one
-    # interval and for a parent is every interval its leaves hold. Kept beside the
-    # spans rather than derived from them because a span is the enclosing pair of
-    # dates and this is the union underneath it — the two differ by every gap in
-    # the plan, and it is the union the bet is judged against (`_occupied_weeks`).
+    # The stretch each LEAF occupies: one interval per record that has a length
+    # to report, forecast for work that is still to come and measured for work
+    # that finished with a recorded end. Kept beside the spans rather than derived
+    # from them because a span is the enclosing pair of dates and this is what
+    # lies inside it — the two differ by every gap in the plan, and it is the days
+    # inside that a bet is judged against (`_occupied_weeks`).
     #
-    # Carried up level by level rather than merged as it goes, so that a pitch
-    # inside a project contributes the days its own tasks occupy and not the
-    # stretch enclosing them: merging at each level would fold a gap into an
-    # interval and hand it to the grandparent as work.
+    # **Leaves only, and a parent's contents gathered from underneath it at the
+    # end** (`_intervals_under`, and the pass below the placement loop). This map
+    # used to carry an entry for a parent too, concatenated from its children as
+    # each parent was placed, and a parent could then only be measured at the
+    # moment the loop reached it. A finished pitch is placed on the historical
+    # branch before any of that runs, so it was given the length of its OWN two
+    # dates instead — see there.
+    #
+    # Gathering downwards needs no order at all, and it also stops a record in
+    # the middle with nothing of its own from swallowing what is under it: a
+    # pitch finished before `end_date` existed and never given a start date gets
+    # no span, so it wrote nothing here, so its project was charged for none of
+    # the tasks inside it. A walk to the leaves passes straight through it.
     occupied: dict[str, list[tuple[date, date]]] = {}
 
     # Completed work is a historical marker, never a forecast, and never a claim
@@ -746,8 +715,25 @@ def schedule(
                 # cannot: handed one interval it will honestly report the day it
                 # covers, and the whole point is that a record with no end date
                 # covers no days that anybody measured.
+                #
+                # And its OWN interval only where it is a leaf. A finished record
+                # that holds children is a box like any other, and what is in the
+                # box is its tasks — so a parent is left to the pass under the
+                # placement loop, which is where every parent's contents are
+                # computed and the only place they are. Written here it was the
+                # record's own idle calendar, and every reader called it "its
+                # tasks": a pitch bet at 8.0, started in January and finished at
+                # the end of June holding a single one-week task was reported by
+                # `check` as needing 25.4 weeks for tasks that need one, with the
+                # same 25.4 in the appetite cell. That is the reading §3 of
+                # `design/time-model.md` threw out for live pitches — a number
+                # naming a cause that is not the cause, and none of the three
+                # remedies the sentence offers touches six idle months — arriving
+                # on the one population §4b exists to serve, and by the ordinary
+                # lifecycle rather than by a corner: ready → in_progress → done
+                # leaves a record carrying both dates.
                 elapsed_weeks=_occupied_weeks([(record.start_date, ended)], config)
-                if ended
+                if ended and not children.get(record.id)
                 else None,
                 # Reached at last on this branch, and reached here because this is
                 # where the records that can answer the question live.
@@ -768,7 +754,14 @@ def schedule(
             # starts contributing honestly. Nothing is written for a record with
             # no end date, so it goes on contributing nothing, exactly as an
             # unsized one does.
-            if ended:
+            #
+            # Nothing is written for a finished PARENT either, on the same rule
+            # as the length above: these two dates enclose its tasks and are not
+            # a stretch of work beside them, so contributing them upwards would
+            # charge a project once for the pitch's calendar and again for every
+            # task inside it. Its tasks are reached from above without it, since
+            # `_intervals_under` walks the whole subtree rather than one level.
+            if ended and not children.get(record.id):
                 occupied[record.id] = [(record.start_date, ended)]
 
     active = {i: e for i, e in live.items() if e.status != "done"}
@@ -777,16 +770,28 @@ def schedule(
     floor = _first_working_day(today, config)
     for record_id in stalled | contradictory:
         budget = _budget_weeks(_duration_weeks(active[record_id], config, live))
-        # A record nobody has sized gets no span here either. This loop wrote one
-        # unconditionally, so it reached `start=end=floor, unscheduled=True`
-        # before the sized-or-not question was ever asked below — and two unsized
-        # tasks in a dependency cycle came back reading Start 27 Aug / End 27 Aug
-        # in the table, styled `derived` exactly like a forecast and sorting to
-        # the top of a Start-ascending sort. That is the precise symptom §2 of
-        # `design/time-model.md` and the long comment further down both argue at
-        # length must not happen, arrived at by a path neither of them was
-        # guarding. One such child also pinned its pitch's rollup to today, since
-        # `min(child.start)` cannot see the flag.
+        # A record with no duration to lay out gets no span here either. This loop
+        # wrote one unconditionally, so it reached `start=end=floor,
+        # unscheduled=True` before the question was ever asked below — and two
+        # unsized tasks in a dependency cycle came back reading Start 27 Aug /
+        # End 27 Aug in the table, styled `derived` exactly like a forecast and
+        # sorting to the top of a Start-ascending sort. That is the precise
+        # symptom §2 of `design/time-model.md` and the long comment further down
+        # both argue at length must not happen, arrived at by a path neither of
+        # them was guarding. One such child also pinned its pitch's rollup to
+        # today, since `min(child.start)` cannot see the flag.
+        #
+        # **Two populations reach this, not one**, and the difference is worth
+        # saying because only the first is a record anybody could fix. A leaf
+        # nobody has sized: somebody states an appetite and it is placed. And
+        # every CONTAINER — a project carries no size field at all, by design, so
+        # `_duration_weeks` is None for one however complete it is, and a project
+        # caught in a dependency cycle therefore loses its span entirely rather
+        # than standing at the floor. That is the same landing an empty project
+        # already has and every view already copes with — but `Index.counts_in`
+        # went on documenting the older behaviour, that an unplaceable record is
+        # given a floor span on both of this function's branches and is therefore
+        # still counted somewhere. It says what this does now.
         #
         # "Could not be placed" and "there is nothing to place" are two different
         # answers, and only the first of them is worth a pair of dates.
@@ -798,6 +803,12 @@ def schedule(
         # None on purpose: these two dates are `floor` twice, standing for "no
         # answer", and reading a fifth of a week out of them would hand
         # `_rollup_problems` a length nothing forecast.
+        #
+        # Left None on this line, that is. A record here that holds children is
+        # filled in from below by the pass under the loop, like every other
+        # parent: its own placement is the thing with no answer, while the tasks
+        # inside it were placed and the days they take are a fact about the box
+        # whatever the scheduler could make of the box's own dates.
         spans[record_id] = Span(start=floor, end=floor, unscheduled=True, budget_weeks=budget)
 
     booked: dict[str, list[tuple[date, date]]] = defaultdict(list)
@@ -831,7 +842,13 @@ def schedule(
             # that stops being that stretch — a bar drawn over a gap is a true
             # picture of when this pitch is in flight, while a bet charged for
             # that gap is a warning naming a cause nobody can act on.
-            occupied[record_id] = [i for k in kid_ids for i in occupied.get(k, ())]
+            #
+            # The contents are not computed here, although they come from the
+            # same children these dates do. They are the pass under this loop
+            # instead, because a parent placed on the historical branch never
+            # reaches this line at all and was measuring its own two dates — one
+            # arithmetic every parent goes through, rather than one written here
+            # and a different one written there.
             spans[record_id] = Span(
                 start=began,
                 end=ended,
@@ -844,7 +861,6 @@ def schedule(
                 # these dates are what somebody proposes to put in it, and
                 # neither number means anything without the other beside it.
                 budget_weeks=_budget_weeks(_duration_weeks(record, config, live)),
-                elapsed_weeks=_occupied_weeks(occupied[record_id], config),
             )
             continue
 
@@ -941,7 +957,68 @@ def schedule(
         for worker in workers:
             booked[worker].append((span.start, span.end))
 
+    # What is in each box, once every leaf that has a length has one. A record
+    # that holds children is measured by the days its children occupy on EVERY
+    # branch above — placed, unplaceable, or finished — which is the whole of
+    # §3's reading and the thing three separate constructors used to each answer
+    # for themselves. The finished branch answered it worst, with the record's
+    # own start and end date, so a bet that ran from January to June holding one
+    # week of work was reported as holding twenty-five.
+    #
+    # After the loop rather than inside it, because the historical branch runs
+    # before the loop begins and a done pitch can hold a task that is still
+    # running. Nothing in between reads `elapsed_weeks` — `_place` reads a
+    # blocker's dates and nothing else off a span — so the only cost of waiting
+    # is that a parent's contents are set a second time on the one branch that
+    # already knew them.
+    for record_id, span in list(spans.items()):
+        if not children.get(record_id):
+            continue
+        spans[record_id] = span.model_copy(
+            update={
+                "elapsed_weeks": _occupied_weeks(
+                    _intervals_under(record_id, children, occupied), config
+                )
+            }
+        )
+
     return spans, explanations
+
+
+def _intervals_under(
+    record_id: str,
+    children: Mapping[str, list[str]],
+    occupied: Mapping[str, list[tuple[date, date]]],
+) -> list[tuple[date, date]]:
+    """Every stretch the leaves below `record_id` occupy, in no particular order.
+
+    The whole subtree and not one level, so that a project is charged the days
+    its tasks take wherever they hang: through a pitch that was placed, through
+    one nobody has sized and that therefore has no span, and through a finished
+    one whose own two dates are the box around those tasks rather than work
+    beside them. Reaching downwards is also what makes this answerable at any
+    moment, which the level-by-level version was not — it could only be computed
+    as each parent was placed, and a finished parent is never placed.
+
+    Overlaps are left in: `_occupied_weeks` merges, and a day counted twice here
+    is still one day there. Sorting is its job too.
+
+    A parent chain is allowed to contain a cycle — `validate_all` reports one as
+    a blocker rather than refusing the plan, so the scheduler meets one — and
+    `seen` is what makes that a subtree walk that terminates rather than a hang
+    on a page somebody has to be able to open to fix it.
+    """
+    intervals: list[tuple[date, date]] = []
+    seen = {record_id}
+    stack = list(children.get(record_id, ()))
+    while stack:
+        kid = stack.pop()
+        if kid in seen:
+            continue
+        seen.add(kid)
+        intervals.extend(occupied.get(kid, ()))
+        stack.extend(children.get(kid, ()))
+    return intervals
 
 
 def _place(
