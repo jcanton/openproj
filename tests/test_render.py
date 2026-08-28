@@ -1092,7 +1092,13 @@ def test_every_explanation_reaches_the_reader(rendered: Path, seed_index: Index)
 
     `drawn` and not `text`: the page draws the sentence with its dates day-first,
     like the axis under it, and the same sentence goes to `openproj schedule`
-    with them ISO."""
+    with them ISO.
+
+    A raw substring of autoescaped markup, which is a trap now that the blocker
+    sentence names a record by its title: the first corpus title carrying an
+    apostrophe or an ampersand reaches the page correctly escaped and fails this
+    line, and the fix then is to compare against the escaped sentence rather than
+    to unescape the page."""
     body = read(rendered, "timeline.html")
     assert seed_index.explanations
     for record_id, explanation in seed_index.explanations.items():

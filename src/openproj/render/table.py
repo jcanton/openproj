@@ -1774,10 +1774,14 @@ async function saveCells(cell, value, extra) {
     // nobody meant, from a gesture as small as opening the next cell.
     unpick(false);
     draw();
-    // The same re-read the single save makes, and for the same reason: the panel
-    // just wrote a date the Start and End columns of every selected row are
-    // derived from, and those columns are not the one that was edited.
-    if (Object.keys(extra || {}).some(name => DERIVES_DATES.has(name))) await refreshRows();
+    // The same re-read the single save makes, and for the same reason: a date
+    // the Start and End columns of every selected row are derived from has just
+    // been written, and those columns are not the one that was edited.
+    //
+    // Asked of `sending` and not of the panel's answers, exactly as it is asked
+    // there: the Start and End cells are pickers now, so a selection of them is
+    // a bulk date write that arrives with no `extra` at all.
+    if (Object.keys(sending).some(name => DERIVES_DATES.has(name))) await refreshRows();
     await refreshProblems();
     draw();
   } finally {
@@ -1861,7 +1865,18 @@ async function saveCell(cell, value, extra) {
     // columns away from the one that was edited. Re-read rather than recomputed:
     // the scheduler is the server's, and a second copy of it here is the thing
     // this codebase has paid for three times already.
-    if (extra && Object.keys(extra).some(name => DERIVES_DATES.has(name))) {
+    //
+    // **Asked of everything being written, and it used to be asked of `extra`
+    // alone** — of the answers the status panel collected, and of nothing else.
+    // That was the same question while `start_date` and `end_date` could only
+    // reach this line through the panel; the two date columns are pickers now,
+    // and a date typed straight into one arrives here with `extra` undefined. It
+    // read as a save that did not take: the Start cell draws `row.start`, which
+    // is the scheduler's span, the `Object.assign` above writes `row.start_date`,
+    // and the redraw below therefore put the OLD forecast straight back into the
+    // cell somebody had just typed a date into — still muted and italic, as if
+    // nothing had been stated at all. The commit had landed the whole time.
+    if (Object.keys(sending).some(name => DERIVES_DATES.has(name))) {
       await refreshRows();
     }
     // Twice: once to put the typed value back into the cell rather than leaving
@@ -1904,6 +1919,60 @@ function rove(cell, focus) {
   if (focus) at.focus();
 }
 
+// Out from under the frozen columns, after the browser has scrolled the box into
+// view its own way.
+//
+// Focusing a control inside a horizontal scroller makes Chrome scroll it into
+// view, and "in view" to Chrome means inside the scrollport — it knows nothing
+// about the two columns that are `position: sticky` INSIDE that scrollport, so
+// the cell it brings to the left edge is the cell it parks underneath them.
+// Measured on a phone (390x844, `measured_on_a_phone`) on the demo plan with this
+// call taken out: opening a stored row's Start cell put `scrollLeft` at 679 —
+// the table's maximum — with the frozen Title column running to x=177 and the
+// open box drawn from x=142.5, so 34.5px of its left end sat under a column
+// that is opaque by design, and
+// `elementFromPoint` at the box's own left edge answers the title's link rather
+// than the box. `owner` went under by 37.5px and `assignees` by 40.5, so it was
+// never only the one column.
+//
+// Still true, and still this function's job, now that the open date box is wider
+// than its cell: what the box overflows is its RIGHT edge, and this is about its
+// left one. The same run with the call back in clears every one of them: the
+// text boxes open at x=177.5, half a pixel past the edge, and the date box at
+// x=185.5, because a date control sits inside the cell's `.5rem` of padding
+// where a text box starts at the border.
+//
+// It was survivable while the cell held text: what was covered was the left end
+// of a date somebody was reading. A picker's first segment is the one it focuses
+// and selects the moment it opens — and it is inside the first 44px of the
+// control, which is the width at which a box holding 15.09.2026 still draws
+// `15.` — so what is under there is the part being typed into. That is why this
+// is fixed here rather than lived with, and fixed for every editor rather than
+// for dates.
+//
+// `FROZEN` and not a written-out pair, so that a third frozen column arrives
+// here with the stylesheet. Measured off the HEADER of each, which is where
+// `stickyOffset` already reads this geometry: a header is in the same column at
+// the same `left` and is never replaced, while the row under the pointer is
+// rebuilt by every `draw()`. A shed column's header measures zero and so cannot
+// raise the edge. And the cell's own column is left out, because the title is
+// both a frozen column and an editable one — measured against its own right edge
+// it is always "under" by its own width, and would scroll away from nothing.
+function clearOfFrozen(cell) {
+  const edge = headers
+    .filter(th => FROZEN.includes(th.dataset.col) && th.dataset.col !== cell.dataset.col)
+    .reduce((most, th) => Math.max(most, th.getBoundingClientRect().right), 0);
+  // Rounded UP, because a scroll offset is fractional going in and rounded
+  // coming back: 40.5px of overlap paid off exactly left the cell half a pixel
+  // short of the edge it was supposed to clear, which is a column drawn over the
+  // first thing a reader looks at.
+  const under = Math.ceil(edge - cell.getBoundingClientRect().left);
+  // Scrolling BACK, never forward: less `scrollLeft` moves the row right, out
+  // from under the frozen edge. Floored at 0 because there is nothing to clear
+  // there — the sticky columns are sitting in their own places and cover nothing.
+  if (under > 0) scroller.scrollLeft = Math.max(0, scroller.scrollLeft - under);
+}
+
 function openEditor(cell) {
   // A computed column answers rather than swallowing the key, exactly as it
   // answers a double-click: a cell that ignores Enter is indistinguishable from
@@ -1925,6 +1994,26 @@ function openEditor(cell) {
   // a header a screen reader reads on the way in; a box conjured inside that
   // cell carries nothing at all unless it is told what it is editing.
   const named = esc(FIELD_LABELS[field] || field);
+  // A date is PICKED, not spelled. Every other date this app asks for is a
+  // native picker — the detail page's form, the status question `askFor` builds
+  // in this same file, the cycle boxes — and the table was the one surface where a
+  // date had to be typed as ISO from memory into a box that would take anything.
+  // The rule is the TYPE and not a list of field names, for the reason `askFor`
+  // gives: written as `field === 'start_date'` it is right until `end_date`
+  // arrives beside it.
+  //
+  // Nothing converts on either side of this. `stored` hands back `YYYY-MM-DD` or
+  // an empty string, which is exactly what `type="date"` reads and exactly what
+  // it reports back, so the value that opens the box and the value the save
+  // sends are the same string they were when this was a text box.
+  //
+  // And NO prefill, which is where this differs from `askFor` on purpose: that
+  // panel is a question a status change just raised and today is nearly always
+  // the answer, while this opens on whatever the FIELD holds — empty on a row
+  // whose Start cell is showing the scheduler's forecast. Filling it in would
+  // put that guess one Enter away from being committed as somebody's choice
+  // (`test_the_editor_opens_on_the_written_value_and_not_the_forecast`).
+  const type = EDITABLE[field] === 'date' ? 'date' : 'text';
   // A closed set is chosen, never typed. Free text over three options is a way
   // to write `in progres` into the corpus. The option's value is the stored
   // identifier and its text is the word for it, so picking "In progress"
@@ -1942,7 +2031,13 @@ function openEditor(cell) {
         `<option value="${esc(o)}" ${o === was ? 'selected' : ''}>` +
         `${esc(markFor(field, o))}${esc(human(o))}</option>`
       ).join('')}</select>`
-    : `<input value="${esc(was)}" data-type="${esc(EDITABLE[field])}" aria-label="${named}"` +
+    // `type` and `data-type` are two different questions and both are asked:
+    // `type` is what the browser draws, `data-type` is what `coerce` and the
+    // suggestion widget read — the widget completes the last comma-separated
+    // token on `dataset.type === 'list'`, and dropping it as a duplicate of
+    // `type` is how picking a second assignee came to replace the first.
+    : `<input value="${esc(was)}" type="${type}"` +
+      ` data-type="${esc(EDITABLE[field])}" aria-label="${named}"` +
       `${suggest ? ` data-suggest="${esc(suggest)}"` : ''} autocomplete="off">`);
   const input = cell.querySelector('select, input');
   // The table gets the autocomplete the detail page has. Suggestions that only
@@ -1952,12 +2047,52 @@ function openEditor(cell) {
   // A single-value cell selects everything, because a double-click leaves the
   // caret where it landed and typing would interleave. A list must NOT: typing
   // over a selected "jcanton, halungge" deletes both reviewers to write one.
+  //
+  // **Leave this pair as it is now that a date box comes through it.** A date is
+  // not a list, so it takes the first branch, and `select()` on `type="date"` is
+  // a defined no-op — it does nothing and it throws nothing, which is why the
+  // picker needs no case of its own here. The `else` is another matter:
+  // `setSelectionRange` raises InvalidStateError on a date box, so anything that
+  // merged the two branches, or reordered them, or dropped the `input.select`
+  // guard, would take the editor down on the two columns that now open one.
   if (EDITABLE[field] !== 'list' && input.select) input.select();
   else if (input.setSelectionRange)
     input.setSelectionRange(input.value.length, input.value.length);
+  clearOfFrozen(cell);
 
   let abandoned = false;
   input.onblur = () => {
+    // **A half-written date must not clear the date that is there.** A native
+    // picker reports `value === ''` for anything it cannot read as a whole date
+    // — `2026-0`, a day typed into an empty box and then a click elsewhere — and
+    // `coerce` maps `''` to `null`, which is right and has to stay right: a date
+    // has to be removable from the table. So the two are indistinguishable by
+    // value alone, and the fumbled one used to arrive here as a deliberate
+    // clear, commit the deletion and say nothing. A text box could not do this:
+    // it sends the garbage and earns a 422 naming the field, which is a refusal
+    // somebody can read.
+    //
+    // `validity.badInput` is the browser's own word for exactly that state — set
+    // while the control holds something it cannot parse, and false for a box
+    // that is genuinely empty — so it is the one thing here that can tell a slip
+    // from an intention. Treated as abandoned rather than refused, because
+    // nothing was decided: the cell is redrawn on the value it still has.
+    //
+    // Guarded with `&&` because `validity` belongs to a real form control and
+    // the driver the node tests run under builds elements that have none, and
+    // behind `!abandoned` because Escape reaches this line through `draw()` with
+    // the half-written date still in the box. Escape is an intention rather than
+    // a slip, and there is nothing to report about it: it says nothing itself —
+    // the `stopPropagation` below is what keeps the grid's own handler from
+    // taking the whole draft row and announcing that instead — and the `draw()`
+    // it has already done is the redraw this branch would do. All that is left to
+    // add is the sentence, and "was left half-written" is a report of a mistake
+    // nobody made.
+    if (!abandoned && input.validity && input.validity.badInput) {
+      draw();
+      announce(`${FIELD_LABELS[field] || field} was left half-written, and was not changed`);
+      return;
+    }
     // A stored cell writes a commit; a draft cell writes into the row nobody has
     // created yet, which is a change to a variable and not to the repository.
     // Same editor, same key handling, one branch at the end of it.
@@ -4164,6 +4299,74 @@ th .grip:hover::before, th .grip.dragging::before { background: var(--accent); w
 #rows tbody tr.draft > td, #rows tbody tr.adder > td {
   white-space: normal; overflow: visible; text-overflow: clip;
 }
+/* THE BOX A DATE CELL OPENS, WHICH IS A PICKER AND NOT A TEXT BOX — AND THE ONE
+   EDITOR THAT DOES NOT FIT ITS CELL. A native date box wants 126px at this font,
+   measured in a Start cell at `width: auto` and the same 126 whether it is empty
+   or holding a date; both date columns measure 74 on the demo plan at 1400.
+   There is no width that is both inside the cell and readable. Measured at
+   1px widths in Chrome at 13px Inter, a box holding 15.09.2026 reads `15.` at
+   44px, `15.09` at 58, `15.09.2` at 74 and the whole date with daylight before
+   the indicator at 100 — and 58 is exactly the content box the End column leaves
+   it, its 74px cell carrying `.5rem` of padding each side. Chrome spends what it
+   has on the calendar indicator, the day and the month, so what a cell-sized box
+   loses is the century and the year, which are the two fields somebody opens
+   this to change.
+
+   So the box keeps the width it asks for and the CELL gets out of its way. That
+   is not a new idea here: `tr.draft > td` and `tr.adder > td` one rule up already
+   turn the clip off so that a control can paint over its neighbour, because a
+   control is not text and has nothing to ellipsise. What is new is that this one
+   is turned off for the length of one edit, on the one cell holding the editor —
+   `:has()` asks exactly that question, and the cell goes back to clipping the
+   moment `draw()` replaces the box with a value again.
+
+   The alternative — a `min-width` on the two date columns in the measuring pass,
+   so that the column was never narrower than the control — was written and taken
+   out again. It widened both columns for every reader whether or not anybody
+   ever opened a date, and the fit spends that width by dropping a column: at
+   1280 the badge test in `test_table.py` lost the clamped column it measures and
+   failed saying there was none. The fit tests are the alarm, and this table is a
+   laptop's.
+
+   **What this costs instead, which is the honest price:** while the editor is
+   open the box covers part of the column to its right, and nothing else. On the
+   demo plan at 1400, Start's box runs 60px into End's 74, and End's runs 60px
+   into `blocked_by`'s 87 — a whole neighbouring value, not a corner of one.
+   Nothing is covered when no editor is open, and the table is the width it was.
+
+   Both declarations are load-bearing and they answer different questions.
+   Measured with `elementFromPoint` over the open box, on a row whose End cell
+   draws `23.09.26` beside the Start editor:
+
+   - as shipped, the point over the indicator answers the date INPUT;
+   - with `position: static`, it answers the span drawing End's own date —
+     `overflow: visible` alone
+     lets the box out of the cell, but a non-positioned cell's content paints in
+     the in-flow inline layer and the neighbouring cell's own text paints in that
+     same layer afterwards, so the box goes UNDER the value beside it;
+   - with `overflow: hidden`, it answers that same span, because the box is
+     clipped at the cell's edge and clipped it is the right-hand end that goes,
+     which is where the indicator is.
+
+   `z-index` is deliberately NOT set. The frozen id and title columns are
+   `position: sticky; z-index: 1`, so a cell at `position: relative; z-index:
+   auto` still passes UNDER them: measured on a phone with `clearOfFrozen` taken
+   out, the point at the open box's left edge answers the title column's link,
+   not the box. That is the behaviour to keep — the frozen pair is opaque on
+   purpose, and `clearOfFrozen` scrolls the cell out from under it rather than
+   painting over it.
+
+   `position: relative` here is also the rule the `dd, td.edit { position:
+   relative }` episode warns about, and it is scoped so that it cannot repeat:
+   `:has(> input[type="date"])` reaches only a cell holding a date box, and
+   neither frozen column ever holds one — `id` is not editable and `title` is
+   text. Nothing here can steal `position: sticky` from the title cell. */
+#rows tbody td.edit:has(> input[type="date"]) { overflow: visible; position: relative; }
+/* And the box is drawn at the row's own type rather than the browser's. It is
+   also the font the 126px above was measured at: the UA default is a different
+   metric and so a different intrinsic width. No `width` and no `box-sizing`,
+   which is the whole point — `width: auto` IS the 126px the control asks for. */
+#rows tbody td.edit > input[type="date"] { font: inherit; }
 /* The bar fills the column it is alone in now, rather than trailing a number. */
 #rows td[data-col="progress"] .meter { display: block; width: 100%; min-width: 2.5rem; }
 /* And the century goes when the column is squeezed, which is the one part of a

@@ -41,15 +41,43 @@ CONFIG = Config(
 HALF_TIME = CONFIG.model_copy(update={"nominal_availability": 0.6})
 
 
-def task(suffix: str, *, owner: str | None = "ann", size: float | None = 1.0, **fields) -> Task:
+# `title` defaults to the suffix, which is all most of this file needs: one string
+# written once and both of a record's names taken off it. It is spelled out where
+# the claim is about the title itself — an assertion that a sentence names the
+# title proves nothing while the title is a substring of the id beside it.
+def task(
+    suffix: str,
+    *,
+    owner: str | None = "ann",
+    size: float | None = 1.0,
+    title: str | None = None,
+    **fields,
+) -> Task:
     return Task(
-        id=f"task-{suffix}", kind="task", title=suffix, owner=owner, person_weeks=size, **fields
+        id=f"task-{suffix}",
+        kind="task",
+        title=suffix if title is None else title,
+        owner=owner,
+        person_weeks=size,
+        **fields,
     )
 
 
-def pitch(suffix: str, *, owner: str | None = "ann", size: float | None = None, **fields) -> Pitch:
+def pitch(
+    suffix: str,
+    *,
+    owner: str | None = "ann",
+    size: float | None = None,
+    title: str | None = None,
+    **fields,
+) -> Pitch:
     return Pitch(
-        id=f"pitch-{suffix}", kind="pitch", title=suffix, owner=owner, person_weeks=size, **fields
+        id=f"pitch-{suffix}",
+        kind="pitch",
+        title=suffix if title is None else title,
+        owner=owner,
+        person_weeks=size,
+        **fields,
     )
 
 
@@ -959,14 +987,27 @@ def test_regression_depending_on_an_ancestor_is_rejected_and_degrades_gracefully
 
 
 def test_a_blocker_bound_start_is_explained_by_naming_the_blocker():
-    records = [task("aaa001"), task("aaa002", owner="bo", depends_on=["task-aaa001"])]
+    """By its TITLE. `task-aaa001 finishes on 21.08.2026` sends the reader off to
+    look up which record that is, from a hover card whose whole job is that they
+    do not have to.
+
+    The id is asserted on `blocker_id` and nowhere in the wording, which is the
+    change: no reader is given it any more, and nothing in `src/` reads that field
+    either. What the reader is given instead is a title, and titles are only
+    required to be non-blank — so this sentence can be ambiguous where the old one
+    could not, and the linked route to the record is the detail page's own rows.
+    `_explain` (`schedule.py`) is where that trade is argued."""
+    records = [
+        task("aaa001", title="Port the bed solver"),
+        task("aaa002", owner="bo", depends_on=["task-aaa001"]),
+    ]
     _, explanations = run(records)
     assert explanations["task-aaa002"] == Explanation(
         record_id="task-aaa002",
         sentence="Cannot start before {start}: {blocker} finishes on {ends}.",
         parts={
             "start": date(2026, 8, 24),
-            "blocker": "task-aaa001",
+            "blocker": "Port the bed solver",
             "ends": date(2026, 8, 21),
         },
         blocker_id="task-aaa001",
@@ -975,8 +1016,36 @@ def test_a_blocker_bound_start_is_explained_by_naming_the_blocker():
     # dates are still dates by the time it gets here.
     assert (
         explanations["task-aaa002"].text
-        == "Cannot start before 2026-08-24: task-aaa001 finishes on 2026-08-21."
+        == "Cannot start before 2026-08-24: Port the bed solver finishes on 2026-08-21."
     )
+    assert (
+        explanations["task-aaa002"].drawn
+        == "Cannot start before 24.08.2026: Port the bed solver finishes on 21.08.2026."
+    )
+
+
+def test_a_blocker_with_no_title_is_named_by_its_id_rather_than_by_a_gap():
+    """A record with an empty title is reported and not refused, so it loads, gets
+    dates, and holds other work up like any other. Dropped into the slot where its
+    name goes, the sentence reads "Cannot start before 24.08.2026:  finishes on
+    21.08.2026." — which names nothing, and reads like the scheduler broke rather
+    than like a record missing a field.
+
+    Two spaces and not `""`, because `validate_all` asks `title.strip()` and the
+    fallback asks the same thing. A title that is blank to the check somebody runs
+    must be blank to the sentence they read, or one of the two is wrong about a
+    record the other is complaining about.
+    """
+    records = [
+        task("aaa001", title="  "),
+        task("aaa002", owner="bo", depends_on=["task-aaa001"]),
+    ]
+    problems = model.validate_all(records, CONFIG)
+    assert any(p.record_id == "task-aaa001" and p.field == "title" for p in problems)
+
+    _, explanations = run(records)
+
+    assert explanations["task-aaa002"].parts["blocker"] == "task-aaa001"
     assert (
         explanations["task-aaa002"].drawn
         == "Cannot start before 24.08.2026: task-aaa001 finishes on 21.08.2026."
@@ -1586,10 +1655,21 @@ def test_a_dependency_is_inherited_down_the_whole_chain_not_just_one_level():
 def test_an_inherited_blocker_is_named_in_the_explanation():
     """The first unexplained date is when a timeline stops being believed, and an
     inherited blocker is the least obvious of them: the reason is written on a
-    record one level up from the bar somebody is pointing at."""
+    record one level up from the bar somebody is pointing at.
+
+    So the sentence has to carry the name of a bet the reader never clicked on,
+    and it carries the bet's title. The `not in` is the half that pins the change:
+    the id is out of the prose here and everywhere. It survives on `blocker_id`,
+    asserted beside the text because that field is now the only place it is at
+    all — nothing in `src/` reads it.
+
+    And this is the case where that costs the most. `task-bbb002` has no
+    `depends_on` of its own, so its "Blocked by" row is empty and the linked title
+    a reader could follow to `pitch-aaa001` is one page up, on the parent that
+    carries the edge."""
     _, why = run(
         [
-            pitch("aaa001"),
+            pitch("aaa001", title="Port the air-side throughflow"),
             pitch("aaa002", depends_on=["pitch-aaa001"]),
             task("bbb001", parent="pitch-aaa001", size=2.0, owner="ann"),
             task("bbb002", parent="pitch-aaa002", size=2.0, owner="bo"),
@@ -1597,7 +1677,8 @@ def test_an_inherited_blocker_is_named_in_the_explanation():
     )
 
     assert why["task-bbb002"].blocker_id == "pitch-aaa001"
-    assert "pitch-aaa001" in why["task-bbb002"].text
+    assert "Port the air-side throughflow" in why["task-bbb002"].text
+    assert "pitch-aaa001" not in why["task-bbb002"].text
 
 
 def test_a_loop_that_only_inheritance_closes_costs_those_records_and_no_others():
