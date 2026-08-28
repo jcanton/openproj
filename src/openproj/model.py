@@ -2568,6 +2568,33 @@ def _an(kind: str) -> str:
     return f"an {kind}" if kind[:1] in "aeiou" else f"a {kind}"
 
 
+def named(record_id: str, records: Mapping[str, Record]) -> str:
+    """`Rewrite the dycore (task-c00001)` — the title first and the id after it.
+
+    The wording for a sentence that is BOTH something a person reads and an
+    instruction to go and edit one particular file: a loop refusal, a dependency
+    problem, a refused kind change. Those two jobs pull opposite ways and this is
+    where they are settled once instead of at every site.
+
+    The title alone would not do it, and the reason is a rule that does not
+    exist: the only thing any title is held to is that it is not blank
+    (`_identity_problems` below is about ids, and nothing anywhere compares two
+    titles), so two records may carry the same one — and "take it out of Rewrite
+    the dycore" then names two files, in a plan where the repair is a hand edit
+    on a protected branch. The id alone is what all of these said before, and an
+    id is not something anybody recognises without opening it.
+
+    The bare id is the answer when this map has no title for that record, and
+    both ways of getting there are real: a `depends_on` naming an id no file
+    claims, and a titleless record hand-written in git — which the create paths
+    refuse and a commit does not. Same fallback as `titleOf` in the table, for
+    the same reason written there.
+    """
+    record = records.get(record_id)
+    title = record.title.strip() if record is not None else ""
+    return f"{title} ({record_id})" if title else record_id
+
+
 # Five levels, because three were not enough to say the thing the team was already
 # writing: the HackMD table escalates past its top value as `High+`. A scale whose
 # top is used for everything urgent stops ordering anything.
@@ -2633,15 +2660,23 @@ def loop_made(candidate: Record, plan: Iterable[Record]) -> str | None:
         ("depends_on", {i: list(e.depends_on) for i, e in by_id.items()}),
     ):
         if candidate.id in _cyclic_members(edges):
-            chain = " → ".join(_loop_through(edges, candidate.id))
+            # Title then id, at every hop and not only at the ends. The chain is
+            # not decoration around the refusal — it IS the instruction, because
+            # breaking the loop means opening one of these records and taking one
+            # name out of its `depends_on` or its `parent`, and the reader has to
+            # choose which. So each hop names a file to open (the id) and says
+            # which piece of work it is (the title). Bare ids were what this said
+            # before, and a chain of five of them is a sentence nobody can act on
+            # without looking all five up.
+            chain = " → ".join(named(one, by_id) for one in _loop_through(edges, candidate.id))
             word = "filed under itself" if field == "parent" else "waiting for itself"
-            return f"that would leave {candidate.id} {word}: {chain}"
+            return f"that would leave {named(candidate.id, by_id)} {word}: {chain}"
     return None
 
 
 def _dependency_problems(
     record: Record, by_id: dict[str, Record], parent_cycles: set[str], dep_cycles: set[str]
-) -> Iterator[tuple[str, str | None, str, int]]:
+) -> Iterator[tuple[str, str | None, str | Sentence, int]]:
     if record.id in dep_cycles:
         yield "blocker", "depends_on", "part of a blocked-by cycle", 1
         return
@@ -2650,13 +2685,48 @@ def _dependency_problems(
     own_ancestors = set() if record.id in parent_cycles else set(ancestors(record.id, by_id))
     for target in record.depends_on:
         if target not in by_id:
+            # The one branch here that stays a bare id, because the id is the
+            # whole subject: no file claims this name, so there is no title to
+            # draw and the complaint is about the spelling itself.
             yield "blocker", "depends_on", f"blocked by {target}, which does not exist", 1
-        elif target in own_ancestors:
-            yield "blocker", "depends_on", f"cannot depend on {target}: it is an ancestor", 1
+            continue
+        # Title then id for the other three. Each is drawn beside the record on
+        # its own page and read by somebody who then has to open THIS record and
+        # take that one name out of its `depends_on` — so the sentence has to say
+        # both which piece of work it means and which line to delete.
+        #
+        # `Problem` carries only `record_id`, which is the record the problem is
+        # ABOUT and never the record it names, so the target's id has nowhere
+        # else to travel: dropping it for the title alone would take it out of
+        # `/api/index.json` and off `openproj check`'s lines, where it is the only
+        # thing a script can resolve. It stays in the sentence rather than in a
+        # second field nothing downstream reads.
+        #
+        # In `parts` and never in the template: `Sentence.sentence` is handed to
+        # `str.format`, so a title of `{0.__class__}` — a string a plan file may
+        # legally hold — would raise on every page that draws a problem.
+        who = {"named": named(target, by_id)}
+        if target in own_ancestors:
+            yield (
+                "blocker",
+                "depends_on",
+                Sentence(sentence="cannot depend on {named}: it is an ancestor", parts=who),
+                1,
+            )
         elif record.id in ancestors(target, by_id):
-            yield "blocker", "depends_on", f"cannot depend on {target}: it is a descendant", 1
+            yield (
+                "blocker",
+                "depends_on",
+                Sentence(sentence="cannot depend on {named}: it is a descendant", parts=who),
+                1,
+            )
         elif by_id[target].status == "shelved":
-            yield "warning", "depends_on", f"blocked by {target}, which is shelved", 1
+            yield (
+                "warning",
+                "depends_on",
+                Sentence(sentence="blocked by {named}, which is shelved", parts=who),
+                1,
+            )
 
 
 def under(record_id: str, children: dict[str, list[str]]) -> list[str]:

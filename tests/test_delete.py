@@ -138,19 +138,74 @@ def test_the_panel_says_what_the_delete_will_take_with_it(index: Index):
     dependency. Both lists come from `cascade_of`, which is what the route itself
     asks — a panel built from a second derivation of that is a panel that can be
     wrong about the commit it is authorising.
+
+    **The sentence names them and the payload identifies them, and those are two
+    different jobs.** What somebody reads before pressing is titles: they are
+    checking WHICH three records are about to go, and `task-0f1002` is not an
+    answer anybody can check without opening it. What goes back with the press is
+    `data-also`, which is the compare-and-swap the route refuses the delete
+    against and is ids for ever. So both halves are asserted here, and the
+    id-list assertion is deliberately made against the paragraph AND the
+    attribute apart: reading the ids out of the whole panel is how the old
+    version of this test would have gone on passing with the titles never drawn.
     """
     parent = next(record_id for record_id in sorted(index.plan) if cascade_of(index, record_id)[0])
     doomed, _ = cascade_of(index, parent)
     page = render_detail(index, ROUTES, only=parent, base_commit=HEAD, may_write=True)
     asking = page[page.index(MARKUP) :]
+    reach = re.search(r'<p class="reach">(.*?)</p>', asking, re.S).group(1)
 
     assert "also deletes" in asking
     for child in doomed:
-        assert child in asking, f"{child} would be deleted and is not named"
+        title = index.records[child].title
+        assert title in reach, f"{child} would be deleted and is not named: {reach}"
+        assert child not in reach, (
+            f"{child} is drawn as a bare id in a sentence somebody reads: {reach}"
+        )
     # And the same ids go back with the press, so what was answered is what the
     # server acts on.
     shown = re.search(r'data-also="([^"]*)"', asking).group(1).split()
     assert sorted(shown) == sorted(doomed + cascade_of(index, parent)[1])
+
+
+def test_the_second_cascade_sentence_names_its_records_the_same_way(index: Index):
+    """The other paragraph, which the test above cannot see.
+
+    `_titles_for` is applied to both halves of `cascade_of` and only one of them
+    was read: the assertion above matches `class="reach"` exactly, so the
+    `reach mild` paragraph — the records that keep their file and lose a
+    dependency — went undrawn-and-unnoticed either way. A helper called at two
+    sites with one of them asserted is a helper that is half tested, and the half
+    that is not is the one that changes silently.
+
+    Chosen for its `frees` and NOT for its `deletes`, so that the record under
+    test is the one this sentence is about; the demo's leaf tasks that free
+    something delete nothing at all, which keeps the two paragraphs apart.
+    """
+    freeing = next(
+        record_id
+        for record_id in sorted(index.plan)
+        if cascade_of(index, record_id)[1] and not cascade_of(index, record_id)[0]
+    )
+    _, freed = cascade_of(index, freeing)
+    page = render_detail(index, ROUTES, only=freeing, base_commit=HEAD, may_write=True)
+    asking = page[page.index(MARKUP) :]
+    mild = re.search(r'<p class="reach mild">(.*?)</p>', asking, re.S).group(1)
+
+    assert "depending on it" in mild
+    for other in freed:
+        title = index.records[other].title
+        assert title in mild, f"{other} loses its dependency and is not named: {mild}"
+        assert other not in mild, (
+            f"{other} is drawn as a bare id in a sentence somebody reads: {mild}"
+        )
+    # And it is one element per name, not a comma-joined string: a title is held
+    # only to being non-blank, so there is no character it cannot contain and the
+    # separator has to be markup the stylesheet draws.
+    assert mild.count('class="name"') == len(freed), mild
+    # The ids still travel, in the attribute the route compares against.
+    shown = re.search(r'data-also="([^"]*)"', asking).group(1).split()
+    assert sorted(shown) == sorted(freed)
 
 
 def test_a_leaf_record_asks_a_plain_question(index: Index):

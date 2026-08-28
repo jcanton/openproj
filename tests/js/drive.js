@@ -27,6 +27,12 @@
 //          {replies: [...]}  {status, json} or {status, text} per fetch, in
 //                            order — a `text` that is not JSON rejects
 //                            `response.json()`, exactly as a 500 does.
+//                            {reject: "message"} makes the FETCH ITSELF reject
+//                            rather than answer, which is the only way to drive
+//                            a dropped connection: a scripted 500 exercises the
+//                            `!response.ok` arm and says nothing at all about
+//                            the `catch`, and eleven write paths had no `catch`
+//                            under a green suite for exactly that reason.
 //          {health: [...]}   what `/api/health` answers, one body per ask in
 //                            order, the quiet day once the list runs out.
 //          {storage: {...}}  localStorage starts holding these; "denied" makes
@@ -373,6 +379,27 @@ class Element {
   appendChild(node) { this.append(node); return node; }
   replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
 
+  // Move a node to a new place among its siblings, which is what a reorder IS.
+  // Missing entirely, and its absence is why the deck's rail — the one surface
+  // on that page anybody can write from — could not be driven at all: both the
+  // drag and the Alt+Arrow path insert the held thumbnail before another one,
+  // and a shim without this stops on that line with the write never attempted.
+  // Same shape as the missing `prepend` above, and the same lesson.
+  //
+  // It detaches first, because that is what the DOM does and because a reorder
+  // that left the node where it was as well would report an order holding one id
+  // twice — which is exactly what `save()` deduplicates against, so a shim that
+  // produced it would hide the guard it is there to exercise.
+  insertBefore(node, before) {
+    const was = this.children.indexOf(node);
+    if (was !== -1) this.children.splice(was, 1);
+    const at = before ? this.children.indexOf(before) : -1;
+    if (at === -1) this.children.push(node);
+    else this.children.splice(at, 0, node);
+    node.parentNode = this;
+    return node;
+  }
+
   // The other end of `append`, and it was missing. The status bar is built at
   // both ends of a row a page may have put something in the middle of, so the
   // page reaches for the standard pair — and a shim that has one and not the
@@ -439,6 +466,28 @@ class Element {
     return {font: '', measureText: text => ({width: String(text).length * 7})};
   }
   get firstElementChild() { return this.children[0] || null; }
+  // The sibling after this one, which is what a reorder inserts before.
+  //
+  // Missing, and its absence did not stop any script: it read as `undefined`,
+  // which `insertBefore` takes as "put it at the end" — so the deck's
+  // Alt+ArrowDown appeared to work and sent the held slide to the BOTTOM of the
+  // rail instead of down one. A shim that answers wrongly is worse than one that
+  // throws, because the wrong answer is the one a test writes itself around.
+  //
+  // Elements only, which is exact here rather than approximate: this shim keeps
+  // an element's own text in `textContent` and not as child nodes, so there are
+  // no text siblings for a real `nextSibling` to have stepped over.
+  //
+  // Its `nextElementSibling` twin is still absent, deliberately. Two shipped
+  // loops walk that one — the shell's heading scan and the mermaid caption
+  // check — and both are written to stop at the first falsy answer, so giving it
+  // one changes what they do on every page this shim runs. That is a change
+  // worth making on its own evidence and not as a side effect of the deck.
+  get nextSibling() {
+    const kin = this.parentNode ? this.parentNode.children : [];
+    const at = kin.indexOf(this);
+    return at === -1 ? null : kin[at + 1] || null;
+  }
   get previousElementSibling() { return null; }
   get childNodes() { return [{textContent: this.textContent}, ...this.children]; }
   get parentElement() { return this.parentNode; }
@@ -607,6 +656,17 @@ async function run(html, expression, options) {
       body: init && init.body !== undefined ? String(init.body) : null,
     });
     const next = replies.shift() || {};
+    // The connection went: wifi dropped, the laptop slept, the tab was offline
+    // before the press. A browser answers that by REJECTING the fetch, with a
+    // `TypeError` — never with a status — so nothing about the `!response.ok`
+    // arm can be reached from here, and a page with no `catch` loses the whole
+    // gesture in silence. Recorded in `calls` first, because the request really
+    // was made: what a test needs to know is that it went out and came back with
+    // nothing, and dropping it would make a rejected write indistinguishable
+    // from one that was never sent.
+    if (next.reject !== undefined) {
+      return Promise.reject(new TypeError(String(next.reject)));
+    }
     const status = next.status === undefined ? 200 : next.status;
     const text = next.text !== undefined
       ? String(next.text)
@@ -811,6 +871,25 @@ async function run(html, expression, options) {
     // the page degrades to exactly what it was. Asked for, it is `DriverSocket`
     // above and the test moves every frame itself.
     matchMedia: () => ({matches: false, addEventListener() {}, addListener() {}}),
+    // The deck's rail marks which slide the reader has scrolled to, and it does
+    // that by observing the sheets. A no-op recorder rather than nothing at all:
+    // a bare identifier the sandbox has not got is a ReferenceError that stops
+    // the script on the line it appears in, and `new IntersectionObserver` is
+    // near the TOP of the deck's one script — above the drag handlers, above the
+    // keyboard reorder, above `save()`. So the deck's entire write path was
+    // unreachable from here, which is why the one change this branch made to
+    // that page shipped with nothing driving it.
+    //
+    // It never fires, and it is not meant to. What a test asks of this page is
+    // what a drop or an Alt+Arrow does; neither of those is a scroll, and a
+    // stub that invented intersections would be answering a question nobody
+    // asked in a shim that is not a viewport.
+    IntersectionObserver: class {
+      constructor(callback) { this.callback = callback; }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
     getComputedStyle: () => ({getPropertyValue: () => ''}),
     // The escape the pages reach for when a selector has to hold typed text.
     CSS: {escape: value => String(value).replace(/[^\w-]/g, c => '\\' + c)},

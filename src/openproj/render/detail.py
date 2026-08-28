@@ -1020,15 +1020,35 @@ _DETAIL = """
         depends on this one is somebody else's work waiting for it, and deleting
         that would be this gesture reaching across the plan. Two sentences because
         they are two different things happening to two different sets of files. -#}
+    {#- By title, and the ids ride `data-also` above. Somebody about to delete
+        three records is checking WHICH three, and `task-0f1002` answers a
+        question nobody asked: the title is the only form of that answer they
+        can recognise without opening each one. The list that has to be an id
+        list still is — `data-also` is the compare-and-swap the route refuses
+        the delete against, and it is not read by anybody.
+
+        `names`, and one element per title rather than one `join(", ")` inside a
+        `.ids`. Both halves of that were wrong once the ids became titles: `.ids`
+        is 12px `var(--font-mono)`, a face chosen so `task-0f1002` can be read a
+        character at a time and the wrong one for prose somebody wrote; and a
+        title is held to ONE rule, that it is not blank, so it may contain a
+        comma and three comma-joined titles read as four. There is no character a
+        title cannot contain, so the boundary is markup and the separator is
+        drawn by the stylesheet — with one literal space between the chips, so
+        that the paragraph's own text still reads as a list. Measured in Chrome
+        without it, `innerText` ran three titles together into one word, which is
+        what a person copies and what continuous reading says aloud. -#}
     {% if e.deletes %}
     <p class="reach">This also deletes
       <strong>{{ e.deletes|length }}</strong> record{{
         "" if e.deletes|length == 1 else "s" }} filed under it:
-      <span class="ids">{{ e.deletes|join(", ") }}</span></p>
+      <span class="names">{% for name in e.deletes_named %}{% if not loop.first %} {% endif %}<span
+        class="name">{{ name }}</span>{% endfor %}</span></p>
     {% endif %}
     {% if e.frees %}
     <p class="reach mild">It also stops
-      <span class="ids">{{ e.frees|join(", ") }}</span>
+      <span class="names">{% for name in e.frees_named %}{% if not loop.first %} {% endif %}<span
+        class="name">{{ name }}</span>{% endfor %}</span>
       depending on it. {{ "That record keeps" if e.frees|length == 1
         else "Those records keep" }} {{ "its" if e.frees|length == 1 else "their"
         }} file.</p>
@@ -2074,7 +2094,15 @@ for (const article of document.querySelectorAll('article.record')) {
       location.href = {{ links.record|tojson }} + answer.id;
     } catch (error) {
       why.hidden = false;
-      why.textContent = 'The server could not be reached. Nothing was changed.';
+      // It does not say "Nothing was changed", which is what stood here and
+      // which this code cannot know: a fetch rejects when the ANSWER is lost as
+      // readily as when the request never left. A rekind that committed and
+      // whose 200 never arrived reached exactly this line — and this write mints
+      // a NEW id and retires the old one, so the record this page is about may
+      // no longer exist under the address in the bar.
+      why.textContent = `Not changed — ${error.message}. Reload this page before `
+        + 'pressing Change it again: a rekind that landed has already given this '
+        + 'record a new id.';
       going.disabled = false;
     } finally {
       dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
@@ -2132,7 +2160,19 @@ for (const article of document.querySelectorAll('article.record')) {
     } catch (error) {
       acts.hidden = false;
       why.hidden = false;
-      why.textContent = 'The server could not be reached. Nothing was deleted.';
+      // It does not say "Nothing was deleted", which is what stood here and
+      // which this code cannot know: a fetch rejects when the ANSWER is lost as
+      // readily as when the request never left, so a delete that committed and
+      // whose 200 never arrived reached exactly this line. On a protected branch
+      // that is the worst possible sentence to be wrong about — it invites a
+      // second press at a record that may already be gone, and the cascade takes
+      // whatever is filed under it.
+      //
+      // So: what failed, and where to look. `also` is still in the panel, so the
+      // question is unanswered rather than half-answered.
+      why.textContent = `Not deleted — ${error.message}. Reload this page before `
+        + 'pressing Delete it again: if the first press landed, this record is '
+        + 'already gone.';
       return;
     }
     if (answer.ok) {
@@ -2159,13 +2199,29 @@ for (const article of document.querySelectorAll('article.record')) {
     // Refused, and the reason is the useful part: "pitch-b20000 cannot be
     // deleted while task-c00001, task-c00002 and task-c00003 are filed under it"
     // is the difference between a button that does not work and a plan that says
-    // what to do next. `detail` for an HTTPException, `conflict` for a write
-    // that lost the swap; the two routes to a refusal spell it differently.
+    // what to do next.
+    //
+    // Through the shell's `refusal`, and not the hand-written
+    // `said.detail || said.conflict` this used to be. The reason is NOT that it
+    // got an answer wrong today: `DELETE /api/record/{id}` answers 409 with
+    // either a rule's `detail` or the store's `conflict` and never both, and it
+    // never sends a `problems` list — the only two routes that do are
+    // `/api/promote` and `POST /api/record`. What that reading got wrong was
+    // only the empty-body fallback, "The server refused: 409" where `refusal`
+    // says what a 409 means.
+    //
+    // The reason is that it was a call site deciding for itself what a refusal
+    // holds, which is the whole defect this branch exists to end — `refusal` had
+    // just learned that a 409 has two shapes, and this line would not have
+    // learned it. It also stood outside the sweep in `tests/test_writes.py` that
+    // exists to catch exactly that: the sweep matched the literal `answer.detail`
+    // and this one is called `said`, so it sat under a green suite. The sweep now
+    // matches the KEY off any receiver, and the mutation test beside it holds
+    // this very line out as one of the two it must go on seeing.
     acts.hidden = false;
     why.hidden = false;
     const said = await answer.json().catch(() => ({}));
-    why.textContent = said.detail || said.conflict ||
-      ('The server refused: ' + answer.status);
+    why.textContent = refusal(said, answer.status);
   };
 }
 
@@ -2322,10 +2378,14 @@ async function save() {
     // readily as when the request never left, so "nothing was sent" would be a
     // guess. Pressing Save again is the whole of the recovery either way: the
     // draft is still in this browser, `BASE.value` still holds the commit this
-    // page was rendered at, and if the write did land, the compare-and-swap
-    // refuses the second press with the conflict report rather than repeating it.
-    announce(`not saved — ${error.message}. Press Save again: if it did land, `
-             + 'the next press is refused rather than repeated.');
+    // page was rendered at, and the second press sends the same fields and the
+    // same body against it — `_merge_frontmatter` skips every key whose stored
+    // value already equals the one being sent, and `_merge_body` does the same
+    // with the prose, so a save that did land merges with itself and answers 200.
+    // It is NOT refused, and this sentence used to promise that it would be.
+    announce(`not saved — ${error.message}. Press Save again: it sends the same `
+             + 'edit against the same base, so a save that did land is not '
+             + 'written twice.');
   } finally {
     // Announced even when refused, or one 409 leaves every event after it held
     // back and the banner never appears again.
@@ -2410,6 +2470,36 @@ async function createRecord() {
     }
     committed = answer.commit;
     location.href = '/detail/' + answer.id;
+  } catch (error) {
+    // The connection went while the request was in the air. This was `try` and
+    // `finally` with no `catch`, so a rejection here escaped unhandled and the
+    // form simply sat there — no navigation, nothing in the problem list, and a
+    // shaping document somebody had just written with nowhere to say whether it
+    // had been kept.
+    //
+    // Into `PROBLEMS`, where every other refusal on this form is drawn, and as a
+    // text node, because `error.message` is the browser's string and this list
+    // is built with `textContent` for exactly that reason.
+    //
+    // No claim about what reached the server. A fetch rejects when the answer is
+    // lost as readily as when the request never left, and unlike a save this
+    // press MINTS a record — so the honest advice is to look before pressing
+    // again rather than to press again.
+    //
+    // **The Records list and not the table**, which is what this said and which
+    // is wrong for two of the kinds this one form creates. `/new?kind=issue` and
+    // `/new?kind=note` come through here, and an unplanned record is never on
+    // `/table` —
+    // `test_an_unplanned_record_is_on_its_own_page_and_the_landing_and_nowhere_else`
+    // asserts exactly that, and names the landing as the page that does show it.
+    // `/` is every record of every kind, so it is the one page this sentence can
+    // name without asking which kind was being made.
+    PROBLEMS.hidden = false;
+    const line = document.createElement('li');
+    line.textContent = `Not created — ${error.message}. Nothing here has been lost: `
+      + 'check the Records list before pressing Create again, because a second '
+      + 'press that both landed would make two records.';
+    PROBLEMS.replaceChildren(line);
   } finally {
     // Announced even when refused, or one rejected form leaves every later
     // event held back and the banner never appears again.
@@ -3469,6 +3559,24 @@ def _by_status(rows: list[dict]) -> list[dict]:
     ]
 
 
+def _titles_for(index: Index, ids: list[str]) -> list[str]:
+    """What those records are called, for a sentence somebody reads.
+
+    Titles alone and not `model.named`'s `Title (id)`: the cascade lines are a
+    consequence a reader agrees to, not an instruction to go and edit one of
+    these files — the ids that matter go back to the server in `data-also`, and
+    that list is a compare-and-swap on the shape of the deletion rather than
+    anything drawn.
+
+    The id is the fallback, exactly as it is in the table's `titleOf`: a record
+    with no title is one nobody can find again, which every create path already
+    refuses, and a plan hand-written in git can still hold one.
+    """
+    return [
+        (index.records[one].title.strip() or one) if one in index.records else one for one in ids
+    ]
+
+
 def render_detail(
     index: Index,
     links: Links = STATIC,
@@ -3508,6 +3616,8 @@ def render_detail(
                 "raw_body": "",
                 "deletes": [],
                 "frees": [],
+                "deletes_named": [],
+                "frees_named": [],
                 # Explicit rather than riding Jinja's default Undefined
                 # stringifying to "": the "never on the creating article" rule
                 # below must survive a move to StrictUndefined, not hold by
@@ -3532,6 +3642,13 @@ def render_detail(
             # a second derivation of them would be a panel that can be wrong
             # about the commit it is authorising.
             row["deletes"], row["frees"] = cascade_of(index, row["id"])
+            # Two lists over the same records: the ids go back to the server as
+            # `data-also`, the titles are what the sentences say. Derived here
+            # from the same `cascade_of` answer rather than looked up in the
+            # template, so the names and the compare-and-swap cannot come from
+            # two different readings of the plan.
+            row["deletes_named"] = _titles_for(index, row["deletes"])
+            row["frees_named"] = _titles_for(index, row["frees"])
             # The promote panel, where the record is. It lived on the two
             # deleted inbox pages; a kind that is not promotable gets an empty
             # Markup, and the static export gets one for everything because
@@ -3670,22 +3787,43 @@ _PROMOTE = """
     // than staying on a note that now has to be reloaded to look right.
     GO.disabled = true;
     SAID.textContent = '';
-    const response = await fetch('/api/promote', {
-      method: 'POST',
-      headers: {'content-type': 'application/json'},
-      body: JSON.stringify({
-        source: {{ source|tojson }},
-        kind: INTO ? INTO.value : {{ only|tojson }},
-        base_commit: {{ base_commit|tojson }},
-      }),
-    });
-    const answer = await response.json();
-    if (!response.ok) {
+    try {
+      const response = await fetch('/api/promote', {
+        method: 'POST',
+        headers: {'content-type': 'application/json'},
+        body: JSON.stringify({
+          source: {{ source|tojson }},
+          kind: INTO ? INTO.value : {{ only|tojson }},
+          base_commit: {{ base_commit|tojson }},
+        }),
+      });
+      // `answerOf` and not a bare `response.json()`: a 500 answers in
+      // `text/plain` and the parse rejects on it, which took the whole of this
+      // handler with it — Promote left disabled, `#promoted` empty, and nothing
+      // to say whether a record had been minted.
+      const answer = await answerOf(response);
+      if (!response.ok) {
+        GO.disabled = false;
+        SAID.textContent = refusal(answer, response.status);
+        return;
+      }
+      location.href = {{ record|tojson }} + answer.id;
+    } catch (error) {
+      // The connection went while the request was in the air. There was no
+      // `catch` at all, and the button is disabled on the first press and never
+      // re-enabled on success — so a rejection left a dead control with no
+      // sentence beside it, which is the one state this bar cannot be got out of
+      // without a reload.
+      //
+      // Re-enabled, and no claim about what reached the server: a fetch rejects
+      // when the answer is lost as readily as when the request never left.
+      // Promotion MINTS a record, so a repeat that both landed is two of them —
+      // the advice is to look first, not to press again.
       GO.disabled = false;
-      SAID.textContent = refusal(answer, response.status);
-      return;
+      SAID.textContent = `Not promoted — ${error.message}. Reload this page before `
+        + 'pressing Promote again: if the first press landed, a second would make '
+        + 'a second record.';
     }
-    location.href = {{ record|tojson }} + answer.id;
   };
 })();
 </script>

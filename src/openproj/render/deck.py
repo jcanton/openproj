@@ -837,22 +837,59 @@ async function save() {
   // back from `_deck_order` as one slide drawn and one id ignored, which is a
   // deck that quietly disagrees with the rail that saved it.
   const ids = [...new Set(order())];
-  const answer = await fetch('/api/cycle/' + NUMBER, {
-    method: 'PUT',
-    headers: {'content-type': 'application/json'},
-    body: JSON.stringify({base_commit: BASE, fields: {deck_order: ids}}),
-  });
-  if (!answer.ok) {
-    // Said out loud rather than swallowed. A drag that appeared to work and did
-    // not is the failure a presenter finds in front of the room.
-    // The shell's `announce`, not one of this page's own. It is declared once
-    // for every page and writes the live region a screen reader is listening
-    // to; a second one here shadowed it, said the same thing to nobody, and
-    // `test_no_page_declares_one_name_twice` caught it.
-    announce('That order could not be saved. Reload and try again.');
-    return;
+  try {
+    const answer = await fetch('/api/cycle/' + NUMBER, {
+      method: 'PUT',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({base_commit: BASE, fields: {deck_order: ids}}),
+    });
+    if (!answer.ok) {
+      // Said out loud rather than swallowed. A drag that appeared to work and did
+      // not is the failure a presenter finds in front of the room.
+      // The shell's `announce`, not one of this page's own. It is declared once
+      // for every page and writes the live region a screen reader is listening
+      // to; a second one here shadowed it, said the same thing to nobody, and
+      // `test_no_page_declares_one_name_twice` caught it.
+      //
+      // And the server's own words, through `answerOf` and `refusal`, because
+      // one sentence covered four different answers here and gave the wrong
+      // advice for three of them: a real 409 carries the report naming what
+      // moved, a 422 names the field, a 503 says the plan's history has forked
+      // and that trying again will never clear it — and "Reload and try again"
+      // is wrong for every one of those.
+      announce(refusal(await answerOf(answer), answer.status));
+      return;
+    }
+    announce(`Slide order saved, ${ids.length} slides.`);
+  } catch (error) {
+    // The connection went while the request was in the air. There was no `catch`
+    // at all, so a drop made offline rejected unhandled: the rail had already
+    // moved the thumbnail, nothing was said, and the presenter was looking at an
+    // order the plan does not hold.
+    //
+    // It does not claim what reached the server — a fetch rejects when the
+    // answer is lost as readily as when the request never left — and, for the
+    // same reason, it does not claim anything about the rail either. "The rail
+    // is showing an order the plan does not hold" is exactly the assertion this
+    // code cannot make: if the PUT committed and only the answer was lost, the
+    // rail is showing precisely what the plan holds, and the page would be
+    // saying the opposite.
+    //
+    // Nor "move a slide again". There is no Save button here, so the only way to
+    // repeat is to move something — which builds a DIFFERENT order, and sends it
+    // against a `BASE` that is a const rendered into the page and never advances.
+    // Base holds the old `deck_order`, the tip holds the first one and the rail
+    // holds a third: three different values for one key, which is the one shape
+    // `_merge_frontmatter` refuses. The advice manufactured the conflict it was
+    // written to avoid.
+    //
+    // So it sends the reader to the one thing that can answer the question. This
+    // page is drawn from the plan's own `deck_order`, so what a reload comes back
+    // with IS what was stored.
+    announce(`That order was not confirmed — ${error.message}. This rail may or `
+             + 'may not match the plan now: reload this deck, which is drawn from '
+             + 'the plan, to see the order that was stored.');
   }
-  announce(`Slide order saved, ${ids.length} slides.`);
 }
 
 THUMBS.addEventListener('dragstart', event => {

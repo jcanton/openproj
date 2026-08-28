@@ -1469,8 +1469,23 @@ textarea.body-field { min-height: var(--writing, 60vh); resize: vertical; }
 .confirming .reach { margin: 0; font-size: 13px; font-weight: 600;
                      color: var(--danger); }
 .confirming .reach.mild { font-weight: 400; color: var(--fg); }
-.confirming .reach .ids { font-family: var(--font-mono); font-size: 12px;
-                          font-weight: 400; }
+/* The records those two sentences name, one element each. This rule was `.ids`,
+   at 12px in `var(--font-mono)` — a face picked so `task-0f1002` reads a
+   character at a time — and it is now prose: the panel says what those records
+   are CALLED, so it is set in the body face at the sentence's own size.
+
+   The separator is drawn, not written. A title is held to one rule, that it is
+   not blank, so there is no character a title cannot contain — comma-joining
+   three titles, one of which has a comma in it, offers a reader four items and
+   asks them to press Delete on that. A tint and a hairline per name cannot be
+   forged from inside one. `font-weight: 400` for the loud line's sake: `.reach`
+   is 600, and a name is the data in that sentence rather than more of its
+   emphasis. */
+.confirming .reach .names { display: inline; }
+.confirming .reach .name { display: inline-block; margin: 0 .1rem;
+                           padding: 0 .3rem; border: 1px solid var(--line);
+                           border-radius: 3px; background: var(--surface-2);
+                           font-weight: 400; }
 /* The server's reason, where the question was asked. A refusal that names three
    tasks is the useful half of this feature and it must not go to the console. */
 .confirming .why { margin: 0; font-size: 12px; color: var(--danger); }

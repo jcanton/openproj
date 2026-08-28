@@ -426,6 +426,26 @@ async function put(fields, body = null) {
     committed = answer.commit;
     BASE.value = answer.commit || BASE.value;
     return answer;
+  } catch (error) {
+    // The connection went while the request was in the air. This was `try` and
+    // `finally` with no `catch`, so the rejection escaped through `saveSetup`
+    // and `flush` as an unhandled one: Save stayed disabled, the bar went on
+    // claiming N unsaved changes, and nothing anywhere said why — the same
+    // shape as the plain-text 500 that `answerOf` was written for, and with
+    // even less to read.
+    //
+    // Null, so the caller treats it as a refusal and `mark()` gives Save back.
+    // And no claim about what reached the server: a fetch rejects when the
+    // answer is lost as readily as when the request never left, so what is said
+    // is what to do — the same fields go out again against the same base.
+    //
+    // That repeat is safe because it is the SAME write, not because the store
+    // would refuse it. `_merge_frontmatter` skips every key whose stored value
+    // already equals the one being sent, so a write that did land, re-sent
+    // unchanged, merges with itself and answers 200.
+    say(`Not saved — ${error.message}. Press Save again: it sends the same values `
+        + 'against the same base, so a first save that did land is not written twice.');
+    return null;
   } finally {
     // Announced even when the write was refused, or one refusal leaves every
     // later event held back and the shell's banner never appears again.
@@ -559,6 +579,25 @@ addEventListener('beforeunload', event => {
   event.returnValue = '';
 });
 
+// The row's own title, which is what the reader is looking at: the betting table
+// draws the record's title as a link in its name cell, while every sentence
+// about a row here named it `task-0a1001`. Written without a Jinja pair in the
+// prose, because this script is a TEMPLATE — a doubled brace in a comment is
+// rendered, and naming the markup cost an `UndefinedError` on every page that
+// draws a cycle. Read out of the row rather than out of a map,
+// because this page ships no `DATA.rows` — and falling back to the id, since a
+// record whose title is blank is one `validate_all` complains about but still
+// draws.
+function named(id) {
+  // Walked rather than selected: an id goes into an attribute selector as text,
+  // and the shim the JS tests drive this page under has no `CSS.escape` to make
+  // that safe. `dataset.id` is the same string the row was drawn with.
+  const row = [...document.querySelectorAll('#bets tbody tr')]
+    .find(tr => tr.dataset.id === id);
+  const title = row && row.querySelector('.betname a');
+  return (title && title.textContent.trim()) || id;
+}
+
 async function flush(quiet) {
   if (!PENDING.size && !ROSTER_DIRTY && !NOTES_DIRTY && !GOAL_DIRTY) return true;
   SAVE.disabled = true;
@@ -588,7 +627,7 @@ async function flush(quiet) {
       });
       const answer = await answerOf(response);
       if (!response.ok) {
-        say(`${id}: ${refusal(answer, response.status)}`
+        say(`${named(id)}: ${refusal(answer, response.status)}`
             + (saved ? ` — ${saved} already saved` : ''));
         mark();
         return false;
@@ -597,6 +636,26 @@ async function flush(quiet) {
       BASE.value = answer.commit || BASE.value;
       PENDING.delete(id);
       saved += Object.keys(fields).length;
+    } catch (error) {
+      // The connection went mid-batch. With no `catch` the rejection escaped
+      // `flush`, so Save stayed disabled over a bar still counting the edits and
+      // nothing said which row the batch stopped on — and the rows before it had
+      // really been committed, one per commit, so "nothing happened" would have
+      // been the wrong thing to say as well as an unsaid one.
+      //
+      // `PENDING` keeps this row and every row after it, which is what makes the
+      // repeat safe: `mark()` gives Save back and the retry re-sends only what is
+      // still pending, with the same values it sent this time. That is why a row
+      // that really did land is not written twice — `_merge_frontmatter` skips
+      // every key whose stored value already equals the one being sent, so the
+      // re-send merges with itself and answers 200. It is NOT refused, and this
+      // sentence used to promise that it would be.
+      say(`${named(id)}: not saved — ${error.message}`
+          + (saved ? ` — ${saved} already saved` : '')
+          + '. Press Save again: the retry sends the same values, so a row that '
+          + 'did land is not written twice.');
+      mark();
+      return false;
     } finally {
       dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
     }
@@ -1443,6 +1502,26 @@ document.getElementById('yes').onclick = async () => {
     }
     committed = answer.commit;
     location.href = '/cycle/' + number;
+  } catch (error) {
+    // The connection went while the request was in the air. With no `catch` the
+    // rejection escaped, the confirmation panel stayed up over a Yes that had
+    // stopped answering, and nothing said whether the cycle now exists.
+    //
+    // Put back the way a refusal puts it back — the form returns and the panel
+    // closes — and no claim about what reached the server: a fetch rejects when
+    // the answer is lost as readily as when the request never left.
+    //
+    // The repeat is safe because a cycle is a file named for its NUMBER and this
+    // sends the same number with the same dates and the same roster: there is no
+    // second cycle to make, and `_merge_frontmatter` skips every key whose stored
+    // value already equals the one being sent, so the re-send merges with itself
+    // and answers 200. It is not refused — this sentence used to say it would be
+    // — and `/cycles` is where the numbers that exist are listed.
+    announce(`Cycle ${number} was not started — ${error.message}. Press Start it again: `
+             + 'it writes the same cycle with the same dates and the same roster, '
+             + 'so a first press that did land is not made twice.');
+    CONFIRM.hidden = true;
+    START.hidden = false;
   } finally {
     dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
   }
@@ -1709,6 +1788,19 @@ async function chooseIcon(name) {
     if (!response.ok) { report(refusal(answer, response.status), true); return false; }
     committed = answer.commit;
     return true;
+  } catch (error) {
+    // The connection went while the request was in the air. With no `catch` the
+    // rejection escaped and the picker was left open with nothing said — the
+    // same state a refusal leaves it in, except that a refusal says why.
+    //
+    // `false`, so the caller treats it as a refusal and does not move the mark
+    // to a row the server may never have stored. Nothing here claims what
+    // reached the server; the icon this page draws next reload is the one the
+    // plan actually holds.
+    report(`Your icon may not have been changed — ${error.message}. Reload to `
+           + 'see the one the plan holds, and choose it again if it is the old one.',
+           true);
+    return false;
   } finally {
     // Announced even when the write was refused, or the shell holds every later
     // event back and its banner never appears again.
