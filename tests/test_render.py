@@ -272,7 +272,13 @@ def test_the_table_carries_the_whole_plan_and_its_derived_dates(rendered: Path, 
     # Its own `start_date`, because it is in progress: work under way started
     # when it started, and the floor at today applies to what has not begun.
     assert scheduled["start"] == "2026-08-13"
-    assert scheduled["derived"] is True
+    # And the row says that date is the record's own and not the scheduler's, so
+    # the cell can be drawn in the page's ink rather than as a forecast. This
+    # asserted `derived is True` — a row-level boolean saying only that the
+    # record had been given a span, which no page ever read, and which could not
+    # have answered this question anyway: the same row's End IS a forecast.
+    assert scheduled["stated"] == ["start"]
+    assert scheduled["end"] > scheduled["start"], "the far end of it is the scheduler's"
     # And nothing beyond what the script reads. `facets` and `predicates` were the
     # whole facet index inlined into every table page for a control bar that is
     # rendered by the server and re-read from its own `<select>`s — dead weight

@@ -327,10 +327,15 @@ def test_the_two_columns_that_show_one_thing_and_edit_another_say_which(page: st
     assert "const field = fieldOf(key);" in body
     assert "reads(row, field)" in body
     assert 'data-field="${esc(field)}"' in body
-    # And the sentence that stops the empty box reading as a bug.
+    # And the sentence that stops the empty box reading as a bug. A date column
+    # carries two of them — one for the day its own file states and one for the
+    # day the scheduler worked out — because that cell shows either, and a single
+    # sentence naming a forecast sat over dates nobody forecast.
     shows = json.loads(re.search(r"const SHOWS = (\{.*?\});", body, re.S).group(1))
     assert set(shows) == set(_COLUMN_FIELD)
-    assert all(sentence.strip() for sentence in shows.values())
+    for column, said in shows.items():
+        readings = [said] if isinstance(said, str) else [said[k] for k in ("stated", "derived")]
+        assert all(sentence.strip() for sentence in readings), column
 
 
 def test_the_id_is_shown_and_is_never_a_control(page: str):
@@ -3403,6 +3408,106 @@ def test_the_editor_opens_on_the_written_value_and_not_the_forecast(page: str):
     # it, so an empty box does not read as a bug.
     assert "Shows the appetite" in got["taskSize"]["tip"], got["taskSize"]["tip"]
     assert "Editing sets start_date" in got["pitchStart"]["tip"], got["pitchStart"]["tip"]
+
+
+@pytest.fixture
+def dated_page() -> str:
+    """Two tasks under a pitch: one shaping with a date and no size, one ready
+    with a size and no date.
+
+    The first is the shape §2 of `design/time-model.md` created — no appetite, so
+    no span — carrying the `start_date` §1b makes legitimate on a record nobody
+    has bet on yet. The second is what the same column looks like when the answer
+    in it really is the scheduler's.
+    """
+    from openproj.render import render_table
+
+    records = [
+        Pitch(
+            id=PITCH,
+            kind="pitch",
+            title="Verify the aroma transport port",
+            status="ready",
+            owner="ann",
+            assignees=["ann"],
+            reviewers=["bo"],
+            person_weeks=3.0,
+        ),
+        Task(
+            id=TASK,
+            kind="task",
+            title="Shape the seam artefact",
+            parent=PITCH,
+            status="shaping",
+            owner="ann",
+            reviewers=["bo"],
+            start_date=date(2026, 9, 7),
+        ),
+        Task(
+            id=OTHER,
+            kind="task",
+            title="Downgrade numpy for global sums",
+            parent=PITCH,
+            status="ready",
+            owner="ann",
+            assignees=["ann"],
+            reviewers=["bo"],
+            person_weeks=1.0,
+        ),
+    ]
+    return render_table(
+        build_index(records, Config(), date(2026, 8, 17)),
+        base_commit="0" * 40,
+        may_write=True,
+    )
+
+
+def test_a_start_date_nobody_forecast_is_still_drawn_in_the_column_that_edits_it(
+    dated_page: str,
+):
+    """**A cell that is the editor for a field must show what that field holds.**
+
+    With no default appetite (§2) a `thinking` or `shaping` record gets no span,
+    and the Start column read the span alone — so a shaping task carrying
+    `start_date: 2026-09-07` drew nothing, while the record page's own Start date
+    row printed it. The cell is a control writing `start_date`, so a person could
+    type a date into it, watch the PATCH commit, and watch the cell stay empty:
+    the one failure mode a derived column is closed to editing to avoid, in the
+    column that was opened.
+
+    And the two answers are told apart the way the rest of the app tells a
+    computed value from a typed one — `.derived`, muted and italic — because a
+    stated date is not a forecast and must not be dressed as one.
+
+    Driven in node, because the rows are built in the browser: which cell carries
+    which class and what its title says exists nowhere in the rendered file.
+    """
+    answer = drive_table(
+        dated_page,
+        "(() => {"
+        "  const cell = id =>"
+        '    tbody.querySelector(`tr[data-id="${id}"] td[data-col="start"]`);'
+        "  const look = td => ({cls: td.className, field: td.dataset.field || null,"
+        "                       text: td.textContent.trim(), tip: td.getAttribute('title')});"
+        f"  return {{shaping: look(cell('{TASK}')), ready: look(cell('{OTHER}'))}};"
+        "})()",
+    )
+    stated, forecast = answer["value"]["shaping"], answer["value"]["ready"]
+
+    # Day-first, and the year is a `<span>` the driver reports separately.
+    assert stated["text"].startswith("07.09"), stated
+    assert "edit" in stated["cls"], stated
+    assert stated["field"] == "start_date"
+    # Not dressed as a forecast: nobody forecast anything about this record.
+    assert "derived" not in stated["cls"], stated
+    assert "Shows start_date, which this record states." in stated["tip"], stated["tip"]
+
+    # And where the date really is the scheduler's, the cell says so in both
+    # channels — the same sentence it has always carried, and the muted italic
+    # every other computed value on this page wears.
+    assert forecast["text"], "the ready task was given no start at all"
+    assert "derived" in forecast["cls"], forecast
+    assert "Shows the scheduled start." in forecast["tip"], forecast["tip"]
 
 
 def rollup_plan(bet: float | None, kids: tuple[tuple[float | None, str], ...]) -> Index:

@@ -124,11 +124,29 @@ _MARK_COLUMN = {field: column for column, field in _COLUMN_SHOWS.items()}
 # has made — the same silence `_rollup_problems` keeps about that record.
 _ROLLUP_GLYPH = {"under": "▾", "level": "=", "over": "▴", "unsized": "?", "unbet": ""}
 
+# The columns whose cell draws a date, which is the pair that can be showing
+# either the file's own value or the scheduler's. Written once and read three
+# ways below — how the cell is formatted, whether it is drawn as computed, and
+# which half of its tooltip it gets — because "start and end are the dates" was
+# three literals in this script and a fourth idea in the payload.
+_TABLE_DATES = ("start", "end")
+
 # What the tooltip adds on those two, because "double-click to edit appetite" on
 # a cell reading `2 wk` does not explain what the number in it is.
+#
+# **A date column gets two sentences and not one, because it shows two different
+# things.** `start` was a single sentence beginning "Shows the scheduled start",
+# and a row with no span draws the date its own file states — so the sentence
+# named a forecast that does not exist over a value somebody typed. Which of the
+# two a given cell holds is `row.stated` (`rows.py`), and `showsIn` below picks
+# the sentence with it.
 _TABLE_SHOWS = {
     "size": "Shows the appetite this record was bet at. Blank means nobody has sized it.",
-    "start": "Shows the scheduled start. Editing sets start_date, the earliest it may begin.",
+    "start": {
+        "stated": "Shows start_date, which this record states. "
+        "Editing sets start_date, the earliest it may begin.",
+        "derived": "Shows the scheduled start. Editing sets start_date, the earliest it may begin.",
+    },
 }
 
 # What this view can be done to, said once, beside the search box. Three gestures
@@ -481,6 +499,33 @@ const COLUMN_FIELD = {{ fields|tojson }};
 const SHOWS = {{ shows|tojson }};
 const fieldOf = key => COLUMN_FIELD[key] || key;
 
+// The columns that draw a date, from `_TABLE_DATES`.
+const DATES = {{ dates|tojson }};
+
+// Whether the value in this cell was worked out rather than typed. It decides
+// one thing — the muted italic `.derived` — and it used to be `!editable && why`
+// written at that one site, which is the same answer for every column BUT the
+// two dates: those show the scheduler's answer on one row and the file's own on
+// the next, and the row says which (`row.stated`, `rows.py`).
+//
+// A column that is derived by construction stays derived however its cell reads,
+// which is why `whyOf` is asked first: the appetite cell on a pitch draws what
+// its tasks occupy, and that is computed whatever the file says.
+function computedIn(row, key) {
+  if (whyOf(row, key)) return true;
+  return DATES.includes(key) && !!row[key] && !(row.stated || []).includes(key);
+}
+
+// What this cell is showing, on the columns where that is not what editing
+// writes. A string is the whole answer; a pair is one sentence for the date the
+// file states and one for the date the scheduler worked out, because a cell that
+// draws either must not describe both as a forecast.
+function showsIn(row, key) {
+  const said = SHOWS[key];
+  if (!said) return '';
+  return typeof said === 'string' ? said : said[computedIn(row, key) ? 'derived' : 'stated'];
+}
+
 // Which kind may hold which — `model.PARENT_KINDS`, shipped rather than retyped.
 // It decides three things on this page: which rows grow a handle, which rows
 // light up as a drop would land, and which refuse before anything is sent.
@@ -677,7 +722,7 @@ function shown(row, key) {
   //
   // The stored value is untouched: this is the cell's text, the row still carries
   // the ISO string, and the sort still reads that.
-  if (key === 'start' || key === 'end') return value ? shortDate(value) : '';
+  if (DATES.includes(key)) return value ? shortDate(value) : '';
   // A record with work under it shows what that work occupies — `5.6 in tasks`,
   // the record page's own sentence for the same number — and not the bet it was
   // made at. The bet is not printed beside it: jcanton, 2026-08-27, "the colour
@@ -858,7 +903,13 @@ function cell(row, key, place) {
   // reveal button and showed every tag beside it anyway.
   const classes = [
     editable ? 'edit' : '',
-    !editable && why ? 'derived' : '',
+    // The value in this cell was worked out rather than typed. `computedIn` and
+    // not `!editable && why`, which was the same answer by a narrower route:
+    // being a control and being a forecast are two questions, and the two date
+    // columns are both — a scheduled start is muted and italic like every other
+    // computed value, and the same cell showing the date this record's own file
+    // states is left in the page's ink, because it is not a forecast.
+    computedIn(row, key) ? 'derived' : '',
     // How this record's contents read against the box its bet bought. The class
     // is written for every state and the stylesheet paints only what it should:
     // `under` and `unsized` have a ground of their own, `level` shares the
@@ -919,7 +970,7 @@ function cell(row, key, place) {
                // what editing writes. Before the sentence about editing, because
                // it is the answer to "why is this number here" and the other is
                // the answer to "how do I change it".
-               editable && SHOWS[key] ? SHOWS[key] : '',
+               editable ? showsIn(row, key) : '',
                editable ? 'Double-click to edit ' + named
                         : key === 'id' && EDITABLE ? moveTip(row) : why]
     .filter(Boolean).join('\\n');
@@ -4426,6 +4477,7 @@ def render_table(
         fields=_COLUMN_FIELD,
         mark_column=_MARK_COLUMN,
         shows=_TABLE_SHOWS,
+        dates=_TABLE_DATES,
         # The sentence about this view, in the slot the graph and the timeline
         # already put theirs in — jcanton, 2026-08-25, asking for the table to be
         # "consistent with the timeline and graph pages". It moved out of the row

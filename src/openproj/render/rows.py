@@ -240,6 +240,55 @@ def _row(index: Index, record_id: str) -> dict:
     def read(name, value):
         return None if name in unread else value
 
+    # The two dates this record's own file holds, through `read` like every other
+    # stored value: a rung that does not schedule reads neither, and a
+    # hand-written `start_date` on a product must no more reach the Start column
+    # than it reaches the Owner one.
+    stated_start = read("start_date", record.start_date)
+    stated_end = read("end_date", record.end_date)
+    # **The Start column falls back to the stated date where the scheduler gave
+    # this record no span.** With no default appetite (§2 of
+    # `design/time-model.md`) a `thinking` or `shaping` record gets no span at
+    # all, and this line read the span alone — so a shaping task carrying
+    # `start_date: 2026-09-07` drew an empty Start cell while the record page's
+    # own Start date row printed the date. The cell is the editor for that field
+    # (`_COLUMN_FIELD`, `table.py`), so you could type a date into it, watch the
+    # PATCH commit, and watch the cell stay blank.
+    #
+    # §2 argued for a blank Start on unsized work and it was right about the
+    # forecast: there is none, and inventing one is what that section refuses. It
+    # was written before the column became the editor for the field, and §1b
+    # makes a future `start_date` on a shaping record the legitimate case rather
+    # than the corner. A stated date is not a forecast — `stated` below is what
+    # keeps the two apart on screen.
+    #
+    # The End column has no such fallback, and the asymmetry is the scheduler's
+    # rather than an oversight: a record with a recorded end is `done`, and the
+    # done branch takes its start date and gives it a span, so there is no
+    # record whose End cell would be blank over a stated `end_date`.
+    start = span.start if span else stated_start
+    end = span.end if span else None
+    # Which of the two date cells is drawing the date the FILE states, as against
+    # one the scheduler worked out. This was `"derived": span is not None`, a
+    # row-level boolean whose comment said it was here so that "the column can
+    # style itself differently from anything a human typed" — and nothing in any
+    # page ever read it, so no column ever did. The question it was asking is
+    # per-CELL and not per-row: a done record's End is its typed `end_date` while
+    # its Start may be a forecast, and a shaping record's Start is typed while it
+    # has no forecast at all.
+    #
+    # Compared value against value rather than by asking which branch produced
+    # it, because the scheduler hands the stated date straight back on more rungs
+    # than a list here could keep up with — `in_progress` starts when its file
+    # says it started, and a `ready` date that clears the floor survives too.
+    # What a reader needs to know is whether the date in front of them is one
+    # somebody chose, and that is what this compares.
+    stated = [
+        column
+        for column, drawn, typed in (("start", start, stated_start), ("end", end, stated_end))
+        if drawn is not None and drawn == typed
+    ]
+
     return {
         "id": record.id,
         "title": record.title,
@@ -289,11 +338,13 @@ def _row(index: Index, record_id: str) -> dict:
         # own page, and on the betting table, which is where a pitch's tasks are
         # argued about. See `_rollup`.
         "rollup": _rollup(index, record_id),
-        "start": span.start.isoformat() if span else None,
-        "end": span.end.isoformat() if span else None,
-        # Every date on this page was computed. Saying so in the payload keeps the
-        # column able to style itself differently from anything a human typed.
-        "derived": span is not None,
+        "start": start.isoformat() if start else None,
+        "end": end.isoformat() if end else None,
+        # The columns above whose value came out of the file rather than out of
+        # the scheduler, so that a cell drawing a forecast can be drawn as one and
+        # a cell drawing somebody's own answer is left alone. See `stated` above,
+        # which is where the whole argument is.
+        "stated": stated,
         "unowned": bool(span and span.unowned),
         "overruns": span.overruns_cycle_weeks if span else None,
         # What is still in the way, not what was ever in the way — jcanton,
