@@ -39,6 +39,7 @@ import asyncio
 import base64
 import binascii
 import contextlib
+import functools
 import json
 import logging
 import math
@@ -48,7 +49,7 @@ import secrets
 import threading
 import time
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import date
 from pathlib import Path
 from typing import Literal
@@ -74,6 +75,7 @@ from .auth import (
 from .index import Index, build_index, cascade_of
 from .model import (
     CONFIG_FILES,
+    DATED_FIELDS,
     DIRECTORY,
     ID_PATTERN,
     INBOXES,
@@ -91,6 +93,7 @@ from .model import (
     Unreadable,
     _an,
     edited_by_id,
+    ends_before_it_starts,
     in_model_order,
     loop_made,
     mint_id,
@@ -110,6 +113,7 @@ from .model import (
     unknown_fields,
     unread_fields,
     validate_all,
+    weeks_outside_every_cycle,
     what_json_can_carry,
     why_it_will_not_read,
 )
@@ -1158,6 +1162,74 @@ def _reject_a_start_date_this_write_puts_in_the_past(
         f"the work has not begun. Pick a date from {today} on, or set the status to "
         "in_progress if it started then.",
     )
+
+
+def _reject_dates_this_write_cannot_mean(
+    fields: dict, candidate: Record, calendar: Callable[[], Config]
+) -> None:
+    """The two date-versus-date rules of §6, refused where somebody can fix them.
+
+    There was no such door before this. `_reject_bad_types` asks whether two
+    fields are numeric and the date coercion takes any parseable ISO date, so the
+    only date-RANGE check in the whole application was the one for cycle files —
+    and `2025-09-11` typed for `2026-09-11` committed with a 200. After it,
+    `span.start <= window[1] and span.end >= window[0]` can never be true for any
+    cycle, so the record drops silently out of `counts_in`, out of `Index.load`
+    and out of `carried_into` while `openproj check` reports the plan clean. A
+    cycle quietly loses a person's work and there is no error anywhere to chase.
+
+    **Two rules, one door, because they share their whole shape.** Both are
+    questions about the dates on the record and nothing else; both have a
+    `validate_all` twin, which is where the same predicate reports the case
+    nobody typed; and both take the same delta test below. Split into two
+    functions they would be two identical guards and four call sites at each of
+    the four write doors, and the thing that matters — that a write is judged on
+    what it typed — would be written twice.
+
+    **Asked of the delta, which `_reject_a_start_date_this_write_puts_in_the_past`
+    above learned the expensive way.** A record can arrive in either state
+    without anybody writing to it: a hand edit in git puts two contradictory
+    dates in a file, and editing `config/cycles.yaml` can move every window out
+    from under a date that was inside one yesterday. Asked of the state, this
+    door would then refuse `{"title": "Renamed"}` on that record, name a field
+    the payload does not carry, refuse a bulk retag because one row in the
+    selection was affected, and refuse every flush of a shaping document being
+    written in the co-editing room. So what is refused is the write that typed a
+    date, and what a record that merely holds one gets is the warning
+    `validate_all` reports beside it.
+
+    The candidate rather than the payload's raw values, because `parse_text` has
+    already turned them into dates and this is a rule about dates. The payload
+    decides WHETHER to ask; the parsed record answers.
+
+    `calendar` is a callable and not a `Config` because of the same delta: three
+    of the four doors have no configuration to hand and would have to read one —
+    `_config_at` walks the whole tree at a commit and parses every cycle and
+    every person under it — and the overwhelming majority of writes name no date
+    at all. A retitle, a retag and every quiet flush of the co-editing room would
+    each have paid for a calendar nothing was going to compare against. Passing
+    the read rather than the answer keeps the delta test in one place, which is
+    the other half of why this is one function.
+    """
+    if not set(DATED_FIELDS) & set(fields):
+        return
+    config = calendar()
+    if ends_before_it_starts(candidate):
+        raise HTTPException(
+            422,
+            f"end_date: {candidate.end_date} is before the start date "
+            f"{candidate.start_date}, so this record would have finished before it began.",
+        )
+    for name in DATED_FIELDS:
+        if name not in fields:
+            continue
+        away = weeks_outside_every_cycle(getattr(candidate, name, None), config)
+        if away is not None:
+            raise HTTPException(
+                422,
+                f"{name}: {getattr(candidate, name)} is {away:.0f} weeks outside every cycle "
+                "this plan has dated, so it would count towards none of them. Check the year.",
+            )
 
 
 def _reject_undeclared_fields(fields: dict, known: tuple[str, ...], what: str) -> None:
@@ -2881,6 +2953,11 @@ def create_app(
         _reject_a_start_date_this_write_puts_in_the_past(
             fields, candidate, index_now()[1].records.get(record_id), today or date.today()
         )
+        # And the two rules that compare a date against the plan's own calendar.
+        # The config is read at `base` — the commit this write is a delta against
+        # — rather than at HEAD, so that the windows this date is judged by are
+        # the ones the person typing it was looking at.
+        _reject_dates_this_write_cannot_mean(fields, candidate, lambda: _config_at(store, base)[0])
         written = await _write_or_refuse(
             store.write,
             path=path,
@@ -3226,6 +3303,11 @@ def create_app(
                 ) from None
             files[path] = content
 
+        # One read of the plan's calendar for the whole batch, and only if a date
+        # is written at all: `_reject_dates_this_write_cannot_mean` asks for it
+        # once and then holds it, rather than walking the tree once per record in
+        # a selection that may be fifty of them.
+        calendar = functools.cache(lambda: _config_at(store, base)[0])
         # The population every candidate is judged against is the plan with all of
         # them already applied. Asked that way round because the batch lands as one
         # commit: a shape that only exists once every record in the selection has
@@ -3252,6 +3334,12 @@ def create_app(
             _reject_a_start_date_this_write_puts_in_the_past(
                 fields, candidate, index.records.get(candidate.id), today or date.today()
             )
+            # Per candidate for the same reason, over the plan's calendar as it
+            # stands at the commit this batch is a delta against. The read is
+            # memoised across the loop by `calendar` below: one payload of fields
+            # is written over every id here, so if it names a date at all it names
+            # it for all of them, and the windows do not move between two records.
+            _reject_dates_this_write_cannot_mean(fields, candidate, calendar)
 
         written = await _write_or_refuse(
             store.write_all,
@@ -3799,6 +3887,7 @@ def create_app(
         _reject_a_start_date_this_write_puts_in_the_past(
             fields, candidate, None, today or date.today()
         )
+        _reject_dates_this_write_cannot_mean(fields, candidate, lambda: config)
         problems = [
             p
             # A file already in the plan that will not parse is not this record's
@@ -4174,6 +4263,13 @@ def create_app(
                 before = None
             _reject_a_start_date_this_write_puts_in_the_past(
                 fields, candidate, before, today or date.today()
+            )
+            # The room is the surface people actually edit on, so it gets every
+            # rule the PATCH door has or it is the one door with none. A flush
+            # that carries no fields carries no date either, and falls straight
+            # through — see the delta argument above, which is this rule's too.
+            _reject_dates_this_write_cannot_mean(
+                fields, candidate, lambda: _config_at(store, room.base)[0]
             )
 
             message = f"{room.record_id}: {_named(fields, RECORD_FIELDS) or 'body'}"

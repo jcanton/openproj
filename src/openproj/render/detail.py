@@ -2159,6 +2159,89 @@ for (const article of document.querySelectorAll('article.record')) {
   };
 }
 
+// What the status now on this form demands and the form has not got — the same
+// question the table's panel asks of a row, asked of this page, so that there is
+// ONE rule and not one per surface. `data-required-at` is `required_at()`, which
+// the model derives by running its own status gates over a blank record rather
+// than restating them, so all three surfaces are reading the gate itself.
+//
+// **A date is filled in rather than complained about**, which is what makes this
+// an ask and not a refusal. Marking a record done demands the day it ended, that
+// day is almost always today, and the control is already on screen — so the
+// answer is offered in the box it belongs in, the counter in the bar goes up by
+// one, and a second press commits it. Somebody who finished on Friday changes
+// four characters instead of being told what they have not done.
+//
+// Anything else is named and nothing else happens. There is no value a form may
+// invent for an owner, an appetite or a reviewer, and a prefill there would
+// commit a guess. The words are the page's own labels, via `labelOf`, because
+// `person_weeks` in a sentence sends somebody looking for a field that is
+// labelled Appetite.
+//
+// **Asked only of a press that MOVES the status**, which is the same trigger the
+// table has — `saveCell` asks when the cell being written is the status cell —
+// and it is not a nicety. A record can already be standing at a status whose
+// gate it fails: a plan in git is a fact, and `in_progress` with nobody assigned
+// is one of the shapes the fixture corpus carries on purpose. Asked of the
+// STATE, this would stand in front of every save on such a record — a retitle, a
+// tag, a paragraph of the shaping document — naming a field nobody was editing,
+// which is the state-versus-delta failure the past-date refusal in `web.py`
+// learned the expensive way. What a record that merely stands there earns is the
+// blocker `validate_all` already reports beside it.
+//
+// Returns whether the save must stop here. It stops on the press that filled a
+// box as well as on the press that could not: a value the page wrote is a value
+// nobody has read yet, and committing it unseen is the prefill deciding rather
+// than offering.
+function stillNeeded(fields) {
+  if (!('status' in fields)) return false;
+  const status = FORM.querySelector('[name=status]')?.value || OPENS;
+  const waived = FORM.querySelector('[name=review_waived]')?.checked;
+  const filled = [];
+  const missing = [];
+  let first = null;
+  for (const control of FORM.querySelectorAll('[data-required-at]')) {
+    // A field this kind does not have is not empty, it is absent — the same
+    // skip `createRecord` makes, for the same reason.
+    if (control.closest('[data-kinds]')?.hidden) continue;
+    if (!control.dataset.requiredAt.split(' ').includes(status)) continue;
+    // review_waived is the escape hatch from the reviewer rule, honoured here
+    // exactly as `markRequired` honours it: otherwise this is a nag.
+    if (control.name === 'reviewers' && waived) continue;
+    const value = read(control);
+    if (!(value === null || (Array.isArray(value) && !value.length))) continue;
+    if (control.dataset.type === 'date') {
+      control.value = today();
+      filled.push(labelOf(control));
+      first = first || control;
+    } else {
+      missing.push(labelOf(control));
+    }
+  }
+  if (!filled.length && !missing.length) return false;
+  if (filled.length) {
+    // The counter in the commit bar counts what has been typed and not saved,
+    // and this page just typed something. Without this the bar says one change
+    // while the form holds two, and Reset would put back a date nobody could
+    // see had been added.
+    dirty();
+    // The box this press actually wrote in, not the first date control on the
+    // form: the keyboard has to land where the value somebody is being asked to
+    // check is, and a query would answer with whichever gated date came first in
+    // the page.
+    first.focus();
+  }
+  // The words on the page, not the words in the file. `data-word` is kept
+  // current by the hill for exactly this — see `choose` in `hill.py` — so this
+  // says "In progress" where the frontmatter says `in_progress`.
+  const said = FORM.querySelector('[name=status]')?.dataset.word || status;
+  announce([
+    filled.length ? `${filled.join(', ')} set to today — check it and press Save again` : '',
+    missing.length ? `still needed at ${said}: ${missing.join(', ')}` : '',
+  ].filter(Boolean).join('. '));
+  return true;
+}
+
 async function save() {
   // One button, two verbs: a record that exists is PATCHed with what changed;
   // a record that does not exist yet is POSTed whole. The branch is the entire
@@ -2172,6 +2255,12 @@ async function save() {
     announce(error.message);
     return;
   }
+  // Before either write path, and therefore before the room's as well. `save()`
+  // hands the form to `COEDIT.save(fields)` whenever the socket is up, which is
+  // the ordinary case — so a check written after that branch would be a check on
+  // the surface nobody uses, which is exactly how a start date typed into the
+  // past came to be refused by one door and committed by the other.
+  if (stillNeeded(fields)) return;
   // While a room is live the body is not this tab's to send: it is the room's,
   // and Save is one commit made over the socket against the room's base, with
   // the fields from this form. Sending both down this path would be two commits
@@ -2785,11 +2874,19 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
     # says this bet does not fit read exactly like the sentence saying when it
     # starts. It keeps the italic — it is still computed, and pretending otherwise
     # would invite somebody to edit it — and gains the warning colour on top.
+    #
+    # `span.overruns_cycle` and not `record.cycle`, which is what this formatted
+    # and which was a different question. The number beside it came from
+    # `_overrun` → `cycle_of`, and `cycle_of` walks UP to the pitch holding the
+    # bet — a task carries no cycle of its own, so four seed task pages read
+    # "▲ overruns cycle None by 4.7 weeks": the one sentence that says a bet did
+    # not fit its box, with the box unnamed. The two travel together on the span
+    # now, so the sentence and the arithmetic cannot pick different cycles.
     overrun = (
         Markup(
             ' · <span class="overrun"><span class="sev-mark sev-mark-warn"'
             ' aria-hidden="true">▲</span> overruns cycle {} by {} weeks</span>'
-        ).format(record.cycle, f"{span.overruns_cycle_weeks:.1f}")
+        ).format(span.overruns_cycle, f"{span.overruns_cycle_weeks:.1f}")
         if span and span.overruns_cycle_weeks
         else Markup("")
     )

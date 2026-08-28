@@ -9,6 +9,7 @@ assignees: [jackdawrie]
 reviewers: [hoopoegrove, turnstonegru]
 review_waived: false
 start_date: 2026-06-22
+end_date: 2026-07-22
 priority: high
 depends_on: []
 tags: [airflow, throughflow, hearth, module, verification]

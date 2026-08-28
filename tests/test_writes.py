@@ -19,6 +19,7 @@ banner beside the row, and what was actually sent.
 from __future__ import annotations
 
 import json
+from datetime import date
 
 import pygit2
 import pytest
@@ -76,6 +77,12 @@ def pages(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
             "cycle": "/cycle/41",
             "table": "/table",
             "detail": f"/detail/{TASK}",
+            # The same page with the plain textarea rather than Ace. `drive.js`
+            # is a DOM shim and not a browser, and 594 KB of third-party editor
+            # is more DOM than it has — so a claim about what SAVE does on this
+            # page is asked of the surface the shim can actually run. What is
+            # under test is `save()`, which is shared by both editors.
+            "detail_plain": f"/detail/{TASK}?editor=plain",
             "graph": "/graph",
             "cycles": "/cycles",
             "new": "/new?kind=task",
@@ -701,3 +708,125 @@ def test_the_two_list_forms_say_it_too(pages):
 
     assert created["value"] == [WEDGED["detail"]]
     assert tabled["value"] == [WEDGED["detail"]]
+
+
+# --------------------------------------------------------------------------- #
+# §4: the record page asks for the end date too
+#
+# One rule and not one per surface. The gate that makes the table's panel pop is
+# `required_at()`, derived from the validator's own status gates, and it reaches
+# this page as `data-required-at` on the controls — so Save asks the same
+# question the panel does, in the medium this page already has: the control is on
+# screen, so the answer is offered in it rather than in a box over it.
+# --------------------------------------------------------------------------- #
+
+FINISHING = """
+(async () => {{
+  const status = FORM.querySelector('[name=status]');
+  status.value = 'done';
+  status.dataset.word = 'Done';
+  {extra}
+  await save();
+  const box = FORM.querySelector('[name=end_date]');
+  return {{filled: box.value, {SAY}, unsaved: UNSAVED.textContent}};
+}})()
+"""
+
+
+def test_pressing_save_on_a_finished_record_offers_the_day_it_ended(pages):
+    """The ask, and the reason it stops the save rather than committing what it
+    guessed.
+
+    Marking a record done demands the day it ended and that day is almost always
+    today, so the answer is written into the box it belongs in — and then nothing
+    is sent, because a value the page wrote is a value nobody has read yet. A
+    second press commits it, and somebody who finished on Friday changes four
+    characters instead of being told what they have not done.
+
+    The seeded task cites no pull request either, which `done` also demands and
+    which no form may invent — so this asserts both halves at once: the date is
+    offered, the PR is named, and the write does not go.
+    """
+    answer = drive(pages["detail_plain"], FINISHING.format(extra="", SAY=SAY))
+
+    assert answer["value"]["filled"] == date.today().isoformat()
+    said = answer["value"]["state"]
+    assert "set to today — check it and press Save again" in said, said
+    assert "still needed at Done: " in said, said
+    # "Done" and not `done`: the word comes off `data-word`, which the hill keeps
+    # current on the hidden input precisely so a refusal says what the reader is
+    # looking at rather than what git holds.
+    assert "at Done:" in said, said
+    # The FIELD names are `labelOf`'s job and this harness cannot answer it:
+    # `drive.js` returns null from every `previousElementSibling`, so `labelOf`
+    # falls back to `control.name` here where a browser answers "End date" and
+    # "PRs". What is asserted instead is that the page really does draw those two
+    # words beside those two controls, which is the half that lives in markup.
+    assert "end_date" in said and "prs" in said, said
+    drawn = pages["detail_plain"]
+    assert ">End date<" in drawn and ">PRs<" in drawn
+    # The counter has to move with it, or the bar claims one change over a form
+    # holding two and Reset puts back a date nobody could see had been added.
+    assert answer["value"]["unsaved"] == "2 unsaved changes", answer["value"]["unsaved"]
+    assert not answer["calls"], "nothing was sent"
+
+
+def test_the_second_press_sends_the_date_the_page_offered(pages):
+    """The ask is one press, not a dialogue: what the first press put in the box
+    is what the second one commits, in the same PATCH as the status.
+
+    A record that goes `done` and then has a date added is two commits, and for
+    the length of the first one the plan holds a record the validator refuses —
+    which is the same argument the table's panel is built on.
+    """
+    answer = drive(
+        pages["detail_plain"],
+        FINISHING.format(
+            extra="FORM.querySelector('[name=prs]').value = 'kilnlab/kiln4py#1'; await save();",
+            SAY=SAY,
+        ),
+        replies=[{"status": 200, "json": {"outcome": "committed", "commit": "c" * 40}}],
+    )
+
+    assert len(answer["calls"]) == 1, answer["calls"]
+    sent = json.loads(answer["calls"][0]["body"])["fields"]
+    assert sent["status"] == "done"
+    assert sent["end_date"] == date.today().isoformat()
+    assert sent["prs"] == ["kilnlab/kiln4py#1"]
+
+
+def test_a_save_that_does_not_move_the_status_is_not_asked_anything(pages):
+    """The guard on the two above, and the delta the ask is scoped to.
+
+    A record can already be standing at a status whose gate it fails — a plan in
+    git is a fact, and `in_progress` with nobody assigned is a shape the fixture
+    corpus carries on purpose. Asked of the STATE rather than of the write, this
+    check would stand in front of every press on such a record: a retitle, a tag,
+    a paragraph of the shaping document, each answered with the name of a field
+    nobody was editing. That is the state-versus-delta failure `web.py`'s
+    past-date refusal learned the expensive way, and this is the same rule the
+    table has — `saveCell` asks when the cell being written is the status cell.
+
+    The form is put into that state rather than a second page being rendered for
+    it: the assignee box is emptied AND its baseline moved with it, so `changed()`
+    reports one edit — the title — over a record that fails its own gate.
+    """
+    answer = drive(
+        pages["detail_plain"],
+        f"""
+        (async () => {{
+          const box = FORM.querySelector('[name=assignees]');
+          box.value = '';
+          ORIGINAL[box.name] = JSON.stringify(read(box));
+          TITLED.value = 'Reproduce the seam artefact again';
+          await save();
+          return {{{SAY}}};
+        }})()
+        """,
+        replies=[{"status": 200, "json": {"outcome": "committed", "commit": "d" * 40}}],
+    )
+
+    assert len(answer["calls"]) == 1, answer["calls"]
+    assert json.loads(answer["calls"][0]["body"])["fields"] == {
+        "title": "Reproduce the seam artefact again"
+    }

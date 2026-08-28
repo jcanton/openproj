@@ -55,6 +55,7 @@ NEEDS_INDEPENDENT_REVIEWER = (
     "work in progress needs a reviewer other than its owner, or review waived"
 )
 NEEDS_PR = "a done record needs at least one PR"
+NEEDS_END_DATE = "a done record needs the date it ended"
 SHOULD_HAVE_PARENT = "a task should have a parent"
 DEPENDS_ON_CYCLE = "part of a blocked-by cycle"
 PARENT_CYCLE = "part of a parent cycle"
@@ -423,7 +424,10 @@ def test_a_wip_record_needs_a_reviewer_who_is_not_its_owner():
 
 
 def test_a_done_record_needs_at_least_one_pr():
-    problem = only(check(task(status="done", prs=[])), TASK_ID)
+    # With the end date supplied, so that the one problem reported is the one this
+    # test is about: `done` gates two fields now, and `only` asserts there is
+    # exactly one.
+    problem = only(check(task(status="done", prs=[], end_date=date(2026, 8, 20))), TASK_ID)
     assert summary(problem) == ("blocker", "prs", NEEDS_PR, 1)
 
 
@@ -997,6 +1001,24 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         ("blocker", "task-31f6c4", "prs", NEEDS_PR, 1),
         ("blocker", "task-3a52d8", "prs", NEEDS_PR, 1),
         ("blocker", "task-3e07b2", "prs", NEEDS_PR, 1),
+        # v5: done, and no record of the day it ended. The SAME five records, and
+        # that is the whole demonstration of what grandfathering is for. These
+        # files are migrated history — three of them say `start_date: null` and
+        # one says it in as many words, `# was fabricated during migration;
+        # unknown` — so there is no end date anybody can supply, and no way for
+        # the file to say so. The rule is 5 and this corpus is
+        # created_schema_version 2, so what they get is a warning; a record
+        # created from now on is created at 5 and is blocked.
+        #
+        # `seed/` went the other way and is the other half of the argument: both
+        # of ITS done tasks carry real start dates, so both were given real end
+        # dates rather than being left to the demotion. A demo that leans on
+        # grandfathering is a demo teaching people to ignore the rule.
+        ("warning", "pitch-2a7f3e", "end_date", NEEDS_END_DATE, 5),
+        ("warning", "pitch-3c9a41", "end_date", NEEDS_END_DATE, 5),
+        ("warning", "task-31f6c4", "end_date", NEEDS_END_DATE, 5),
+        ("warning", "task-3a52d8", "end_date", NEEDS_END_DATE, 5),
+        ("warning", "task-3e07b2", "end_date", NEEDS_END_DATE, 5),
         # v4: a bet is made on a pitch, and these tasks are part of one
         ("warning", "task-2b6c94", "cycle", inherits.format("pitch-2a7f3e"), 4),
         ("warning", "task-31f6c4", "cycle", inherits.format("pitch-3c9a41"), 4),
@@ -1533,3 +1555,127 @@ def test_the_form_is_told_to_ask_for_somebody():
     it."""
     for kind in ("project", "pitch", "task"):
         assert set(required_at(kind)["assignees"]) == {"ready", "in_progress"}, kind
+
+
+# --- §4 and §6: the end date, and dates compared to dates ---------------------
+
+
+def test_a_done_record_needs_the_date_it_ended():
+    """The one fact a finished record holds that nothing can derive.
+
+    Without it the span is the start date twice — a dot on the timeline, an End
+    column showing a start, no elapsed weeks and no overrun — so the field is not
+    bookkeeping: it is what makes every reader of finished work able to say
+    anything at all.
+    """
+    done = task(status="done", prs=["kilnlab/kiln4py#1"], created_schema_version=5)
+    problem = only(check(done), TASK_ID)
+    assert summary(problem) == ("blocker", "end_date", NEEDS_END_DATE, 5)
+    assert check(done.model_copy(update={"end_date": date(2026, 8, 20)})) == []
+
+
+def test_a_record_that_was_already_done_is_warned_and_not_blocked():
+    """Grandfathering, on the rule it was chosen for.
+
+    A corpus of finished work written before this field existed cannot supply it —
+    `tests/fixtures/corpus` says `# was fabricated during migration; unknown` on
+    one of its own start dates — so shipping this rule below `schema_version`
+    would have turned five real files red on the commit that added it, and the
+    rule would have been reverted rather than adopted. Shipped at 5, with
+    `schema_version` moved 4 -> 5 in the same change, it warns about them and
+    blocks everything written from now on.
+    """
+    older = only(check(task(status="done", prs=["x/y#1"], created_schema_version=4)), TASK_ID)
+    newer = only(check(task(status="done", prs=["x/y#1"], created_schema_version=5)), TASK_ID)
+    assert older.severity == "warning"
+    assert newer.severity == "blocker"
+    assert older.message == newer.message == NEEDS_END_DATE
+
+
+def test_the_form_is_told_to_ask_for_the_end_date():
+    """The gate read the way a form reads it, which is how the table's panel and
+    the record page's Save both come to ask for this without either of them
+    knowing the rule."""
+    for kind in ("project", "pitch", "task"):
+        assert set(required_at(kind)["end_date"]) == {"done"}, kind
+
+
+def test_a_record_cannot_have_finished_before_it_began():
+    """Two typed dates and no derivation between them, and nothing compared them.
+
+    A blocker rather than a warning, and version 1 rather than 5, which is the
+    exception this file makes exactly twice: grandfathering exists so a rule
+    invented today does not turn last year's file red, and no file can predate the
+    FIELD. `end_date` arrives at version 5, so anything carrying one was written
+    after this rule existed, whatever version the file declares of itself.
+    """
+    backwards = task(
+        status="done",
+        prs=["x/y#1"],
+        start_date=date(2026, 8, 20),
+        end_date=date(2026, 8, 3),
+        created_schema_version=1,
+    )
+    problem = only(check(backwards), TASK_ID, "end_date")
+    assert summary(problem) == (
+        "blocker",
+        "end_date",
+        "the end date 2026-08-03 is before the start date 2026-08-20, "
+        "so this record finished before it began",
+        1,
+    )
+    assert check(backwards.model_copy(update={"end_date": date(2026, 8, 20)})) == []
+
+
+DATED = Config(cycles={36: (date(2026, 6, 22), date(2026, 8, 14))})
+
+
+def test_a_date_typed_a_year_out_is_reported_rather_than_silently_dropped():
+    """§6's failure, made to say something.
+
+    `2025-09-11` for `2026-09-11` parses, commits and then makes
+    `span.start <= window[1] and span.end >= window[0]` false for every cycle
+    there is — so the record drops out of `counts_in`, out of `Index.load` and out
+    of `carried_into` at once, while `openproj check` reports the plan clean. A
+    cycle loses a person's work and there is no error anywhere to chase.
+    """
+    strayed = task(status="in_progress", start_date=date(2025, 9, 11), person_weeks=1.0)
+    problem = only(check(strayed, config=DATED), TASK_ID, "start_date")
+    assert summary(problem) == (
+        "warning",
+        "start_date",
+        "2025-09-11 is 41 weeks outside every cycle this plan has dated, so this record "
+        "counts towards none of them: check the year",
+        5,
+    )
+
+
+def test_a_date_near_the_plans_cycles_is_left_alone():
+    """The allowance is what keeps the rule from refusing the ordinary case: work
+    bet in the last cycle anybody has dated runs on into the next one, which by
+    definition has no window yet."""
+    for day in (date(2026, 6, 22), date(2026, 8, 14), date(2026, 10, 30), date(2026, 4, 6)):
+        near = task(status="in_progress", start_date=day, person_weeks=1.0)
+        assert [p for p in check(near, config=DATED) if p.field == "start_date"] == [], day
+
+
+def test_a_plan_that_has_dated_no_cycles_checks_no_dates():
+    """The same bargain the roster check makes: a tool that refuses dates before
+    anybody has written a cycles file is a tool nobody finishes setting up."""
+    strayed = task(status="in_progress", start_date=date(2025, 9, 11), person_weeks=1.0)
+    assert [p for p in check(strayed) if p.field == "start_date"] == []
+
+
+def test_the_end_date_is_held_to_the_same_calendar_as_the_start():
+    """Both fields, because a rule enforced on one date and reported on two is the
+    one-fact-two-implementations failure with extra steps."""
+    strayed = task(
+        status="done",
+        prs=["x/y#1"],
+        start_date=date(2026, 7, 6),
+        end_date=date(2027, 9, 11),
+        created_schema_version=5,
+    )
+    problem = only(check(strayed, config=DATED), TASK_ID, "end_date")
+    assert problem.severity == "warning"
+    assert problem.message.startswith("2027-09-11 is 56 weeks outside every cycle")

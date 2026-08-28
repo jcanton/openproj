@@ -76,6 +76,12 @@ EDITABLE: dict[str, str] = {
     "prs": "list",
     "cycle": "number",
     "start_date": "date",
+    # Beside the start and after it, because they are one fact read left to
+    # right and because the page's order is when-it-sits-and-when. It is the
+    # only editable field a status GATE asks for that is blank on every record
+    # until the day the work finishes — see `Record.end_date` for why the other
+    # end of the pair is derived and this one is typed.
+    "end_date": "date",
     # The inbox-only fields, after everything above: they were not in the order
     # jcanton gave because no planned kind reads them, and trailing the shared
     # fields keeps his order intact on every kind rather than threading gaps
@@ -436,6 +442,10 @@ LABELS = {
     "reviewers": "Reviewers",
     "review_waived": "Review waived",
     "start_date": "Start date",
+    # "End date" and not "Ended", to pair with the label above it: the two are
+    # one control each side of a hyphen on the page, and a reader scanning for
+    # the second of a pair is scanning for the first one's shape.
+    "end_date": "End date",
     "priority": "Priority",
     "cycle": "Cycle",
     "parent": "Parent",

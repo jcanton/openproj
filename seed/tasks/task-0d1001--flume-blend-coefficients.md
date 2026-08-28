@@ -9,6 +9,7 @@ assignees: [nightjarelli, Dunnocksen]
 reviewers: [Oxpeckerly, hoopoegrove]
 review_waived: false
 start_date: 2026-02-02
+end_date: 2026-02-13
 priority: high
 depends_on: []
 tags: [griddle, transport, least-squares, interpolation, drum]

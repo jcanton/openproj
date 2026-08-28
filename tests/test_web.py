@@ -6627,3 +6627,173 @@ def test_the_kind_control_actually_changes_the_kind_in_a_real_browser(
     assert confirming["asking"] == "Make Chaff optics a task?", confirming["asking"]
 
     assert answer[-1] == "true Task", (answer, said)
+
+
+# --------------------------------------------------------------------------- #
+# §4 and §6: the end date, and the two rules that compare dates to dates
+# --------------------------------------------------------------------------- #
+
+# The plan's own calendar, which is what a date is judged against. `SEED` dates
+# no cycles at all, and that is deliberate everywhere else in this file: a plan
+# with no cycles file switches the far-date rule off, which is the same "no
+# roster, no check" bargain the people rule makes and is the ordinary state of a
+# repository somebody started this morning. Every test that wants the rule ON
+# commits this over the tree first.
+DATED_SEED = {
+    **SEED,
+    "config/cycles.yaml": (
+        "cycles:\n  36: [2026-06-22, 2026-08-14]\n  37: [2026-08-17, 2026-10-09]\n"
+    ),
+}
+
+
+def test_an_end_date_before_the_start_is_refused_at_every_write_door(
+    client: TestClient, repo_path: Path
+):
+    """Two typed fields with no derivation between them, and nothing compared them.
+
+    `task-c00001` was seeded starting 2026-07-06, so an end in June is a record
+    that finished before it began — which `schedule` can only draw by throwing the
+    date away, and which no page can present as anything. Both doors, because a
+    writable surface is only closed if every way into it is.
+    """
+    base = git_head(repo_path)
+
+    saved = save(client, TASK, {"end_date": "2026-06-01"})
+    assert saved.status_code == 422, saved.text
+    assert "end_date" in saved.json()["detail"]
+    assert "2026-06-01" in saved.json()["detail"]
+    assert "2026-07-06" in saved.json()["detail"], "and the date it is before"
+
+    made = create(
+        client,
+        {**VALID_TASK, "start_date": "2027-01-04", "status": "done", "prs": ["o/r#1"]}
+        | {"end_date": "2026-12-01"},
+    )
+    assert made.status_code == 422, made.text
+
+    assert git_head(repo_path) == base, "a refusal writes nothing"
+
+
+def test_a_date_typed_a_year_out_is_refused_rather_than_silently_dropped(
+    client: TestClient, repo_path: Path
+):
+    """§6's failure, stopped where somebody can still fix it.
+
+    `2025-09-11` for `2026-09-11` parses and commits with a 200, and then
+    `span.start <= window[1] and span.end >= window[0]` is false for every cycle
+    there is — so the record falls out of `counts_in`, out of `Index.load` and out
+    of `carried_into` at once while `openproj check` calls the plan clean. The
+    only date-range check this application had was the one for cycle files.
+    """
+    commit_directly(repo_path, DATED_SEED, "the plan dates its cycles")
+    base = git_head(repo_path)
+
+    refused = save(client, TASK, {"start_date": "2025-09-11"})
+    assert refused.status_code == 422, refused.text
+    assert "start_date" in refused.json()["detail"]
+    assert "outside every cycle" in refused.json()["detail"]
+    assert "Check the year" in refused.json()["detail"]
+
+    # And a date inside the plan's own stretch of cycles is not this refusal. It
+    # is refused by the rule beside it — the work has not begun — which is what
+    # keeps this assertion honest about which rule answered.
+    fine = save(client, TASK, {"start_date": "2026-09-11"})
+    assert fine.status_code == 200, fine.text
+
+    assert git_head(repo_path) != base, "the second save landed"
+
+
+def test_the_far_date_refusal_reaches_the_bulk_door_as_well(client: TestClient, repo_path: Path):
+    """One commit for the batch, so a refusal about any row refuses every row —
+    which is right for a payload nobody can apply, and this one is exactly that:
+    the same impossible date written over every record named."""
+    commit_directly(repo_path, DATED_SEED, "the plan dates its cycles")
+    base = git_head(repo_path)
+
+    bulk = save_many(client, [TASK, OTHER], {"start_date": "2019-04-01"})
+
+    assert bulk.status_code == 422, bulk.text
+    assert "outside every cycle" in bulk.json()["detail"]
+    assert git_head(repo_path) == base, "a refusal writes nothing"
+
+
+def test_a_write_that_names_no_date_is_not_refused_by_a_date_rule(
+    client: TestClient, repo_path: Path
+):
+    """The delta, which the past-date refusal beside these learned the expensive
+    way and which they share.
+
+    Both states are reachable without anybody writing to the record: a hand edit
+    in git puts contradictory dates in a file, and editing `config/cycles.yaml`
+    moves every window out from under a date that was inside one yesterday. Asked
+    of the STATE, this door would refuse `{"title": "Renamed"}` on such a record,
+    name a field the payload does not carry, refuse a bulk retag over one row in
+    the selection, and refuse every flush of a shaping document in the co-editing
+    room. What a record that merely holds one gets is the warning beside it.
+    """
+    strayed = DRIFTED_RECORD.replace("start_date: 2026-07-02", "start_date: 2019-04-01")
+    commit_directly(
+        repo_path,
+        {**DATED_SEED, f"tasks/{DRIFTED}.md": strayed},
+        "a hand edit with the year wrong",
+    )
+
+    renamed = save(client, DRIFTED, {"title": "Renamed"})
+
+    assert renamed.status_code == 200, renamed.text
+    assert index_of(client)["plan"][DRIFTED]["title"] == "Renamed"
+    problems = index_of(client)["problems"]
+    assert [
+        one
+        for one in problems
+        if one["record_id"] == DRIFTED
+        and one["field"] == "start_date"
+        and one["severity"] == "warning"
+        and "outside every cycle" in one["message"]
+    ], "and the plan says so where nobody typed anything"
+
+
+def test_a_record_created_done_needs_the_date_it_ended(client: TestClient, repo_path: Path):
+    """The gate at the create door, where `validate_all`'s blockers are what
+    refuse.
+
+    Over a plan at `schema_version: 5`, because that is the half of this change
+    that makes the rule bite: a record is created at the repository's own version,
+    and a rule newer than the record it judges may only warn. The same create over
+    the seeded `schema_version: 2` lands with a warning beside it, which is
+    grandfathering doing exactly what it is for.
+    """
+    commit_directly(
+        repo_path,
+        {**SEED, "config/defaults.yaml": "schema_version: 5\nnominal_availability: 1.0\n"},
+        "the plan moves to schema_version 5",
+    )
+    finished = {**VALID_TASK, "status": "done", "prs": ["kilnlab/kiln4py#1"]}
+
+    refused = create(client, finished)
+
+    assert refused.status_code == 422, refused.text
+    assert [p["field"] for p in refused.json()["problems"]] == ["end_date"]
+    assert refused.json()["problems"][0]["message"] == "a done record needs the date it ended"
+
+    made = create(client, {**finished, "end_date": "2026-08-20"})
+    assert made.status_code == 201, made.text
+
+
+def test_a_row_carries_the_end_date_so_the_table_can_tell_what_it_still_needs(
+    client: TestClient,
+):
+    """`missingFor` reads the row, and a field a gate names has to be answerable
+    from it. `end_date` is empty on every row anybody is about to mark done, so
+    without this the panel would ask again for a date the file already holds."""
+    saved = save(client, DONE, {"start_date": "2026-08-03", "end_date": "2026-08-20"})
+    assert saved.status_code == 200, saved.text
+
+    rows = client.get("/api/table.json").json()["rows"]
+    assert rows[DONE]["end_date"] == "2026-08-20"
+    assert rows[TASK]["end_date"] is None
+    # And the span ends there rather than at the start date, which is the column
+    # a reader of that row is actually looking at: a finished record was a dot,
+    # with its End cell showing the day it began.
+    assert (rows[DONE]["start"], rows[DONE]["end"]) == ("2026-08-03", "2026-08-20")

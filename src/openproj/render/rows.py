@@ -162,16 +162,23 @@ def _row(index: Index, record_id: str) -> dict:
             # it has no stake in, which reads as a field it holds.
             else []
         ),
-        # Two fields that are not columns and are not drawn anywhere on this
+        # Three fields that are not columns and are not drawn anywhere on this
         # page. They are here because the gate names them: a status the table can
         # set demands them, and a row has to be able to answer whether it already
-        # holds one. `start_date` is on no row at all, and `person_weeks` is
+        # holds one. The two dates are on no column at all, and `person_weeks` is
         # answered under its own name because that is the name the gate's message
         # carries — `size` above holds the same number now that there is no
         # default standing in for it, but the field a blocker names and the
         # column a page draws are two vocabularies, and the row answers in both
         # rather than making the script translate between them.
         "start_date": record.start_date.isoformat() if record.start_date else None,
+        # And the end, for the same reason and one more: `done` is a status the
+        # table can set, the gate demands this field at it, and unlike the two
+        # beside it this one is empty on EVERY row somebody is about to mark
+        # done. Without it here `missingFor` cannot tell a row that has already
+        # been answered from one that has not, so the panel would ask again for
+        # a date the file already holds.
+        "end_date": record.end_date.isoformat() if record.end_date else None,
         "person_weeks": getattr(record, "person_weeks", None),
         # Not a column, but the control bar offers it: a dropdown whose value the
         # client cannot see is a filter that changes the URL and does nothing.

@@ -31,6 +31,7 @@ import math
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import date
+from typing import NamedTuple
 
 import networkx as nx
 from pydantic import BaseModel
@@ -66,6 +67,22 @@ class Span(BaseModel):
     historical: bool = False
     unscheduled: bool = False
     overruns_cycle_weeks: float | None = None
+    # WHICH cycle that number is about, travelling beside it.
+    #
+    # It is `cycle_of(record, by_id)` — the cycle the BET was made in, which for
+    # a task under a pitch is the pitch's — and it is carried rather than looked
+    # up again by whoever prints the sentence, because the two answers were
+    # different and the page printed the wrong one. `render/detail.py` formatted
+    # `record.cycle`, and a task carries no cycle of its own, so four seed task
+    # pages read "▲ overruns cycle None by 4.7 weeks": the one sentence in the
+    # tool that says a bet did not fit its box, unreadable. It was hidden from
+    # the tests because 11 of the fixture corpus's 15 tasks happen to write their
+    # own `cycle:`.
+    #
+    # None exactly when `overruns_cycle_weeks` is None, and the two are set
+    # together in every constructor below. A record that overran was measured
+    # against something, or it was not measured at all.
+    overruns_cycle: int | None = None
     # The box, in calendar weeks: this record's OWN appetite over the summed
     # availability of the people on it, rounded by `_budget_weeks` to the whole
     # working days the scheduler would actually lay that appetite out over. Two
@@ -92,17 +109,20 @@ class Span(BaseModel):
     # days nobody is working and no remedy the warning offers can recover. See
     # `_occupied_weeks`.
     #
-    # None wherever there is no length to report, which is three cases. An
-    # unscheduled span, whose `start` and `end` are a placeholder for "no answer"
-    # rather than dates anybody forecast — a fifth of a week is not a length, it
-    # is today twice. A `historical` one, which today is a start date twice for
-    # exactly the same reason: nothing records where finished work ended. And a
-    # parent none of whose children have one, which is the first two seen from
-    # above — a pitch whose every task is finished or unplaceable occupies no
-    # days this can measure. When §4 of `design/time-model.md` lands and a done
-    # record carries a real `end_date`, the second case becomes a measurement of
-    # what actually happened rather than a forecast — the one number here that is
-    # not a prediction — and the third goes with it.
+    # None wherever there is no length to report, which is two cases now and was
+    # three. An unscheduled span, whose `start` and `end` are a placeholder for
+    # "no answer" rather than dates anybody forecast — a fifth of a week is not a
+    # length, it is today twice. And a parent none of whose children have one,
+    # which is the first case seen from above.
+    #
+    # The third was a `historical` span, and it went with §4 of
+    # `design/time-model.md`: a done record's dates were its start date twice,
+    # for want of anywhere to record where finished work ended, and there is an
+    # `end_date` now. So on a finished record this is the one number on any span
+    # that was MEASURED rather than forecast — working days between two dates
+    # somebody wrote down — and the parents of finished work get a length back
+    # with it. A record written before the gate existed still carries no end and
+    # still lands here as None, which is why this stays optional.
     elapsed_weeks: float | None = None
 
 
@@ -309,11 +329,14 @@ def _occupied_weeks(intervals: list[tuple[date, date]], config: Config) -> float
     touches a gap. A number that makes the tool name a cause that is not the
     cause is worse than no number.
 
-    The same mechanism read a length back out of the dates a done record's point
-    marker carries, which are deliberately given no `elapsed_weeks` of their own:
-    a pitch holding one task that started in January was warned at thirty-three
-    weeks. Here a child with no length is a child that contributes no interval,
-    so it drops out of the arithmetic rather than being subtracted from it.
+    The same mechanism read a length back out of the two dates a done record's
+    point marker carried, which were the same date twice: a pitch holding one
+    task that started in January was warned at thirty-three weeks. §4 of
+    `design/time-model.md` gave a done record a recorded `end_date`, so what it
+    now contributes is the days it really ran and not the stretch from its start
+    to today. A child with no length still contributes no interval at all — an
+    unsized record, and a finished one written before the end date existed — so
+    it drops out of the arithmetic rather than being subtracted from it.
 
     **Merged and not summed, which is what keeps shared assignees right.** Two
     tasks on one person serialise — `_place` books workers, so a contended person
@@ -441,7 +464,22 @@ def _availability_of(who: str, record: Record, config: Config, by_id: dict[str, 
     return stated if stated else config.nominal_availability or 1.0
 
 
-def _overrun(record: Record, end: date, config: Config, by_id: dict[str, Record]) -> float | None:
+class Overrun(NamedTuple):
+    """How far past its cycle's build a record ran, and which cycle that was.
+
+    One value and not two, because the two are one measurement: the number is
+    meaningless without the window it was taken against, and the page that
+    printed them separately printed a number from here beside a cycle read off
+    the record — see `Span.overruns_cycle`. Handed back together, a caller that
+    has one has the other, and there is no arrangement of these lines in which
+    it can hold a weeks-past-cycle-37 and call it cycle 41.
+    """
+
+    cycle: int
+    weeks: float
+
+
+def _overrun(record: Record, end: date, config: Config, by_id: dict[str, Record]) -> Overrun | None:
     """Weeks past the end of the BUILD of the cycle this was bet into, or None.
 
     Cool-down is not build time — Shape Up's whole point is that work lands
@@ -460,13 +498,35 @@ def _overrun(record: Record, end: date, config: Config, by_id: dict[str, Record]
     directly would turn one unconfigured number into a KeyError for every span.
     """
     number = cycle_of(record, by_id)
-    window = config.cycles.get(number) if number is not None else None
+    if number is None:
+        return None
+    window = config.cycles.get(number)
     if window is None:
         return None
     builds_until = build_end(number, window, config)
     if end <= builds_until:
         return None
-    return (end - builds_until).days / 7
+    return Overrun(number, (end - builds_until).days / 7)
+
+
+def _overrun_fields(
+    record: Record, end: date, config: Config, by_id: dict[str, Record]
+) -> dict[str, object]:
+    """The two `Span` keys an overrun sets, so that no constructor can set one.
+
+    Splatted into all three `Span` constructions below rather than written out at
+    each, and that is the point of it rather than a saving of two lines: the
+    defect this pair exists to fix was a number and a cycle number that came from
+    different places, and a shape where one can be passed without the other is a
+    shape where they can drift again. `Span.overruns_cycle` is None exactly when
+    `Span.overruns_cycle_weeks` is, because this is the only thing that writes
+    either.
+    """
+    over = _overrun(record, end, config, by_id)
+    return {
+        "overruns_cycle": over.cycle if over is not None else None,
+        "overruns_cycle_weeks": over.weeks if over is not None else None,
+    }
 
 
 def build_end(number: int | None, window: tuple[date, date], config: Config) -> date:
@@ -637,28 +697,79 @@ def schedule(
     # on anyone's future capacity.
     for record in live.values():
         if record.status == "done" and record.start_date is not None:
+            # Where the work actually stopped, and the start date only where
+            # nobody has said. This branch drew a POINT until §4 of
+            # `design/time-model.md` landed — `end=start_date`, so a finished
+            # record's End column showed its start, its bar was a dot, and
+            # `elapsed_weeks` had nothing to measure. It has a typed end now, and
+            # the gate in `_status_problems` is what makes the fallback rare
+            # rather than routine: only a record written before version 5 reaches
+            # it, and what that record gets is exactly the point marker it had.
+            #
+            # An end BEFORE the start is read as no end at all, not clamped to
+            # one. `end_date` and `start_date` are two typed fields with no
+            # derivation between them, so a hand-written file can contradict
+            # itself — `ends_before_it_starts` is a blocker at the door and in
+            # `validate_all` — and a plan in git is a fact this module draws
+            # rather than refuses. Drawn literally it is a bar with a negative
+            # width, a negative length handed to `_rollup_problems`, and a
+            # `min`/`max` rollup reporting a pitch that started after it
+            # finished. Clamped to the start it is worse in a quieter way: the
+            # span becomes one day, and one day read back as an interval is 0.2 —
+            # the fifth of a week this branch spent a release learning is not a
+            # length. So the honest reading is that this record records no usable
+            # end, which is exactly the state of one written before the field
+            # existed, and it lands on the same branch.
+            ended = (
+                record.end_date
+                if record.end_date and record.end_date >= record.start_date
+                else None
+            )
             spans[record.id] = Span(
                 start=record.start_date,
-                end=record.start_date,
+                end=ended or record.start_date,
                 historical=True,
                 budget_weeks=_budget_weeks(_duration_weeks(record, config, live)),
-                # No length, rather than the length of these two dates. They are
-                # the same date: nothing records where finished work ENDED yet,
-                # so this branch marks a point and not a span, and a point read
-                # back as an interval is one working day — 0.2. That number was
-                # read as a real measurement everywhere it went: a done pitch bet
-                # at eight printed "8.0 · 0.2 in tasks" on its own page, and
-                # `_rollup_problems` could never fire on a finished bet because a
-                # fifth of a week is under every box there is. It also
-                # falsified the comment beside `Span.elapsed_weeks`, which says
-                # in as many words that a fifth of a week is not a length but
-                # today twice — and then stored exactly that.
+                # With a recorded end, the one number on any span that is a
+                # measurement rather than a forecast: two dates somebody wrote
+                # down, so the working days between them are days that were
+                # actually spent. Without one, None, and the long argument for
+                # that is still live because the branch is still reachable — the
+                # two dates are then the SAME date, and a point read back as an
+                # interval is one working day, 0.2, which was taken for a real
+                # measurement everywhere it went. A done pitch bet at eight
+                # printed "8.0 · 0.2 in tasks" on its own page, and
+                # `_rollup_problems` could never fire on a finished bet, because
+                # a fifth of a week is under every box there is.
                 #
-                # §4 of `design/time-model.md` gives a done record an `end_date`
-                # somebody typed; when that lands, this stops being None and
-                # becomes the one genuinely measured number on any span.
-                elapsed_weeks=None,
+                # `if ended` and not `_occupied_weeks` deciding, because it
+                # cannot: handed one interval it will honestly report the day it
+                # covers, and the whole point is that a record with no end date
+                # covers no days that anybody measured.
+                elapsed_weeks=_occupied_weeks([(record.start_date, ended)], config)
+                if ended
+                else None,
+                # Reached at last on this branch, and reached here because this is
+                # where the records that can answer the question live.
+                # `_overrun` was called on the two forecast branches only, so
+                # `overruns_cycle_weeks` was None for every FINISHED record —
+                # the one number that says whether a bet landed inside its cycle,
+                # absent for exactly the population that could say. A forecast
+                # overrun is a prediction; this one happened.
+                **_overrun_fields(record, ended or record.start_date, config, live),
             )
+            # And the days it occupied go up to its parent, which is the other
+            # half of the same change. `_occupied_weeks`' own docstring records
+            # what the point marker did here — a pitch holding one task that
+            # started in January was warned at thirty-three weeks, because the
+            # enclosing reading pulled those two dates back out — and §3 of the
+            # design says where it lands: a child with no length contributes
+            # nothing, and a done record with a recorded end has a length and
+            # starts contributing honestly. Nothing is written for a record with
+            # no end date, so it goes on contributing nothing, exactly as an
+            # unsized one does.
+            if ended:
+                occupied[record.id] = [(record.start_date, ended)]
 
     active = {i: e for i, e in live.items() if e.status != "done"}
     stalled = _unschedulable(active)
@@ -724,7 +835,7 @@ def schedule(
             spans[record_id] = Span(
                 start=began,
                 end=ended,
-                overruns_cycle_weeks=_overrun(record, ended, config, live),
+                **_overrun_fields(record, ended, config, live),
                 # The one place this record's OWN size is read on the rollup
                 # branch, which used to return before `_duration_weeks` was ever
                 # reached — a parent's dates come from its children and never
@@ -799,17 +910,17 @@ def schedule(
             )
             continue
         span, explanation = placed
-        # A leaf occupies exactly the days it was placed over, and this is where
-        # every interval in `occupied` enters the plan — a parent holds only what
-        # it was handed from below. A record that got no span holds nothing here
-        # either, and that is how an unsized task and a done record's point marker
-        # drop out of what their pitch is charged for rather than being filtered
-        # out of it somewhere further up.
+        # A leaf occupies exactly the days it was placed over. This is where the
+        # FORECAST intervals enter the plan — a parent holds only what it was
+        # handed from below — and the done loop above is where the measured ones
+        # do. A record that got no span holds nothing in either, and that is how
+        # an unsized task drops out of what its pitch is charged for rather than
+        # being filtered out somewhere further up.
         occupied[record_id] = [(span.start, span.end)]
         spans[record_id] = span.model_copy(
             update={
                 "unowned": not workers,
-                "overruns_cycle_weeks": _overrun(record, span.end, config, live),
+                **_overrun_fields(record, span.end, config, live),
                 # A leaf's budget IS the duration it was placed at — there are no
                 # children to roll up — so with both put through `_working_days`
                 # the two are the same number here, exactly. They used not to be:

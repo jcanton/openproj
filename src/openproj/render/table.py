@@ -1242,27 +1242,41 @@ function missingFor(row, status) {
 // Fields a span is computed from. Editing one of these from the table changes
 // `start` and `end`, which are columns nothing in the browser can work out — so
 // the rows are re-read from the server rather than patched in place.
-const DERIVES_DATES = new Set(['start_date', 'person_weeks', 'cycle']);
-
-// Today, in the reader's own timezone. `toISOString` is UTC, so on a laptop east
-// of Greenwich in the evening it offers tomorrow — which is a date somebody
-// accepts without reading, because it is prefilled and it is nearly right.
-function today() {
-  const now = new Date();
-  return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
-    .toISOString().slice(0, 10);
-}
+// `end_date` is in it for a reason of its own rather than by symmetry: a done
+// record's span ENDS at the date it records, so answering the panel changes the
+// End column of the row that was edited — and the End column is not the column
+// anybody clicked. Left out, the row would go on showing the start date in both
+// date columns, styled `derived` like a real forecast, until a reload.
+const DERIVES_DATES = new Set(['start_date', 'end_date', 'person_weeks', 'cycle']);
 
 // The one question a status change is allowed to ask. It is asked BEFORE the
 // write, so the answer travels in the same PATCH as the status: a row that goes
 // `in_progress` and then has a date added is two commits, and for the length of
 // the first one the plan holds a record the validator refuses.
-function askFor(cell, status, fields) {
+//
+// `commit` is what to do with the answers, and it is a parameter because the
+// panel now serves both write paths. One cell hands back `saveCell`; a
+// selection hands back `saveCells`, whose whole gesture is one answer written
+// over every picked row in one commit. The alternative was a second panel with
+// the same markup, the same keyboard handling and the same prefill, which is
+// the shape that lets one of the two quietly stop prefilling.
+//
+// `about` is the sentence over the boxes. A selection has to say how far the
+// answer reaches, because "Done needs this" over one date box, above a table
+// with nine rows marked, does not say that all nine are about to get it.
+function askFor(cell, status, fields, commit, about) {
   const panel = document.getElementById('askfor');
   const named = fields.map(field => {
     const label = FIELD_LABELS[field] || field;
     const type = EDITABLE[field] === 'date' ? 'date' : 'text';
-    const value = field === 'start_date' ? today() : '';
+    // Every date this panel can ask for is prefilled with today, and the rule is
+    // the TYPE rather than a list of field names — which is what it was, naming
+    // `start_date` alone, so `end_date` arrived beside it offering an empty box
+    // in the one place the answer is nearly always today. A status change is a
+    // statement about now: the work started today, or it finished today. Any
+    // other field is left blank, because there is no value a form may guess at
+    // for an owner or an appetite.
+    const value = EDITABLE[field] === 'date' ? today() : '';
     // `data-type` and `data-suggest` are what `openEditor` writes on the box it
     // builds, for the same widget: `data-type` is not decoration — the widget
     // reads `dataset.type === 'list'` to complete the last comma-separated
@@ -1275,7 +1289,8 @@ function askFor(cell, status, fields) {
       ` value="${esc(value)}"></label>`;
   }).join('');
   panel.innerHTML =
-    `<p class="asking">${esc(human(status))} needs ${fields.length === 1 ? 'this' : 'these'}` +
+    `<p class="asking">${esc(about ||
+      `${human(status)} needs ${fields.length === 1 ? 'this' : 'these'}`)}` +
     `</p>${named}` +
     `<span class="acts"><button type="button" id="asked" class="primary">Save</button>` +
     `<button type="button" id="unasked">Cancel</button></span>`;
@@ -1309,7 +1324,7 @@ function askFor(cell, status, fields) {
     }
     panel.hidden = true;
     panel.innerHTML = '';
-    saveCell(cell, status, extra);
+    commit(extra);
   };
   // Enter saves and Escape gives up, which is what every other box on this page
   // answers to — a panel that has to be dismissed with the mouse is a panel that
@@ -1396,27 +1411,54 @@ function sayPicked() {
 // a loop over the singular route: the second call in a loop is written against
 // the commit the first one made, so a conflict halfway leaves half the selection
 // written on a protected branch with no way to say which half.
-async function saveCells(cell, value) {
+async function saveCells(cell, value, extra) {
   const field = cell.dataset.field;
   const ids = pickableRows().filter(id => PICKED.has(id));
   const box = document.getElementById('row-conflict');
   box.hidden = true;
   box.textContent = '';
   let coerced;
+  let sending;
   try {
     coerced = coerce(EDITABLE[field], value);
+    sending = {[field]: coerced};
+    for (const [name, raw] of Object.entries(extra || {}))
+      sending[name] = coerce(EDITABLE[name], raw);
   } catch (error) {
     announce(`${field} ${error.message}`);
     return;
   }
-  // The status gate, asked of every row before any of them is written. One row
-  // that cannot be `ready` without an assignee refuses the whole edit and says
-  // which rows they are — the singular route ASKS, through `askFor`, and asking
-  // here would be one panel per row over a gesture whose whole point is doing it
-  // once. Naming them is what lets somebody fix them and try again.
-  if (field === 'status') {
-    const short = ids.filter(id => missingFor(DATA.rows[id] || {}, coerced).length);
-    if (short.length) {
+  // The status gate, asked of every row before any of them is written, and this
+  // is where a refusal turned into a question. It used to refuse outright and
+  // name the rows — which was right while every field a gate could want was one
+  // a person answers per record. `end_date` is not: a done record needs the day
+  // it finished, that field is empty on EVERY row anybody is about to mark done,
+  // and so "select the finished tasks, set Done, one commit" — the gesture this
+  // whole selection mechanism exists for — would have met the refusal every
+  // single time, about every single row, for ever.
+  //
+  // So the panel asks ONCE and the answer is written over the selection, because
+  // "these all finished today" is one fact about the batch. Anything the panel
+  // cannot ask that way still refuses and still names the rows: an owner, an
+  // appetite and a reviewer are one fact PER record, and prefilling nine rows
+  // with one appetite would commit a number nobody meant, in one commit, on a
+  // protected branch. The type is what decides — a date is the shape of thing a
+  // batch can share — which is the same rule `askFor` prefills by.
+  //
+  // The one answer lands on every selected record, including one that already
+  // held a date, and that is the gesture rather than a bug in it:
+  // `PATCH /api/records` writes one map of fields over a set of ids in one
+  // commit, which is the whole reason the selection exists, and a value per row
+  // would be a commit per row. So the panel says how far the answer reaches in
+  // as many words — "for all 9 selected records" — and somebody who wants to
+  // keep a date they already typed takes that row out of the selection. The
+  // value it replaces is one commit back either way.
+  if (field === 'status' && !extra) {
+    const wanted = [...new Set(ids.flatMap(id => missingFor(DATA.rows[id] || {}, coerced)))];
+    const cannot = wanted.filter(name => EDITABLE[name] !== 'date');
+    if (cannot.length) {
+      const short = ids.filter(id =>
+        missingFor(DATA.rows[id] || {}, coerced).some(name => cannot.includes(name)));
       box.hidden = false;
       box.textContent = short.length === ids.length
         ? `None of these can be ${human(coerced)} yet: ${short.join(', ')}. `
@@ -1425,13 +1467,19 @@ async function saveCells(cell, value) {
           + 'Fix those rows, or take them out of the selection.';
       return;
     }
+    if (wanted.length) {
+      askFor(cell, value, wanted, answers => saveCells(cell, value, answers),
+        `${human(coerced)} needs ${wanted.length === 1 ? 'this' : 'these'} `
+        + `for all ${ids.length} selected record${ids.length === 1 ? '' : 's'}`);
+      return;
+    }
   }
   dispatchEvent(new Event('openproj:writing'));
   let committed = null;
   try {
     const response = await fetch('/api/records', {
       method: 'PATCH', headers: {'content-type': 'application/json'},
-      body: JSON.stringify({base_commit: BASE.value, ids, fields: {[field]: coerced}}),
+      body: JSON.stringify({base_commit: BASE.value, ids, fields: sending}),
     });
     const answer = await answerOf(response);
     if (response.status === 409) {
@@ -1447,7 +1495,7 @@ async function saveCells(cell, value) {
     BASE.value = answer.commit;
     for (const id of ids) {
       markSaved(answer, id);
-      Object.assign(DATA.rows[id], {[field]: coerced});
+      Object.assign(DATA.rows[id], sending);
     }
     announce(`${ids.length} ${(FIELD_LABELS[field] || field).toLowerCase()} `
       + `cell${ids.length === 1 ? '' : 's'} saved in one commit`);
@@ -1455,6 +1503,10 @@ async function saveCells(cell, value) {
     // nobody meant, from a gesture as small as opening the next cell.
     unpick(false);
     draw();
+    // The same re-read the single save makes, and for the same reason: the panel
+    // just wrote a date the Start and End columns of every selected row are
+    // derived from, and those columns are not the one that was edited.
+    if (Object.keys(extra || {}).some(name => DERIVES_DATES.has(name))) await refreshRows();
     await refreshProblems();
     draw();
   } finally {
@@ -1486,7 +1538,10 @@ async function saveCell(cell, value, extra) {
   // through here with it must not ask again.
   if (field === 'status' && !extra) {
     const wanted = missingFor(DATA.rows[cell.dataset.record] || {}, coerced);
-    if (wanted.length) { askFor(cell, value, wanted); return; }
+    if (wanted.length) {
+      askFor(cell, value, wanted, answers => saveCell(cell, value, answers));
+      return;
+    }
   }
   let sending;
   try {

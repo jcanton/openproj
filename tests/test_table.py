@@ -6200,3 +6200,195 @@ def test_a_plain_click_puts_the_selection_down(page: str, tmp_path: Path):
     )
 
     assert not got["ids"], f"{got['ids']} survived a plain click"
+
+
+# --------------------------------------------------------------------------- #
+# §4: marking work done asks for the day it ended, once
+#
+# The gate demands `end_date` at `done`, and that field is empty on every row
+# anybody is about to mark done — which is a different shape from every gate
+# before it. `owner`, `assignees` and `person_weeks` are answered once and then
+# stay answered, so a bulk status change met the refusal rarely; this one would
+# have met it every single time, about every single row.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def finishing_page(demo_root: Path) -> str:
+    """A table of two tasks that need exactly one thing to be Done: the date.
+
+    Built rather than committed, because the shared corpus deliberately holds a
+    done task with no PRs and two ready tasks with none either — and a row short
+    of a PR takes the refusal branch, which is the branch this fixture exists not
+    to take. Both tasks here cite a pull request and are otherwise complete, so
+    `missingFor(row, 'done')` is `['end_date']` and nothing else.
+    """
+    from openproj.render import render_table
+
+    common = dict(
+        kind="task",
+        parent=PITCH,
+        status="in_progress",
+        owner="ann",
+        assignees=["ann"],
+        reviewers=["bo"],
+        person_weeks=1.0,
+        start_date=date(2026, 8, 3),
+        prs=["kilnlab/kiln4py#1"],
+    )
+    records = [
+        Pitch(
+            id=PITCH,
+            kind="pitch",
+            title="Verify the aroma transport port",
+            status="ready",
+            owner="ann",
+            assignees=["ann"],
+            reviewers=["bo"],
+            person_weeks=3.0,
+        ),
+        Task(id=TASK, title="Reproduce the seam artefact", **common),
+        Task(id=OTHER, title="Downgrade numpy for global sums", **common),
+    ]
+    # `base_commit` and `may_write`, or the page comes back as the read-only
+    # export: everything this fixture is for lives inside the template's
+    # `editable` branch, and a signed-out reader's table has no `saveCell` in it
+    # at all.
+    return render_table(
+        build_index(records, Config(), date(2026, 8, 17)),
+        base_commit="0" * 40,
+        may_write=True,
+    )
+
+
+def today_here() -> str:
+    """Today as the page's `today()` answers it.
+
+    Both are the local calendar day: the shell's helper subtracts the timezone
+    offset before taking the ISO date, precisely so that a laptop east of
+    Greenwich in the evening does not offer tomorrow, and node runs in the same
+    zone this process does.
+    """
+    return date.today().isoformat()
+
+
+PICK_BOTH = (
+    f"  PICKED_FIELD = 'status'; PICKED.add('{TASK}'); PICKED.add('{OTHER}');"
+    f'  const cell = tbody.querySelector(\'td[data-record="{TASK}"][data-field="status"]\');'
+)
+
+
+def test_the_bulk_panel_asks_for_the_end_date_once_and_writes_it_to_the_selection(
+    finishing_page: str,
+):
+    """The gesture this whole selection mechanism exists for: select the finished
+    tasks, set Done, one commit.
+
+    It used to answer "None of these can be Done yet" — every time, because the
+    date is empty on every row by construction — so the refusal would have been
+    the only thing anybody ever saw. One panel, one answer, and it travels in the
+    same PATCH as the status: a selection that goes `done` and then has a date
+    added is two commits, and for the length of the first one the plan holds
+    records the validator refuses.
+    """
+    answer = drive_table(
+        finishing_page,
+        "(async () => {" + PICK_BOTH + "  await saveCells(cell, 'done');" + f"  {SETTLE}"
+        "  const panel = document.getElementById('askfor');"
+        "  const box = panel.querySelector('input[data-field=\"end_date\"]');"
+        "  const asked = {shown: !panel.hidden, said: panel.querySelector('.asking').textContent,"
+        "                 fields: [...panel.querySelectorAll('input')].map(i => i.dataset.field),"
+        "                 prefilled: box ? box.value : null};"
+        "  box.value = '2026-08-21';"
+        "  panel.querySelector('#asked').onclick();"
+        f"  {SETTLE}"
+        "  return asked;"
+        "})()",
+        replies=[
+            {
+                "status": 200,
+                "json": {
+                    "outcome": "committed",
+                    "commit": "b" * 40,
+                    "conflict": None,
+                    "pushed": True,
+                },
+            },
+            {"status": 200, "json": {"rows": {}, "problems": []}},
+            {"status": 200, "json": {"problems": []}},
+        ],
+    )
+
+    asked = answer["value"]
+    assert asked["shown"], "the selection was refused instead of being asked"
+    assert asked["fields"] == ["end_date"]
+    assert asked["prefilled"] == today_here(), "the one answer that is nearly always right"
+    assert "all 2 selected records" in asked["said"], asked["said"]
+
+    wrote = [call for call in answer["calls"] if call["method"] == "PATCH"]
+    assert len(wrote) == 1, "one gesture, one commit"
+    sent = json.loads(wrote[0]["body"])
+    assert sorted(sent["ids"]) == sorted([TASK, OTHER])
+    assert sent["fields"] == {"status": "done", "end_date": "2026-08-21"}
+
+
+def test_the_bulk_panel_still_refuses_what_it_cannot_ask_for(page: str):
+    """One answer for the whole batch is honest about a date — "these all finished
+    today" is one fact — and dishonest about everything else.
+
+    An owner, an appetite and a reviewer are one fact PER record, so prefilling
+    nine rows with one of them would commit a number nobody meant, in one commit,
+    on a protected branch. The refusal names the rows, which is what lets somebody
+    fix them and try again; it is the shared corpus here, whose two ready tasks
+    cite no pull request.
+    """
+    answer = drive_table(
+        page,
+        "(async () => {" + PICK_BOTH + "  await saveCells(cell, 'done');" + f"  {SETTLE}"
+        "  return {shown: !document.getElementById('askfor').hidden,"
+        "          said: document.getElementById('row-conflict').textContent};"
+        "})()",
+    )
+
+    assert answer["value"]["shown"] is False, "it asked for a field nobody can answer in bulk"
+    assert (
+        "can be Done yet" in answer["value"]["said"]
+        or "cannot be Done yet" in (answer["value"]["said"])
+    ), answer["value"]["said"]
+    assert not [call for call in answer["calls"] if call["method"] == "PATCH"]
+
+
+def test_the_single_cell_panel_prefills_today_for_the_end_date(finishing_page: str):
+    """The prefill is keyed on the TYPE and not on a list of field names, which is
+    what it was — naming `start_date` alone, so the field that arrived beside it
+    offered an empty box in the one place the answer is nearly always today."""
+    answer = drive_table(
+        finishing_page,
+        "(async () => {"
+        f'  const cell = tbody.querySelector(\'td[data-record="{TASK}"]'
+        '[data-field="status"]\');'
+        "  await saveCell(cell, 'done');"
+        f"  {SETTLE}"
+        "  const panel = document.getElementById('askfor');"
+        "  return {shown: !panel.hidden,"
+        "          value: panel.querySelector('input[data-field=\"end_date\"]').value};"
+        "})()",
+    )
+
+    assert answer["value"]["shown"]
+    assert answer["value"]["value"] == today_here()
+    assert not [call for call in answer["calls"] if call["method"] == "PATCH"], (
+        "the question is asked before the write, so the answer travels with it"
+    )
+
+
+def test_the_end_date_is_a_field_the_row_is_re_read_after(page: str):
+    """`DERIVES_DATES` decides whether the rows come back from the server after a
+    save, and a done record's span ENDS at the date it records — so answering the
+    panel changes the End column of the row that was edited, which is not the
+    column anybody clicked. Left out, the row goes on showing the start date in
+    both date columns, styled `derived` like a real forecast, until a reload.
+    """
+    answer = drive_table(page, "[...DERIVES_DATES].sort()")
+
+    assert answer["value"] == ["cycle", "end_date", "person_weeks", "start_date"]

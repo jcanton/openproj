@@ -201,7 +201,10 @@ def test_an_unsized_child_caught_in_a_cycle_does_not_pin_its_pitch_to_today():
     assert spans["pitch-bbb001"].start == date(2026, 9, 7)
 
 
-def test_step3_done_work_is_a_historical_point_marker_or_no_span_at_all():
+def test_step3_done_work_with_no_recorded_end_is_a_point_marker_or_no_span_at_all():
+    """The grandfathered shape, which is still reachable and therefore still
+    pinned: a record finished before `end_date` existed carries none, and what it
+    gets is exactly the point marker it always had."""
     dated = task("aaa001", status="done", start_date=date(2026, 7, 1))
     spans, _ = run([dated, task("aaa002", status="done")])
     july = date(2026, 7, 1)
@@ -211,18 +214,19 @@ def test_step3_done_work_is_a_historical_point_marker_or_no_span_at_all():
     assert "task-aaa002" not in spans
 
 
-def test_step3_a_done_record_has_no_length_rather_than_a_fifth_of_a_week():
-    """These two dates are one day, because nothing records where work ENDED yet.
+def test_step3_a_done_record_with_no_end_has_no_length_rather_than_a_fifth_of_a_week():
+    """Without a recorded end these two dates are one day, and one day is not a
+    length.
 
-    Read back as an interval that day was 0.2 — a fifth of a week,
-    which is not a length but today twice, and which the comment beside
-    `Span.elapsed_weeks` names as the thing it must not store. It travelled: a
-    done pitch bet at eight printed "8.0 · 0.2 in tasks" on its own page, and
-    `_rollup_problems` could not fire on a finished bet at any size, because a
-    fifth of a week is inside every box there is.
+    Read back as an interval it was 0.2 — a fifth of a week, which is today twice
+    and which the comment beside `Span.elapsed_weeks` names as the thing it must
+    not store. It travelled: a done pitch bet at eight printed "8.0 · 0.2 in
+    tasks" on its own page, and `_rollup_problems` could not fire on a finished
+    bet at any size, because a fifth of a week is inside every box there is.
 
-    §4 of `design/time-model.md` stores an `end_date` somebody typed, and then
-    this becomes a measurement instead of None.
+    `_occupied_weeks` cannot make this decision for itself — handed one interval
+    it will honestly report the day it covers — so the branch is what keeps a
+    record with no recorded end out of the arithmetic.
     """
     spans, _ = run([task("aaa001", status="done", start_date=date(2026, 7, 1), size=8.0)])
     assert spans["task-aaa001"].elapsed_weeks is None
@@ -369,16 +373,18 @@ def test_a_gap_between_two_tasks_is_not_charged_to_the_bet():
     assert box.elapsed_weeks == pytest.approx(2.0), "twelve calendar weeks, two of them worked"
 
 
-def test_a_done_task_contributes_nothing_to_what_its_pitch_holds():
+def test_a_done_task_with_no_recorded_end_contributes_nothing_to_what_its_pitch_holds():
     """A point marker has no length, and the rollup used to read one back off it.
 
-    The done branch above gives a finished record `start=end=start_date` and an
-    `elapsed_weeks` of None on purpose, because nothing records where finished
-    work ended yet. `min(child.start)`/`max(child.end)` read those same two dates
-    straight back out, so the None was undone one level up: a pitch holding a
-    task that started in January was charged for every week since. §4 of
-    `design/time-model.md` gives a done record a real `end_date`, and on that day
-    it starts contributing an interval it can honestly stand behind.
+    A finished record with no `end_date` gets `start=end=start_date` and an
+    `elapsed_weeks` of None. `min(child.start)`/`max(child.end)` read those same
+    two dates straight back out, so the None was undone one level up: a pitch
+    holding a task that started in January was charged for every week since. What
+    it contributes to the union is nothing at all, which is the same answer an
+    unsized child gets and for the same reason — there is no length to add.
+
+    A finished task that DOES record its end contributes the days it really ran;
+    that is the test two below.
     """
     records = [
         pitch("bbb001", size=4.0),
@@ -391,7 +397,7 @@ def test_a_done_task_contributes_nothing_to_what_its_pitch_holds():
     assert box.elapsed_weeks == pytest.approx(1.0), "the live task, and nothing for the done one"
 
 
-def test_a_pitch_whose_tasks_are_all_finished_has_no_contents_to_measure():
+def test_a_pitch_whose_tasks_all_finished_undated_has_no_contents_to_measure():
     """None, exactly as each of its children has None, and not a number.
 
     Zero would be a measurement — the good tint, a bet that took no time — and
@@ -406,6 +412,196 @@ def test_a_pitch_whose_tasks_are_all_finished_has_no_contents_to_measure():
     ]
     spans, _ = run(records)
     assert spans["pitch-bbb001"].elapsed_weeks is None
+
+
+# --------------------------------------------------------------------------- #
+# §4b: what a recorded end date makes readable
+# --------------------------------------------------------------------------- #
+
+
+def test_a_finished_record_ends_where_its_end_date_says():
+    """The End column and the timeline bar, which is where §4b starts.
+
+    The done branch built `end=start_date`, so a finished record's End cell showed
+    its own START and its bar was a dot however long the work had taken. It ends
+    at the recorded date now, and the span is still `historical` — a record of
+    what happened rather than a forecast of what will, which is the channel the
+    timeline hatches.
+    """
+    finished = task(
+        "aaa001",
+        status="done",
+        start_date=date(2026, 6, 22),
+        end_date=date(2026, 7, 17),
+        size=4.0,
+    )
+    span = run([finished])[0]["task-aaa001"]
+    assert (span.start, span.end) == (date(2026, 6, 22), date(2026, 7, 17))
+    assert span.historical
+
+
+def test_a_finished_record_measures_the_weeks_it_actually_took():
+    """The one number on any span that is measured rather than forecast.
+
+    22 June is a Monday and 17 July is the Friday four weeks later, with no
+    holiday in `CONFIG` between them: 5 + 5 + 5 + 5 = 20 working days, and 20 / 5
+    is 4.0. The box beside it is 4.0 too and that is a coincidence of this fixture
+    rather than the same arithmetic — the budget is the bet divided by the people
+    on it, and one of the two below moves it without touching the dates.
+    """
+    ran_to_time = task(
+        "aaa001", status="done", start_date=date(2026, 6, 22), end_date=date(2026, 7, 17), size=4.0
+    )
+    assert run([ran_to_time])[0]["task-aaa001"].elapsed_weeks == pytest.approx(4.0)
+
+    # Three working days longer, and nothing else about the record different.
+    ran_late = ran_to_time.model_copy(update={"end_date": date(2026, 7, 22)})
+    span = run([ran_late])[0]["task-aaa001"]
+    assert span.elapsed_weeks == pytest.approx(4.6)
+    assert span.budget_weeks == pytest.approx(4.0), "the bet did not move; the actual did"
+
+
+def test_a_finished_task_contributes_the_days_it_really_ran_to_its_pitch():
+    """§3's clause, arriving.
+
+    A child with no length contributes nothing to the union its bet is judged
+    against, and a finished record was in that state by construction. With a
+    recorded end it has a real interval and starts contributing honestly — which
+    is the only reading under which "did this bet fit" can be answered about the
+    records that already know.
+
+    Two tasks on two different people, deliberately: the done one ran 22 June to
+    17 July (20 working days) and the live one is placed from the floor, Monday 17
+    August, for one week (5 days). They share no day, so the union is 25 working
+    days — 5.0 weeks — and the enclosing span is very much longer than that.
+    """
+    records = [
+        pitch("bbb001", size=4.0),
+        task(
+            "aaa001",
+            parent="pitch-bbb001",
+            status="done",
+            start_date=date(2026, 6, 22),
+            end_date=date(2026, 7, 17),
+            size=4.0,
+        ),
+        task("aaa002", parent="pitch-bbb001", owner="bo", size=1.0),
+    ]
+    box = run(records)[0]["pitch-bbb001"]
+    assert (box.start, box.end) == (date(2026, 6, 22), date(2026, 8, 21))
+    assert box.elapsed_weeks == pytest.approx(5.0)
+
+
+def test_a_finished_record_says_whether_it_landed_inside_its_cycle():
+    """`_overrun` was reached on the two forecast branches and never on this one,
+    so the one number that says whether a bet landed inside its cycle was None for
+    exactly the population that could answer it.
+
+    Cycle 36 runs 22 June to 14 August in `CONFIG`, with no cycle record, so build
+    ends `cooldown_weeks` before the window does: 14 August minus 14 days is 31
+    July. A record that ended on the 31st is inside it — the comparison is `<=` —
+    and one that ended on 7 August is seven days past, which is 1.0 week.
+    """
+
+    def ending(day: date) -> Span:
+        finished = task(
+            "aaa001", status="done", cycle=36, start_date=date(2026, 6, 22), end_date=day, size=4.0
+        )
+        return run([finished])[0]["task-aaa001"]
+
+    assert ending(date(2026, 7, 31)).overruns_cycle_weeks is None
+    assert ending(date(2026, 8, 7)).overruns_cycle_weeks == pytest.approx(1.0)
+
+
+def test_the_cycle_an_overrun_is_measured_against_travels_beside_the_number():
+    """The bug §4b names, and the shape that ends it.
+
+    `_overrun` measures against `cycle_of`, which walks UP to the pitch holding
+    the bet — a task carries no cycle of its own — while the record page formatted
+    `record.cycle`. So four seed task pages read "▲ overruns cycle None by 4.7
+    weeks": the one sentence that says a bet did not fit its box, with the box
+    unnamed. The task below is exactly that shape, and the two answers are
+    asserted apart.
+    """
+    records = [
+        pitch("bbb001", cycle=36, size=4.0),
+        task(
+            "aaa001",
+            parent="pitch-bbb001",
+            status="done",
+            start_date=date(2026, 6, 22),
+            end_date=date(2026, 8, 7),
+            size=4.0,
+        ),
+    ]
+    finished = [r for r in records if r.id == "task-aaa001"][0]
+    span = run(records)[0]["task-aaa001"]
+    assert finished.cycle is None, "the task states no cycle: the bet is on the pitch"
+    assert span.overruns_cycle == 36
+    assert span.overruns_cycle_weeks == pytest.approx(1.0)
+
+
+def test_a_span_never_names_a_cycle_it_did_not_measure_against():
+    """The two fields are written by one helper, so there is no arrangement of the
+    three `Span` constructions in which a span holds a cycle and no number, or a
+    number and no cycle. Asserted over a whole plan rather than over one record,
+    because the claim is about every branch.
+    """
+    records = [
+        pitch("bbb001", cycle=36, size=4.0),
+        task("aaa001", parent="pitch-bbb001", size=8.0),
+        task("aaa002", parent="pitch-bbb001", owner="bo", size=1.0, cycle=37),
+        task(
+            "aaa003",
+            parent="pitch-bbb001",
+            status="done",
+            start_date=date(2026, 6, 22),
+            end_date=date(2026, 8, 7),
+            size=4.0,
+        ),
+        task("aaa004", owner="cy", depends_on=["task-aaa004"], size=1.0),
+    ]
+    spans, _ = run(records)
+    assert len(spans) >= 5
+    for record_id, span in spans.items():
+        assert (span.overruns_cycle is None) == (span.overruns_cycle_weeks is None), record_id
+    assert any(s.overruns_cycle is not None for s in spans.values()), "and one of them overran"
+
+
+def test_an_end_date_before_the_start_is_read_as_no_end_at_all():
+    """A plan in git is a fact the scheduler draws rather than refuses.
+
+    Both doors and `validate_all` call this pair a blocker, but a file committed
+    by hand can hold anything, and every other reading of it is worse. Drawn
+    literally it is a bar with a negative width, a negative length handed to the
+    rollup, and a pitch reported as starting after it finished. Clamped to the
+    start it becomes a one-day span, and one day read back as an interval is the
+    0.2 this branch spent a release learning is not a length. So it lands where a
+    record written before the field existed lands: a point marker with nothing to
+    measure, and one blocker beside it saying why.
+    """
+    backwards = task(
+        "aaa001",
+        status="done",
+        start_date=date(2026, 7, 17),
+        end_date=date(2026, 6, 22),
+        size=4.0,
+        # So that the one blocker asserted below is the one this test is about;
+        # `done` gates a PR as well and this fixture is not about that.
+        prs=["kilnlab/kiln4py#1"],
+    )
+    span = run([backwards])[0]["task-aaa001"]
+    assert (span.start, span.end) == (date(2026, 7, 17), date(2026, 7, 17))
+    assert span.elapsed_weeks is None
+    # And the blocker beside it, asserted here rather than only in
+    # `test_validate.py`, because the two halves are one claim: the scheduler is
+    # allowed to draw nothing about this record only because something else says
+    # out loud that it is wrong.
+    assert [
+        p.field
+        for p in model.validate_all([backwards], CONFIG)
+        if p.severity == "blocker" and p.record_id == "task-aaa001"
+    ] == ["end_date"]
 
 
 def test_step5_ordering_is_by_priority_then_id():
@@ -1184,9 +1380,8 @@ def test_a_done_date_at_the_end_of_the_calendar_costs_its_dependent_and_nothing_
         end=date.max,
         historical=True,
         budget_weeks=1.0,
-        # No length: a done record is a point marker until an end date is stored
-        # on it, and one day read back as a fifth of a week was a measurement of
-        # nothing.
+        # No length: this record states no end date, so it is a point marker, and
+        # one day read back as a fifth of a week is a measurement of nothing.
         elapsed_weeks=None,
     )
     assert spans["task-aaa002"].unscheduled

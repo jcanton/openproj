@@ -2017,6 +2017,24 @@ const ANNOUNCE = document.getElementById('announce');
 const esc = value => String(value ?? '').replace(/[&<>"]/g,
   c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 
+// Today, in the reader's OWN timezone, as the `2026-08-28` a date box and the
+// record files both hold. `toISOString` alone is UTC, so on a laptop east of
+// Greenwich in the evening it answers tomorrow — a date somebody accepts without
+// reading, because it arrived prefilled and it is nearly right.
+//
+// Here rather than in the table's script, which is where it was written and its
+// only caller. Two surfaces prefill a date now — the table's missing-fields
+// panel and the record page's own Save — and this is exactly the shape that gets
+// one copy of an offset right and the other wrong, in a value nobody checks
+// because it is almost always correct. Declared in the shell for the reason
+// `esc` above is: every page has it, and a second `function today` in a second
+// classic script on the same page is a SyntaxError rather than a copy.
+function today() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+    .toISOString().slice(0, 10);
+}
+
 // The ladder the stylesheet actually has rules for, and `_status_class` in
 // Python written once more in the language that draws the other half of these
 // chips. Escaping an unknown status would be enough to make it harmless and

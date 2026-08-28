@@ -6552,3 +6552,46 @@ def test_a_rendered_file_offers_no_way_to_change_a_kind(rendered: Path):
     assert not re.search(r'class="chip kind-\w+ kindchip"', body)
     assert not re.search(r'<div class="rekinding"', body)
     assert not re.search(r'<select class="becomes"', body)
+
+
+# --- §4b: the overrun sentence names the cycle it was measured against --------
+
+
+def test_the_overrun_sentence_names_the_cycle_the_bet_was_made_in(demo_root: Path):
+    """ "▲ overruns cycle None by 4.7 weeks" — the one sentence in the tool that
+    says a bet did not fit its box, with the box unnamed.
+
+    The number came from `_overrun`, which measures against `cycle_of` — the
+    cycle the BET was made in, which for a task under a pitch is the pitch's —
+    while this page formatted `record.cycle`. A task carries no cycle of its own,
+    so every task page whose file happened not to write one read `None`. It was
+    hidden from the tests because 11 of the frozen corpus's 15 tasks do write one.
+
+    The task below is exactly that shape in the shipped demo: it states no cycle,
+    it is filed under a pitch bet into 36, and it runs past the end of that
+    cycle's build. The measured cycle travels on the span beside the number now,
+    so the display and the computation cannot pick different ones — and the
+    assertion is written against the span rather than against a number typed
+    here, which is what keeps it from becoming a second copy of the arithmetic.
+    """
+    from datetime import date
+
+    from openproj.render import ROUTES, render_detail
+
+    records, config, _ = load_repo(demo_root)
+    index = build_index(records, config, date(2026, 8, 17))
+    over = [
+        record_id
+        for record_id, span in index.spans.items()
+        if span.overruns_cycle_weeks
+        and index.plan[record_id].kind == "task"
+        and index.plan[record_id].cycle is None
+    ]
+    assert over, "the demo should hold a task with no cycle of its own that overran"
+
+    for record_id in over:
+        span = index.spans[record_id]
+        page = render_detail(index, ROUTES, only=record_id)
+        said = f"overruns cycle {span.overruns_cycle} by {span.overruns_cycle_weeks:.1f} weeks"
+        assert said in " ".join(page.split()), record_id
+        assert "overruns cycle None" not in page, record_id

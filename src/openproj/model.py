@@ -526,6 +526,16 @@ class Config(BaseModel):
     # fit its box. The overrun is measured against the end of BUILD, and this is
     # how many weeks of the window are not build.
     cooldown_weeks: float = 2.0
+    # How far outside the stretch its own cycles cover a plan may still hold a
+    # typed date. See `weeks_outside_every_cycle`, which is the only reader.
+    #
+    # Twelve rather than a rounder number, and both bounds are the argument. It
+    # has to be comfortably MORE than a cycle, because work bet in the last cycle
+    # anybody has dated legitimately runs on into the next one, which by
+    # definition has no window yet. It has to be comfortably LESS than a year,
+    # because the mistake this exists to catch is a mistyped year — and a rule
+    # that admits a date a year out catches nothing at all.
+    dates_within_weeks_of_a_cycle: float = 12.0
     holidays: list[date] = []
     cycles: dict[int, tuple[date, date]] = {}
     # The roster, from config/people.yaml. Empty means the check is off, which is
@@ -939,6 +949,29 @@ class Record(BaseModel):
     # read: a file still saying `assigned_on:` parses clean and would otherwise
     # lose its date in silence.
     start_date: date | None = None
+    # The day the work actually finished, and the ONLY end this tool stores.
+    #
+    # **The actual, never the estimate**, and the difference is the whole of why
+    # this field is one line and the forecast is none. A forecast end moves on
+    # inputs nobody edits on this record — a blocker slipping, a worker filling
+    # up, a cycle's review date being set, midnight — so a stored one is stale
+    # the moment anything else in the plan moves. Left alone it says one date
+    # while the index says another, and the timeline, the cycle "until" and the
+    # carryover list all keep using the SPAN, so the number written on the
+    # record would be the one number nothing else on any page agrees with. Kept
+    # fresh it is a commit per record per recompute, on a protected branch under
+    # a single-writer lock, each one invalidating every reader's index and
+    # 409-ing every browser holding a page rendered against the previous head.
+    # That is the same drift `start_date` refuses to store the other end of, and
+    # "derived data never reaches frontmatter" is the invariant behind both.
+    #
+    # A recorded end is the one date on a record that CANNOT be derived, which
+    # is the other half of the argument: without it a finished record's span is
+    # its start date twice, `elapsed_weeks` has nothing to measure, and
+    # `overruns_cycle_weeks` — the one number that says whether a bet landed
+    # inside its cycle — is absent for exactly the records that could answer.
+    # See §4 and §4b of `design/time-model.md`.
+    end_date: date | None = None
     # Named rather than numbered: "priority 2" means nothing to a reader, and a
     # number invites arithmetic on something that is only an ordering. A plain
     # string for the same reason as `status` — see above.
@@ -1377,6 +1410,11 @@ _WORK_FIELDS = (
     "reviewers",
     "review_waived",
     "start_date",
+    # Both ends of the same fact, or the ladder says a codebase reads no start
+    # and reads an end. `_editable_for` and the create form take their boxes from
+    # this list and the validator reports from it, so one date left out of it is
+    # a box offered on a product and a warning about the value typed into it.
+    "end_date",
     "cycle",
     "priority",
     "prs",
@@ -2609,6 +2647,100 @@ def start_date_has_passed(record: Record, today: date) -> bool:
     return record.start_date < today
 
 
+# --------------------------------------------------------------------------- #
+# Dates compared to dates
+#
+# There was no such rule until this change, and the gap was not a small one:
+# `_reject_bad_types` asks only whether two fields are numeric, and the date
+# coercion takes any parseable ISO date with no range check at all — the one
+# date-range check in the whole application was the one for cycle files. So
+# `2025-09-11` typed for `2026-09-11` committed with a 200, and then
+# `span.start <= window[1] and span.end >= window[0]` could never be true for
+# any cycle, so the record dropped silently out of `counts_in`, out of
+# `Index.load` and out of `carried_into` while `openproj check` reported the
+# plan clean. A cycle quietly lost a person's work with no error to chase.
+#
+# Both rules below are one predicate with two callers, which is the shape §1b
+# established for `start_date_has_passed` and the shape this repository has been
+# bitten three times for not having.
+# --------------------------------------------------------------------------- #
+
+
+def ends_before_it_starts(record: Record) -> bool:
+    """Whether this record claims to have finished before it began.
+
+    Two typed dates and no derivation between them, which is what makes this the
+    simplest rule in the file and also the one nothing was checking. The damage
+    is not cosmetic: `schedule` builds a done record's span out of exactly this
+    pair, and a span whose end precedes its start is a bar drawn backwards, a
+    negative `elapsed_weeks` handed to `_rollup_problems`, and a `min`/`max`
+    rollup that reports its parent as running from after it finished.
+
+    A door refuses it and `validate_all` blocks it, on the one-predicate-two-
+    callers shape — but unlike `start_date_has_passed` the two callers here reach
+    the same severity, because there is no drift case. Neither date moves on its
+    own; a record that says this said it because somebody wrote both halves.
+    """
+    return (
+        record.start_date is not None
+        and record.end_date is not None
+        and record.end_date < record.start_date
+    )
+
+
+def weeks_outside_every_cycle(value: date | None, config: Config) -> float | None:
+    """How far this date falls outside the plan's own cycle windows, or None.
+
+    None means "nothing to say", and it covers three cases that are worth
+    separating from a zero. The date is absent. The plan has dated no cycles at
+    all, which is the ordinary state of a repository somebody started this
+    morning and is the same "no roster, no check" bargain `_people_problems`
+    makes — a tool that refuses dates before anybody has written a cycles file is
+    a tool nobody finishes setting up. Or the date is inside the plan's span of
+    cycles, or within `Config.dates_within_weeks_of_a_cycle` of either end of it,
+    which is every date anybody means to type.
+
+    **Measured against the whole stretch the cycles cover, not against each
+    window.** The months between two cycles are real days that real work runs
+    through — the demo corpus leaves a whole unnumbered month for the conference
+    and release window — so a per-window test would refuse the ordinary case. The
+    question this asks is the one a typo fails: is this date anywhere near the
+    period this plan is about.
+
+    The allowance is a configured number of weeks rather than a constant here,
+    because how far past its last dated cycle a plan legitimately reaches is a
+    fact about the team's own planning horizon and not about this tool. The
+    default is wider than a cycle and narrower than the year a mistyped year
+    moves a date by, which is the failure in the comment above.
+
+    Returns the distance in weeks and not a bool, so that both callers can print
+    it. "41 weeks outside every cycle this plan has dated" and "this date is
+    outside the plan" are different amounts of help: the first is a number
+    somebody can hold against the year they meant to type, and the second is a
+    sentence they have to go and check for themselves.
+    """
+    if value is None or not config.cycles:
+        return None
+    earliest = min(window[0] for window in config.cycles.values())
+    latest = max(window[1] for window in config.cycles.values())
+    allowed = max(0.0, config.dates_within_weeks_of_a_cycle) * 7
+    if value < earliest:
+        days = (earliest - value).days
+    elif value > latest:
+        days = (value - latest).days
+    else:
+        return None
+    return None if days <= allowed else days / 7
+
+
+# The dates a person types, in the order the record declares them, and the fields
+# both rules above are asked about. Written here rather than at each caller
+# because the door and the validator have to ask about the same ones — a rule
+# enforced on one date and reported on two is the one-fact-two-implementations
+# failure with extra steps.
+DATED_FIELDS = ("start_date", "end_date")
+
+
 def _status_problems(
     record: Record, reviewers: list[str] | None = None
 ) -> Iterator[tuple[str, str | None, str, int]]:
@@ -2687,8 +2819,28 @@ def _status_problems(
                 "work in progress needs a reviewer other than its owner, or review waived",
                 1,
             )
-    elif record.status == "done" and not record.prs:
-        yield "blocker", "prs", "a done record needs at least one PR", 1
+    elif record.status == "done":
+        if not record.prs:
+            yield "blocker", "prs", "a done record needs at least one PR", 1
+        # And the day it ended, which is the one fact a finished record holds
+        # that nothing can work out for itself. Without it a done record's span
+        # is its start date twice: a dot on the timeline, an End column showing
+        # a start, no elapsed weeks and no overrun. See `Record.end_date`.
+        #
+        # **Version 5, and the number is the rule.** Grandfathering demotes a
+        # rule NEWER than the record it judges, so a required field only ever
+        # lands safely one version above what the corpus was written at. Stamped
+        # low — 1, say — this turns every already-finished record into a blocker
+        # the day it ships, including the ones the fixture corpus annotates
+        # `# was fabricated during migration; unknown`, for which there is no
+        # date anybody can supply and no way to say so. Stamped 5 with
+        # `schema_version` left at 4, the other way round, nothing ever reaches
+        # version 5, so it warns for ever and blocks nothing — a required field
+        # that is not required. So it is 5 AND `seed/config/defaults.yaml` moves
+        # 4 → 5 in the same change: everything written from now on is held to it,
+        # and everything already in the corpus gets the warning instead.
+        if record.end_date is None:
+            yield "blocker", "end_date", "a done record needs the date it ended", 5
 
 
 def required_at(kind: str | None = None) -> dict[str, tuple[str, ...]]:
@@ -2977,9 +3129,15 @@ def _rollup_problems(
     # for a container and for a pitch nobody has bet on yet, and a bet that was
     # never made cannot be exceeded. Silent too where nothing underneath has a
     # length to occupy: an unscheduled span, whose two dates stand for "no
-    # answer", and a pitch whose every task is finished — a done record is a
-    # point marker until §4 of `design/time-model.md` gives it an end date, and
-    # a bet nothing can be measured against is not a bet that was exceeded.
+    # answer", and a pitch every one of whose tasks is unsized. A bet nothing can
+    # be measured against is not a bet that was exceeded.
+    #
+    # A pitch whose every task is FINISHED used to be a third case, because a
+    # done record was a point marker with no length. §4 of
+    # `design/time-model.md` gave it a recorded end, so a finished bet now has a
+    # real interval underneath it and is judged against its box like any other —
+    # which is the only reading under which "did this bet fit" can ever be
+    # answered about the records that already know.
     if span.budget_weeks is None or span.elapsed_weeks is None:
         return
     if span.elapsed_weeks <= span.budget_weeks:
@@ -3196,6 +3354,45 @@ def _problems_for(
             "has started",
             5,
         )
+    # The two date-versus-date rules, both of which the door refuses as well.
+    #
+    # `ends_before_it_starts` is version 1 rather than 5, which is the exception
+    # `_problems_for` already makes once above for a field a rung does not read,
+    # and it is the same argument: grandfathering exists so that a rule invented
+    # today does not turn a file written last year red, and NO FILE CAN PREDATE
+    # THE FIELD. `end_date` arrives in version 5, so every record that carries
+    # one was written after this rule existed, whatever `created_schema_version`
+    # the file happens to declare. Stamped 5, a hand-written record whose dates
+    # contradict each other would report a warning where it means a blocker, for
+    # ever — and a backwards span is not a missing fact, it is two facts that
+    # cannot both be true.
+    if ends_before_it_starts(record):
+        yield (
+            "blocker",
+            "end_date",
+            f"the end date {record.end_date} is before the start date "
+            f"{record.start_date}, so this record finished before it began",
+            1,
+        )
+    # And a date that is nowhere near this plan, which IS a warning, and for the
+    # reason the drift rule above is one: nobody can be sure. A plan whose cycles
+    # file stops at last spring is a plan whose dates are all legitimately
+    # outside it, and refusing to load work over a config file somebody has not
+    # got round to would be the tool arguing with the team about its own
+    # bookkeeping. The door is where a person is standing and can be told; here
+    # the sentence is what somebody chasing a record that vanished from every
+    # cycle page will actually find. Version 5, and a warning cannot be demoted
+    # below itself — see `_RETIRED`.
+    for field in DATED_FIELDS:
+        away = weeks_outside_every_cycle(getattr(record, field, None), config)
+        if away is not None:
+            yield (
+                "warning",
+                field,
+                f"{getattr(record, field)} is {away:.0f} weeks outside every cycle this plan "
+                "has dated, so this record counts towards none of them: check the year",
+                5,
+            )
     yield from _people_problems(record, config)
 
 

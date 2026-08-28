@@ -50,16 +50,30 @@ warns. Who is on them is what decides it: a four-week task and a half-week task 
 weeks if one person holds both and four if they run side by side. Nothing refuses the save, because
 cutting scope, re-betting, and putting another person on it are all decisions for a person.
 
-## Nobody types a date
+## Two dates, and both of them happened
 
-There is exactly one date to type: `start_date`, the day the work began. On something that has not
-begun it is a day named in advance and has to still be ahead — a start date already in the past is
-refused before `in_progress` — while from `in_progress` on a past one is expected, because "I
-started this on Monday and it is now Wednesday" is the ordinary case and the only thing the field
-can mean once work is under way. Starts, ends, the critical path, when a person frees up, whether
-something runs past its cycle — all derived from the sizes, the dependencies and the roster. So when
-a date is wrong, do not go looking for the date: change a size, change what the thing depends on, or
+The only dates anybody types are the two ends of work that is real. `start_date` is the day the work
+began: on something that has not begun it is a day named in advance and has to still be ahead — a
+start date already in the past is refused before `in_progress` — while from `in_progress` on a past
+one is expected, because "I started this on Monday and it is now Wednesday" is the ordinary case and
+the only thing the field can mean once work is under way. `end_date` is the day it finished, and
+marking something Done asks for it with today already filled in.
+
+**No forecast is ever stored.** The end a plan shows for work still in flight is derived, and it has
+to be: it moves when a blocker slips, when somebody fills up, when a cycle's review date is set, and
+at midnight. Written into the file it would be the one number nothing else agreed with. A recorded
+end is the opposite — it is what happened, it never moves again, and it is the only reason the plan
+can say afterwards whether a bet landed inside its cycle.
+
+Everything else is derived: starts, ends, the critical path, when a person frees up, whether
+something runs past its cycle — all of it from the sizes, the dependencies and the roster. So when a
+date is wrong, do not go looking for the date: change a size, change what the thing depends on, or
 change an availability.
+
+A date wildly outside the cycles the plan has dated is refused when you type it and reported by
+`openproj check` if it got in another way. A year typed wrong parses perfectly and then belongs to no
+cycle at all, so the record silently stops counting towards anybody's capacity — which is the one
+kind of wrong date that leaves nothing to chase.
 
 Only `depends_on` is stored, and on the thing that is waiting; what a record blocks is derived by
 reversing it, so the two can never contradict each other. Any kind may depend on any kind — a task
@@ -91,7 +105,7 @@ save and by `openproj check`.
 | `shaping`     | an idea nobody has bet on                                         | nothing — it has no owner and no size by definition                    |
 | `ready`       | shaped, and bettable                                              | an owner, somebody assigned, a reviewer or `review_waived`, and a size |
 | `in_progress` | being built                                                       | `start_date`, a size, and a reviewer who is not the owner              |
-| `done`        | finished                                                          | at least one PR                                                        |
+| `done`        | finished                                                          | at least one PR, and `end_date` — the day it finished                  |
 | `shelved`     | parked                                                            | nothing — parked work is not broken work                               |
 
 An issue has four of them: no `shaping`, because a shaped issue is a pitch, and no `thinking`,

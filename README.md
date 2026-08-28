@@ -5,12 +5,15 @@ the fields in frontmatter and the shaping document as the body. The bet and the 
 one file, which is the whole idea: there is no shape doc to link to, nothing to keep in step with
 anything else, and `git log` on a plan is a record of decisions rather than of edits.
 
-Nobody types a date. A person writes a size in person-weeks and one `start_date` — the day the work
-began, or on work not yet begun, the day it will. Start dates, end dates, the critical path and
-every rollup are derived from that, from the dependency graph, and from who is on the work at what
-availability. The tool invents neither number: a record nobody has sized gets no span at all and
-weighs nothing anywhere, rather than a length nobody chose. When a date looks wrong, the thing to
-change is a size, a dependency or an availability.
+Nobody types a forecast. A person writes a size in person-weeks and the two dates that actually
+happened: `start_date`, the day the work began — or on work not yet begun, the day it will — and,
+when it is finished, `end_date`, the day it stopped. Everything else is derived: the forecast end,
+the critical path and every rollup come from those, from the dependency graph, and from who is on
+the work at what availability. A predicted end is never written into a file, because it moves every
+time anything else in the plan does; a recorded one is, because it is the only thing that can say
+afterwards whether a bet landed inside its cycle. The tool invents no number: a record nobody has
+sized gets no span at all and weighs nothing anywhere, rather than a length nobody chose. When a
+date looks wrong, the thing to change is a size, a dependency or an availability.
 
 ## The live one
 
