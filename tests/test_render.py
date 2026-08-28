@@ -7018,6 +7018,150 @@ def test_the_betting_tables_connectors_follow_what_is_on_screen(
     assert got["sortedDrawn"] == "none", got
 
 
+_BETTING_BOX = """
+const shown = () => betRows().filter(row => !row.hidden).map(row => row.dataset.id);
+const ask = needle => { BETFIND.value = needle; betSearch(); return shown(); };
+const out = {all: betRows().length};
+
+// The row this is about: one input holding a list of two, which is what
+// `assignees` and `reviewers` are — `", ".join(...)` on the way out.
+const holder = betRows().find(row => [...row.querySelectorAll('input')]
+  .some(box => box.dataset.type === 'list' && box.value.split(',').length > 1));
+out.holder = holder ? holder.dataset.id : null;
+if (holder) {
+  const box = [...holder.querySelectorAll('input')]
+    .find(one => one.dataset.type === 'list' && one.value.split(',').length > 1);
+  const [first, second] = box.value.split(',').map(value => plain(value));
+  out.values = [first, second];
+  // The two welded together, which is what the row's haystack said before the
+  // split and which no value on any row can legitimately contain.
+  out.welded = ask(first + second);
+  // And two needles that start inside one value and finish inside the next.
+  out.crossShort = ask(first.slice(-2) + second.slice(0, 2)).includes(holder.dataset.id);
+  out.crossLong = ask(first.slice(-4) + second.slice(0, 3)).includes(holder.dataset.id);
+  out.firstAlone = ask(first).includes(holder.dataset.id);
+  out.secondAlone = ask(second).includes(holder.dataset.id);
+}
+out.truncated = ask('C++').length;
+out.empty = ask('').length;
+return out;
+"""
+
+_PEOPLE_BOX = """
+const box = document.getElementById('q');
+// Plained on the way out, so a login with a capital in it is the same string
+// here and in the assertion.
+const ask = needle => {
+  box.value = needle; box.dispatchEvent(new Event('input'));
+  return GROUPS.filter(group => !group.hidden).map(group => plain(group.dataset.login));
+};
+const rows = GROUPS.flatMap(group => [...group.querySelectorAll('tr[data-role]')]
+  .map(row => row.dataset.text)).join(' ');
+const logins = GROUPS.map(group => plain(group.dataset.login));
+
+// Every other letter of somebody's login: a subsequence of it under `found`'s
+// rule — never more than one letter skipped at a time — and a substring of
+// nothing at all, so that what it finds is only ever the loose tier at a login.
+let login = null, skipped = null;
+for (const one of logins) {
+  const every = [...one].filter((_, at) => at % 2 === 0).join('');
+  if (every.length < 4 || one.includes(every)) continue;
+  if (rows.includes(every) || logins.some(other => other.includes(every))) continue;
+  login = one; skipped = every; break;
+}
+const out = {people: GROUPS.length, login, skipped};
+if (login) {
+  out.skippedFinds = ask(skipped);
+  out.loginFinds = ask(login);
+}
+out.truncated = ask('C++');
+out.empty = ask('').length;
+return out;
+"""
+
+
+def test_the_two_boxes_cycles_py_rolls_by_hand_match_the_way_the_rest_does(
+    server_pages: dict[str, str], seed_index: Index, tmp_path: Path
+):
+    """The betting table's search and the people page's, held to the blob's rules.
+
+    These are the two boxes that do not read a server-built haystack: the betting
+    table builds one out of its own cells and live inputs, and the people page
+    matches a login and a row key separately because a person whose name matches
+    keeps all of their rows. Both were therefore the two places the rules could
+    silently not apply — and both had stopped applying them.
+
+    **A needle may not cross from one value into the next.** `searchable` puts a
+    space between values so `found`'s walk can stop there, and the betting table
+    reproduced the boundary per cell — but `assignees` and `reviewers` are ONE
+    input each holding a comma-joined list, so plaining the box whole welded two
+    logins into one chunk and the leak came back inside a single cell. Measured
+    on this corpus before the split: `redpollardchiffchaffy` found the two rows
+    that hold `redpollard, chiffchaffy`, as a substring, and so did `rdch`,
+    `ardchi` and `llardch`, none of which is in either login.
+
+    **A login never takes the subsequence tier.** That is the whole reason `bare`
+    reads two haystacks, and the people page's own box was matching a login
+    loosely: every other letter of somebody's login kept that person and all of
+    their rows.
+
+    **A needle punctuation truncated is not a needle.** `plain('C++')` is `'c'`,
+    which parses, is not empty, and answers nearly everything: 13 of this
+    table's 14 rows and 16 of the people page's people.
+
+    In Chrome, because the answer is which rows a live page hid: `betSearch`
+    reads `row.cells` and the value of every input in the row, and none of that
+    exists until a browser has built the table.
+    """
+    from browser import chrome, measured_in
+
+    from openproj.render import render_people
+
+    bets = measured_in(
+        chrome(), server_pages["cycle"], tmp_path / "bet-search.html", 1400,
+        _BETTING_BOX, height=1200, patience=2500,
+    )
+    assert bets["holder"], (
+        "no row on this betting table holds two people in one list box, so nothing "
+        "here is a test of a needle crossing between them"
+    )
+    assert bets["welded"] == [], (
+        f"{bets['values']} are two values and were searched as one string: "
+        f"their concatenation found {bets['welded']}"
+    )
+    assert not bets["crossShort"] and not bets["crossLong"], (
+        f"a needle running out of {bets['values'][0]} and into {bets['values'][1]} "
+        f"still finds {bets['holder']}"
+    )
+    # And the split did not cost the row the values themselves.
+    assert bets["firstAlone"] and bets["secondAlone"], bets
+    assert bets["truncated"] == 0, (
+        f"`C++` kept {bets['truncated']} of {bets['all']} rows: the box is searching "
+        "for whatever `plain` left of it"
+    )
+    assert bets["empty"] == bets["all"], "an empty box is not a search and hides nothing"
+
+    people = measured_in(
+        chrome(), render_people(seed_index), tmp_path / "people-search.html", 1400,
+        _PEOPLE_BOX, height=1200, patience=2500,
+    )
+    assert people["login"], (
+        "no login on this page is long enough to skip letters out of without landing "
+        "on something else, so nothing here is a test of the tier a login gets"
+    )
+    assert people["skippedFinds"] == [], (
+        f"{people['skipped']} is {people['login']} with letters left out and it found "
+        f"{people['skippedFinds']}"
+    )
+    assert people["login"] in people["loginFinds"], (
+        f"a login typed out no longer finds its own rows: {people['loginFinds']}"
+    )
+    assert people["truncated"] == [], (
+        f"`C++` kept {len(people['truncated'])} of {people['people']} people"
+    )
+    assert people["empty"] == people["people"], "an empty box is not a search"
+
+
 def test_the_create_form_opens_with_no_date_in_the_box(server_pages: dict[str, str]):
     """jcanton, 2026-08-26: "assigned date default to empty would be better than
     default=today".

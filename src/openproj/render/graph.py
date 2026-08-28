@@ -594,9 +594,18 @@ function edgesByContainer(edges) {
 
 const elk = new ELK();
 
+// Which arrangement is the current one. `relayout` awaits ELK in the middle, so
+// two of them can be in flight at once and the one that finishes LAST wins —
+// which is not the one that was asked for last: `cy.fit` at the bottom fits
+// whatever is visible now, so a stale run ends by fitting the new drawing around
+// the old drawing's positions. Nothing here can cancel a layout that has already
+// started, so the answer is thrown away instead of applied.
+let laying = 0;
+
 // Lay the visible graph out and draw the answer. Asynchronous, and the callers
 // treat it as such: the filter awaits nothing, it simply asks again.
 async function relayout() {
+  const mine = ++laying;
   const nodes = cy.nodes(':visible');
   const edges = cy.edges(':visible');
   if (!nodes.length) return;
@@ -624,6 +633,11 @@ async function relayout() {
     say('this plan could not be laid out — the drawing is unarranged');
     return;
   }
+  // A newer layout started while this one was in ELK, so this answer is about a
+  // graph that is no longer on the canvas. Dropped rather than drawn: applying
+  // it moves nodes to where an older visible set wanted them, and the `cy.fit`
+  // below then frames the current drawing around those positions.
+  if (mine !== laying) return;
 
   // A child's x and y are relative to its parent, so the walk carries the offset.
   const at = {};
@@ -925,6 +939,36 @@ if (document.fonts) document.fonts.ready.then(paint);
 // canvas — which, by construction, every edge of a matching node is.
 let laidOut = cy.nodes().map(node => node.id()).sort().join(',');
 
+// One arrangement per PAUSE in the typing, not one per set change.
+//
+// `laidOut` above stops a keystroke that changed nothing from moving anything,
+// and it was enough while a bare word was a substring: a substring can only ever
+// narrow as a word grows, so the set changed once or twice per word and then
+// stopped. A subsequence does not behave that way. Measured on `seed/` on
+// 2026-08-28, typing `otherwise` one character at a time: 27, 2, 2, 11, 3, 0, 0,
+// 0, 0 records kept — the drawing arranged itself three times over, once at the
+// eleven records it had just expanded to and again at the three it collapsed
+// back to, all of it before the fifth of nine characters.
+//
+// **The filter is not delayed and must not be.** Which nodes are faded, how many
+// are shown and whether the "nothing matches" box is up are what a reader looks
+// at while typing, and they are a pass over the canvas rather than a layout.
+// What costs is `await elk.layout(graph)` over the whole visible subgraph, and
+// what a reader cannot use is a drawing that rearranges under the hand — so the
+// arrangement is what waits, and a further keystroke resets the wait.
+let pendingLayout = null;
+function layoutSoon() {
+  clearTimeout(pendingLayout);
+  // A pause between keystrokes, and not a measured layout time: how long ELK
+  // takes is a function of the plan and this number is about the hand. What it
+  // buys, measured the same day: `otherwise` typed straight through costs one
+  // arrangement instead of three, and typed with a stop after every character
+  // still costs one per change of the set — the wait delays a layout, it never
+  // swallows one. Short enough that the stop at the end of a word is not a page
+  // that has quietly stopped answering.
+  pendingLayout = setTimeout(relayout, 150);
+}
+
 const NOTHING = document.getElementById('nothing');
 const CLEAR = document.getElementById('clear-filters');
 
@@ -988,12 +1032,15 @@ function applyFilter() {
   NOTHING.hidden = keep.size > 0;
   if (!keep.size) drawNothing();
 
-  // Only when the set actually changed: re-running dagre on every keystroke in
-  // the search box moves every box under the hand that is typing.
+  // Only when the set actually changed: re-running the layout on every keystroke
+  // in the search box moves every box under the hand that is typing. What is
+  // asked for here is an arrangement rather than an arrangement OF THIS SET —
+  // `relayout` reads `cy.nodes(':visible')` when it runs — so a delayed one is
+  // always about what is on the canvas at the moment it fires.
   const now = cy.nodes(':visible').map(node => node.id()).sort().join(',');
   if (now === laidOut || !keep.size) return;
   laidOut = now;
-  relayout();
+  layoutSoon();
 }
 
 // The first drawing. The constructor used to carry `layout:` and did this on the

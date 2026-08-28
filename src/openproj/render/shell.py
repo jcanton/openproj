@@ -2017,6 +2017,157 @@ const ANNOUNCE = document.getElementById('announce');
 const esc = value => String(value ?? '').replace(/[&<>"]/g,
   c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 
+// How every search box on every page decides whether a needle is in a haystack.
+//
+// Declared here for the reason `esc` above is, and it is the same reason twice
+// over: six search boxes and every completion popup on the site want this, and
+// they are spread across FIVE scripts — `_FILTER_JS`'s `matches()` (table,
+// timeline, graph, landing), the people page's own `apply()` and the betting
+// table's `betSearch()` (both in `cycles.py`; the people box shares the control
+// bar's markup but not its `matches()`, which is what made this list read four
+// for a while), `attachSuggest`, and the editor's link picker. `_FILTER_JS` is
+// included by five renderers and not by the record page or the create form, so
+// putting these there would have forced a private second copy into the two
+// pages that carry a combobox and no filter bar — which is exactly the
+// divergence this pair was written to end: `smcl` finding a record in the table
+// and nothing in the Parent picker on that record's own page.
+//
+// Spelled again in Python — `plain`, `sought`, `found` and `bare` in `query.py`
+// — character for character the same walk, because the static export filters
+// without a server and the server answers a link without a browser, so there
+// have to be two. `test_the_two_matchers_agree_letter_for_letter` compares them
+// by their answers.
+//
+// **Four ordinary names in the scope every page script shares, and five locals
+// already shadow two of them**: `found` in `deck.py`'s `refresh`, `table.py`'s
+// `draw`, `detail.py`'s `show` and `controls.py`'s `drawingsIn`, and `bare` in
+// `controls.py`'s `foldInPullRequests`. Every one is inside a function body, so
+// none of them is the SyntaxError a second top-level `const` would be and
+// nothing is broken today. What they are is a trap for the next edit: inside
+// those five scopes the name is a slide index, an array of rows, a boolean, an
+// array of drawings and a `{value, label}` object, so `found(needle, hay)`
+// written there is a TypeError at the keystroke rather than a failure at load.
+// Left as they are because none of those five bodies has any reason to search —
+// `draw` already filters through `matches()` — so renaming would be churn in
+// four files to buy nothing. Anything added to them that DOES want this pair
+// renames the local first.
+//
+// `[^a-z0-9]` and not a Unicode property class, and the reason is in `plain`'s
+// docstring over there rather than repeated here: this string is walked by index
+// below, and an index in this language counts UTF-16 code units while an index
+// in that one counts code points. Deleting everything outside ASCII is what
+// keeps the two walks from disagreeing about how far one emoji is. Spelling the
+// class out also keeps this file compiling without a SyntaxWarning: `_SHELL` is
+// a plain triple-quoted string and not a raw one, so a backslash here that
+// Python does not know an escape for is an invalid escape sequence — silent to
+// ruff, which selects E, F, I, UP and B while W605 lives in `W`, and fatal
+// under `python -W error::SyntaxWarning`. Any regex written into this script
+// wants its backslashes doubled, or wants writing without one.
+const plain = text => String(text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+// `plain`, on the needle side, where a truncation has to become nothing.
+//
+// `plain` is a DELETION, and deleting from something short enough leaves a stub
+// that is still a legal needle. Measured over the demo plan on 2026-08-28,
+// before this existed: `C++` plained to `c` and kept 27 of 28 rows, `c#` the
+// same, `Δt` plained to `t` and kept all 28, `I/O` plained to `io` and kept 10.
+// Negated they were no better and no steadier: `not C++` and `not c#` left one
+// row each, `not Δt` left NOTHING at all, and `not I/O` left 18 — three
+// different wrong answers to one shape of typo. None of them said anything
+// beside the box, because all four parse perfectly.
+//
+// So nothing survives a truncation that leaves fewer than three characters, and
+// both halves are load-bearing: FEWER THAN THREE because what punctuation leaves
+// behind answers far more than it was asked to — `c` out of `C++` kept 27 of 28
+// rows and `io` out of `I/O` kept 10 — and AND SOMETHING WAS DROPPED so a
+// short word typed with no punctuation in it is untouched — `ci` still finds the
+// tag `ci`, while `c#` is two characters only because `plain` ate one.
+// `some.cool` and `2-gpu` keep far more than three and are what they were.
+//
+// `kept !== lowered` and never a length comparison: `plain` only deletes, so the
+// two ask the same question, and counting characters is the one thing this pair
+// must not do across two languages — code points here, UTF-16 units there.
+const sought = text => {
+  const lowered = String(text ?? '').toLowerCase();
+  const kept = plain(lowered);
+  return kept.length < 3 && kept !== lowered ? '' : kept;
+};
+
+// 0 for no match, 1 for a substring, 2 for a subsequence. Truthy wherever a
+// yes-or-no is wanted; a rank because the two capped completion lists show eight
+// of what they find, so a weak match there can evict a strong one.
+//
+// Both arguments arrive `plain`ed. For the four filtering views the haystack was
+// plained once on the server, in `searchable` (`index.py`), which is why nothing
+// here ever normalises a row: the warning over that function — the same answer
+// computed fifteen thousand times — is about exactly this loop.
+function found(needle, hay) {
+  // A term with nothing searchable left in it matches nothing, for the same
+  // reason an unknown field does: a query that widens by accident is worse
+  // than one that visibly empties. A stray `#` must not answer the plan.
+  if (!needle) return 0;
+  // The needle carries no space, so a substring can never cross a value.
+  if (hay.includes(needle)) return 1;
+  // Under four characters there is no subsequence tier at all. Four is `smcl`,
+  // the shortest example jcanton gave, so it is the highest floor his ask
+  // survives; re-measured against the narrowed haystack on 2026-08-28, after
+  // the tiers were split. A floor of 3, over every three-letter needle the two
+  // corpora offer, adds at worst 16 of `seed/`'s 28 rows (`a00`) and 11 of the
+  // fixture's 26 (`ete`), with 2.2% and 3.3% of needles adding more than the
+  // fifth of the plan the noise guard allows; a floor of 2 is worse again. It
+  // would also buy nothing: `s_c_t` is refused by the GAP rule below, not by
+  // this floor — `sct` skips `o`, `m`, `e` between the `s` and the `c` of
+  // `somecooltitle`, three in a row, at every floor. The argument in full is
+  // over `found` in `query.py`.
+  if (needle.length < 4) return 0;
+  // An all-digit needle never takes the subsequence tier. A number is copied off
+  // a screen rather than remembered, so it is typed right or not at all, and read
+  // loosely it is catastrophic: `1364` is a subsequence of `c2smicon4py1234564`,
+  // so `?q=1364` kept a record whose only pull request is #1234564. The widening
+  // was asked for so `1364`, `#1364` and `C2SM/icon4py#1364` would all find the
+  // same record; the substring tier above already does that.
+  if (/^[0-9]+$/.test(needle)) return 0;
+  for (let start = 0; start < hay.length; start++) {
+    if (hay[start] !== needle[0]) continue;
+    let at = 1, skipped = 0;
+    for (let i = start + 1; i < hay.length; i++) {
+      if (hay[i] === ' ') break;        // a value ended; a match may not cross into the next
+      if (hay[i] === needle[at]) {
+        at++; skipped = 0;
+        if (at === needle.length) return 2;
+      } else if (++skipped > 2) break;  // never skip more than two letters in a row
+    }
+  }
+  return 0;
+}
+
+// How a bare word meets one record. The two tiers read different haystacks: a
+// substring is looked for in `wide`, the whole blob a record is known by, and a
+// subsequence only in `narrow`, its id and title alone.
+//
+// **The split is the point.** The ask was about a title, and a subsequence let
+// loose on the rest of the blob stops answering it: over the demo plan, typing
+// `operator` gave 27, 19, 5, 19, 5, 5, 5, 5 rows as the eight characters went
+// in — the list QUADRUPLED on the fourth character and collapsed on the fifth.
+// All 14 rows it gained on `oper` were subsequences, and 13 of them matched
+// nothing but the reviewer login `hoopoegrove` — o, p, e, r with a letter
+// skipped between each. It is 27, 19, 5, 5, 5, 5, 5, 5 now — but only over the
+// demo plan. Over `tests/fixtures/corpus` it is 26, 5, 4, 5, 4, 4, 4, 4: one
+// title long enough to hide `oper` in still adds a row on the fourth character
+// and loses it on the fifth, so the claim is "monotone on the demo plan" and
+// never "monotone". The argument in full is over `bare` in `query.py`.
+//
+// A login, a tag and a pull request are copied off a screen, so the substring
+// tier already serves them and the loose tier only costs them. `nameable` in
+// `index.py` builds `narrow`.
+function bare(needle, wide, narrow) {
+  if (!needle) return 0;
+  if (wide.includes(needle)) return 1;
+  // `narrow` is `wide`'s id and title chunks and nothing more, so a substring of
+  // it was already answered above and only the subsequence rank can be new here.
+  return found(needle, narrow) === 2 ? 2 : 0;
+}
+
 // Today, in the reader's OWN timezone, as the `2026-08-28` a date box and the
 // record files both hold. `toISOString` alone is UTC, so on a laptop east of
 // Greenwich in the evening it answers tomorrow — a date somebody accepts without

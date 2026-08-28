@@ -334,6 +334,11 @@ def test_the_searchable_text_is_the_fields_and_not_the_document():
     The shaping document IS the record, and it is still not the record's index: a
     900-word pitch in a substring search makes every long word in the plan a
     match for something, and nothing on the row says which word matched.
+
+    The title is spelled here the way `plain` (`query.py`) leaves it — one chunk,
+    no spaces and no hyphen — because that is what the blob holds since the box
+    went separator-blind. The space between two values survives and is the only
+    character that does; inside one it does not.
     """
     record = a_task(
         "task-c00001",
@@ -343,7 +348,7 @@ def test_the_searchable_text_is_the_fields_and_not_the_document():
     )
     blob = build_index([record], CONFIG, TODAY).search_blob["task-c00001"]
 
-    assert "reproduce the 2-gpu seam artefact" in blob
+    assert "reproducethe2gpuseamartefact" in blob
     assert "gpu" in blob
     assert "ci" in blob
     assert "firebrick" not in blob
@@ -364,7 +369,9 @@ def test_the_searchable_text_holds_the_names_a_record_is_known_by():
 
     assert "alice" in blob
     assert "bob" in blob
-    assert "task-c00001" in blob
+    # `taskc00001`, because the blob is `plain`ed: an id is punctuated too, and
+    # somebody retyping one from memory gets the letters and not the hyphen.
+    assert "taskc00001" in blob
 
 
 def test_the_searchable_text_holds_an_inbox_records_author():
@@ -594,7 +601,14 @@ def test_predicates_are_ored_within_the_field():
     ]
 
 
-def test_search_is_a_case_insensitive_substring_match():
+def test_search_ignores_case_and_the_separators():
+    """It was `..._is_a_case_insensitive_substring_match` until 2026-08-28, and a
+    bare word stopped being a substring match on that day: the needle and the
+    blob are both `plain`ed, and four characters or more also find a name whose
+    letters they are. `test_search.py` renamed its own sibling for the same
+    reason. The three assertions under this did not move; the name had to, or
+    the file starts pinning a rule it no longer describes.
+    """
     records = [
         a_task("task-c00001", "Reproduce the 2-GPU seam artefact"),
         a_task("task-c00002", "Downgrade numpy", tags=["reductions"]),

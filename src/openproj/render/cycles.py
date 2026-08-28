@@ -16,6 +16,7 @@ from ..model import (
     size_weeks,
     without_comments,
 )
+from ..query import plain
 from ..schedule import build_end
 from .controls import _FILTER_JS, _combobox_html, _cycle_numbers, _facets_html
 from .env import _compiled
@@ -895,7 +896,23 @@ const BETNONE = document.getElementById('betnone');
 function betRows() { return [...BETS.tBodies[0].rows]; }
 
 function betSearch() {
-  const term = BETFIND.value.trim().toLowerCase();
+  // `said` is what is in the box and `term` is what can be searched for. They
+  // part company wherever normalising leaves less than a needle: `#` is
+  // something somebody typed, so this is not an empty box and the rows must
+  // narrow — to nothing, and with the sentence below saying which `#` found
+  // none. Reading `!term` for "the box is empty" would show the whole table back
+  // instead, which is the one answer a search must never give to a term it
+  // cannot answer.
+  //
+  // `sought` and not `plain`, which is the half of that split this box was
+  // missing. `plain('C++')` is `'c'` — not empty, so nothing above catches it,
+  // and a one-character substring answers almost everything: measured on cycle
+  // 37 of the test corpus, `C++` and `c#` each kept 13 of the table's 14 rows.
+  // `sought` empties a needle `plain` truncated, so those narrow to nothing the
+  // way `#` already did. Every other box on every page reads `sought`; its
+  // comment in `_SHELL` is where the rule is written down.
+  const said = BETFIND.value.trim();
+  const term = sought(said);
   let shown = 0;
   for (const row of betRows()) {
     // The whole row's text, which is what somebody means by "search": a title,
@@ -903,18 +920,42 @@ function betSearch() {
     // table. `textContent` misses what is inside the editable cells, whose
     // value lives on the input rather than in the tree, so those are asked
     // separately.
+    //
+    // **Plained per cell and per typed VALUE, then joined on a space**, which is
+    // the boundary `found` stops at. Joining the row first and plaining the
+    // result would delete the whitespace between the cells and let a subsequence
+    // run out of a title and into the owner beside it — the cross-value leak
+    // that `searchable`'s space exists to prevent, reintroduced by the one box
+    // that has no server-built blob to read. This is also the one box that
+    // normalises per row per keystroke, over one cycle's candidates; it already
+    // lowercased exactly this string just as often.
+    //
+    // **A value, and not a box.** `assignees` and `reviewers` are one input each
+    // holding a comma-joined list, so a box plained whole welds its logins into
+    // a single chunk and the leak comes back inside one cell — which is what it
+    // did. Measured on cycle 37 of the test corpus, where two rows carry
+    // `redpollard, chiffchaffy`: `dchi`, `ardchi` and `llardch` each found
+    // exactly those two rows and no others, and `redpollardchiffchaffy` found
+    // them too — as a SUBSTRING, so this was never only the loose tier's doing.
+    // Split on the comma the blur handler above stages a list on, so the
+    // boundary this box searches by is the boundary the file is written with,
+    // and one chunk per list element is what `_joined` builds on the server.
     const typed = [...row.querySelectorAll('input')]
-      .filter(box => box.type !== 'checkbox').map(box => box.value).join(' ');
-    const hit = !term || (row.textContent + ' ' + typed).toLowerCase().includes(term);
+      .filter(box => box.type !== 'checkbox')
+      .flatMap(box => box.dataset.type === 'list' ? box.value.split(',') : [box.value])
+      .map(value => plain(value));
+    const haystack = [...row.cells].map(cell => plain(cell.textContent))
+      .concat(typed).join(' ');
+    const hit = !said || !!found(term, haystack);
     row.hidden = !hit;
     if (hit) shown++;
   }
   // Empty must not look like broken. A search matching nothing is the commonest
   // way to arrive at an empty table, and it is a different sentence from "this
   // cycle has nothing to bet on" — with the control that gets you out of it.
-  BETNONE.hidden = shown > 0 || !term;
-  if (!BETNONE.hidden) document.getElementById('betterm').textContent = BETFIND.value.trim();
-  say(term ? `${shown} of ${betRows().length} shown` : '');
+  BETNONE.hidden = shown > 0 || !said;
+  if (!BETNONE.hidden) document.getElementById('betterm').textContent = said;
+  say(said ? `${shown} of ${betRows().length} shown` : '');
   betTree();
 }
 
@@ -1713,7 +1754,20 @@ const COUNT = document.getElementById('shown');
 // them here to show twelve of fifteen is a second copy of the markup that has to
 // keep agreeing with the first.
 function apply() {
-  const text = (params.get('q') || '').trim().toLowerCase();
+  // Plained once per redraw and not once per row. `data-text` arrives plain from
+  // the server for the same reason `row.search` does — see the roster's `search`
+  // key in `cycles.py` — so the only string this loop normalises is the login,
+  // which is one per group rather than one per row.
+  //
+  // `said` and `text` part company wherever normalising leaves less than a
+  // needle, and the split is the betting table's: `#` is a term somebody typed,
+  // and this box sits in the same bar as the table's, where `#` answers nothing.
+  // A box that showed every row back for it would be the divergence, one bar
+  // apart. `sought` and not `plain` for the rest of that — `plain('C++')` is
+  // `'c'`, which is not empty and answers almost every row of any page it is
+  // asked of.
+  const said = (params.get('q') || '').trim();
+  const text = sought(said);
   // `getAll` and OR within a field, which is what the bar can now ask and what
   // `matches` and `apply_filters` have always answered. With `get` this page
   // honoured the first value and ignored the rest in silence — a control that
@@ -1723,12 +1777,36 @@ function apply() {
     .map(field => [field, params.getAll(field).filter(Boolean)])
     .filter(([, values]) => values.length);
   let visible = 0;
+  // Which haystack takes which tier, on a page whose rows are PEOPLE. `bare`
+  // twice rather than `found` twice, so this page reads a needle the way every
+  // other one does — and the two calls differ because the two strings are
+  // different kinds of thing.
+  //
+  // **A login gets the substring tier and nothing else**, which is what the
+  // empty third argument says: `bare` looks for a substring in `wide` and a
+  // subsequence only in `narrow`, and there is no narrow here. A login is copied
+  // off a screen rather than remembered, so the loose tier cannot help it and
+  // can only cost — and on this page it cost a whole person at a time. Measured
+  // on `seed/` on 2026-08-28: `oper` kept 5 people and 23 rows, of which 18 were
+  // `hoopoegrove`'s entire group, every one of them matching through the login
+  // and through nothing else. It is 4 people and 5 rows now, which is what
+  // `operator` typed out answers too.
+  //
+  // **A row's key is already narrow**, so the same string is passed twice rather
+  // than pretended to be two: `render_people` builds `search` from the record's
+  // id and title — `NAME_FIELDS`, the fields `nameable` uses — and both tiers may
+  // read those. What that costs is real and is left alone: the SUBSTRING tier
+  // here is narrower than the table's, which searches the whole blob, so a tag
+  // or a pull request that finds a record on /table finds nothing here. Widening
+  // it means a second server-built string on every row of a page that draws one
+  // row per record per role, which is the page weight `searchable` refuses.
   for (const group of GROUPS) {
-    const person = group.dataset.login.toLowerCase();
+    const person = plain(group.dataset.login);
     let kept = 0;
     for (const row of group.querySelectorAll('tr[data-role]')) {
       const keep = want.every(([field, values]) => values.includes(row.dataset[field]))
-        && (!text || person.includes(text) || row.dataset.text.includes(text));
+        && (!said || !!bare(text, person, '')
+            || !!bare(text, row.dataset.text, row.dataset.text));
       row.hidden = !keep;
       kept += keep ? 1 : 0;
     }
@@ -2667,7 +2745,14 @@ def render_people(index: Index, links: Links = STATIC, editable: bool = False, m
                         "kind": record.kind,
                         "status": record.status,
                         "span": f"{span.start} → {span.end}" if span else "—",
-                        "search": f"{record_id} {record.title}".lower(),
+                        # Two chunks, `plain`ed one at a time so the space between
+                        # them survives as the boundary `found` stops at: an id
+                        # and a title are two values, and a subsequence must not
+                        # run out of one and into the other. Built here rather
+                        # than in `apply()` for the reason `searchable`'s
+                        # docstring gives — it is one answer per row, not one per
+                        # row per keystroke.
+                        "search": f"{plain(record_id)} {plain(record.title)}",
                     }
                 )
 

@@ -446,4 +446,9 @@ def _row(index: Index, record_id: str) -> dict:
         # `search` is the key the people rows already use for exactly this,
         # which is why it is spelled that way here.
         "search": index.search_blob[record_id],
+        # The narrow haystack the subsequence tier reads, built by
+        # `nameable` (`index.py`) and carried for the same reason: two
+        # short values, so `smcl` finds `some_cool_title` without `oper`
+        # dragging in the rows that hold the login `hoopoegrove`.
+        "name": index.name_blob[record_id],
     }
