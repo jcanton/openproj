@@ -112,13 +112,15 @@ from openproj.web import SESSION_COOKIE, create_app
 # The columns the table draws that nobody may type into. Kept as an expectation
 # rather than computed silently, so that adding a derived column and forgetting to
 # make it read-only fails here instead of in the corpus.
-# Columns with no written field under them at all: what they show is the
-# scheduler's arithmetic and there is nothing to type into.
-DERIVED = {"end", "blocked_by", "progress"}
-# And the two that show a derived value and edit the field beneath it — `size`
-# writes `person_weeks`, `start` writes `start_date`. They are not editable
-# under their own names, which is why they still have to be named here.
-SHOWS_DERIVED = {"size", "start"}
+# Columns with no written field under them at all: what they show is counted
+# from somewhere else and there is nothing to type into.
+DERIVED = {"blocked_by", "progress"}
+# And the three that show one value and edit the field beneath it — `size`
+# writes `person_weeks`, `start` writes `start_date`, `end` writes `end_date`.
+# They are not editable under their own names, which is why they still have to be
+# named here. `end` joined them when a done record's End cell stopped being a
+# forecast and started being the date its own file records.
+SHOWS_DERIVED = {"size", "start", "end"}
 
 
 @pytest.fixture
@@ -288,10 +290,10 @@ def test_the_table_declares_which_columns_a_person_owns(page: str):
 def test_no_derived_column_can_be_edited_at_all(page: str):
     """Structurally absent, exactly as on the detail page.
 
-    An END date typed by hand is a lie the next reschedule contradicts, and the
-    contradiction surfaces as "the tool is wrong" rather than as "somebody typed
-    over a forecast". There is no field under it to write, which is the whole
-    difference between these three columns and the two below.
+    A blocker count typed by hand is a lie the graph contradicts: it is counted
+    from `depends_on` on the records that name this one, so there is no field
+    under it to write. That is the whole difference between these two columns and
+    the three below, each of which shows one value and edits a real field.
     """
     assert set(columns(page)) - set(EDITABLE) - {"id"} <= DERIVED | SHOWS_DERIVED, (
         "a new column is neither editable nor known-derived"
@@ -302,17 +304,18 @@ def test_no_derived_column_can_be_edited_at_all(page: str):
         assert field not in controls(page), field
 
 
-def test_the_two_columns_that_show_one_thing_and_edit_another_say_which(page: str):
+def test_the_three_columns_that_show_one_thing_and_edit_another_say_which(page: str):
     """jcanton, 2026-08-27: "the appetite is not an editable field in the /table
     (dunno why) make it editable in /table please. start date as well".
 
-    The reason it was not is that neither column IS its field. `size` shows the
-    pitch's appetite, or the task's effort, or the default when neither is set;
-    `start` shows the day the scheduler landed on after the dependencies and the
-    people. Both are forecasts, and a control that wrote back what it was showing
+    The reason they were not is that no one of them IS its field. `size` shows the
+    pitch's appetite, or the task's effort, or what its tasks occupy; `start`
+    shows the day the scheduler landed on after the dependencies and the people;
+    `end` shows the day it lands on after those, or — on a done record — the day
+    the file says the work stopped. A control that wrote back what it was showing
     would let somebody commit an assumption they never made.
 
-    So the cell shows the forecast and the editor opens on the written field —
+    So the cell shows its own reading and the editor opens on the written field —
     `_COLUMN_FIELD` is the whole of the mechanism, and it is shipped to the
     browser rather than spelled twice.
     """
@@ -320,7 +323,15 @@ def test_the_two_columns_that_show_one_thing_and_edit_another_say_which(page: st
 
     body = script(page)
     shipped = json.loads(re.search(r"const COLUMN_FIELD = (\{.*?\});", body).group(1))
-    assert shipped == _COLUMN_FIELD == {"size": "person_weeks", "start": "start_date"}
+    assert (
+        shipped
+        == _COLUMN_FIELD
+        == {
+            "size": "person_weeks",
+            "start": "start_date",
+            "end": "end_date",
+        }
+    )
     # Asked of the FIELD and not the column, which is what makes a product's size
     # cell refuse without a rule of its own: `unread_fields` already says a rung
     # that is not sized does not read `person_weeks`.
@@ -4161,16 +4172,20 @@ def test_the_new_row_offers_the_fields_that_kind_has_and_no_others():
     assert fields["pitch"]["size"] == "person_weeks"
     assert fields["task"]["size"] == "person_weeks"
     assert "size" not in fields["project"], "a project has no size of its own"
-    # The two columns that show a derived value and write the one underneath it.
+    # The three columns that show one value and write the one underneath it.
     # `start` joined `size` here on 2026-08-27: it shows the scheduled day and
     # writes `start_date`, the earliest the work may begin, which is a field a
-    # person owns on every kind the scheduler dates.
+    # person owns on every kind the scheduler dates. `end` joined them when a
+    # done record's End cell stopped being a forecast — it writes `end_date`, and
+    # a record created straight into `done` is exactly where that is typed.
     assert fields["task"]["start"] == "start_date"
+    assert fields["task"]["end"] == "end_date"
     assert "start" not in fields["product"], "a product is never scheduled"
+    assert "end" not in fields["product"], "nor does it ever finish"
     for kind, columns in fields.items():
         assert "id" not in columns, f"the server mints the id, not the browser ({kind})"
-        for derived in ("end", "blocked_by", "progress"):
-            assert derived not in columns, f"{derived} is the scheduler's ({kind})"
+        for derived in ("blocked_by", "progress"):
+            assert derived not in columns, f"{derived} is counted, not typed ({kind})"
         for column, field in columns.items():
             assert field in EDITABLE, f"{column} writes to a field nobody owns"
 
@@ -4178,16 +4193,17 @@ def test_the_new_row_offers_the_fields_that_kind_has_and_no_others():
 def test_the_row_says_which_columns_it_cannot_be_typed_into_and_why(page: str):
     """Two different reasons a cell takes nothing, and a blank cell says neither.
 
-    A project has no Appetite; nobody has an End, because the scheduler works it
-    out from the start and the size. Both are drawn as cells that cannot be
+    A project has no Appetite; nobody has a Blockers count, because it is counted
+    from the records that name this one. Both are drawn as cells that cannot be
     filled in, and each carries the sentence that belongs to it — asked of the
     map rather than listed in the page, so a column that becomes kind-only later
     explains itself without this line changing.
 
-    `end` and not `start`, which is what this asked before 2026-08-27. `start`
-    stopped being one of these the day the column began writing `start_date`;
-    `end` is the one that is genuinely nobody's to type, because there is no
-    field under it at all.
+    `blocked_by` and not one of the dates, which is what this asked until the
+    dates became controls. `start` stopped being one of these on 2026-08-27, when
+    the column began writing `start_date`, and `end` stopped when a done record's
+    End cell turned out to be showing the `end_date` its own file records. What
+    is left in this half of the test is the column with no field under it at all.
     """
     answer = drive_table(
         page,
@@ -4197,17 +4213,18 @@ def test_the_row_says_which_columns_it_cannot_be_typed_into_and_why(page: str):
         '    const td = tbody.querySelector(`tr.draft td[data-col="${column}"]`);'
         "    return [td.getAttribute('class'), td.getAttribute('title')];"
         "  };"
-        "  return {size: tip('size'), end: tip('end'), start: tip('start'),"
-        "          title: tip('title')};"
+        "  return {size: tip('size'), blocked: tip('blocked_by'), start: tip('start'),"
+        "          end: tip('end'), title: tip('title')};"
         "})()",
     )
     got = answer["value"]
 
     assert got["size"][0] == "draft-none"
     assert got["size"][1] == "A project has no appetite"
-    assert got["end"][0] == "draft-none"
-    assert "Derived from" in got["end"][1], "the scheduler's own sentence, not a new one"
+    assert got["blocked"][0] == "draft-none"
+    assert "Counted from" in got["blocked"][1], "the page's own sentence, not a new one"
     assert "edit" in got["start"][0], "a project is scheduled, so it has a start to set"
+    assert "edit" in got["end"][0], "and an end to record when it finishes"
     assert "edit" in got["title"][0], "and the column it does have is a control"
 
 
@@ -5792,6 +5809,58 @@ def test_a_complaint_about_a_date_lands_on_the_date_cell(client: TestClient, rep
     # And it is the validator's own sentence on the cell, not some other row's.
     assert drawn[DRIFTED]["start"] == said[(DRIFTED, "start_date")]
     assert drawn[DONE]["end"] == said[(DONE, "end_date")]
+
+
+def test_the_end_cell_edits_the_date_a_done_record_records(client: TestClient):
+    """**The cell a mark hangs on has to be the cell that can answer it.**
+
+    Routing the `end_date` problems to the End column put "a done record needs
+    the date it ended" on a cell whose tooltip then said "Derived from the start
+    and the appetite" and which carried no `data-field` at all — so the mark
+    reached the right cell, the cell called the value computed, and the one edit
+    that would clear the mark was the one edit that cell refused.
+
+    It has not been a forecast on a done record since §4b of
+    `design/time-model.md` gave the done branch a typed `end_date` to end at, and
+    the record page has had an editable End date row for it the whole time. This
+    is the table agreeing: the column edits `end_date` where a record has one to
+    give, and says which of the two dates it is drawing.
+
+    Driven in node, because the rows are built in the browser.
+    """
+    from test_web import DONE, TASK
+
+    # `DONE` is the corpus's finished task and carries no `end_date` — the row
+    # the marked-but-uneditable cell was actually about — and `TASK` is
+    # in_progress, whose End really is the scheduler's.
+    assert save(client, DONE, {"end_date": "2026-06-30"}).status_code == 200
+    page = client.get("/table").text
+    answer = drive_table(
+        page,
+        "(() => {"
+        "  const cell = id =>"
+        '    tbody.querySelector(`tr[data-id="${id}"] td[data-col="end"]`);'
+        "  const look = td => ({cls: td.className, field: td.dataset.field || null,"
+        "                       text: td.textContent.trim(), tip: td.getAttribute('title')});"
+        f"  return {{done: look(cell('{DONE}')), running: look(cell('{TASK}'))}};"
+        "})()",
+    )
+    ended, forecast = answer["value"]["done"], answer["value"]["running"]
+
+    # The date the file records, drawn as the file's own rather than as a
+    # forecast, in a cell that opens on the field it came from.
+    assert ended["text"].startswith("30.06"), ended
+    assert "edit" in ended["cls"], ended
+    assert ended["field"] == "end_date"
+    assert "derived" not in ended["cls"], ended
+    assert "Shows end_date, the day this record records that it ended." in ended["tip"], ended[
+        "tip"
+    ]
+    # And the sentence that used to be the whole tooltip is kept for the rows it
+    # is still true of.
+    assert "derived from the start and the appetite" in forecast["tip"], forecast["tip"]
+    assert "derived" in forecast["cls"], forecast
+    assert forecast["field"] == "end_date", "still the editor, on a row with no date yet"
 
 
 def test_only_a_cell_with_something_in_the_way_is_tinted(page: str):

@@ -43,8 +43,18 @@ from .tokens import (
 # carried its own literal list of four, so a fifth derived column would have kept
 # its editor open and refused with `undefined`. A cell that will not be edited and
 # will not say why is indistinguishable from a cell that is broken.
+#
+# **`end` was in here and is not, and the sentence it carried was the reason.**
+# It read "Derived from the start and the appetite", which stopped being true of
+# every `done` record when §4b of `design/time-model.md` gave the done branch a
+# typed `end_date` to end at. On such a row the cell shows what the file states,
+# the validator's `a done record needs the date it ended` now marks that same
+# cell — and the tooltip underneath it claimed the value was computed and offered
+# no way to supply it. The mark reached the right cell and the cell refused the
+# one edit that would clear it. The End column is the editor for `end_date` now,
+# exactly as Start is for `start_date`, and `_TABLE_SHOWS` is where it says which
+# of the two dates a given cell is drawing.
 _TABLE_WHY = {
-    "end": "Derived from the start and the appetite.",
     "blocked_by": "Counted from depends_on, minus the ones already done or shelved.",
     "progress": "Counted from the task list in the body. Tick the boxes there.",
 }
@@ -71,34 +81,42 @@ _COLUMN_SHOWS = {
     "blocked_by": "depends_on",
 }
 
-# The two columns that SHOW a derived value and EDIT the written one underneath
-# it. jcanton, 2026-08-27: "the appetite is not an editable field in the /table
-# (dunno why) make it editable in /table please. start date as well".
+# The three columns that SHOW one value and EDIT the written one underneath it.
+# jcanton, 2026-08-27: "the appetite is not an editable field in the /table (dunno
+# why) make it editable in /table please. start date as well".
 #
-# The reason it was not is in `_TABLE_WHY`, where both used to sit: `size` on a
-# pitch with tasks is the bet and not what those tasks come to, and `start` is
-# `start_date` after the scheduler has moved it for the dependencies and for what
-# the people on it are already doing. Both cells are forecasts, and typing over a
-# forecast is how a plan stops being believed.
+# The reason they were not is in `_TABLE_WHY`, where all three used to sit: `size`
+# on a pitch with tasks is the bet and not what those tasks come to, and `start`
+# is `start_date` after the scheduler has moved it for the dependencies and for
+# what the people on it are already doing. Those two cells are forecasts, and
+# typing over a forecast is how a plan stops being believed.
 #
-# What makes them editable is that the editor opens on the WRITTEN field and
-# never on the number in the cell, which is the same rule the draft row has
+# **`end` is the third, and it is the one whose cell is not always a forecast.**
+# A `done` record's span ends at the `end_date` its file states (§4b of
+# `design/time-model.md`), so the End cell on that row shows a value somebody
+# typed — and the record page has had an editable End date row for it all along.
+# The table now agrees, which is what the two surfaces have to do: a person who
+# learns the model from one page must not be taught something else by the other.
+#
+# What makes all three editable is that the editor opens on the WRITTEN field and
+# never on the value in the cell, which is the same rule the draft row has
 # followed since it was written (`_editable_for`). Type into it and the cell goes
-# back to being the scheduler's on the next draw.
+# back to being the scheduler's on the next draw — where the scheduler has an
+# answer at all.
 #
-# A kind that reads neither field is still refused, and by the mechanism that
-# already existed rather than a new one: `reads()` asks `unread_fields`, which
-# puts `person_weeks` on any rung that is not `sized` and `start_date` on any
+# A kind that reads none of these fields is still refused, and by the mechanism
+# that already existed rather than a new one: `reads()` asks `unread_fields`,
+# which puts `person_weeks` on any rung that is not `sized` and both dates on any
 # rung that does not schedule. A product's size cell has never been editable and
 # still is not.
 #
 # Derived from the map above rather than listed beside it, and `_TABLE_DERIVED`
 # is the whole of the difference: a column with a sentence in `_TABLE_WHY` has no
 # editor at all — `whyOf` closes the cell before `EDITABLE` is ever consulted —
-# so `end` and `blocked_by` drop out here for the reason they were written into
-# `_TABLE_WHY` in the first place. Listing this pair by hand instead is what
-# would let a sixth column be added above and silently open an editor on a
-# forecast, which is the thing this comment spends four paragraphs refusing.
+# so `blocked_by` drops out here for the reason it was written into `_TABLE_WHY`
+# in the first place. Listing this trio by hand instead is what would let a sixth
+# column be added above and silently open an editor on a forecast, which is the
+# thing this comment spends four paragraphs refusing.
 _COLUMN_FIELD = {
     column: field for column, field in _COLUMN_SHOWS.items() if column not in _TABLE_DERIVED
 }
@@ -131,21 +149,30 @@ _ROLLUP_GLYPH = {"under": "▾", "level": "=", "over": "▴", "unsized": "?", "u
 # three literals in this script and a fourth idea in the payload.
 _TABLE_DATES = ("start", "end")
 
-# What the tooltip adds on those two, because "double-click to edit appetite" on
-# a cell reading `2 wk` does not explain what the number in it is.
+# What the tooltip adds on those three, because "double-click to edit appetite"
+# on a cell reading `2 wk` does not explain what the number in it is.
 #
 # **A date column gets two sentences and not one, because it shows two different
 # things.** `start` was a single sentence beginning "Shows the scheduled start",
 # and a row with no span draws the date its own file states — so the sentence
-# named a forecast that does not exist over a value somebody typed. Which of the
-# two a given cell holds is `row.stated` (`rows.py`), and `showsIn` below picks
-# the sentence with it.
+# named a forecast that does not exist over a value somebody typed. `end` is the
+# same fault with the halves swapped: it said "Derived from the start and the
+# appetite" from `_TABLE_WHY`, which a `done` record's End cell has not been
+# since it began ending at the `end_date` its file records. Which of the two a
+# given cell holds is `row.stated` (`rows.py`), and `showsIn` below picks the
+# sentence with it.
 _TABLE_SHOWS = {
     "size": "Shows the appetite this record was bet at. Blank means nobody has sized it.",
     "start": {
         "stated": "Shows start_date, which this record states. "
         "Editing sets start_date, the earliest it may begin.",
         "derived": "Shows the scheduled start. Editing sets start_date, the earliest it may begin.",
+    },
+    "end": {
+        "stated": "Shows end_date, the day this record records that it ended. "
+        "Editing sets end_date.",
+        "derived": "Shows the scheduled end, derived from the start and the appetite. "
+        "Editing sets end_date, the day the work actually stopped.",
     },
 }
 
@@ -1439,9 +1466,11 @@ function holds(row, field) {
 // the rows are re-read from the server rather than patched in place.
 // `end_date` is in it for a reason of its own rather than by symmetry: a done
 // record's span ENDS at the date it records, so answering the panel changes the
-// End column of the row that was edited — and the End column is not the column
-// anybody clicked. Left out, the row would go on showing the start date in both
-// date columns, styled `derived` like a real forecast, until a reload.
+// End column of a row whose Status cell is what was clicked. Left out, the row
+// would go on showing the start date in both date columns, styled `derived` like
+// a real forecast, until a reload. The End cell is a control of its own now, and
+// the same entry covers it — a date typed there is a date the scheduler ends the
+// span at, so the row has to come back from the server rather than be patched.
 const DERIVES_DATES = new Set(['start_date', 'end_date', 'person_weeks', 'cycle']);
 
 // The one question a status change is allowed to ask. It is asked BEFORE the
@@ -4411,13 +4440,14 @@ def _new_row_fields() -> dict[str, dict[str, str]]:
 
     A column missing from a kind's map is a column that kind cannot be typed into
     — which is three different sentences and all of them true: `id` is the
-    server's, `end` is the scheduler's, and Appetite is a thing a project does
-    not have. The row draws each of them differently and says which it is.
+    server's, Blockers is counted rather than written, and Appetite is a thing a
+    project does not have. The row draws each of them differently and says which
+    it is.
 
-    `size` and `start` are the columns that are not simply their own field, which
-    is why the derived value in a stored row's cell is never what an editor opens
-    on (`_COLUMN_SHOWS`) — and a row that does not exist yet has nothing derived
-    standing in either cell, so there is nothing here to commit by accident.
+    `size`, `start` and `end` are the columns that are not simply their own
+    field, which is why the value in a stored row's cell is never what an editor
+    opens on (`_COLUMN_SHOWS`) — and a row that does not exist yet has nothing
+    standing in any of the three, so there is nothing here to commit by accident.
     Typing 3 into Appetite writes `person_weeks: 3`, and the cell goes back to
     being the scheduler's the moment the row is a record.
     """

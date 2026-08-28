@@ -246,14 +246,20 @@ def _row(index: Index, record_id: str) -> dict:
     # than it reaches the Owner one.
     stated_start = read("start_date", record.start_date)
     stated_end = read("end_date", record.end_date)
-    # **The Start column falls back to the stated date where the scheduler gave
-    # this record no span.** With no default appetite (§2 of
-    # `design/time-model.md`) a `thinking` or `shaping` record gets no span at
-    # all, and this line read the span alone — so a shaping task carrying
-    # `start_date: 2026-09-07` drew an empty Start cell while the record page's
-    # own Start date row printed the date. The cell is the editor for that field
-    # (`_COLUMN_FIELD`, `table.py`), so you could type a date into it, watch the
-    # PATCH commit, and watch the cell stay blank.
+    # **Each date column falls back to the stated date where the scheduler gave
+    # this record no span**, because each of them is the editor for that field
+    # (`_COLUMN_FIELD`, `table.py`) and a cell that edits a field must show what
+    # the field holds. Otherwise you type a date into it, watch the PATCH commit,
+    # and watch the cell stay blank — the one failure a derived column is closed
+    # to editing to avoid, in the columns that were opened.
+    #
+    # Both halves are reachable and neither is exotic. With no default appetite
+    # (§2 of `design/time-model.md`) a `thinking` or `shaping` record gets no span
+    # at all, so a shaping task carrying `start_date: 2026-09-07` drew nothing
+    # while the record page's own Start date row printed it. And `done` does not
+    # demand a start date — deliberately, because migrated history often cannot
+    # name one — so a finished record with a recorded `end_date` and no start
+    # never reaches the scheduler's historical branch and drew nothing either.
     #
     # §2 argued for a blank Start on unsized work and it was right about the
     # forecast: there is none, and inventing one is what that section refuses. It
@@ -261,13 +267,8 @@ def _row(index: Index, record_id: str) -> dict:
     # makes a future `start_date` on a shaping record the legitimate case rather
     # than the corner. A stated date is not a forecast — `stated` below is what
     # keeps the two apart on screen.
-    #
-    # The End column has no such fallback, and the asymmetry is the scheduler's
-    # rather than an oversight: a record with a recorded end is `done`, and the
-    # done branch takes its start date and gives it a span, so there is no
-    # record whose End cell would be blank over a stated `end_date`.
     start = span.start if span else stated_start
-    end = span.end if span else None
+    end = span.end if span else stated_end
     # Which of the two date cells is drawing the date the FILE states, as against
     # one the scheduler worked out. This was `"derived": span is not None`, a
     # row-level boolean whose comment said it was here so that "the column can
