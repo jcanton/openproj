@@ -1763,8 +1763,15 @@ def test_a_start_date_typed_into_the_past_is_refused_before_work_has_begun(
     pitch, the Start column answers today, and the file and the page disagree
     with a 200 in between.
 
-    Both doors, because a closed writable surface is only closed if every way in
-    is: the create form can type the same date into the same field.
+    Two of the three doors here, because a closed writable surface is only closed
+    if every way in is. The create form types the same date into the same field,
+    and the third way in is the co-editing room — the record page hands its form
+    to `COEDIT.save(fields)` whenever the socket is up, so the Save people
+    actually press does not come through this route at all. Naming only these two
+    is how the room came to be the one surface with no rule for a while;
+    `test_a_room_refuses_a_start_date_typed_into_the_past_and_keeps_the_prose`
+    (`tests/test_coedit.py`) is the third, asked over a real socket because that
+    is the medium the answer lives in.
     """
     base = git_head(repo_path)
 

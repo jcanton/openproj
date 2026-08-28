@@ -1114,13 +1114,19 @@ def _reject_a_start_date_this_write_puts_in_the_past(
     carry, and a bulk edit refused the entire selection because one row in it had
     a date that had gone by. Renaming, retagging, reparenting by drag and drawing
     a dependency edge were all impossible for that record, and the sentence they
-    got named the wrong cause. **The co-editing room was the worst of it**, and it
-    is the one somebody would re-introduce: `_commit_room` ran this on every
-    flush, so a shaping document being written on a drifted record was refused
-    identically on Save, on the twenty-second quiet window and on the last person
-    out — told to copy the work out of the editor, and holding the only copy of
-    the document until the last tab closed. The room does not ask this question at
-    all now; the argument is on `_commit_room` itself.
+    got named the wrong cause. **The co-editing room was the worst of it**: it ran
+    this on every flush, so a shaping document being written on a drifted record
+    was refused identically on Save, on the twenty-second quiet window and on the
+    last person out — told to copy the work out of the editor, and holding the
+    only copy of the document until the last tab closed.
+
+    The delta is what lets the room keep the gate rather than lose it. Deleting
+    it from `_commit_room` was the first repair and it went a door too far: that
+    function commits the record page's FIELDS as well as its prose — `save()`
+    there hands the form to `COEDIT.save(fields)` whenever the socket is up — so
+    the surface people actually edit on was the one surface with no rule. All four
+    doors ask it now, and the two flushes nobody typed at carry `{}` and fall
+    through, which is exactly the distinction the delta draws.
 
     So the question is asked of the delta: the candidate is illegal AND this write
     is what made it so — the payload typed the date, or the record was legal until
@@ -4131,26 +4137,44 @@ def create_app(
             # The same gate the PATCH route stands behind, and for the same
             # reason: a record that will not read back takes every page down for
             # everybody, on a branch where the commit cannot be force-pushed away.
-            # The parse IS the check and the record it returns is dropped.
+            candidate = parse_text(content, room.path)
+            # **A room commits frontmatter, not only prose, and that is why this
+            # gate is here.** `save()` on the record page ends at
+            # `if (COEDIT.live()) { COEDIT.save(fields); return; }` — while the
+            # socket is up, which is the ordinary case, the form's fields come
+            # through this function and never through `PATCH /api/record`. So a
+            # start date typed into the past on the primary editing surface was
+            # answered 422 by the door nobody was using and committed by the one
+            # everybody was: the same field, the same record, two answers, and the
+            # file left saying a ready pitch began last month.
             #
-            # It used to be kept, for a second gate that stood here and refused a
-            # start date that had passed. That gate is gone from this function and
-            # must not come back. `_commit_room` is Save, the twenty-second quiet
-            # window and the last person out of the room, and the gate keyed on the
-            # parsed candidate — so a record whose stated date had merely drifted
-            # by, with nobody having touched it, refused all three flushes
-            # identically, told the people typing to copy their work out of the
-            # editor, and left the shaping document existing nowhere but the room
-            # until the last tab closed it. A body edit is never what makes a date
-            # late.
+            # It is asked in the DELTA form the other three doors use, and the
+            # delta is the whole of what was wrong with the version that stood
+            # here before. That one asked the parsed candidate alone — "is this
+            # record illegal" — and a date that has merely drifted by makes it
+            # illegal every second of every day with nobody having touched it. It
+            # therefore fired on all three of the ways a room reaches git: Save,
+            # the twenty-second quiet window and the last person out. Three people
+            # writing a shaping document on a drifted record were told to copy
+            # their work out of the editor, and the document existed in the room
+            # and in no file until the last tab closed it. In this form a flush
+            # carrying no fields cannot be refused by it at all — the timer and the
+            # last person out send `{}`, and a body edit is never what makes a date
+            # late — so what is refused is the press that typed the date, and the
+            # prose stays in the room to be saved again the moment it is corrected.
             #
-            # The price is one and it is named rather than hidden: a start date
-            # typed into the record's own form while a room is live commits here
-            # without that refusal, and is then reported beside the record as a
-            # warning. That is the answer this tool gives every date that has gone
-            # by, and it is a great deal cheaper than refusing a commit that is
-            # carrying three people's prose over one field one of them typed.
-            parse_text(content, room.path)
+            # `before` is the record as the file has it at the room's own base,
+            # which is what this write is a delta against; the guard is there
+            # because a file in git can be anything `patch_text` will round-trip
+            # and `parse_text` will not read, and `None` there means the
+            # conservative half of the rule, as it does on the create door.
+            try:
+                before = parse_text(original, room.path)
+            except ValueError:
+                before = None
+            _reject_a_start_date_this_write_puts_in_the_past(
+                fields, candidate, before, today or date.today()
+            )
 
             message = f"{room.record_id}: {_named(fields, RECORD_FIELDS) or 'body'}"
             if others:
