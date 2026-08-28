@@ -1089,6 +1089,11 @@ def test_a_refusal_names_the_field_the_way_the_form_labels_it(client: TestClient
     the next read "person_weeks: a ready pitch needs an appetite", from the same
     `<ul>`, about the same box. Both go through `labelOf` now.
 
+    `problem.drawn` rather than `problem.message`: a Problem stopped carrying a
+    finished string when the validator sentences gained a stored form and a drawn
+    one, so the terminal and `--json` keep ISO dates while a page draws the same
+    day the way every other date on it is drawn. This form is on a page.
+
     The list is built from text nodes rather than interpolated into `innerHTML`,
     because `answer.detail` quotes back a key the request supplied: a 422 is the
     server repeating the client's own string, and repeating it as markup is how a
@@ -1097,7 +1102,7 @@ def test_a_refusal_names_the_field_the_way_the_form_labels_it(client: TestClient
     new = client.get("/new?kind=pitch").text
 
     assert "function refusals(answer, status) {" in new
-    assert "return control ? `${labelOf(control)}: ${problem.message}` : problem.message;" in new
+    assert "return control ? `${labelOf(control)}: ${problem.drawn}` : problem.drawn;" in new
     assert "if (!problems.length) return [refusal(answer, status)];" in new
     assert "CSS.escape(problem.field)" in new, "the field arrives over the wire"
     # Built, not interpolated.
