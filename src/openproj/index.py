@@ -27,6 +27,7 @@ from .model import (
     Problem,
     Record,
     Unreadable,
+    _days_outside,
     ancestors,
     checklist,
     cycle_of,
@@ -649,23 +650,20 @@ class Index(BaseModel):
         them instead of being listed under both, which is the one answer this
         method may not give.
 
-        Deliberately not `weeks_outside_every_cycle`, which is the neighbouring
-        arithmetic and answers a different question. That one measures against
-        the whole stretch the plan's cycles cover, and says so at length: a date
-        in the gap between two windows is an ordinary date and warning about it
-        would refuse the ordinary case. This one has to name a single cycle, so
-        it is the one place that must look at each window in turn.
+        The per-window arithmetic is `_days_outside`, shared with
+        `weeks_outside_every_cycle` rather than written a second time here: both
+        turn on the same inclusive reading of a window's two ends, and one fact
+        with two implementations is what this repository has been bitten three
+        times by. What the two rules do with those distances is where they part.
+        That one takes the smallest and asks whether it is past an allowance,
+        because a date in the gap between two windows is an ordinary date nobody
+        should be warned about; this one has to name a cycle, so it keeps the
+        window the smallest distance belongs to.
         """
 
         def distance(number: int) -> tuple[int, date, int]:
-            start, end = self.cycles[number]
-            if start <= day <= end:
-                away = 0
-            elif day < start:
-                away = (start - day).days
-            else:
-                away = (day - end).days
-            return away, start, number
+            window = self.cycles[number]
+            return _days_outside(day, window), window[0], number
 
         return min(self.cycles, key=distance)
 
