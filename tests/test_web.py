@@ -189,6 +189,35 @@ SEED = {
     ),
 }
 
+# A task whose stated start date has gone by with nobody having touched it: the
+# date was typed while it was still next month, and the calendar moved. This is
+# drift — `validate_all` says so as a warning — and it is the state that must not
+# read as somebody typing a date into the past, because a record in it is
+# otherwise fully editable.
+#
+# Deliberately NOT in `SEED`, which every test in this file and in `test_coedit`
+# is written around: a record with a standing warning on it would change what
+# half the assertions about problems and counts in both files are counting.
+# Committed by the tests that want it, over the seeded tree, the way a person
+# with a terminal would.
+DRIFTED = "task-c00004"
+DRIFTED_RECORD = (
+    "---\n"
+    "id: task-c00004\n"
+    "kind: task\n"
+    "title: Chase the halo-exchange regression\n"
+    "parent: pitch-b20000\n"
+    "status: ready\n"
+    "owner: cy\n"
+    "reviewers: [ann]\n"
+    "person_weeks: 1.0\n"
+    "start_date: 2026-07-02\n"
+    "priority: medium\n"
+    "---\n"
+    "\nTyped when it was still next month.\n"
+)
+DRIFTED_SEED = {**SEED, f"tasks/{DRIFTED}.md": DRIFTED_RECORD}
+
 
 @pytest.fixture
 def repo_path(tmp_path: Path) -> Path:
@@ -1786,6 +1815,73 @@ def test_the_past_date_refusal_reads_the_record_and_not_only_the_payload(
     assert refused.status_code == 422, refused.text
     assert "2026-07-06" in refused.json()["detail"]
     assert git_head(repo_path) == base, "a refusal writes nothing"
+
+
+def test_a_date_and_the_status_that_makes_it_legal_travel_in_one_payload(client: TestClient):
+    """The interaction that decides which record the rule is asked about.
+
+    "I started this on Monday" is one gesture on the page — the date and the
+    status move together — and it arrives as one PATCH. Judged against the
+    record's CURRENT status this pitch is `ready` and the date is refused, so the
+    only way through would be two saves in the right order, which is the order
+    everybody gets wrong. Judged against the candidate's resulting status it is
+    `in_progress`, which is what the field is for.
+    """
+    saved = save(client, PITCH, {"start_date": "2026-07-01", "status": "in_progress"})
+
+    assert saved.status_code == 200, saved.text
+    stored = index_of(client)["plan"][PITCH]
+    assert (stored["status"], stored["start_date"]) == ("in_progress", "2026-07-01")
+
+
+def test_an_edit_that_touches_neither_the_date_nor_the_status_is_not_this_refusal(
+    client: TestClient, repo_path: Path
+):
+    """Drift is a warning, and a record carrying one is otherwise fully editable.
+
+    The rule was asked of the whole parsed candidate, which reads as "this record
+    is illegal" rather than "this write made it illegal" — and a date that has
+    drifted by makes the candidate illegal whatever the payload says. So renaming
+    this task answered 422 naming `start_date`, a field the payload does not
+    carry, and retagging it, reparenting it by drag and drawing a dependency edge
+    from it were refused the same way. Nobody typed anything; the calendar moved.
+    """
+    commit_directly(repo_path, DRIFTED_SEED, "a task whose date has gone by")
+
+    renamed = save(client, DRIFTED, {"title": "Renamed"})
+
+    assert renamed.status_code == 200, renamed.text
+    assert index_of(client)["plan"][DRIFTED]["title"] == "Renamed"
+    # And the plan still says so, in the register that is meant to: a warning
+    # beside the record, which is what nobody having touched it earns.
+    problems = client.get("/api/index.json").json()["problems"]
+    assert [
+        one
+        for one in problems
+        if one["record_id"] == DRIFTED
+        and one["field"] == "start_date"
+        and one["severity"] == "warning"
+    ]
+
+
+def test_one_drifted_row_does_not_refuse_the_whole_bulk_selection(
+    client: TestClient, repo_path: Path
+):
+    """A bulk edit is one commit, so a refusal about any row refuses every row.
+
+    That is the right shape for a payload nobody can apply — and exactly the
+    wrong one for a date that went by on its own in a record somebody happened to
+    have selected. Setting the priority on two tasks answered 422 about a third
+    field in one of them, and the remedy the sentence names is not one anybody
+    could act on from a table with a selection in it.
+    """
+    commit_directly(repo_path, DRIFTED_SEED, "a task whose date has gone by")
+
+    bulk = save_many(client, [OTHER, DRIFTED], {"priority": "high"})
+
+    assert bulk.status_code == 200, bulk.text
+    plan = index_of(client)["plan"]
+    assert [plan[OTHER]["priority"], plan[DRIFTED]["priority"]] == ["high", "high"]
 
 
 def test_a_field_no_record_declares_is_refused_at_every_write_door(

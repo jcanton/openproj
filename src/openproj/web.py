@@ -1092,7 +1092,9 @@ def _reject_bad_status(kind: str, fields: dict) -> None:
         )
 
 
-def _reject_a_start_date_that_has_passed(candidate: Record, today: date) -> None:
+def _reject_a_start_date_this_write_puts_in_the_past(
+    fields: dict, candidate: Record, before: Record | None, today: date
+) -> None:
     """A start date typed into the past, before it is a file.
 
     The other half of `start_date_has_passed`, and the reason it is a function
@@ -1103,16 +1105,46 @@ def _reject_a_start_date_that_has_passed(candidate: Record, today: date) -> None
     here who can be told and can fix it in the same second; there is nobody at all
     on the drift path.
 
-    It takes the CANDIDATE rather than the payload, alone among the `_reject_*`
-    family, and it has to: the rule is about two fields at once, and a PATCH
-    carries only the ones that moved. `{"status": "ready"}` sent to a record that
-    already holds a date, and `{"start_date": "2020-01-01"}` sent to one that is
-    already ready, are both this refusal — and neither is visible in `fields`.
-    The parsed candidate is the one place both values are true at the same time,
-    which is why this is called after `parse_text` rather than beside its siblings
-    above.
+    **What is refused is the WRITE, and not the state the record is in.** The
+    first version asked the candidate alone, which reads as "this record is
+    illegal" — and a record whose stated date has merely drifted by is illegal by
+    that reading every second of every day, with nobody having touched it. So the
+    door refused every write that so much as passed over one: `{"title":
+    "Renamed"}` on a drifted task answered 422 naming a field the payload did not
+    carry, and a bulk edit refused the entire selection because one row in it had
+    a date that had gone by. Renaming, retagging, reparenting by drag and drawing
+    a dependency edge were all impossible for that record, and the sentence they
+    got named the wrong cause. **The co-editing room was the worst of it**, and it
+    is the one somebody would re-introduce: `_commit_room` ran this on every
+    flush, so a shaping document being written on a drifted record was refused
+    identically on Save, on the twenty-second quiet window and on the last person
+    out — told to copy the work out of the editor, and holding the only copy of
+    the document until the last tab closed. The room does not ask this question at
+    all now; the argument is on `_commit_room` itself.
+
+    So the question is asked of the delta: the candidate is illegal AND this write
+    is what made it so — the payload typed the date, or the record was legal until
+    this write moved its status back onto a date that was already standing in it.
+    Drift with an unrelated payload over it is exactly the case that falls
+    through, and what it earns is `validate_all`'s warning, which is what drift is.
+
+    **`before` is the record as it stands, and `None` means there is none** — the
+    create door, where nothing is standing and therefore every value in the
+    candidate is one somebody has just typed. It is also what a record the index
+    cannot show us reads as, and refusing there is the conservative half of the
+    rule rather than a hole in it.
+
+    It still reads the CANDIDATE and not the payload alone, alone among the
+    `_reject_*` family, and it has to: the rule is about two fields at once and a
+    PATCH carries only the ones that moved. `{"status": "ready"}` sent to a record
+    that already holds a past date is this refusal, and the date is not in
+    `fields`. The parsed candidate is the one place the new status and the old
+    date are true at the same time, which is why this is called after `parse_text`
+    rather than beside its siblings above.
     """
     if not start_date_has_passed(candidate, today):
+        return
+    if "start_date" not in fields and before is not None and start_date_has_passed(before, today):
         return
     raise HTTPException(
         422,
@@ -2835,7 +2867,14 @@ def create_app(
         loop = loop_made(candidate, index_now()[1].records.values())
         if loop:
             raise HTTPException(409, loop)
-        _reject_a_start_date_that_has_passed(candidate, today or date.today())
+        # The record as it stands, read out of the same population `loop_made` is
+        # asked about above rather than parsed a second time out of `original`:
+        # the rule needs to know whether this write is what put the date in the
+        # past or whether it had drifted there already, and one memoised index is
+        # cheaper than a second parse of a file this route has already parsed once.
+        _reject_a_start_date_this_write_puts_in_the_past(
+            fields, candidate, index_now()[1].records.get(record_id), today or date.today()
+        )
         written = await _write_or_refuse(
             store.write,
             path=path,
@@ -3198,8 +3237,15 @@ def create_app(
             # rungs, and the whole point of the rule is that `in_progress` is the
             # one where the date is right. The batch is one commit, so a refusal
             # about any of them refuses all of them — which is the same shape the
-            # bulk status edit already has when it cannot mark something done.
-            _reject_a_start_date_that_has_passed(candidate, today or date.today())
+            # bulk status edit already has when it cannot mark something done, and
+            # the reason this asks about the delta and not about the state: the
+            # state reading refused a selection outright because one row in it
+            # held a date that had gone by on its own, which made a bulk retag
+            # impossible for anybody whose selection touched a drifted record.
+            # `index.records`, the population `after` is built from a line above.
+            _reject_a_start_date_this_write_puts_in_the_past(
+                fields, candidate, index.records.get(candidate.id), today or date.today()
+            )
 
         written = await _write_or_refuse(
             store.write_all,
@@ -3740,7 +3786,13 @@ def create_app(
         # that has passed is a WARNING — nobody typed it, the calendar moved — and
         # this filters to blockers. Somebody typing it into a create form is the
         # other half of that rule and the half a person can act on.
-        _reject_a_start_date_that_has_passed(candidate, today or date.today())
+        #
+        # With no `before` at all, which is not an omission: a record that does
+        # not exist yet has nothing standing in it, so nothing here can have
+        # drifted and every value in this candidate is one somebody has just typed.
+        _reject_a_start_date_this_write_puts_in_the_past(
+            fields, candidate, None, today or date.today()
+        )
         problems = [
             p
             # A file already in the plan that will not parse is not this record's
@@ -4079,11 +4131,26 @@ def create_app(
             # The same gate the PATCH route stands behind, and for the same
             # reason: a record that will not read back takes every page down for
             # everybody, on a branch where the commit cannot be force-pushed away.
-            # The candidate is kept rather than dropped now that a second gate
-            # reads it — the closed writable surface is only closed if every way
-            # in is, and the room is the third one.
-            candidate = parse_text(content, room.path)
-            _reject_a_start_date_that_has_passed(candidate, today or date.today())
+            # The parse IS the check and the record it returns is dropped.
+            #
+            # It used to be kept, for a second gate that stood here and refused a
+            # start date that had passed. That gate is gone from this function and
+            # must not come back. `_commit_room` is Save, the twenty-second quiet
+            # window and the last person out of the room, and the gate keyed on the
+            # parsed candidate — so a record whose stated date had merely drifted
+            # by, with nobody having touched it, refused all three flushes
+            # identically, told the people typing to copy their work out of the
+            # editor, and left the shaping document existing nowhere but the room
+            # until the last tab closed it. A body edit is never what makes a date
+            # late.
+            #
+            # The price is one and it is named rather than hidden: a start date
+            # typed into the record's own form while a room is live commits here
+            # without that refusal, and is then reported beside the record as a
+            # warning. That is the answer this tool gives every date that has gone
+            # by, and it is a great deal cheaper than refusing a commit that is
+            # carrying three people's prose over one field one of them typed.
+            parse_text(content, room.path)
 
             message = f"{room.record_id}: {_named(fields, RECORD_FIELDS) or 'body'}"
             if others:

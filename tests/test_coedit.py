@@ -38,7 +38,7 @@ from browser import chrome, measured_in
 from fastapi.testclient import TestClient
 from test_injection import run_js
 from test_store import commit_directly
-from test_web import PATH, SECRET, SEED, TASK, git_head
+from test_web import DRIFTED, DRIFTED_SEED, PATH, SECRET, SEED, TASK, git_head
 
 from openproj import coedit
 from openproj import web as web_module
@@ -91,8 +91,8 @@ def stored(plan: Path, path: str = PATH) -> str:
     return (tip.tree / path).data.decode("utf-8")
 
 
-def stored_body(plan: Path) -> str:
-    return split_front_matter(stored(plan))[1]
+def stored_body(plan: Path, path: str = PATH) -> str:
+    return split_front_matter(stored(plan, path))[1]
 
 
 def log_of(plan: Path) -> list[tuple[str, str]]:
@@ -317,6 +317,42 @@ def test_a_save_carries_the_fields_from_the_form_and_the_body_from_the_room(
     assert message.splitlines()[0] == f"{TASK}: status"
     assert stored_body(plan).startswith("New opening line.\n")
     assert "status: in_progress" in stored(plan)
+
+
+def test_a_room_commits_a_document_on_a_record_whose_start_date_has_gone_by(
+    client: TestClient, plan: Path
+):
+    """The past-date rule stood inside `_commit_room`, and it took the room out.
+
+    It was asked of the whole parsed candidate, so it fired on a record whose
+    stated start date had merely drifted by with nobody having touched it — and
+    `_commit_room` is every way a room ever reaches git: the Save button, the
+    twenty-second quiet window and the last person out. All three refused,
+    identically, with a sentence about a field nobody in the room had typed and
+    an instruction to copy the work out of the editor. The shaping document
+    existed in the room and in no file, and when the last tab closed it was gone.
+
+    Asked over a real socket rather than of the helper, because the claim is that
+    the flush lands: what a person in a room gets back is a frame, and `Session`
+    turns a `refused` into the failure of this test with the server's own words
+    in it.
+    """
+    commit_directly(plan, DRIFTED_SEED, "a task whose date has gone by")
+    before = len(log_of(plan))
+
+    with open_room(client, "ann", record_id=DRIFTED) as one:
+        ann = Session(one, "ann")
+        ann.hello()
+        ann.type(0, "## Problem\n\nThe halo exchange drops a rank at the seam.\n\n")
+        ann.save()
+        saved = ann.take("saved")
+
+    assert saved["outcome"] in ("committed", "retried")
+    assert len(log_of(plan)) == before + 1, "the flush is one commit, not a refusal"
+    assert "drops a rank at the seam" in stored_body(plan, f"tasks/{DRIFTED}.md")
+    # Nothing about the date was written, so the file still says what it said and
+    # the plan still warns about it. A drifted date is the validator's business.
+    assert "start_date: 2026-07-02" in stored(plan, f"tasks/{DRIFTED}.md")
 
 
 def test_a_room_will_not_write_somebody_elses_name_into_its_own_trailers(
