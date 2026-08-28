@@ -8,7 +8,7 @@ owner: Oxpeckerly
 reviewers: [eiderdowny]
 person_weeks: 0.5
 assignees: []
-assigned_on: null
+start_date: null
 cycle: 34
 priority: medium
 depends_on: [task-31f6c4]   # synthetic, see seed/README.md

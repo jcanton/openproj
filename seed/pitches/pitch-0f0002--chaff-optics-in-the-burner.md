@@ -8,7 +8,7 @@ owner: null
 assignees: []
 reviewers: []
 review_waived: false
-assigned_on: null
+start_date: null
 cycle: null
 priority: medium
 depends_on: []

@@ -81,7 +81,7 @@ from test_web import (
 )
 
 from openproj.auth import sign_session
-from openproj.index import build_index
+from openproj.index import Index, build_index
 from openproj.model import (
     KIND_NAMES,
     PARENT_KINDS,
@@ -105,18 +105,22 @@ from openproj.render import (
     render_static,
     render_table,
 )
+from openproj.render.rows import _row
+from openproj.render.tokens import _SIZE_FIELD_NAME
 from openproj.web import SESSION_COOKIE, create_app
 
 # The columns the table draws that nobody may type into. Kept as an expectation
 # rather than computed silently, so that adding a derived column and forgetting to
 # make it read-only fails here instead of in the corpus.
-# Columns with no written field under them at all: what they show is the
-# scheduler's arithmetic and there is nothing to type into.
-DERIVED = {"end", "blocked_by", "progress"}
-# And the two that show a derived value and edit the field beneath it — `size`
-# writes `person_weeks`, `start` writes `assigned_on`. They are not editable
-# under their own names, which is why they still have to be named here.
-SHOWS_DERIVED = {"size", "start"}
+# Columns with no written field under them at all: what they show is counted
+# from somewhere else and there is nothing to type into.
+DERIVED = {"blocked_by", "progress"}
+# And the three that show one value and edit the field beneath it — `size`
+# writes `person_weeks`, `start` writes `start_date`, `end` writes `end_date`.
+# They are not editable under their own names, which is why they still have to be
+# named here. `end` joined them when a done record's End cell stopped being a
+# forecast and started being the date its own file records.
+SHOWS_DERIVED = {"size", "start", "end"}
 
 
 @pytest.fixture
@@ -286,10 +290,10 @@ def test_the_table_declares_which_columns_a_person_owns(page: str):
 def test_no_derived_column_can_be_edited_at_all(page: str):
     """Structurally absent, exactly as on the detail page.
 
-    An END date typed by hand is a lie the next reschedule contradicts, and the
-    contradiction surfaces as "the tool is wrong" rather than as "somebody typed
-    over a forecast". There is no field under it to write, which is the whole
-    difference between these three columns and the two below.
+    A blocker count typed by hand is a lie the graph contradicts: it is counted
+    from `depends_on` on the records that name this one, so there is no field
+    under it to write. That is the whole difference between these two columns and
+    the three below, each of which shows one value and edits a real field.
     """
     assert set(columns(page)) - set(EDITABLE) - {"id"} <= DERIVED | SHOWS_DERIVED, (
         "a new column is neither editable nor known-derived"
@@ -300,17 +304,18 @@ def test_no_derived_column_can_be_edited_at_all(page: str):
         assert field not in controls(page), field
 
 
-def test_the_two_columns_that_show_one_thing_and_edit_another_say_which(page: str):
+def test_the_three_columns_that_show_one_thing_and_edit_another_say_which(page: str):
     """jcanton, 2026-08-27: "the appetite is not an editable field in the /table
     (dunno why) make it editable in /table please. start date as well".
 
-    The reason it was not is that neither column IS its field. `size` shows the
-    pitch's appetite, or the task's effort, or the default when neither is set;
-    `start` shows the day the scheduler landed on after the dependencies and the
-    people. Both are forecasts, and a control that wrote back what it was showing
+    The reason they were not is that no one of them IS its field. `size` shows the
+    pitch's appetite, or the task's effort, or what its tasks occupy; `start`
+    shows the day the scheduler landed on after the dependencies and the people;
+    `end` shows the day it lands on after those, or — on a done record — the day
+    the file says the work stopped. A control that wrote back what it was showing
     would let somebody commit an assumption they never made.
 
-    So the cell shows the forecast and the editor opens on the written field —
+    So the cell shows its own reading and the editor opens on the written field —
     `_COLUMN_FIELD` is the whole of the mechanism, and it is shipped to the
     browser rather than spelled twice.
     """
@@ -318,17 +323,30 @@ def test_the_two_columns_that_show_one_thing_and_edit_another_say_which(page: st
 
     body = script(page)
     shipped = json.loads(re.search(r"const COLUMN_FIELD = (\{.*?\});", body).group(1))
-    assert shipped == _COLUMN_FIELD == {"size": "person_weeks", "start": "assigned_on"}
+    assert (
+        shipped
+        == _COLUMN_FIELD
+        == {
+            "size": "person_weeks",
+            "start": "start_date",
+            "end": "end_date",
+        }
+    )
     # Asked of the FIELD and not the column, which is what makes a product's size
     # cell refuse without a rule of its own: `unread_fields` already says a rung
     # that is not sized does not read `person_weeks`.
     assert "const field = fieldOf(key);" in body
     assert "reads(row, field)" in body
     assert 'data-field="${esc(field)}"' in body
-    # And the sentence that stops the empty box reading as a bug.
+    # And the sentence that stops the empty box reading as a bug. A date column
+    # carries two of them — one for the day its own file states and one for the
+    # day the scheduler worked out — because that cell shows either, and a single
+    # sentence naming a forecast sat over dates nobody forecast.
     shows = json.loads(re.search(r"const SHOWS = (\{.*?\});", body, re.S).group(1))
     assert set(shows) == set(_COLUMN_FIELD)
-    assert all(sentence.strip() for sentence in shows.values())
+    for column, said in shows.items():
+        readings = [said] if isinstance(said, str) else [said[k] for k in ("stated", "derived")]
+        assert all(sentence.strip() for sentence in readings), column
 
 
 def test_the_id_is_shown_and_is_never_a_control(page: str):
@@ -552,8 +570,11 @@ def test_the_status_gate_is_written_on_the_controls_themselves(new_page: str):
     for field, gates in (
         ("owner", "ready"),
         ("reviewers", "ready in_progress"),
-        ("person_weeks", "ready"),
-        ("assigned_on", "in_progress"),
+        # Both rungs, like the reviewer above it: work that is running has to be
+        # sized, because with no default appetite an unsized record in flight is
+        # scheduled nowhere and charged to nobody.
+        ("person_weeks", "ready in_progress"),
+        ("start_date", "in_progress"),
         ("prs", "done"),
     ):
         assert f'data-required-at="{gates}"' in control(new_page, field), field
@@ -2185,7 +2206,7 @@ def test_the_form_says_which_fields_the_chosen_status_demands(new_page: str):
         facts,
     )
 
-    assert {"Owner", "Reviewers", "Assigned on", "PRs"} <= set(m.strip() for m in marked)
+    assert {"Owner", "Reviewers", "Start date", "PRs"} <= set(m.strip() for m in marked)
     assert "Tags" not in marked, "a field no status demands carries no mark"
     # Only in the form, and only for the status in force: the mark is toggled, and
     # a mark that could not be taken off would be an asterisk beside every field.
@@ -2589,10 +2610,17 @@ def test_a_problem_marks_the_row_and_the_cell_that_caused_it(page: str):
     """The reason a row is a problem lived in a native `title` on the `<tr>`, and
     a table is not a thing anybody hovers to find out.
 
-    A field the table has no column for — `assigned_on`, `person_weeks` — still
-    has to be findable, so its complaint falls to the id cell. A glyph on a
-    column nobody can see is a row that says something is wrong and will not say
-    what.
+    A field the table really has no column for — `parent`, which the tree draws
+    instead of a column — still has to be findable, so its complaint falls to the
+    id cell. A glyph on a column nobody can see is a row that says something is
+    wrong and will not say what.
+
+    The routing itself is asserted where it happens, by driving the script over a
+    corpus that carries the problems:
+    `test_a_complaint_about_a_date_lands_on_the_date_cell`. What is checked here
+    is that the map is SHIPPED rather than written out in JavaScript — the two
+    hand-written halves of one mapping are what left the Start and End columns
+    unreachable — and that the fallback under it is still the id cell.
     """
     body = script(page)
 
@@ -2601,7 +2629,7 @@ def test_a_problem_marks_the_row_and_the_cell_that_caused_it(page: str):
     glyph = r'class="sev-mark sev-mark-\$\{SEV_CLASS\[mark\.severity\]\}" role="img"'
     assert re.search(glyph, body)
     assert 'aria-label="${esc(note)}"' in body, "the glyph's name is the message"
-    assert "const MARK_COLUMN = {person_weeks: 'size'," in body
+    assert re.search(r"const MARK_COLUMN = \{\"", body), "the map is data, not a literal"
     assert "keys.includes(problem.field) ? problem.field : 'id'" in body
 
 
@@ -3050,7 +3078,17 @@ def test_an_editable_cell_shows_it_and_a_derived_one_says_why_not(page: str):
     why = json.loads(re.search(r"const WHY = (\{.*?\});", body, re.S).group(1))
     assert set(why) == set(_TABLE_DERIVED)
     assert all(sentence.strip() for sentence in why.values())
-    assert 'data-why="${esc(WHY[key])}"' in body
+    # Through `whyOf` and not out of `WHY` directly, because one column's answer
+    # is a fact about the ROW: a size cell over a record with tasks under it
+    # draws what they occupy, and the reason it cannot be edited is the
+    # comparison that cell is making. Four things read the answer — is this a
+    # control, is it drawn derived, what does a double-click say, does the
+    # keyboard stop here — and a fifth answer only some of them knew about is how
+    # a cell ends up looking editable and refusing to open.
+    assert "function whyOf(row, key) {" in body
+    assert "  const rollup = rollupOn(row, key);" in body
+    assert "  return rollup ? rollup.why : (WHY[key] || '');" in body
+    assert 'data-why="${esc(why)}"' in body
     # Through `announce`, so the refusal reaches somebody who cannot see the bar
     # it is drawn in — and from Enter as well as from a double-click. The
     # sentence is a parameter now, because a row refusing to hold another one is
@@ -3113,7 +3151,12 @@ def test_the_grouping_of_problems_is_written_once(page: str):
     carried = payload(page)
 
     assert isinstance(carried["problems"], list)
-    assert {"severity", "record_id", "field", "message"} <= set(carried["problems"][0])
+    # `drawn` beside `message`: one sentence in the two forms its two kinds of
+    # reader need — ISO for `/api/index.json` and the terminal, day-first for the
+    # cell marks this page hangs on a table whose Start and End columns are drawn
+    # that way. The script reads `drawn`, so its absence would be a mark saying
+    # `undefined`.
+    assert {"severity", "record_id", "field", "message", "drawn"} <= set(carried["problems"][0])
     assert "problems" not in next(iter(carried["rows"].values())), "one list, not one per row"
     # The two predicates that read the problem list are recomputed with it.
     assert "row.predicates.push('missing_required_fields');" in script(page)
@@ -3139,7 +3182,7 @@ def test_a_cell_can_be_edited_without_a_mouse(page: str):
     # The id cell joined them, and it is not editable: it is where a move is
     # started without a mouse, and a gesture only a mouse can make is a gesture
     # half the room does not have.
-    assert "const reachable = EDITABLE && (editable || key in WHY || key === 'id');" in body
+    assert "const reachable = EDITABLE && (editable || !!why || key === 'id');" in body
     assert "${reachable ? ' tabindex=\"-1\"' : ''}" in body
     assert "for (const td of all) td.tabIndex = td === at ? 0 : -1;" in body
 
@@ -3301,13 +3344,21 @@ def test_the_popup_a_cell_opens_hangs_off_the_body_and_not_off_the_cell(page: st
 def test_the_editor_opens_on_the_written_value_and_not_the_forecast(page: str):
     """**The safety property the whole column-to-field map exists for.**
 
-    The pitch in this corpus has `person_weeks: 3` and no `assigned_on`; the
-    project has `assigned_on: 2026-07-01` and no size of its own. So the pitch's
+    The pitch in this corpus has `person_weeks: 3` and no `start_date`; the
+    project has `start_date: 2026-07-01` and no size of its own. So the pitch's
     start cell SHOWS a date the scheduler worked out and the field under it is
     empty — and if the editor opened on what the cell was showing, a
     double-click and an Enter would write the forecast into the file as though
     somebody had chosen it. That is the failure this column was closed to editing
     to avoid, and opening on the stored value is what reopens it safely.
+
+    The size half is asked of a TASK, and the reason is the answer to the same
+    question one rung up: the pitch holds two tasks, so its size cell draws what
+    they occupy and refuses the editor entirely rather than opening one on a
+    number nobody can see (`test_a_rollup_size_cell_refuses_the_editor_...`).
+    Where the cell is a control at all, the field under it is what the box holds,
+    and `task-c00001` is the corpus record that has one — `person_weeks: 1.5`,
+    written with a comment after it in a hand-formatted file.
 
     Driven in Chrome because the rows are built in the browser: nothing about
     which cell is a control and what its box contains exists in the rendered file.
@@ -3321,7 +3372,10 @@ def test_the_editor_opens_on_the_written_value_and_not_the_forecast(page: str):
         "  const look = td => ({cls: td.className, field: td.dataset.field || null,"
         "                       text: td.textContent.trim(), tip: td.getAttribute('title')});"
         "  const pitch = byKind('pitch'), project = byKind('project');"
-        "  const out = {pitchSize: look(cell(pitch, 'size')),"
+        # By id and not by kind: this corpus holds three tasks and the size half
+        # of this test is about the one whose appetite is written down.
+        f"  const task = '{TASK}';"
+        "  const out = {taskSize: look(cell(task, 'size')),"
         "               pitchStart: look(cell(pitch, 'start')),"
         "               projectSize: look(cell(project, 'size')),"
         "               projectStart: look(cell(project, 'start'))};"
@@ -3332,7 +3386,7 @@ def test_the_editor_opens_on_the_written_value_and_not_the_forecast(page: str):
         "    return value;"
         "  };"
         "  out.pitchStartBox = boxIn(pitch, 'start');"
-        "  out.pitchSizeBox = boxIn(pitch, 'size');"
+        "  out.taskSizeBox = boxIn(task, 'size');"
         "  out.projectStartBox = boxIn(project, 'start');"
         "  return out;"
         "})()",
@@ -3340,21 +3394,21 @@ def test_the_editor_opens_on_the_written_value_and_not_the_forecast(page: str):
     got = answer["value"]
 
     # Both columns are controls now, and each says which field it writes.
-    assert "edit" in got["pitchSize"]["cls"], got["pitchSize"]
-    assert got["pitchSize"]["field"] == "person_weeks"
+    assert "edit" in got["taskSize"]["cls"], got["taskSize"]
+    assert got["taskSize"]["field"] == "person_weeks"
     assert "edit" in got["pitchStart"]["cls"], got["pitchStart"]
-    assert got["pitchStart"]["field"] == "assigned_on"
+    assert got["pitchStart"]["field"] == "start_date"
 
     # The cell shows the forecast.
     assert got["pitchStart"]["text"], "the start cell drew nothing at all"
-    # The box opens on the field, which is empty: this pitch has no assigned_on.
+    # The box opens on the field, which is empty: this pitch has no start_date.
     assert got["pitchStartBox"] == "", (
         f"the editor opened on the forecast {got['pitchStartBox']!r}; typing Enter "
         "would have written the scheduler's own guess into the file"
     )
     # And where the field IS written, that is what the box holds.
     assert got["projectStartBox"] == "2026-07-01", got["projectStartBox"]
-    assert got["pitchSizeBox"] == "3", got["pitchSizeBox"]
+    assert got["taskSizeBox"] == "1.5", got["taskSizeBox"]
 
     # A kind that reads neither field is still refused, by the rule that was
     # already there rather than by one written for this.
@@ -3363,8 +3417,602 @@ def test_the_editor_opens_on_the_written_value_and_not_the_forecast(page: str):
 
     # And the tooltip says what the cell is showing before it says how to change
     # it, so an empty box does not read as a bug.
-    assert "Shows the appetite" in got["pitchSize"]["tip"], got["pitchSize"]["tip"]
-    assert "Editing sets assigned_on" in got["pitchStart"]["tip"], got["pitchStart"]["tip"]
+    assert "Shows the appetite" in got["taskSize"]["tip"], got["taskSize"]["tip"]
+    assert "Editing sets start_date" in got["pitchStart"]["tip"], got["pitchStart"]["tip"]
+
+
+@pytest.fixture
+def dated_page() -> str:
+    """Two tasks under a pitch: one shaping with a date and no size, one ready
+    with a size and no date.
+
+    The first is the shape §2 of `design/time-model.md` created — no appetite, so
+    no span — carrying the `start_date` §1b makes legitimate on a record nobody
+    has bet on yet. The second is what the same column looks like when the answer
+    in it really is the scheduler's.
+    """
+    from openproj.render import render_table
+
+    records = [
+        Pitch(
+            id=PITCH,
+            kind="pitch",
+            title="Verify the aroma transport port",
+            status="ready",
+            owner="ann",
+            assignees=["ann"],
+            reviewers=["bo"],
+            person_weeks=3.0,
+        ),
+        Task(
+            id=TASK,
+            kind="task",
+            title="Shape the seam artefact",
+            parent=PITCH,
+            status="shaping",
+            owner="ann",
+            reviewers=["bo"],
+            start_date=date(2026, 9, 7),
+        ),
+        Task(
+            id=OTHER,
+            kind="task",
+            title="Downgrade numpy for global sums",
+            parent=PITCH,
+            status="ready",
+            owner="ann",
+            assignees=["ann"],
+            reviewers=["bo"],
+            person_weeks=1.0,
+        ),
+    ]
+    return render_table(
+        build_index(records, Config(), date(2026, 8, 17)),
+        base_commit="0" * 40,
+        may_write=True,
+    )
+
+
+def test_a_start_date_nobody_forecast_is_still_drawn_in_the_column_that_edits_it(
+    dated_page: str,
+):
+    """**A cell that is the editor for a field must show what that field holds.**
+
+    With no default appetite (§2) a `thinking` or `shaping` record gets no span,
+    and the Start column read the span alone — so a shaping task carrying
+    `start_date: 2026-09-07` drew nothing, while the record page's own Start date
+    row printed it. The cell is a control writing `start_date`, so a person could
+    type a date into it, watch the PATCH commit, and watch the cell stay empty:
+    the one failure mode a derived column is closed to editing to avoid, in the
+    column that was opened.
+
+    And the two answers are told apart the way the rest of the app tells a
+    computed value from a typed one — `.derived`, muted and italic — because a
+    stated date is not a forecast and must not be dressed as one.
+
+    Driven in node, because the rows are built in the browser: which cell carries
+    which class and what its title says exists nowhere in the rendered file.
+    """
+    answer = drive_table(
+        dated_page,
+        "(() => {"
+        "  const cell = id =>"
+        '    tbody.querySelector(`tr[data-id="${id}"] td[data-col="start"]`);'
+        "  const look = td => ({cls: td.className, field: td.dataset.field || null,"
+        "                       text: td.textContent.trim(), tip: td.getAttribute('title')});"
+        f"  return {{shaping: look(cell('{TASK}')), ready: look(cell('{OTHER}'))}};"
+        "})()",
+    )
+    stated, forecast = answer["value"]["shaping"], answer["value"]["ready"]
+
+    # Day-first, and the year is a `<span>` the driver reports separately.
+    assert stated["text"].startswith("07.09"), stated
+    assert "edit" in stated["cls"], stated
+    assert stated["field"] == "start_date"
+    # Not dressed as a forecast: nobody forecast anything about this record.
+    assert "derived" not in stated["cls"], stated
+    assert "Shows start_date, which this record states." in stated["tip"], stated["tip"]
+
+    # And where the date really is the scheduler's, the cell says so in both
+    # channels — the same sentence it has always carried, and the muted italic
+    # every other computed value on this page wears.
+    assert forecast["text"], "the ready task was given no start at all"
+    assert "derived" in forecast["cls"], forecast
+    assert "Shows the scheduled start." in forecast["tip"], forecast["tip"]
+
+
+def rollup_plan(bet: float | None, kids: tuple[tuple[float | None, str], ...]) -> Index:
+    """A pitch and its tasks, all on one person, so the box and the contents are
+    both arithmetic a reader of the test can do in their head.
+
+    One name on everything is what makes that true: `_duration_weeks` divides an
+    appetite by the availability of the people on it, so a bet of 2.0 with one
+    full-time name buys exactly two calendar weeks, and two tasks on that same
+    name queue behind each other and occupy the sum of their own. Two names would
+    make every number here a division nobody reading the assertion can check.
+
+    Derived from the model rather than described: the sizes go in as
+    `person_weeks` and everything else — the spans, the box, the union of the
+    days — is what the scheduler makes of them, which is the arithmetic the cell
+    is drawing.
+    """
+    from openproj.model import Config, Pitch, Task
+
+    records: list = [
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Q",
+            assignees=["ann"],
+            **({"person_weeks": bet} if bet is not None else {}),
+        )
+    ]
+    for at, (size, status) in enumerate(kids, start=1):
+        records.append(
+            Task(
+                id=f"task-00000{at}",
+                kind="task",
+                title="T",
+                parent="pitch-000001",
+                status=status,
+                assignees=["ann"],
+                **({"person_weeks": size} if size is not None else {}),
+            )
+        )
+    return build_index(records, Config(), date(2026, 8, 17))
+
+
+def test_a_size_cell_over_work_reads_that_work_against_the_box_the_bet_bought():
+    """**The five readings the cell can carry, and the sentence for each.**
+
+    A bet is a box and its tasks are what somebody proposes to put in it, so the
+    one thing the appetite column has to answer about a pitch is whether that
+    still fits. The number is the days its tasks occupy — calendar against
+    calendar, because a pitch bet at eight person-weeks with two people on it has
+    bought four calendar weeks and that is the box.
+
+    Four of the five are the design's own table. The fourth is the one that is
+    easy to leave out and is the reason the other three can be trusted: with no
+    default appetite left, a pitch holding one sized task and one nobody has
+    estimated occupies only the days of the first, which is under the box — and
+    green there would say a bet is known to fit when half of it has never been
+    looked at. Good has to mean *known* to be under.
+
+    The fifth is a pitch nobody has bet on yet. It has contents and no box, so it
+    reports the contents and offers no verdict: `_rollup_problems` is silent
+    about that record, and a page shouting where the validator says nothing
+    teaches a reader that one of the two is lying to them.
+    """
+    from openproj.render.table import _ROLLUP_GLYPH
+
+    cases = {
+        "under": (3.0, ((1.0, "ready"),)),
+        "level": (2.0, ((2.0, "ready"),)),
+        "over": (1.0, ((2.0, "ready"),)),
+        # `shaping` and not `ready`, because the size gate reaches `ready`: an
+        # unsized task there is a blocker, and this state is about the work that
+        # is legitimately unsized and still part of the bet.
+        "unsized": (3.0, ((1.0, "ready"), (None, "shaping"))),
+        "unbet": (None, ((1.0, "ready"),)),
+    }
+    read = {}
+    for wanted, (bet, kids) in cases.items():
+        index = rollup_plan(bet, kids)
+        read[wanted] = _row(index, "pitch-000001")["rollup"]
+        # Every one of them is a leaf's cell untouched: a task draws its own
+        # appetite and nothing else, or the column would be a record agreeing
+        # with itself.
+        assert _row(index, "task-000001")["rollup"] is None
+
+    # Each case is named after the reading it is built to produce, so the map is
+    # its own expectation.
+    assert {name: one["state"] for name, one in read.items()} == {name: name for name in cases}, (
+        read
+    )
+    # The number is the days the tasks occupy and not the bet, on every one of
+    # them — including `over`, where the two are furthest apart.
+    assert [one["text"] for one in read.values()] == [
+        "1.0 in tasks",
+        "2.0 in tasks",
+        "2.0 in tasks",
+        "1.0 in tasks",
+        "1.0 in tasks",
+    ], read
+
+    # Colour is the first channel and a mark is the second, because colour is the
+    # one channel a dichromat loses and this cell answers "will this fit".
+    assert {name: _ROLLUP_GLYPH[name] for name in read} == {
+        "under": "\u25be",
+        "level": "=",
+        "over": "\u25b4",
+        "unsized": "?",
+        # No mark, because there is no box to be under, level with or over.
+        "unbet": "",
+    }
+
+    # And the comparison is in words, so the reading is not colour-only.
+    #
+    # **The sentence names the bet, the people and what that buys, and it used to
+    # name only the last of the three.** `bet 3.0 weeks` was what these rows said
+    # on a record whose file says `person_weeks: 3` — the same number here only
+    # because one full-time name holds it, and `bet 4.0 weeks` on the corpus pitch
+    # whose file says 8. That sends a reader into the file after a figure written
+    # nowhere in it. The box is still the only number the verdict is made against,
+    # because the appetite is in person-weeks and the days are in calendar ones;
+    # what changed is that the conversion is now on the line instead of assumed.
+    assert read["over"]["why"] == (
+        "Bet 1 over 1 person, which buys 1.0 weeks; its tasks need 2.0 — over the box."
+    )
+    assert read["under"]["why"] == (
+        "Bet 3 over 1 person, which buys 3.0 weeks; its tasks need 1.0 — inside the box."
+    )
+    assert read["level"]["why"] == (
+        "Bet 2 over 1 person, which buys 2.0 weeks; its tasks need 2.0 — exactly the box."
+    )
+    assert read["unsized"]["why"] == (
+        "Bet 3 over 1 person, which buys 3.0 weeks; its tasks need 1.0 — "
+        "but 1 of its 2 have no length yet, so that can only grow."
+    )
+    assert read["unbet"]["why"] == "No bet on this yet. Its tasks need 1.0 weeks."
+
+
+def test_a_bet_none_of_whose_tasks_is_sized_still_gets_the_reading_that_says_so():
+    """**The fourth state reaches the record it was written for, which is the
+    worst case and was the one it missed.**
+
+    A pitch holding three sized tasks and four unsized ones got the `?`, because
+    the three that were sized gave it a number to hang the reading on. A pitch
+    whose tasks are ALL unsized got nothing at all: it is scheduled nowhere, so
+    `Span.elapsed_weeks` has nothing to report, `_tasks_add_up_to` answers None,
+    and `_rollup` returned None with it — no mark, no muted ground, no sentence,
+    and the bet drawn plainly in a cell that offered an editor on it. Strictly
+    less is known about that bet than about the one that gets the warning, and
+    the table said strictly more about it.
+
+    So the gate is having work underneath rather than having a number for it, and
+    the missing number is the reading: `?` over "no length yet", with the bet, the
+    people and the fact that nothing has been estimated in the sentence.
+
+    Both plans are asked in one test on purpose. The pair is the whole claim —
+    they are the same state, and a fix that gave the second one its own wording
+    would have made "nobody has sized this" read as two different things
+    depending on how thoroughly nobody had done it.
+    """
+    from openproj.render.table import _ROLLUP_GLYPH
+
+    nothing = rollup_plan(8.0, ((None, "shaping"), (None, "shaping"), (None, "shaping")))
+    some = rollup_plan(8.0, ((1.0, "ready"), (None, "shaping")))
+
+    # The case as it arrives: no span, so no dates and no box either — which is
+    # why the sentence below can name the bet and the people and stops there.
+    assert nothing.spans.get("pitch-000001") is None
+    assert _row(nothing, "pitch-000001")["start"] is None
+
+    read = _row(nothing, "pitch-000001")["rollup"]
+    assert read is not None, "the bet with nothing sized under it is the case the state is for"
+    assert read["state"] == _row(some, "pitch-000001")["rollup"]["state"] == "unsized"
+    assert _ROLLUP_GLYPH[read["state"]] == "?"
+    # No number, and none invented: `0.0 in tasks` would be a measurement of
+    # nothing drawn as a measurement, and the sort key is None for the same
+    # reason — the column puts the row where it puts an unsized leaf rather than
+    # where a bet its own cell no longer shows would fall.
+    assert read["weeks"] is None
+    assert read["text"] == "no length yet"
+    assert "8" not in read["text"], read["text"]
+    # The row still carries the bet, because the gate that asks for one at
+    # `ready` reads this key — it is the cell that stops drawing it.
+    assert _row(nothing, "pitch-000001")["size"] == 8.0
+    # And the sentence says what is known and what is not: the bet as the file
+    # states it, in person-weeks, over the people it is staffed with.
+    assert read["why"] == (
+        "Bet 8 over 1 person. Nothing under it has a length yet, "
+        "so nothing can be said about whether it fits."
+    )
+
+
+def test_a_child_adds_nothing_when_it_has_no_length_and_not_only_when_unsized(tmp_path: Path):
+    """The predicate behind the fourth reading is the SPAN, not `person_weeks`.
+
+    They come apart, and this corpus is where: `task-c00003` is done and was
+    written before an end date was asked for, so it carries an appetite, it is in
+    the progress rollup, and the days it contributes to the union are none. Read
+    off the field, the pitch above it counts three tasks of three and paints a
+    verdict on a number two of them made. Read off the span — which is where the
+    number in the cell came from — it says one of the three adds nothing yet, and
+    what is drawn is a floor.
+
+    Asked of the corpus rather than of a plan built for it, because this is a
+    case somebody has to think of before they can construct it, and the corpus
+    already had it.
+    """
+    from openproj.model import size_weeks
+
+    root = tmp_path / "plan"
+    for name, text in SEED.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text)
+    records, config, _ = load_repo(root)
+    index = build_index(records, config, date(2026, 8, 17))
+
+    assert all(size_weeks(index.plan[one]) is not None for one in index.children[PITCH]), (
+        "every task under this pitch is sized, so a field-based reading would see nothing wrong"
+    )
+    rollup = _row(index, PITCH)["rollup"]
+
+    assert rollup["state"] == "unsized", rollup
+    assert "1 of its 3 have no length yet" in rollup["why"], rollup
+
+
+def test_a_container_that_holds_no_appetite_is_given_no_reading_of_one():
+    """A project has work under it and no bet of its own, and its appetite cell
+    stays as empty as it has always been.
+
+    `_rollup_problems` says this in as many words — "a project is not bet, its
+    pitches are, and its span is their rollup" — so a number in that column would
+    be a box nobody bought, drawn in a column the row's own rule already empties.
+    `unread_fields` is that rule and is asked here rather than restated, so a
+    seventh rung needs no edit.
+
+    It is also what keeps this cell and the record page saying one thing. The
+    record page builds its Appetite row out of the model's fields, and a project
+    has no `person_weeks` field to build it from — so a table drawing `17.4 in
+    tasks` there would be the only surface in the app that thinks a project has
+    an appetite.
+    """
+    records, config, _ = load_repo(Path(__file__).resolve().parents[1] / "seed")
+    index = build_index(records, config, date(2026, 8, 17))
+    containers = [
+        record_id
+        for record_id, record in index.plan.items()
+        if _SIZE_FIELD_NAME in unread_fields(record.kind) and index.children.get(record_id)
+    ]
+
+    assert containers, "the corpus has no container with work under it, so nothing was asked"
+    for record_id in containers:
+        assert _row(index, record_id)["rollup"] is None, record_id
+    # And the rungs that DO read one still get it, or this would pass by drawing
+    # the cell nowhere at all.
+    assert any(_row(index, record_id)["rollup"] for record_id in index.plan)
+
+
+def test_a_rollup_size_cell_refuses_the_editor_it_could_not_honour(page: str):
+    """**A cell that shows a derived number and edits a stored one asks a person
+    to type at a value they cannot see.**
+
+    That is the rule the two derived-value columns were closed to editing for in
+    the first place, and re-opening them was made safe by the editor opening on
+    the written field. It cannot be made safe here: the pitch's size cell no
+    longer shows the pitch's appetite at all, it shows what its tasks occupy, so
+    an editor on `person_weeks` would be a box holding a number that is nowhere
+    on the row. The bet is still typed on the record's own page and at the
+    betting table, which is where a pitch's tasks are argued about.
+
+    The refusal is the mechanism this page already had rather than a second one:
+    the cell carries the reason, a double-click answers with it, and the class
+    says the value is derived. A cell that silently ignores a double-click is
+    indistinguishable from a cell that is broken.
+
+    Driven in node, because the rows are built in the browser: which cell is a
+    control exists in no rendered file.
+    """
+    answer = drive_table(
+        page,
+        "(() => {"
+        "  const at = (id, col) =>"
+        '    tbody.querySelector(`tr[data-id="${id}"] td[data-col="${col}"]`);'
+        "  const look = td => ({cls: td.className, field: td.dataset.field || null,"
+        "                       record: td.dataset.record || null,"
+        "                       why: td.dataset.why || null, tab: td.getAttribute('tabindex'),"
+        "                       text: td.textContent.trim(),"
+        "                       tip: td.getAttribute('title') || ''});"
+        f"  const out = {{pitch: look(at('{PITCH}', 'size')), task: look(at('{TASK}', 'size'))}};"
+        f"  openEditor(at('{PITCH}', 'size'));"
+        f"  out.opened = !!at('{PITCH}', 'size').querySelector('input, select');"
+        "  return out;"
+        "})()",
+    )
+    got = answer["value"]
+
+    # Not a control: no field to write, no record to write it to, and the class
+    # that says the number came from somewhere else.
+    assert got["pitch"]["field"] is None, got["pitch"]
+    assert got["pitch"]["record"] is None, got["pitch"]
+    assert "edit" not in got["pitch"]["cls"], got["pitch"]["cls"]
+    assert "derived" in got["pitch"]["cls"], got["pitch"]["cls"]
+    assert not got["opened"], "the editor opened on a value the cell is not showing"
+    # And it says why, in the same place every other computed cell does — so the
+    # double-click is answered rather than ignored.
+    assert "its tasks need " in got["pitch"]["why"], got["pitch"]["why"]
+    # Still on the keyboard's path. Read-only is not out of reach: the sentence
+    # this cell carries is the one worth arriving at.
+    assert got["pitch"]["tab"] == "-1", got["pitch"]
+
+    # One rung down nothing changed. A task draws its own appetite and edits it.
+    assert got["task"]["field"] == "person_weeks", got["task"]
+    assert "edit" in got["task"]["cls"], got["task"]["cls"]
+
+
+def test_the_rollup_cell_says_what_it_is_showing_and_how_it_reads(page: str):
+    """The cell draws the tasks' number in the record page's own words, the mark
+    for how it reads against the box, and the comparison in a sentence.
+
+    The bet is deliberately not printed beside it — jcanton, 2026-08-27: "the
+    colour already says whether it is under, level or over, so repeating the bet
+    is a number for nothing" — and the records that make up the sum are not named
+    either, because they are the rows directly underneath: the table is a tree.
+
+    The corpus's pitch is `unsized`, and by the case worth having: it holds three
+    tasks, one of them done before `end_date` existed, so what the other two
+    occupy is a floor and the cell says so rather than painting a verdict on it.
+    """
+    answer = drive_table(
+        page,
+        "(() => {"
+        f'  const td = tbody.querySelector(`tr[data-id="{PITCH}"] td[data-col="size"]`);'
+        "  const mark = td.querySelector('.rollmark');"
+        "  return {cls: td.className, text: td.textContent.trim(),"
+        "          first: td.children.length ? td.children[0].className : null,"
+        "          mark: mark ? mark.textContent : null,"
+        "          named: mark ? mark.getAttribute('aria-label') : null,"
+        "          role: mark ? mark.getAttribute('role') : null,"
+        "          tip: td.getAttribute('title') || ''};"
+        "})()",
+    )
+    got = answer["value"]
+
+    # The tasks' number, in the sentence the record page prints under Appetite —
+    # taken off the row rather than written down here, because the union of days
+    # two `ready` tasks occupy is measured from the day the page was rendered and
+    # a number typed into this file would be right until tomorrow. What the
+    # arithmetic comes to is pinned against a fixed date above.
+    #
+    # `in` and not `==`, and that is about the harness rather than about the
+    # cell: `drive.js` keeps an element's OWN text in `textContent` and
+    # synthesises the leading text node from it, so a cell holding a `<span>` and
+    # a text node answers with the text node alone where a browser answers with
+    # both. An equality here would pass in node and fail in Chrome, or the other
+    # way round, and say nothing about the page either time.
+    said = payload(page)["rows"][PITCH]["rollup"]["text"]
+    assert said.endswith(" in tasks"), said
+    assert said in got["text"], (got["text"], said)
+    # And not the bet, which is 3 and is what this cell used to draw.
+    assert "3" not in got["text"].replace(said, ""), got["text"]
+    # The mark is an element of its own and the first thing in the cell, so a
+    # column of these reads as one column of verdicts rather than as numbers with
+    # something after them.
+    assert got["first"] == "rollmark", got
+    # The reading, as a ground and as a mark: two channels, because the fill is
+    # the one a reader with colour blindness does not get.
+    assert "roll-unsized" in got["cls"], got["cls"]
+    assert got["mark"] == "?", got
+    # The mark is named rather than hidden. The words beside it are `2.2 in
+    # tasks`, which is the half of this cell that does NOT say whether the bet
+    # fits, so a reader who cannot see the ground would be given a number and no
+    # reading of it.
+    assert got["role"] == "img", got
+    assert "have no length yet" in (got["named"] or ""), got
+    # The comparison in words, on the cell itself. The box is the calendar weeks
+    # the bet bought and not the stated appetite — three person-weeks over one
+    # name, which is the same number here only because that name is full-time —
+    # and the sentence carries the conversion rather than leaving a reader to
+    # find a 3.0 the file does not contain.
+    assert "Bet 3 over 1 person, which buys 3.0 weeks; its tasks need " in got["tip"], got["tip"]
+
+
+def test_the_tint_on_a_rollup_cell_and_the_warning_on_it_cannot_disagree(page: str):
+    """**One comparison, drawn once.**
+
+    `_rollup_problems` fires on exactly `elapsed_weeks > budget_weeks`,
+    `MARK_COLUMN` routes its `person_weeks` field to this column, and the cell is
+    grounded in the severity fill because of it. So the `over` state deliberately
+    has no ground of its own: a `.roll-over` rule would be a second copy of
+    `--sev-warn-soft` written beside a second copy of the comparison that decides
+    it, and the only thing two copies of one rule can ever do is disagree — a
+    green cell with a warning triangle in it, or a warned cell with nothing to
+    act on.
+
+    Both halves are asked. The states are pinned against the validator's own
+    output over a corpus holding every reading, and the stylesheet is resolved
+    rather than grepped: a rule being in the sheet says nothing about whether it
+    wins, which is the only thing a reader sees.
+    """
+    from cascade import el, sheet_of
+
+    every = (
+        (1.0, ((2.0, "ready"),)),
+        (3.0, ((1.0, "ready"),)),
+        # A bet its tasks fill exactly. Both sides are read in whole working days
+        # for this to be reachable at all, and it is the case a `>=` written into
+        # either half would paint warn while the other one said nothing.
+        (2.0, ((2.0, "ready"),)),
+        # Over the box AND holding something nobody has sized, which is the pair
+        # that decides the order the states are tried in: the warning fires on
+        # this record, so the cell may not report the reading that has no
+        # warning behind it.
+        (1.0, ((2.0, "ready"), (None, "shaping"))),
+        (None, ((1.0, "ready"),)),
+    )
+    for bet, kids in every:
+        index = rollup_plan(bet, kids)
+        state = _row(index, "pitch-000001")["rollup"]["state"]
+        warned = [
+            problem
+            for problem in index.problems
+            if problem.record_id == "pitch-000001" and "its tasks need" in problem.message
+        ]
+        assert bool(warned) == (state == "over"), (bet, kids, state, warned)
+
+    sheet = sheet_of(page)
+    where = [el("body"), el("main", id="main"), el("div", "table-scroll"), el("table", id="rows")]
+    row = where + [el("tbody"), el("tr")]
+
+    # No rule anywhere in the served sheet reaches `over` — the second copy this
+    # test is written about would be one, whatever it painted — so the ground the
+    # cell is drawn in is the mark's, resolved rather than assumed.
+    assert not [one for one in sheet.rules if "roll-over" in one.selector], [
+        one.selector for one in sheet.rules if "roll-over" in one.selector
+    ]
+    over = row + [el("td", "derived roll-over sev-cell-warn", data_col="size")]
+    assert sheet.value(over, "background") == "var(--sev-warn-soft)", sheet.winner(
+        over, "background"
+    )
+
+    # And a blocker on the appetite of a record whose tasks happen to fit beats
+    # the green, on weight and not on the order this sheet ends up in: the rollup
+    # grounds are one class each, which is the lightest rule that can reach these
+    # cells.
+    fits = row + [el("td", "derived roll-under sev-cell-blocker", data_col="size")]
+    assert sheet.value(fits, "background") == "var(--sev-blocker-soft)", sheet.winner(
+        fits, "background"
+    )
+    # With no problem on it, the reading is what paints.
+    under = row + [el("td", "derived roll-under", data_col="size")]
+    assert sheet.value(under, "background") == "var(--st-done-soft)", sheet.winner(
+        under, "background"
+    )
+    # `level` is `.inherited`'s own declaration and not a second rule holding the
+    # same colour: the class already means "this value came from the work
+    # underneath", which is what a bet its tasks fill exactly is.
+    level = row + [el("td", "derived roll-level", data_col="size")]
+    inherited = row + [el("td", "inherited", data_col="reviewers")]
+    assert sheet.value(level, "background") == sheet.value(inherited, "background")
+    assert sheet.value(level, "background") == "var(--st-ready-soft)"
+
+
+def test_the_number_in_the_size_cell_is_the_number_the_record_page_prints():
+    """One fact, one implementation, pinned from both ends.
+
+    This repository has been bitten four times by one fact written twice, and the
+    fourth was this exact number: the record page read `index.progress[id].total`
+    while `check` summed only the sized children, so the page printed a larger
+    number than the one the validator was warning about. Both read
+    `Span.elapsed_weeks` now, and this cell is the third reader — a table drawing
+    `5.6 in tasks` beside a record page saying `5.1` would be the same defect
+    wearing a new hat, and nothing else on either page would notice.
+    """
+    from openproj.render import STATIC, _fact_rows
+
+    records, config, _ = load_repo(Path(__file__).resolve().parents[1] / "seed")
+    index = build_index(records, config, date(2026, 8, 17))
+    checked = 0
+    for record_id, record in index.plan.items():
+        rollup = _row(index, record_id)["rollup"]
+        appetite = [
+            row
+            for row in _fact_rows(index, record, STATIC)
+            if str(row["label"]).startswith("Appetite")
+        ]
+        # `weeks is None` is the one reading with no number to pin: nothing under
+        # that record has a length, so the cell says "no length yet" and the
+        # record page draws the appetite field the way it draws any other field
+        # nothing has been computed from. Two different sentences about the same
+        # record, and neither is a number, so there is nothing here for them to
+        # disagree about.
+        if rollup is None or rollup["weeks"] is None or not appetite:
+            continue
+        assert rollup["text"] in str(appetite[0]["display"]), (record_id, rollup, appetite[0])
+        checked += 1
+    assert checked, "no record in the corpus draws this cell, so nothing was pinned"
 
 
 def test_every_control_on_the_create_form_has_a_name(new_page: str):
@@ -3524,16 +4172,20 @@ def test_the_new_row_offers_the_fields_that_kind_has_and_no_others():
     assert fields["pitch"]["size"] == "person_weeks"
     assert fields["task"]["size"] == "person_weeks"
     assert "size" not in fields["project"], "a project has no size of its own"
-    # The two columns that show a derived value and write the one underneath it.
+    # The three columns that show one value and write the one underneath it.
     # `start` joined `size` here on 2026-08-27: it shows the scheduled day and
-    # writes `assigned_on`, the earliest the work may begin, which is a field a
-    # person owns on every kind the scheduler dates.
-    assert fields["task"]["start"] == "assigned_on"
+    # writes `start_date`, the earliest the work may begin, which is a field a
+    # person owns on every kind the scheduler dates. `end` joined them when a
+    # done record's End cell stopped being a forecast — it writes `end_date`, and
+    # a record created straight into `done` is exactly where that is typed.
+    assert fields["task"]["start"] == "start_date"
+    assert fields["task"]["end"] == "end_date"
     assert "start" not in fields["product"], "a product is never scheduled"
+    assert "end" not in fields["product"], "nor does it ever finish"
     for kind, columns in fields.items():
         assert "id" not in columns, f"the server mints the id, not the browser ({kind})"
-        for derived in ("end", "blocked_by", "progress"):
-            assert derived not in columns, f"{derived} is the scheduler's ({kind})"
+        for derived in ("blocked_by", "progress"):
+            assert derived not in columns, f"{derived} is counted, not typed ({kind})"
         for column, field in columns.items():
             assert field in EDITABLE, f"{column} writes to a field nobody owns"
 
@@ -3541,16 +4193,17 @@ def test_the_new_row_offers_the_fields_that_kind_has_and_no_others():
 def test_the_row_says_which_columns_it_cannot_be_typed_into_and_why(page: str):
     """Two different reasons a cell takes nothing, and a blank cell says neither.
 
-    A project has no Appetite; nobody has an End, because the scheduler works it
-    out from the start and the size. Both are drawn as cells that cannot be
+    A project has no Appetite; nobody has a Blockers count, because it is counted
+    from the records that name this one. Both are drawn as cells that cannot be
     filled in, and each carries the sentence that belongs to it — asked of the
     map rather than listed in the page, so a column that becomes kind-only later
     explains itself without this line changing.
 
-    `end` and not `start`, which is what this asked before 2026-08-27. `start`
-    stopped being one of these the day the column began writing `assigned_on`;
-    `end` is the one that is genuinely nobody's to type, because there is no
-    field under it at all.
+    `blocked_by` and not one of the dates, which is what this asked until the
+    dates became controls. `start` stopped being one of these on 2026-08-27, when
+    the column began writing `start_date`, and `end` stopped when a done record's
+    End cell turned out to be showing the `end_date` its own file records. What
+    is left in this half of the test is the column with no field under it at all.
     """
     answer = drive_table(
         page,
@@ -3560,17 +4213,18 @@ def test_the_row_says_which_columns_it_cannot_be_typed_into_and_why(page: str):
         '    const td = tbody.querySelector(`tr.draft td[data-col="${column}"]`);'
         "    return [td.getAttribute('class'), td.getAttribute('title')];"
         "  };"
-        "  return {size: tip('size'), end: tip('end'), start: tip('start'),"
-        "          title: tip('title')};"
+        "  return {size: tip('size'), blocked: tip('blocked_by'), start: tip('start'),"
+        "          end: tip('end'), title: tip('title')};"
         "})()",
     )
     got = answer["value"]
 
     assert got["size"][0] == "draft-none"
     assert got["size"][1] == "A project has no appetite"
-    assert got["end"][0] == "draft-none"
-    assert "Derived from" in got["end"][1], "the scheduler's own sentence, not a new one"
+    assert got["blocked"][0] == "draft-none"
+    assert "Counted from" in got["blocked"][1], "the page's own sentence, not a new one"
     assert "edit" in got["start"][0], "a project is scheduled, so it has a start to set"
+    assert "edit" in got["end"][0], "and an end to record when it finishes"
     assert "edit" in got["title"][0], "and the column it does have is a control"
 
 
@@ -3740,18 +4394,23 @@ def test_what_the_server_refuses_a_row_with_is_shown_beside_it(page: str):
             {
                 "status": 422,
                 "json": {
+                    # `drawn` beside `message`, because a Problem carries both
+                    # and a page draws the day-first one: neither of these
+                    # sentences names a date, so here they are the same string.
                     "problems": [
                         {
                             "severity": "blocker",
                             "record_id": "pitch-000000",
                             "field": "owner",
                             "message": "a ready record needs an owner",
+                            "drawn": "a ready record needs an owner",
                         },
                         {
                             "severity": "blocker",
                             "record_id": "pitch-000000",
                             "field": "assignees",
                             "message": "a ready record needs somebody on it",
+                            "drawn": "a ready record needs somebody on it",
                         },
                     ]
                 },
@@ -4872,7 +5531,7 @@ def test_a_row_that_names_no_reviewer_shows_the_ones_under_it(tmp_path: Path):
             owner="ann",
             reviewers=[],
             person_weeks=4,
-            assigned_on=date(2026, 8, 10),
+            start_date=date(2026, 8, 10),
         ),
         Task(
             id="task-000001",
@@ -4883,7 +5542,7 @@ def test_a_row_that_names_no_reviewer_shows_the_ones_under_it(tmp_path: Path):
             owner="ann",
             reviewers=["bo"],
             person_weeks=2,
-            assigned_on=date(2026, 8, 10),
+            start_date=date(2026, 8, 10),
         ),
         Task(
             id="task-000002",
@@ -4894,7 +5553,7 @@ def test_a_row_that_names_no_reviewer_shows_the_ones_under_it(tmp_path: Path):
             owner="bo",
             reviewers=["cy"],
             person_weeks=2,
-            assigned_on=date(2026, 8, 10),
+            start_date=date(2026, 8, 10),
         ),
     ]
     page = render_table(build_index(records, Config(), date(2026, 8, 17)))
@@ -5087,6 +5746,121 @@ def test_a_blocker_that_is_done_is_not_a_blocker(client: TestClient, repo_path: 
     assert blockers_of(TASK) == 1
     assert save(client, OTHER, {"status": "shelved"}).status_code == 200
     assert blockers_of(TASK) == 0
+
+
+def test_a_complaint_about_a_date_lands_on_the_date_cell(client: TestClient, repo_path: Path):
+    """**The cell a mark hangs on is the cell the mark tells you to edit.**
+
+    `MARK_COLUMN` routed `person_weeks` and `depends_on` to their columns and
+    knew nothing about the two dates, while `_COLUMN_FIELD` — the same mapping,
+    written down separately and one direction over — knew `start` was
+    `start_date`. So the table drew a Start column and an End column that no
+    problem about a start or an end could reach: every one of them fell through
+    to `'id'`, under a tooltip whose last line says the fix "is to edit the cell
+    the sentence is on".
+
+    Driven rather than grepped, and asserted on the WHOLE set of marked columns
+    per row rather than on the presence of one. The rows are built in the
+    browser, so which cell carries a glyph exists in no rendered file — and a
+    substring of `MARK_COLUMN` cannot tell a route that works from a route that
+    is written down and then overridden by the fallback beneath it.
+
+    The two problems are the corpus's own: `DRIFTED` is a ready task whose stated
+    start date has gone by, and `DONE` is a done task with no `end_date` (a
+    warning rather than a blocker here only because the seed declares
+    `schema_version: 2`, which is what grandfathering is for). Both are read off
+    the payload rather than typed, so a change to either rule's wording moves
+    this test with it instead of past it.
+    """
+    from test_web import DONE, DRIFTED, DRIFTED_SEED
+
+    commit_directly(repo_path, DRIFTED_SEED, "a task whose date has gone by")
+    page = client.get("/table").text
+    problems = json.loads(
+        re.search(r'<script id="payload" type="application/json">(.*?)</script>', page, re.S).group(
+            1
+        )
+    )["problems"]
+    said = {(p["record_id"], p["field"]): p["drawn"] for p in problems}
+    assert (DRIFTED, "start_date") in said, said
+    assert (DONE, "end_date") in said, said
+
+    answer = drive_table(
+        page,
+        "(() => {"
+        "  const out = {};"
+        "  for (const tr of tbody.querySelectorAll('tr[data-id]')) {"
+        "    const marks = {};"
+        "    for (const td of tr.querySelectorAll('td[data-col]')) {"
+        "      const glyph = td.querySelector('.sev-mark');"
+        "      if (glyph) marks[td.getAttribute('data-col')] ="
+        "        glyph.getAttribute('aria-label');"
+        "    }"
+        "    out[tr.getAttribute('data-id')] = marks;"
+        "  }"
+        "  return out;"
+        "})()",
+    )
+    drawn = answer["value"]
+
+    # The whole set, so that a mark left behind on the id cell fails here too.
+    assert set(drawn[DRIFTED]) == {"assignees", "start"}, drawn[DRIFTED]
+    assert set(drawn[DONE]) == {"prs", "end"}, drawn[DONE]
+    # And it is the validator's own sentence on the cell, not some other row's.
+    assert drawn[DRIFTED]["start"] == said[(DRIFTED, "start_date")]
+    assert drawn[DONE]["end"] == said[(DONE, "end_date")]
+
+
+def test_the_end_cell_edits_the_date_a_done_record_records(client: TestClient):
+    """**The cell a mark hangs on has to be the cell that can answer it.**
+
+    Routing the `end_date` problems to the End column put "a done record needs
+    the date it ended" on a cell whose tooltip then said "Derived from the start
+    and the appetite" and which carried no `data-field` at all — so the mark
+    reached the right cell, the cell called the value computed, and the one edit
+    that would clear the mark was the one edit that cell refused.
+
+    It has not been a forecast on a done record since §4b of
+    `design/time-model.md` gave the done branch a typed `end_date` to end at, and
+    the record page has had an editable End date row for it the whole time. This
+    is the table agreeing: the column edits `end_date` where a record has one to
+    give, and says which of the two dates it is drawing.
+
+    Driven in node, because the rows are built in the browser.
+    """
+    from test_web import DONE, TASK
+
+    # `DONE` is the corpus's finished task and carries no `end_date` — the row
+    # the marked-but-uneditable cell was actually about — and `TASK` is
+    # in_progress, whose End really is the scheduler's.
+    assert save(client, DONE, {"end_date": "2026-06-30"}).status_code == 200
+    page = client.get("/table").text
+    answer = drive_table(
+        page,
+        "(() => {"
+        "  const cell = id =>"
+        '    tbody.querySelector(`tr[data-id="${id}"] td[data-col="end"]`);'
+        "  const look = td => ({cls: td.className, field: td.dataset.field || null,"
+        "                       text: td.textContent.trim(), tip: td.getAttribute('title')});"
+        f"  return {{done: look(cell('{DONE}')), running: look(cell('{TASK}'))}};"
+        "})()",
+    )
+    ended, forecast = answer["value"]["done"], answer["value"]["running"]
+
+    # The date the file records, drawn as the file's own rather than as a
+    # forecast, in a cell that opens on the field it came from.
+    assert ended["text"].startswith("30.06"), ended
+    assert "edit" in ended["cls"], ended
+    assert ended["field"] == "end_date"
+    assert "derived" not in ended["cls"], ended
+    assert "Shows end_date, the day this record records that it ended." in ended["tip"], ended[
+        "tip"
+    ]
+    # And the sentence that used to be the whole tooltip is kept for the rows it
+    # is still true of.
+    assert "derived from the start and the appetite" in forecast["tip"], forecast["tip"]
+    assert "derived" in forecast["cls"], forecast
+    assert forecast["field"] == "end_date", "still the editor, on a row with no date yet"
 
 
 def test_only_a_cell_with_something_in_the_way_is_tinted(page: str):
@@ -5310,6 +6084,7 @@ def test_a_refused_create_gives_the_check_back(page: str):
                             "record_id": "task-a1b2c3",
                             "severity": "blocker",
                             "message": "a task needs an owner before it can be ready",
+                            "drawn": "a task needs an owner before it can be ready",
                         },
                     ]
                 },
@@ -6197,3 +6972,306 @@ def test_a_plain_click_puts_the_selection_down(page: str, tmp_path: Path):
     )
 
     assert not got["ids"], f"{got['ids']} survived a plain click"
+
+
+# --------------------------------------------------------------------------- #
+# §4: marking work done asks for the day it ended, once
+#
+# The gate demands `end_date` at `done`, and that field is empty on every row
+# anybody is about to mark done — which is a different shape from every gate
+# before it. `owner`, `assignees` and `person_weeks` are answered once and then
+# stay answered, so a bulk status change met the refusal rarely; this one would
+# have met it every single time, about every single row.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def finishing_page(demo_root: Path) -> str:
+    """A table of two tasks that need exactly one thing to be Done: the date.
+
+    Built rather than committed, because the shared corpus deliberately holds a
+    done task with no PRs and two ready tasks with none either — and a row short
+    of a PR takes the refusal branch, which is the branch this fixture exists not
+    to take. Both tasks here cite a pull request and are otherwise complete, so
+    `missingFor(row, 'done')` is `['end_date']` and nothing else.
+    """
+    from openproj.render import render_table
+
+    common = dict(
+        kind="task",
+        parent=PITCH,
+        status="in_progress",
+        owner="ann",
+        assignees=["ann"],
+        reviewers=["bo"],
+        person_weeks=1.0,
+        start_date=date(2026, 8, 3),
+        prs=["kilnlab/kiln4py#1"],
+    )
+    records = [
+        Pitch(
+            id=PITCH,
+            kind="pitch",
+            title="Verify the aroma transport port",
+            status="ready",
+            owner="ann",
+            assignees=["ann"],
+            reviewers=["bo"],
+            person_weeks=3.0,
+        ),
+        Task(id=TASK, title="Reproduce the seam artefact", **common),
+        Task(id=OTHER, title="Downgrade numpy for global sums", **common),
+    ]
+    # `base_commit` and `may_write`, or the page comes back as the read-only
+    # export: everything this fixture is for lives inside the template's
+    # `editable` branch, and a signed-out reader's table has no `saveCell` in it
+    # at all.
+    return render_table(
+        build_index(records, Config(), date(2026, 8, 17)),
+        base_commit="0" * 40,
+        may_write=True,
+    )
+
+
+def today_here() -> str:
+    """Today as the page's `today()` answers it.
+
+    Both are the local calendar day: the shell's helper subtracts the timezone
+    offset before taking the ISO date, precisely so that a laptop east of
+    Greenwich in the evening does not offer tomorrow, and node runs in the same
+    zone this process does.
+    """
+    return date.today().isoformat()
+
+
+PICK_BOTH = (
+    f"  PICKED_FIELD = 'status'; PICKED.add('{TASK}'); PICKED.add('{OTHER}');"
+    f'  const cell = tbody.querySelector(\'td[data-record="{TASK}"][data-field="status"]\');'
+)
+
+
+def test_the_bulk_panel_asks_for_the_end_date_once_and_writes_it_to_the_selection(
+    finishing_page: str,
+):
+    """The gesture this whole selection mechanism exists for: select the finished
+    tasks, set Done, one commit.
+
+    It used to answer "None of these can be Done yet" — every time, because the
+    date is empty on every row by construction — so the refusal would have been
+    the only thing anybody ever saw. One panel, one answer, and it travels in the
+    same PATCH as the status: a selection that goes `done` and then has a date
+    added is two commits, and for the length of the first one the plan holds
+    records the validator refuses.
+    """
+    answer = drive_table(
+        finishing_page,
+        "(async () => {" + PICK_BOTH + "  await saveCells(cell, 'done');" + f"  {SETTLE}"
+        "  const panel = document.getElementById('askfor');"
+        "  const box = panel.querySelector('input[data-field=\"end_date\"]');"
+        "  const asked = {shown: !panel.hidden, said: panel.querySelector('.asking').textContent,"
+        "                 fields: [...panel.querySelectorAll('input')].map(i => i.dataset.field),"
+        "                 prefilled: box ? box.value : null};"
+        "  box.value = '2026-08-21';"
+        "  panel.querySelector('#asked').onclick();"
+        f"  {SETTLE}"
+        "  return asked;"
+        "})()",
+        replies=[
+            {
+                "status": 200,
+                "json": {
+                    "outcome": "committed",
+                    "commit": "b" * 40,
+                    "conflict": None,
+                    "pushed": True,
+                },
+            },
+            {"status": 200, "json": {"rows": {}, "problems": []}},
+            {"status": 200, "json": {"problems": []}},
+        ],
+    )
+
+    asked = answer["value"]
+    assert asked["shown"], "the selection was refused instead of being asked"
+    assert asked["fields"] == ["end_date"]
+    assert asked["prefilled"] == today_here(), "the one answer that is nearly always right"
+    assert "all 2 selected records" in asked["said"], asked["said"]
+
+    wrote = [call for call in answer["calls"] if call["method"] == "PATCH"]
+    assert len(wrote) == 1, "one gesture, one commit"
+    sent = json.loads(wrote[0]["body"])
+    assert sorted(sent["ids"]) == sorted([TASK, OTHER])
+    assert sent["fields"] == {"status": "done", "end_date": "2026-08-21"}
+
+
+def test_the_bulk_panel_still_refuses_what_it_cannot_ask_for(page: str):
+    """One answer for the whole batch is honest about a date — "these all finished
+    today" is one fact — and dishonest about everything else.
+
+    An owner, an appetite and a reviewer are one fact PER record, so prefilling
+    nine rows with one of them would commit a number nobody meant, in one commit,
+    on a protected branch. The refusal names the rows, which is what lets somebody
+    fix them and try again; it is the shared corpus here, whose two ready tasks
+    cite no pull request.
+    """
+    answer = drive_table(
+        page,
+        "(async () => {" + PICK_BOTH + "  await saveCells(cell, 'done');" + f"  {SETTLE}"
+        "  return {shown: !document.getElementById('askfor').hidden,"
+        "          said: document.getElementById('row-conflict').textContent};"
+        "})()",
+    )
+
+    assert answer["value"]["shown"] is False, "it asked for a field nobody can answer in bulk"
+    assert (
+        "can be Done yet" in answer["value"]["said"]
+        or "cannot be Done yet" in (answer["value"]["said"])
+    ), answer["value"]["said"]
+    assert not [call for call in answer["calls"] if call["method"] == "PATCH"]
+
+
+@pytest.fixture
+def reviving_page() -> str:
+    """Two tasks a bulk `in_progress` reads differently: one has never started,
+    and the other started in March and was finished.
+
+    This is the shape the union misses. The panel asks about the UNION of what
+    the selected rows are missing, and the finished row is missing nothing that
+    `in_progress` demands — so it says nothing about `start_date`, is asked
+    nothing, and used to take the answer anyway. Everything else that gate wants
+    is present on both rows, so the refusal that names a field nobody can answer
+    in bulk is out of the way and the date branch is the only one left.
+    """
+    from openproj.render import render_table
+
+    common = dict(
+        kind="task",
+        parent=PITCH,
+        owner="ann",
+        assignees=["ann"],
+        reviewers=["bo"],
+        person_weeks=1.0,
+        prs=["kilnlab/kiln4py#1"],
+    )
+    records = [
+        Pitch(
+            id=PITCH,
+            kind="pitch",
+            title="Verify the aroma transport port",
+            status="ready",
+            owner="ann",
+            assignees=["ann"],
+            reviewers=["bo"],
+            person_weeks=3.0,
+        ),
+        Task(id=TASK, title="Reproduce the seam artefact", status="ready", **common),
+        Task(
+            id=OTHER,
+            title="Downgrade numpy for global sums",
+            status="done",
+            start_date=date(2026, 3, 2),
+            end_date=date(2026, 4, 13),
+            **common,
+        ),
+    ]
+    return render_table(
+        build_index(records, Config(), date(2026, 8, 17)),
+        base_commit="0" * 40,
+        may_write=True,
+    )
+
+
+def test_the_bulk_answer_is_never_written_over_a_row_that_already_holds_one(reviving_page: str):
+    """A start date is history, and one box may not correct nine rows' worth of it.
+
+    Reopening finished work is the reachable version: select two tasks and set
+    them `in_progress`, one of which never started and one of which started on
+    2 March. The panel asked once because SOME row was short of a date, prefilled
+    today because that is nearly always the right answer for the row that is
+    short — and then wrote today over both, destroying a real start date in one
+    commit on a protected branch. `saveCell` could never do it: it asks
+    `missingFor` of the one row it is about, so the single path can only write a
+    field that row has not got.
+
+    The panel is answered here rather than merely counted, because the question
+    is not the defect — what the answer then reaches is — and a test that stopped
+    at "it asked" would pass against a panel that overwrites.
+    """
+    answer = drive_table(
+        reviving_page,
+        "(async () => {" + PICK_BOTH + "  await saveCells(cell, 'in_progress');" + f"  {SETTLE}"
+        "  const panel = document.getElementById('askfor');"
+        "  const shown = !panel.hidden;"
+        "  if (shown) { panel.querySelector('#asked').onclick();" + f" {SETTLE}" + " }"
+        "  return {shown, said: document.getElementById('row-conflict').textContent,"
+        # Read defensively: a save that lands re-reads the rows, so this page's
+        # copy of them is whatever the server sent back. The PATCH body below is
+        # what says what was written; this says what the reader is still shown.
+        f"          kept: (DATA.rows['{OTHER}'] || {{}}).start_date}};"
+        "})()",
+        replies=[
+            {
+                "status": 200,
+                "json": {
+                    "outcome": "committed",
+                    "commit": "b" * 40,
+                    "conflict": None,
+                    "pushed": True,
+                },
+            },
+            {"status": 200, "json": {"rows": {}, "problems": []}},
+            {"status": 200, "json": {"problems": []}},
+        ],
+    )
+
+    wrote = [call for call in answer["calls"] if call["method"] == "PATCH"]
+    assert not wrote, (
+        "one answer was written to every selected record, the row that already had "
+        f"a date included: {json.loads(wrote[0]['body']) if wrote else None}"
+    )
+    assert answer["value"]["shown"] is False, (
+        "it asked for a date one of the two selected rows already holds, and what "
+        "the panel asks for it writes to all of them"
+    )
+    assert answer["value"]["kept"] == "2026-03-02", "the date the record really started"
+
+    said = answer["value"]["said"]
+    assert OTHER in said, f"the refusal has to name the row to act on: {said!r}"
+    assert "start date" in said, f"and the field, in the reader's word for it: {said!r}"
+    assert TASK not in said, f"the row that was missing it is not the problem: {said!r}"
+
+
+def test_the_single_cell_panel_prefills_today_for_the_end_date(finishing_page: str):
+    """The prefill is keyed on the TYPE and not on a list of field names, which is
+    what it was — naming `start_date` alone, so the field that arrived beside it
+    offered an empty box in the one place the answer is nearly always today."""
+    answer = drive_table(
+        finishing_page,
+        "(async () => {"
+        f'  const cell = tbody.querySelector(\'td[data-record="{TASK}"]'
+        '[data-field="status"]\');'
+        "  await saveCell(cell, 'done');"
+        f"  {SETTLE}"
+        "  const panel = document.getElementById('askfor');"
+        "  return {shown: !panel.hidden,"
+        "          value: panel.querySelector('input[data-field=\"end_date\"]').value};"
+        "})()",
+    )
+
+    assert answer["value"]["shown"]
+    assert answer["value"]["value"] == today_here()
+    assert not [call for call in answer["calls"] if call["method"] == "PATCH"], (
+        "the question is asked before the write, so the answer travels with it"
+    )
+
+
+def test_the_end_date_is_a_field_the_row_is_re_read_after(page: str):
+    """`DERIVES_DATES` decides whether the rows come back from the server after a
+    save, and a done record's span ENDS at the date it records — so answering the
+    panel changes the End column of the row that was edited, which is not the
+    column anybody clicked. Left out, the row goes on showing the start date in
+    both date columns, styled `derived` like a real forecast, until a reload.
+    """
+    answer = drive_table(page, "[...DERIVES_DATES].sort()")
+
+    assert answer["value"] == ["cycle", "end_date", "person_weeks", "start_date"]

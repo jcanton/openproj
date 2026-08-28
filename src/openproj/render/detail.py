@@ -7,9 +7,19 @@ from collections.abc import Sequence
 
 from markupsafe import Markup, escape
 
-from ..index import Index, _people_on, cascade_of
+from ..index import Index, cascade_of
 from ..model import KINDS as KIND_LADDER
-from ..model import NOTE_STATES, RUNG, Config, Record, checklist, sections, size_weeks
+from ..model import (
+    NOTE_STATES,
+    RUNG,
+    Record,
+    checklist,
+    sections,
+    size_weeks,
+    staffing_of,
+    tasks_occupy,
+    workers_on,
+)
 from ..vendor import _ace, _yjs
 from .controls import _REQUIRED_JS, _combobox_html, _control_html
 from .editor import (
@@ -1244,8 +1254,11 @@ _DETAIL = """
             <span class="box" aria-hidden="true">{{ '☑' if item.done else '☐' }}</span>
             <a href="{{ links.record }}{{ item.id }}">{{ item.title }}</a>
             <span class="chip {{ item.status_class }}">{{ item.status|human }}</span>
-            <span class="tally">{{ item.size }} wk{% if item.people %}
-              · {{ item.people }}{% endif %}</span>
+            {#- Both halves are optional and the separator belongs to neither:
+                a container carries no appetite of its own, and a task nobody has
+                assigned carries no names. -#}
+            <span class="tally">{% if item.size %}{{ item.size }} wk{% endif -%}
+              {%- if item.size and item.people %} · {% endif %}{{ item.people }}</span>
           </li>
           {% endfor %}
         </ul>
@@ -2156,6 +2169,89 @@ for (const article of document.querySelectorAll('article.record')) {
   };
 }
 
+// What the status now on this form demands and the form has not got — the same
+// question the table's panel asks of a row, asked of this page, so that there is
+// ONE rule and not one per surface. `data-required-at` is `required_at()`, which
+// the model derives by running its own status gates over a blank record rather
+// than restating them, so all three surfaces are reading the gate itself.
+//
+// **A date is filled in rather than complained about**, which is what makes this
+// an ask and not a refusal. Marking a record done demands the day it ended, that
+// day is almost always today, and the control is already on screen — so the
+// answer is offered in the box it belongs in, the counter in the bar goes up by
+// one, and a second press commits it. Somebody who finished on Friday changes
+// four characters instead of being told what they have not done.
+//
+// Anything else is named and nothing else happens. There is no value a form may
+// invent for an owner, an appetite or a reviewer, and a prefill there would
+// commit a guess. The words are the page's own labels, via `labelOf`, because
+// `person_weeks` in a sentence sends somebody looking for a field that is
+// labelled Appetite.
+//
+// **Asked only of a press that MOVES the status**, which is the same trigger the
+// table has — `saveCell` asks when the cell being written is the status cell —
+// and it is not a nicety. A record can already be standing at a status whose
+// gate it fails: a plan in git is a fact, and `in_progress` with nobody assigned
+// is one of the shapes the fixture corpus carries on purpose. Asked of the
+// STATE, this would stand in front of every save on such a record — a retitle, a
+// tag, a paragraph of the shaping document — naming a field nobody was editing,
+// which is the state-versus-delta failure the past-date refusal in `web.py`
+// learned the expensive way. What a record that merely stands there earns is the
+// blocker `validate_all` already reports beside it.
+//
+// Returns whether the save must stop here. It stops on the press that filled a
+// box as well as on the press that could not: a value the page wrote is a value
+// nobody has read yet, and committing it unseen is the prefill deciding rather
+// than offering.
+function stillNeeded(fields) {
+  if (!('status' in fields)) return false;
+  const status = FORM.querySelector('[name=status]')?.value || OPENS;
+  const waived = FORM.querySelector('[name=review_waived]')?.checked;
+  const filled = [];
+  const missing = [];
+  let first = null;
+  for (const control of FORM.querySelectorAll('[data-required-at]')) {
+    // A field this kind does not have is not empty, it is absent — the same
+    // skip `createRecord` makes, for the same reason.
+    if (control.closest('[data-kinds]')?.hidden) continue;
+    if (!control.dataset.requiredAt.split(' ').includes(status)) continue;
+    // review_waived is the escape hatch from the reviewer rule, honoured here
+    // exactly as `markRequired` honours it: otherwise this is a nag.
+    if (control.name === 'reviewers' && waived) continue;
+    const value = read(control);
+    if (!(value === null || (Array.isArray(value) && !value.length))) continue;
+    if (control.dataset.type === 'date') {
+      control.value = today();
+      filled.push(labelOf(control));
+      first = first || control;
+    } else {
+      missing.push(labelOf(control));
+    }
+  }
+  if (!filled.length && !missing.length) return false;
+  if (filled.length) {
+    // The counter in the commit bar counts what has been typed and not saved,
+    // and this page just typed something. Without this the bar says one change
+    // while the form holds two, and Reset would put back a date nobody could
+    // see had been added.
+    dirty();
+    // The box this press actually wrote in, not the first date control on the
+    // form: the keyboard has to land where the value somebody is being asked to
+    // check is, and a query would answer with whichever gated date came first in
+    // the page.
+    first.focus();
+  }
+  // The words on the page, not the words in the file. `data-word` is kept
+  // current by the hill for exactly this — see `choose` in `hill.py` — so this
+  // says "In progress" where the frontmatter says `in_progress`.
+  const said = FORM.querySelector('[name=status]')?.dataset.word || status;
+  announce([
+    filled.length ? `${filled.join(', ')} set to today — check it and press Save again` : '',
+    missing.length ? `still needed at ${said}: ${missing.join(', ')}` : '',
+  ].filter(Boolean).join('. '));
+  return true;
+}
+
 async function save() {
   // One button, two verbs: a record that exists is PATCHed with what changed;
   // a record that does not exist yet is POSTed whole. The branch is the entire
@@ -2169,6 +2265,12 @@ async function save() {
     announce(error.message);
     return;
   }
+  // Before either write path, and therefore before the room's as well. `save()`
+  // hands the form to `COEDIT.save(fields)` whenever the socket is up, which is
+  // the ordinary case — so a check written after that branch would be a check on
+  // the surface nobody uses, which is exactly how a start date typed into the
+  // past came to be refused by one door and committed by the other.
+  if (stillNeeded(fields)) return;
   // While a room is live the body is not this tab's to send: it is the room's,
   // and Save is one commit made over the socket against the room's base, with
   // the fields from this form. Sending both down this path would be two commits
@@ -2683,22 +2785,82 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
                 PRIORITY_GLYPH.get(str(record.priority), ""),
                 _human(record.priority),
             )
-        elif name == _SIZE_FIELD_NAME and _tasks_add_up_to(index, record) is not None:
-            # The bet, and what its tasks propose to put inside it. Two numbers on
-            # one line because they are one question: an appetite read on its own
-            # says nothing about whether the work still fits, and the answer was
-            # only ever visible by adding the tasks up by hand.
+        elif name == _SIZE_FIELD_NAME:
+            # The appetite, and — where there is work filed under this record —
+            # the box that bet bought beside what its tasks propose to put inside
+            # it. One question rather than two numbers: an appetite read on its
+            # own says nothing about whether the work still fits, and the answer
+            # was only ever visible by adding the tasks up by hand.
+            #
+            # **The line carries its own units, because the label no longer
+            # does.** `LABELS["person_weeks"]` said "Appetite (person-weeks)" over
+            # `2.0 the bet buys · 5.6 in tasks`, and both of those are CALENDAR
+            # weeks — the box is the stated bet divided by the people on the
+            # record — so the `<dt>` named the unit of neither number under it,
+            # on a file that says `person_weeks: 4.0`. The label is plain
+            # "Appetite" now and every reading below says in words what it is in.
+            #
+            # **The stated bet is named, in the table's words and not a third set
+            # of them.** It used to appear nowhere in the reading view at all: a
+            # reader saw 2.0 and 5.6 and could not recover the 4 that was actually
+            # written down, nor the two people the scheduler divided it by to get
+            # the 2.0 — the very defect `_rollup` (`rows.py`) was rewritten to fix
+            # when its cell printed `bet 4.0 weeks` on a record whose file says 8.
+            # This is the same fact on a second page, so it is the same sentence:
+            # "Bet 4 over 2 people, which buys 2.0 weeks", `:g` on the bet and one
+            # decimal on the box exactly as that cell's own title has them. Two
+            # phrasings of one fact is how this codebase has been bitten before,
+            # and a reader moving between the table and this page should recognise
+            # the sentence rather than have to re-read it.
+            #
+            # `staffing_of` and not a headcount written out here, for the reason
+            # both other readers give: the box came from dividing the appetite by
+            # the summed AVAILABILITY of the people on it, and "over 2 people"
+            # named a number the arithmetic did not use wherever those two people
+            # are not both full-time. The function is `model.py`'s so that one
+            # wording reaches all three surfaces.
             #
             # Warned about only against a bet somebody actually made. A pitch with
             # no appetite yet is not over it, and `_rollup_problems` says nothing
             # about that case either — a page that shouts where the validator is
-            # silent teaches people that one of the two is lying.
+            # silent teaches people that one of the two is lying. That record used
+            # to draw the page's empty dash where the box goes, which is a mark
+            # for "this field is blank" standing in for "no bet has been made
+            # here"; it says so in the cell's own words instead.
             total = _tasks_add_up_to(index, record)
-            stated = field["text"]
-            over = bool(stated) and total > float(stated)
-            display = Markup('{} · <span class="{}">{} in tasks</span>').format(
-                stated or "—", "overrun" if over else "quiet", f"{total:g}"
-            )
+            if total is None:
+                # Nothing under this record has a length — a leaf, or a pitch
+                # none of whose tasks is sized — so there is no box and no
+                # contents, and what is left is the field itself. Which is in
+                # person-weeks, and now has to say so on its own: this is the row
+                # that lost the unit off its label, and "1.0" under a bare
+                # "Appetite" is a number a reader cannot act on.
+                display = (
+                    Markup("{} person-weeks").format(field["text"])
+                    if field["text"] not in ("", None)
+                    else empty
+                )
+            else:
+                span = index.spans.get(record.id)
+                # The box `_rollup_problems` holds the tasks against, so the
+                # verdict this line is coloured by is made from the two numbers
+                # printed on it. `.get`, because a pitch every one of whose tasks
+                # is unsized is scheduled nowhere at all — that record has no
+                # span, hence no box, and `total` is None above it anyway.
+                budget = span.budget_weeks if span is not None else None
+                stated = size_weeks(record)
+                staffing = staffing_of(record, span.staffed_at if span is not None else None)
+                bet = (
+                    f"Bet {stated:g} over {staffing}"
+                    if stated is not None
+                    else "No bet on this yet"
+                )
+                over = budget is not None and total > budget
+                display = Markup('{} · <span class="{}">{} in tasks</span>').format(
+                    f"{bet}, which buys {budget:.1f} weeks" if budget is not None else bet,
+                    "overrun" if over else "quiet",
+                    f"{total:.1f}",
+                )
         elif field["type"] == "date":
             # Drawn day-first like every other date on the page; the control
             # under it is an `<input type="date">` and keeps the ISO string,
@@ -2769,11 +2931,19 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
     # says this bet does not fit read exactly like the sentence saying when it
     # starts. It keeps the italic — it is still computed, and pretending otherwise
     # would invite somebody to edit it — and gains the warning colour on top.
+    #
+    # `span.overruns_cycle` and not `record.cycle`, which is what this formatted
+    # and which was a different question. The number beside it came from
+    # `_overrun` → `cycle_of`, and `cycle_of` walks UP to the pitch holding the
+    # bet — a task carries no cycle of its own, so four seed task pages read
+    # "▲ overruns cycle None by 4.7 weeks": the one sentence that says a bet did
+    # not fit its box, with the box unnamed. The two travel together on the span
+    # now, so the sentence and the arithmetic cannot pick different cycles.
     overrun = (
         Markup(
             ' · <span class="overrun"><span class="sev-mark sev-mark-warn"'
             ' aria-hidden="true">▲</span> overruns cycle {} by {} weeks</span>'
-        ).format(record.cycle, f"{span.overruns_cycle_weeks:.1f}")
+        ).format(span.overruns_cycle, f"{span.overruns_cycle_weeks:.1f}")
         if span and span.overruns_cycle_weeks
         else Markup("")
     )
@@ -2803,7 +2973,12 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
                 # finishes first — a login and an id, both free text, both
                 # concatenated into the sentence by the scheduler. The one row on
                 # this page that reads as prose is still two stored values.
-                "display": escape(why.text),
+                #
+                # `drawn` and not `text`: this row sits among the dates the rest
+                # of the page draws day-first, and the scheduler holds the dates
+                # in its sentences as dates precisely so this one reader can ask
+                # for them that way without the CLI's ISO output changing too.
+                "display": escape(why.drawn),
                 "control": "",
                 "gates": (),
                 "derived": True,
@@ -2876,15 +3051,64 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
     return rows
 
 
-def _tasks_add_up_to(index: Index, record: Record) -> float | None:
-    """What the tasks under this one propose to spend, or None if it has none.
+def _tasks_under(index: Index, record_id: str) -> list[str]:
+    """The children whose work rolls up into this record's own span.
 
-    The same number `_rollup_problems` compares against the appetite, read from
-    the same place, so the sentence on the page and the sentence in `check`
-    cannot disagree about the arithmetic.
+    Shelved ones are not among them, and that is the same list `_progress_of`
+    (`index.py`) rolls up and the same one `validate_all` builds its child map
+    from — parked work is not work anybody is waiting on, and a pitch that has
+    ever shelved a task would otherwise be permanently short of an answer about
+    the tasks it still holds. A child the plan cannot resolve is dropped for the
+    reason every other reader drops one: an id naming nothing is not a task.
+
+    Written once and read by both surfaces that draw this number — the record
+    page through `_tasks_add_up_to` below, the table cell through `_rollup`
+    (`rows.py`) — because a second copy of "which children count" is the second
+    implementation `tasks_occupy` (`model.py`) exists to prevent.
     """
-    counted = index.progress.get(record.id)
-    return counted.total if counted is not None and counted.unit == "weeks" else None
+    return [
+        child
+        for child in index.children.get(record_id, ())
+        if child in index.plan and index.plan[child].status != "shelved"
+    ]
+
+
+def _tasks_add_up_to(index: Index, record: Record) -> float | None:
+    """How long the tasks under this one actually take, or None if it has none.
+
+    The number `_rollup_problems` compares against the bet, read off the same
+    span and through the same gate — `tasks_occupy` (`model.py`), which both call
+    and neither restates.
+
+    **That claim was made here twice before it was true, and the second time is
+    why the gate moved into `model.py`.** This first read
+    `index.progress[id].total`, which sums what was bet on each child and charged
+    the old default for every unsized one, so the reading view's number was
+    silently larger than the one `check` warned on. The number moved to
+    `Span.elapsed_weeks` and the GATE did not: `index.progress` counts a child
+    only if somebody stated a size for it, `_rollup_problems` asked the span
+    whether anything underneath had a length, and §4 of `design/time-model.md`
+    pulled those two populations apart on the ordinary case of a `done` task
+    with dates and no appetite. Three surfaces then said three different things
+    about one bet. See `tasks_occupy` for which question survived and why.
+
+    The number is the calendar one and not the person-week one: two four-week
+    tasks on two people are four weeks here and eight on one person, which is the
+    difference somebody looking at a pitch wants to see. Occupied and not
+    enclosed — a task waiting until November contributes its own two weeks and
+    not the three months before them; see `_occupied_weeks` (`schedule.py`) for
+    the warning that argument came out of.
+
+    None where nothing it holds has a length — an unsized child, which gets no
+    span at all, and a finished one written before an end date was asked for,
+    whose start and end are the same day. That day used to be read back out as a
+    fifth of a week, so every done pitch on the site printed "8.0 · 0.2 in
+    tasks": a number that is not a measurement of anything, under every box there
+    is, beside the one kind of record whose contents are finally a fact rather
+    than a forecast. None too where the plan holds no span for this record at
+    all, which is where a pitch whose tasks are every one of them unsized lands.
+    """
+    return tasks_occupy(_tasks_under(index, record.id), index.spans.get(record.id))
 
 
 def _progress_view(index: Index, record: Record) -> dict | None:
@@ -2901,11 +3125,10 @@ def _progress_view(index: Index, record: Record) -> dict | None:
     counted = index.progress.get(record.id)
     if counted is None or not counted.of:
         return None
-    config = Config(default_task_effort=index.default_task_effort)
     items = []
     for child_id in counted.of:
         child = index.plan[child_id]
-        size, defaulted = size_weeks(child, config)
+        size = size_weeks(child)
         items.append(
             {
                 "id": child_id,
@@ -2913,8 +3136,18 @@ def _progress_view(index: Index, record: Record) -> dict | None:
                 "done": child.status == "done",
                 "status": child.status,
                 "status_class": _status_class(child.status),
-                "size": f"{size:g}" + ("*" if defaulted else ""),
-                "people": ", ".join(_people_on(child)),
+                # Every line here is a child `_weighed` (`index.py`) actually
+                # counted — `counted.of` names them — so an unsized task is not
+                # in this list at all. A container is: it was weighed by what is
+                # under it and carries no size of its own, and it used to print
+                # the default with an asterisk on it, half a week nobody had
+                # written standing where a five-week project's weight belonged.
+                # Blank, and the template drops the whole clause: the panel is
+                # about how far along the tasks are, and a project's weight is
+                # the sum of what is under it rather than anything to print
+                # here.
+                "size": "" if size is None else f"{size:g}",
+                "people": ", ".join(workers_on(child)),
             }
         )
     return {
@@ -3023,7 +3256,14 @@ def _detail_rows(index: Index, links: Links = STATIC, only: str | None = None) -
             # names a parent and `_links` renders it as itself.
             "parent": record.parent,
             "parent_link": _links([record.parent], index, links) if record.parent else "",
-            "problems": [p.message for p in index.problems if p.record_id == record_id],
+            # `drawn` and not `message`: these are drawn as prose on the page,
+            # which is the page that reads a date out day-first everywhere else —
+            # in the fact rows, in the date boxes and in the "Why then" sentence
+            # the scheduler writes about the very date three of these are about.
+            # "the start date 2026-08-10 has passed" sat a few rows above "the
+            # 10.08.2026 you set has passed", the same day said two ways. The ISO
+            # form is `message`, and it is what the terminal and the API take.
+            "problems": [p.drawn for p in index.problems if p.record_id == record_id],
             # Not problems: notes about the shaping document, printed here and
             # nowhere else. See `_shaping_hints`.
             "hints": _shaping_hints(record, bool(index.children.get(record_id))),
@@ -3060,7 +3300,7 @@ def _new_rows() -> list[dict]:
             # jcanton, 2026-08-26, reversing it: "assigned date default to empty
             # would be better than default=today".
             #
-            # The argument was answering the wrong risk. `assigned_on` is the one
+            # The argument was answering the wrong risk. `start_date` is the one
             # date the whole schedule is derived FROM, and a record created today
             # is very often work that starts next cycle or work somebody is
             # writing down so as not to lose it. Prefilling today does not stop
@@ -3071,9 +3311,9 @@ def _new_rows() -> list[dict]:
             #
             # Empty is not silent. `validate_all` already asks for this field at
             # `in_progress` and nowhere else — "work in progress needs the date it
-            # was assigned" — so a record that never gets one is fine until it
-            # starts, and then says so beside itself.
-            assigned_on=None,
+            # started" — so a record that never gets one is fine until it starts,
+            # and then says so beside itself.
+            start_date=None,
         )
         # One form on the page, so one prefix. The detail page's is the record's
         # id, because that page can hold sixteen of them at once.

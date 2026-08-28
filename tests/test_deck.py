@@ -193,7 +193,7 @@ def corpus() -> list[Record]:
         parent="proj-000001",
         status="in_progress",
         cycle=37,
-        assigned_on=date(2026, 8, 17),
+        start_date=date(2026, 8, 17),
         reviewers=["bo"],
     )
     solver = Task(
@@ -204,7 +204,7 @@ def corpus() -> list[Record]:
         person_weeks=4.0,
         parent="pitch-0c0001",
         status="in_progress",
-        assigned_on=date(2026, 8, 17),
+        start_date=date(2026, 8, 17),
         reviewers=["bo"],
         prs=["kilnlab/kiln4py#2427", "kilnlab/hearth#2765"],
         body=BED,
@@ -217,7 +217,7 @@ def corpus() -> list[Record]:
         person_weeks=1.0,
         parent="pitch-0c0001",
         status="done",
-        assigned_on=date(2026, 8, 17),
+        start_date=date(2026, 8, 17),
         reviewers=["ann"],
         prs=["kilnlab/kiln4py#2403"],
     )
@@ -443,7 +443,7 @@ def test_the_progress_section_is_what_a_review_slide_is_for(index: Index):
         person_weeks=4.0,
         parent="pitch-0c0001",
         status="in_progress",
-        assigned_on=TODAY,
+        start_date=TODAY,
         reviewers=["bo"],
         body="## Problem\n\nFortran.\n\n## Progress\n\n- [x] Bindings\n\n"
         "Blocked on a tap point nobody has generated yet.\n",
@@ -516,7 +516,7 @@ def test_a_heading_the_bet_emptied_is_not_printed_over_blank_paper():
         person_weeks=4.0,
         parent="pitch-0c0001",
         status="in_progress",
-        assigned_on=TODAY,
+        start_date=TODAY,
         reviewers=["bo"],
         body="## Notes\n\n### Solution\n\nThe plan lives here.\n",
     )
@@ -820,7 +820,7 @@ def test_the_plan_a_slide_falls_back_to_is_cut_to_the_sheet_and_says_so(tmp_path
         person_weeks=1.0,
         parent="pitch-0c0001",
         status="done",
-        assigned_on=TODAY,
+        start_date=TODAY,
         reviewers=["ann"],
         body=plan,
     )
@@ -884,7 +884,7 @@ BET_FILE = (
     "status: in_progress\n"
     "owner: ann\n"
     "reviewers: [bo]\n"
-    "assigned_on: 2026-08-17\n"
+    "start_date: 2026-08-17\n"
     "person_weeks: 2\n"
     "cycle: 37\n"
     'prs: ["kilnlab/kiln4py#2403"]\n'

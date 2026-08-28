@@ -117,7 +117,7 @@ def test_the_body_textarea_holds_what_is_stored(page: str, client: TestClient):
 
 def test_the_editable_fields_are_the_ones_a_person_owns(page: str):
     named = controls(page)
-    for field in ("title", "status", "owner", "reviewers", "assigned_on", "priority", "body"):
+    for field in ("title", "status", "owner", "reviewers", "start_date", "priority", "body"):
         assert field in named, field
 
 
@@ -483,9 +483,9 @@ def test_resetting_an_edit_nobody_made_is_refused_rather_than_silent(page: str, 
 
 def test_the_status_a_row_is_set_to_says_what_it_will_be_refused_without(page: str):
     """The rules were a dict in `render.py` and nowhere on screen. Marked live,
-    because moving a task to in_progress is the moment `assigned_on` starts
+    because moving a task to in_progress is the moment `start_date` starts
     mattering — and the moment nobody is looking at the validator."""
-    assert 'data-required-at="in_progress"' in control(page, "assigned_on")
+    assert 'data-required-at="in_progress"' in control(page, "start_date")
     assert 'data-required-at="ready in_progress"' in control(page, "reviewers")
     assert "function markRequired(form)" in page
     assert "form.addEventListener('change', () => markRequired(form));" in page
@@ -513,7 +513,7 @@ def test_a_date_box_is_the_only_copy_of_the_day_it_holds(page: str):
     `test_both_halves_of_the_app_write_a_date_the_same_way` drives it against
     `_read_date` whether or not anything on a page calls it today.
     """
-    assert 'type="date"' in control(page, "assigned_on")
+    assert 'type="date"' in control(page, "start_date")
     assert "insertAdjacentElement('afterend', echo)" not in page
     assert "'iso field' : 'iso'" not in page
     # And no stylesheet still dresses a span nothing inserts.
@@ -1089,6 +1089,11 @@ def test_a_refusal_names_the_field_the_way_the_form_labels_it(client: TestClient
     the next read "person_weeks: a ready pitch needs an appetite", from the same
     `<ul>`, about the same box. Both go through `labelOf` now.
 
+    `problem.drawn` rather than `problem.message`: a Problem stopped carrying a
+    finished string when the validator sentences gained a stored form and a drawn
+    one, so the terminal and `--json` keep ISO dates while a page draws the same
+    day the way every other date on it is drawn. This form is on a page.
+
     The list is built from text nodes rather than interpolated into `innerHTML`,
     because `answer.detail` quotes back a key the request supplied: a 422 is the
     server repeating the client's own string, and repeating it as markup is how a
@@ -1097,7 +1102,7 @@ def test_a_refusal_names_the_field_the_way_the_form_labels_it(client: TestClient
     new = client.get("/new?kind=pitch").text
 
     assert "function refusals(answer, status) {" in new
-    assert "return control ? `${labelOf(control)}: ${problem.message}` : problem.message;" in new
+    assert "return control ? `${labelOf(control)}: ${problem.drawn}` : problem.drawn;" in new
     assert "if (!problems.length) return [refusal(answer, status)];" in new
     assert "CSS.escape(problem.field)" in new, "the field arrives over the wire"
     # Built, not interpolated.

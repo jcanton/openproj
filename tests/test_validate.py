@@ -29,6 +29,7 @@ from openproj.model import (
     required_at,
     validate_all,
 )
+from openproj.schedule import schedule
 
 TASK_ID = "task-aaa111"
 OTHER_TASK_ID = "task-ddd444"
@@ -42,7 +43,8 @@ NEEDS_OWNER = "a ready record needs an owner"
 NEEDS_REVIEWER = "a ready record needs a reviewer, or review waived"
 NEEDS_EFFORT = "a ready task needs an appetite"
 NEEDS_APPETITE = "a ready pitch needs an appetite"
-NEEDS_ASSIGNED_ON = "work in progress needs the date it was assigned"
+NEEDS_START_DATE = "work in progress needs the date it started"
+NEEDS_SIZE_WIP = "work in progress needs an appetite"
 RETIRED_SHAPED_BY = (
     "shaped_by is no longer read: owner records who shaped a pitch and holds it — "
     "move the name there and delete this key"
@@ -53,6 +55,7 @@ NEEDS_INDEPENDENT_REVIEWER = (
     "work in progress needs a reviewer other than its owner, or review waived"
 )
 NEEDS_PR = "a done record needs at least one PR"
+NEEDS_END_DATE = "a done record needs the date it ended"
 SHOULD_HAVE_PARENT = "a task should have a parent"
 DEPENDS_ON_CYCLE = "part of a blocked-by cycle"
 PARENT_CYCLE = "part of a parent cycle"
@@ -129,13 +132,46 @@ def project(**overrides: object) -> Project:
         "owner": "jackdawrie",
         "assignees": ["jackdawrie"],
         "reviewers": ["merganserly"],
-        "assigned_on": date(2026, 8, 3),
+        "start_date": date(2026, 8, 3),
     }
     return Project(**(fields | overrides))
 
 
-def check(*records: Record, config: Config | None = None) -> list[Problem]:
-    return validate_all(list(records), config or Config())
+def check(
+    *records: Record, config: Config | None = None, today: date | None = None
+) -> list[Problem]:
+    """`today` only where a test is about a date. Everywhere else it is left to
+    `validate_all`'s own default, which is the real one — the fixtures below carry
+    no start dates, so nothing else in this file floats with the clock."""
+    return validate_all(list(records), config or Config(), None, today)
+
+
+# A Monday, so a span's arithmetic is readable in the tests that assert on it:
+# five working days is one calendar week from here with no weekend swallowed at
+# the front. Fixed rather than `date.today()` because the rollup rule's message
+# quotes the length of a scheduled span, and a rule whose words depend on which
+# weekday the suite runs on is a rule nobody can pin.
+PLAN_TODAY = date(2026, 8, 17)
+
+
+def rolled_up(*records: Record, config: Config | None = None) -> list[Problem]:
+    """`validate_all` as a whole PLAN sees it: scheduled first, spans passed in.
+
+    `check` above is the other caller shape and the commoner one — a candidate
+    record on its way to being written, judged with no schedule — and without
+    spans `_rollup_problems` is simply not applied. Every test of that rule goes
+    through here instead, because the two numbers it compares are the
+    scheduler's: what the bet buys in calendar weeks, and how many weeks of work
+    the tasks underneath actually occupy.
+    """
+    settings = config or Config()
+    spans, _ = schedule(list(records), settings, PLAN_TODAY)
+    # The same day for both halves. The scheduler's floor and the validator's
+    # "this date has gone by" are one day by definition, and a helper that pinned
+    # one and let the other read the clock would lay a span out from a Monday in
+    # August and then judge its dates against whatever day the suite happens to
+    # run on.
+    return validate_all(list(records), settings, spans, PLAN_TODAY)
 
 
 def only(problems: list[Problem], record_id: str, field: str | None = None) -> Problem:
@@ -273,10 +309,105 @@ def test_a_retired_key_on_a_shelved_record_stays_unreported():
     assert check(parse_text(text, f"pitches/{PITCH_ID}.md")) == []
 
 
-def test_a_wip_record_needs_assigned_on():
-    for record in (task(status="in_progress", assigned_on=None), project(assigned_on=None)):
+def test_a_wip_record_needs_a_start_date():
+    for record in (task(status="in_progress", start_date=None), project(start_date=None)):
         problem = only(check(record), record.id)
-        assert summary(problem) == ("blocker", "assigned_on", NEEDS_ASSIGNED_ON, 1)
+        assert summary(problem) == ("blocker", "start_date", NEEDS_START_DATE, 1)
+
+
+def test_a_start_date_that_has_drifted_into_the_past_is_a_warning():
+    """The half of the rule no door can catch.
+
+    A date typed as future becomes past by the passage of time, with nobody
+    editing anything, so no refusal at any write path ever fires on it. The
+    scheduler has been discarding it since it was written — the start is
+    `max(floor, start_date, blocker_ready)` — and until this rule the ledger said
+    nothing at all about a record whose file and whose Start column disagree.
+
+    A warning and not a blocker precisely because nobody did it. There is no edit
+    to refuse and no moment at which anybody could have been told.
+    """
+    for status in ("thinking", "shaping", "ready"):
+        stale = task(status=status, start_date=date(2026, 8, 17))
+        assert summary(only(check(stale, today=date(2026, 8, 28)), TASK_ID, "start_date")) == (
+            "warning",
+            "start_date",
+            "the start date 2026-08-17 has passed and the work has not begun, so this is "
+            "scheduled from today instead: move the date, or say the work has started",
+            5,
+        ), status
+
+
+def test_a_start_date_still_to_come_is_what_the_field_is_for():
+    """The boundary is today, and today itself is not past. A date in the future
+    is an ordinary plan — somebody says when they will pick this up — and a rule
+    that nagged about the day it was typed would fire on every record written
+    before lunch."""
+    for stated in (date(2026, 8, 28), date(2026, 9, 30)):
+        soon = task(start_date=stated)
+        assert [p for p in check(soon, today=date(2026, 8, 28)) if p.field == "start_date"] == []
+
+
+def test_a_start_date_in_the_past_is_expected_once_the_work_has_begun():
+    """Scoped to status, and it has to be. At `in_progress` a date that has gone
+    by is not merely allowed, it is the correct value and the gate above demands
+    the field — "I started this on Monday and it is now Wednesday" is the ordinary
+    case. At `done` it is the whole span. Unscoped, this rule would nag about
+    every record that is actually being worked on."""
+    began = date(2026, 8, 17)
+    for record in (
+        task(status="in_progress", start_date=began),
+        task(status="done", start_date=began, prs=["https://github.com/c2sm/x/pull/1"]),
+    ):
+        assert [
+            p for p in check(record, today=date(2026, 8, 28)) if p.field == "start_date"
+        ] == [], record.status
+
+
+def test_a_start_date_on_a_rung_that_is_never_scheduled_is_not_judged_twice():
+    """An issue reads no dates at all, and `unread_fields` already says so beside
+    the record. A second sentence about the same key — one saying the date is not
+    read, one saying it has passed — is this validator arguing with itself about a
+    field nothing derives anything from."""
+    text = (
+        "---\nid: issue-9f2b48\nkind: issue\ntitle: I\nstatus: ready\n"
+        "start_date: 2026-08-17\n---\n\nb\n"
+    )
+    issue = parse_text(text, "issues/issue-9f2b48.md")
+    said = [summary(p) for p in check(issue, today=date(2026, 8, 28)) if p.field == "start_date"]
+    assert said == [
+        ("warning", "start_date", "an issue is never scheduled, so its start_date is not read", 1)
+    ]
+
+
+def test_a_wip_record_needs_a_size():
+    """The gate stopped at `ready`, and `in_progress` is reachable without ever
+    passing through it — so an unsized record could be running, and three in
+    icon4py-plan were. With no default appetite behind it, such a record is not
+    scheduled, weighs nothing in its pitch's progress and charges nobody's
+    capacity: it is work that is happening and that the plan cannot account for.
+
+    A container is asked for nothing, because it has nothing to be asked for:
+    `project()` is in progress and holds no `person_weeks` field at all.
+    """
+    started = {"status": "in_progress", "start_date": date(2026, 8, 3), "person_weeks": None}
+    for record, record_id in ((task(**started), TASK_ID), (pitch(**started), PITCH_ID)):
+        assert summary(only(check(record), record_id, "person_weeks")) == (
+            "blocker",
+            "person_weeks",
+            NEEDS_SIZE_WIP,
+            1,
+        )
+    assert [p for p in check(project()) if p.field == "person_weeks"] == []
+
+
+def test_a_shaping_record_is_left_unsized_on_purpose():
+    """The gate deliberately does not reach down the ladder. A bet nobody has
+    shaped has no appetite yet, and demanding one is demanding a guess — which is
+    the whole thing this change took out of the scheduler."""
+    for status in ("thinking", "shaping"):
+        unsized = pitch(status=status, person_weeks=None)
+        assert [p for p in check(unsized) if p.field == "person_weeks"] == [], status
 
 
 def test_a_wip_record_needs_a_reviewer_who_is_not_its_owner():
@@ -284,7 +415,7 @@ def test_a_wip_record_needs_a_reviewer_who_is_not_its_owner():
     somebody else before work may be in progress."""
     wip = task(
         status="in_progress",
-        assigned_on=date(2026, 8, 3),
+        start_date=date(2026, 8, 3),
         owner="jackdawrie",
         reviewers=["jackdawrie"],
     )
@@ -293,7 +424,10 @@ def test_a_wip_record_needs_a_reviewer_who_is_not_its_owner():
 
 
 def test_a_done_record_needs_at_least_one_pr():
-    problem = only(check(task(status="done", prs=[])), TASK_ID)
+    # With the end date supplied, so that the one problem reported is the one this
+    # test is about: `done` gates two fields now, and `only` asserts there is
+    # exactly one.
+    problem = only(check(task(status="done", prs=[], end_date=date(2026, 8, 20))), TASK_ID)
     assert summary(problem) == ("blocker", "prs", NEEDS_PR, 1)
 
 
@@ -308,7 +442,7 @@ def test_review_waived_satisfies_both_the_todo_and_the_wip_reviewer_gates():
     todo = task(reviewers=[], review_waived=True)
     wip = task(
         status="in_progress",
-        assigned_on=date(2026, 8, 3),
+        start_date=date(2026, 8, 3),
         owner="jackdawrie",
         reviewers=["jackdawrie"],
         review_waived=True,
@@ -457,18 +591,141 @@ def test_a_project_is_not_bet_because_it_holds_bets():
     assert cycle_of(records[0], {"proj-000001": records[0]}) is None
 
 
-def test_tasks_that_add_up_to_more_than_the_bet_say_so():
+# The `{}` staffing slot is `staffing_of`'s wording and not a headcount. It was
+# a bare count until 2026-08-28 — "the 3.0 the bet buys at 2" — which reads as
+# the divisor and is only the divisor where everybody is at full rate: the two
+# people on `pitch-7b3e94` are half-available each, so its 3.0 came from
+# dividing by 1.0 while the sentence invited a reader to work out 3 ÷ 2.
+OVER_THE_BOX = (
+    "its tasks need {} weeks with the people on them, more than the {} the bet buys over {} — "
+    "cut scope, re-bet it, or put more people on it"
+)
+
+
+def test_tasks_that_do_not_fit_in_the_weeks_the_bet_bought_say_so():
     """The appetite is the box and the tasks are what somebody proposes to put in
     it. Nothing compared the two, so a six-week bet holding seven and a half
-    weeks of tasks read as a six-week bet on every page."""
+    weeks of tasks read as a six-week bet on every page.
+
+    The design's own worked example, because it is the case the person-week sum
+    could not see: eight person-weeks with two people on them buy four calendar
+    weeks, and four and a half person-weeks of tasks sit comfortably inside eight
+    — but not inside four, once both tasks are on the same person and have to
+    queue. The old arithmetic said this pitch was fine. 4.6 rather than the
+    design's 4.5 because `_working_days` buys a whole third day for half a week,
+    which is the scheduler's rounding and not a second opinion about the size.
+    """
     records = [
-        Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=6.0),
-        Task(id="task-000001", kind="task", title="A", parent="pitch-000001", person_weeks=4.0),
-        Task(id="task-000002", kind="task", title="B", parent="pitch-000001", person_weeks=3.5),
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Q",
+            person_weeks=8.0,
+            assignees=["jackdawrie", "merganserly"],
+        ),
+        Task(
+            id="task-000001",
+            kind="task",
+            title="A",
+            parent="pitch-000001",
+            person_weeks=4.0,
+            assignees=["jackdawrie"],
+        ),
+        Task(
+            id="task-000002",
+            kind="task",
+            title="B",
+            parent="pitch-000001",
+            person_weeks=0.5,
+            assignees=["jackdawrie"],
+        ),
     ]
-    problem = only(validate_all(records, Config()), "pitch-000001", field="person_weeks")
-    assert problem.severity == "warning", "cutting scope or re-betting is a decision"
-    assert "7.5 weeks, more than the 6" in problem.message
+    problem = only(rolled_up(*records), "pitch-000001", field="person_weeks")
+    assert problem.severity == "warning", "every remedy is a decision for a person"
+    # "over 2 people" and no rate clause: both are at the nominal full rate, so
+    # the headcount IS the divisor and 8 ÷ 2 = 4.0 is arithmetic the reader can do.
+    assert problem.message == OVER_THE_BOX.format("4.6", "4.0", "2 people")
+
+
+def test_the_same_tasks_on_different_people_fit_and_say_nothing():
+    """The span is why the sum went. Four weeks and half a week are four and a
+    half of calendar if one person holds both and four if they run side by side,
+    and the scheduler already knows which — `_place` books workers, so a
+    contended person serialises their own work and an uncontended pair does not.
+    A sum reports four and a half in both cases and is wrong in one of them.
+
+    Same three records as the test above with one name changed, which is the
+    whole demonstration.
+    """
+    records = [
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Q",
+            person_weeks=8.0,
+            assignees=["jackdawrie", "merganserly"],
+        ),
+        Task(
+            id="task-000001",
+            kind="task",
+            title="A",
+            parent="pitch-000001",
+            person_weeks=4.0,
+            assignees=["jackdawrie"],
+        ),
+        Task(
+            id="task-000002",
+            kind="task",
+            title="B",
+            parent="pitch-000001",
+            person_weeks=0.5,
+            assignees=["merganserly"],
+        ),
+    ]
+    assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
+
+
+def test_a_gap_between_the_tasks_is_not_work_and_is_not_warned_about():
+    """The contents is what the tasks occupy, not the stretch that encloses them.
+
+    This was `max(child.end) - min(child.start)`, so a task somebody dated to
+    November put every week between August and November inside the bet. The
+    corpus has one — `pitch-7b3e94`, whose second task waits for the plant
+    shutdown — and it was warned at twenty weeks against a three-week box, of
+    which fourteen were a gap. What makes that worse than a wrong number is the
+    sentence attached to it: cut scope, re-bet it, or put more people on it are
+    the three remedies, and none of them shortens a wait.
+
+    Two people, so nothing queues and the whole distance is the stated date. The
+    bet still buys 2.0 and the tasks still hold 2.0, which is the `=` row.
+    """
+    records = [
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Q",
+            person_weeks=4.0,
+            assignees=["jackdawrie", "merganserly"],
+        ),
+        Task(
+            id="task-000001",
+            kind="task",
+            title="A",
+            parent="pitch-000001",
+            person_weeks=1.0,
+            assignees=["jackdawrie"],
+        ),
+        Task(
+            id="task-000002",
+            kind="task",
+            title="B",
+            parent="pitch-000001",
+            person_weeks=1.0,
+            assignees=["merganserly"],
+            start_date=date(2026, 11, 2),
+        ),
+    ]
+    assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
 
 
 def test_tasks_that_fit_inside_the_bet_say_nothing():
@@ -478,7 +735,19 @@ def test_tasks_that_fit_inside_the_bet_say_nothing():
         Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=6.0),
         Task(id="task-000001", kind="task", title="A", parent="pitch-000001", person_weeks=4.0),
     ]
-    assert [p for p in validate_all(records, Config()) if p.field == "person_weeks"] == []
+    assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
+
+
+def test_a_pitch_nobody_has_bet_on_is_not_accused_of_exceeding_a_bet():
+    """No appetite is no box, and a box nobody drew cannot be overflowed. The
+    span still has a length — its tasks are scheduled — so the guard is
+    `budget_weeks`, which is None for a pitch with no `person_weeks` of its own
+    and for every container, and not the presence of dates."""
+    records = [
+        Pitch(id="pitch-000001", kind="pitch", title="Q"),
+        Task(id="task-000001", kind="task", title="A", parent="pitch-000001", person_weeks=9.0),
+    ]
+    assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
 
 
 def test_a_shelved_task_is_not_counted_against_its_pitchs_appetite():
@@ -494,7 +763,7 @@ def test_a_shelved_task_is_not_counted_against_its_pitchs_appetite():
             status="shelved",
         ),
     ]
-    assert [p for p in validate_all(records, Config()) if p.field == "person_weeks"] == []
+    assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
 
 
 def test_a_task_nobody_sized_is_not_counted_at_a_number_nobody_typed():
@@ -503,6 +772,10 @@ def test_a_task_nobody_sized_is_not_counted_at_a_number_nobody_typed():
     an instruction built entirely out of a config default. The docstring said
     "only stated sizes are compared" the whole time; this holds it to that on
     the children, where it was false.
+
+    It survives the move to spans by a different route, and that is the point of
+    keeping it: an unsized record is scheduled nowhere at all, so it contributes
+    no dates to roll up, and there is no filter left for anybody to forget.
     """
     records = [
         Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=1.0),
@@ -511,27 +784,137 @@ def test_a_task_nobody_sized_is_not_counted_at_a_number_nobody_typed():
             for n in range(1, 5)
         ],
     ]
-    assert [p for p in validate_all(records, Config()) if p.field == "person_weeks"] == []
+    assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
 
 
-def test_sized_tasks_overrunning_alone_warn_and_the_message_counts_only_them():
-    """When only some children are sized, the sized ones overrunning the bet is
-    still a statement somebody made — the unsized ones can only push the total
-    higher — so the warning fires, counts the sized ones alone, and says out
-    loud that the rest are uncounted rather than quietly pricing them at the
-    default.
+def test_unsized_tasks_drop_out_of_the_rollup_and_the_sized_ones_still_warn():
+    """When only some children are sized, the sized ones alone overrunning the
+    box is still a statement somebody made, so the warning fires on what has
+    dates — and the unsized ones can only make it worse, never better, so firing
+    on the short answer is the conservative one.
+
+    The message no longer counts anything, which is the visible change here. It
+    used to say "its 2 sized tasks alone add up to 5 weeks … and the 1 without a
+    size can only add to that", because a sum has to confess what it left out of
+    itself. A span does not: it is the length of the work that is actually
+    placed, and what is missing from it is missing from the plan rather than from
+    the arithmetic. Naming the gap is the table cell's job — the fourth state,
+    muted rather than good — and it is not this sentence's.
     """
     records = [
-        Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=4.0),
-        Task(id="task-000001", kind="task", title="A", parent="pitch-000001", person_weeks=3.0),
-        Task(id="task-000002", kind="task", title="B", parent="pitch-000001", person_weeks=2.0),
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Q",
+            person_weeks=4.0,
+            assignees=["jackdawrie"],
+        ),
+        Task(
+            id="task-000001",
+            kind="task",
+            title="A",
+            parent="pitch-000001",
+            person_weeks=3.0,
+            assignees=["jackdawrie"],
+        ),
+        Task(
+            id="task-000002",
+            kind="task",
+            title="B",
+            parent="pitch-000001",
+            person_weeks=2.0,
+            assignees=["jackdawrie"],
+        ),
         Task(id="task-000003", kind="task", title="C", parent="pitch-000001"),
     ]
-    said = [p for p in validate_all(records, Config()) if p.field == "person_weeks"]
-    assert [p.message for p in said] == [
-        "its 2 sized tasks alone add up to 5 weeks, more than the 4 it was bet at, "
-        "and the 1 without a size can only add to that — cut scope, or re-bet it"
+    said = [p for p in rolled_up(*records) if p.field == "person_weeks"]
+    assert [p.message for p in said] == [OVER_THE_BOX.format("5.0", "4.0", "1 person")]
+
+
+def test_a_bet_its_tasks_exactly_fill_is_level_with_the_box_and_says_nothing():
+    """The `=` row of the design's own table, which used to be unreachable.
+
+    `working_days_after` lays 2.5 weeks out as `ceil(12.5)` = thirteen working
+    days and `_occupied_weeks` reads them back as 2.6, so the contents were always
+    the CEILING of the box: equal only where the size was a multiple of a fifth
+    of a week, larger everywhere else. This rule fires on strict `>`, so a pitch
+    bet at 2.5 holding one task bet at 2.5 on the same person — the tasks filling
+    the box exactly — was told it needed 2.6 more than the 2.5 it had. Any
+    fractional availability puts every bet in that position, so this was not an
+    edge case but the normal one.
+    """
+    records = [
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Q",
+            person_weeks=2.5,
+            assignees=["jackdawrie"],
+        ),
+        Task(
+            id="task-000001",
+            kind="task",
+            title="A",
+            parent="pitch-000001",
+            person_weeks=2.5,
+            assignees=["jackdawrie"],
+        ),
     ]
+    assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
+
+
+def test_the_sentence_quotes_the_box_after_the_same_rounding_it_compares_with():
+    """A number in the message that the comparison did not use is a message nobody
+    can check. The bet is 2.5 person-weeks on one person, which the scheduler will
+    lay out over thirteen working days — so the box this rule holds the tasks
+    against is 2.6, and 2.6 is what the sentence has to say it is. It said 2.5,
+    which is the stated appetite rather than the box, and a reader adding it up
+    found a warning that fired on numbers that were not over.
+    """
+    records = [
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Q",
+            person_weeks=2.5,
+            assignees=["jackdawrie"],
+        ),
+        Task(
+            id="task-000001",
+            kind="task",
+            title="A",
+            parent="pitch-000001",
+            person_weeks=3.0,
+            assignees=["jackdawrie"],
+        ),
+    ]
+    problem = only(rolled_up(*records), "pitch-000001", field="person_weeks")
+    assert problem.message == OVER_THE_BOX.format("3.0", "2.6", "1 person")
+
+
+def test_a_pitch_whose_tasks_are_all_unsized_is_not_compared_against_its_own_placement():
+    """It was the tasks that had to fit in the box, and here it was the pitch itself.
+
+    A container is a container by the plan and not by which of its children came
+    back with a span, and that distinction only appeared when the default
+    appetite went: a pitch whose every child is unsized had no child spans to
+    roll up, fell through to the leaf path and was PLACED — so `budget_weeks` and
+    `elapsed_weeks` both described the pitch's own placement, the second being
+    the ceiling of the first, and this rule told somebody to cut scope on a bet
+    holding no measured work at all.
+    """
+    records = [
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Q",
+            person_weeks=2.5,
+            assignees=["jackdawrie"],
+        ),
+        Task(id="task-000001", kind="task", title="A", parent="pitch-000001"),
+        Task(id="task-000002", kind="task", title="B", parent="pitch-000001"),
+    ]
+    assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
 
 
 # --- the seed corpus --------------------------------------------------------
@@ -551,9 +934,13 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
     already does and nothing had ever said: nine tasks carrying a `cycle` that
     belongs to the pitch they are part of, one task hung straight off a project —
     which is allowed now, and was the shape the first real import needed — and
-    one pitch whose five tasks propose twice the work it was bet at. All
-    warnings: the corpus is created_schema_version 2 and these rules are 4, so
-    nothing written before them breaks.
+    TWO pitches whose tasks, as they are actually staffed, need more calendar than
+    the bets bought. It said one, and one was true while that comparison was a sum
+    of person-weeks against an undivided appetite; moving it to calendar-against-
+    calendar found `pitch-7b3e94` as well, whose two tasks fit its bet as effort
+    and cannot fit it as time. All warnings: the corpus is
+    created_schema_version 2 and these rules are 4, so nothing written before them
+    breaks.
 
     The corpus grew from 17 files to 30 on 2026-08-23, and this set grew by
     exactly four entries — all four on records the growth added, none on a record
@@ -564,10 +951,33 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
     """
     records, config, _ = load_repo(seed_root)
     assert len(records) == 30
+    # Scheduled, because one rule reads spans — see `rolled_up`. At `PLAN_TODAY`
+    # rather than the real one, and that is now the whole reason the numbers below
+    # can be written down at all. This comment used to claim the rollup entries
+    # came out identical for every "today" from 2025 to 2030, on the grounds that
+    # their children carry start dates of their own; that was true of the enclosing
+    # span and is false of the days the children occupy. Four of `pitch-5e7b1c`'s
+    # five tasks are `ready` with no start date, so the chain they form begins on
+    # the floor and moves with it, while the fifth is `in_progress` from a stated
+    # 13 August and does not — and what the union counts from the chain is only
+    # its tail past that fixed stretch, which is two working days longer from the
+    # 17th than from the 13th. So the same corpus reads 5.2 at one and 5.6 at the
+    # other, and this set is a snapshot only because the day is named here.
+    # `pitch-7b3e94`'s 6.0 is steadier — both its tasks are held by dates rather
+    # than by the floor, one behind `pitch-6f2d18`'s in-progress children and one
+    # by its own stated 2026-12-21 — but steadier is not still, and the argument
+    # for pinning the day is the pair of them and not either alone.
+    spans, _ = schedule(records, config, PLAN_TODAY)
     inherits = (
         "the bet is on the pitch, so this task takes its cycle from {}; the number here is ignored"
     )
-    assert summaries(validate_all(records, config)) == {
+    # `PLAN_TODAY` here too, and now it is load-bearing rather than tidy: one rule
+    # compares a stated start date against the day the plan is judged around, and
+    # this corpus holds a ready task dated 2026-12-21. Left to read the clock,
+    # this frozen set would acquire an entry on the day that date goes by — a
+    # snapshot that changes with nobody editing anything, which is the one thing a
+    # snapshot may not do.
+    assert summaries(validate_all(records, config, spans, PLAN_TODAY)) == {
         # Nine records at ready or in_progress with nobody assigned, which is the
         # argument for that rule made against real files: an owner answers for a
         # bet and assignees are who is doing it, and the scheduler prices a record
@@ -584,8 +994,8 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         ("warning", "task-5c1d84", "assignees", NEEDS_SOMEBODY_READY, 2),
         ("warning", "task-5f062b", "assignees", NEEDS_SOMEBODY_READY, 2),
         # wip without a start date
-        ("blocker", "proj-7e57a0", "assigned_on", NEEDS_ASSIGNED_ON, 1),
-        ("blocker", "pitch-48ea9e", "assigned_on", NEEDS_ASSIGNED_ON, 1),
+        ("blocker", "proj-7e57a0", "start_date", NEEDS_START_DATE, 1),
+        ("blocker", "pitch-48ea9e", "start_date", NEEDS_START_DATE, 1),
         # wip with an empty reviewer list and nothing underneath carrying one.
         # `pitch-5e7b1c` was here too and is not any more: its own list is empty,
         # but its tasks name ibisbillie, mudlarkish and accentor9, and a pitch whose
@@ -598,6 +1008,24 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         ("blocker", "task-31f6c4", "prs", NEEDS_PR, 1),
         ("blocker", "task-3a52d8", "prs", NEEDS_PR, 1),
         ("blocker", "task-3e07b2", "prs", NEEDS_PR, 1),
+        # v5: done, and no record of the day it ended. The SAME five records, and
+        # that is the whole demonstration of what grandfathering is for. These
+        # files are migrated history — three of them say `start_date: null` and
+        # one says it in as many words, `# was fabricated during migration;
+        # unknown` — so there is no end date anybody can supply, and no way for
+        # the file to say so. The rule is 5 and this corpus is
+        # created_schema_version 2, so what they get is a warning; a record
+        # created from now on is created at 5 and is blocked.
+        #
+        # `seed/` went the other way and is the other half of the argument: both
+        # of ITS done tasks carry real start dates, so both were given real end
+        # dates rather than being left to the demotion. A demo that leans on
+        # grandfathering is a demo teaching people to ignore the rule.
+        ("warning", "pitch-2a7f3e", "end_date", NEEDS_END_DATE, 5),
+        ("warning", "pitch-3c9a41", "end_date", NEEDS_END_DATE, 5),
+        ("warning", "task-31f6c4", "end_date", NEEDS_END_DATE, 5),
+        ("warning", "task-3a52d8", "end_date", NEEDS_END_DATE, 5),
+        ("warning", "task-3e07b2", "end_date", NEEDS_END_DATE, 5),
         # v4: a bet is made on a pitch, and these tasks are part of one
         ("warning", "task-2b6c94", "cycle", inherits.format("pitch-2a7f3e"), 4),
         ("warning", "task-31f6c4", "cycle", inherits.format("pitch-3c9a41"), 4),
@@ -609,13 +1037,47 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         ("warning", "task-5c1d84", "cycle", inherits.format("pitch-5e7b1c"), 4),
         ("warning", "task-5f062b", "cycle", inherits.format("pitch-5e7b1c"), 4),
         # v4: the migration hung this one straight off the project
-        # v4: 8.1 weeks of tasks inside a four-week bet
+        # v4: two pitches whose tasks, as actually staffed, do not fit in the
+        # calendar weeks their bets bought. `pitch-5e7b1c` was the only one of
+        # these before, on the person-week sum — "its 5 tasks add up to 8.1
+        # weeks, more than the 4 it was bet at" — and `pitch-7b3e94` is the move
+        # to the calendar finding what that sum could not: 1.0 and 2.0 against a
+        # bet of 3.0 is a perfect fit as effort, and six weeks against three as
+        # time, because Whimbrel and Stonechat are each half-available and the
+        # second task waits for the first. Both are real shapes in the corpus
+        # rather than files written wrong on purpose, which is the argument for
+        # the rule.
+        #
+        # **The two sentences differ, and the pair of them is the argument for
+        # `staffing_of`.** `pitch-5e7b1c` is staffed by two people at the nominal
+        # full rate, so its "over 2 people" is the divisor and 4 ÷ 2 = 2.0 is
+        # arithmetic a reader can do. `pitch-7b3e94` is not, and both sentences
+        # said "at 2" until 2026-08-28 — so the first taught a reader that the
+        # operation is division and the second, one row down, gave them 3 ÷ 2 and
+        # a printed 3.0.
+        #
+        # `pitch-6f2d18` was here as a third and is not any more, and the reason
+        # is the union rather than a softened rule. Its two tasks overlap on
+        # purpose — cycle 37's own record says in as many words that the lowering
+        # and the benchmark were left running alongside rather than queued behind
+        # each other, both under Redpoll — so the days they share are counted
+        # once: 13 August to 28 August is 12 working days, where adding their
+        # placements up gives 15. Twelve against the 14 that 2.0 person-weeks buys
+        # Redpoll at a half and Chiffchaff at a quarter is a bet that fits, and a
+        # sum of 15 was a bet that did not. This entry going is the union doing
+        # the thing it was added for.
         (
             "warning",
             "pitch-5e7b1c",
             "person_weeks",
-            "its 5 tasks add up to 8.1 weeks, more than the 4 it was bet at — "
-            "cut scope, or re-bet it",
+            OVER_THE_BOX.format("5.6", "2.0", "2 people"),
+            4,
+        ),
+        (
+            "warning",
+            "pitch-7b3e94",
+            "person_weeks",
+            OVER_THE_BOX.format("6.0", "3.0", "2 people, 1 full-time between them"),
             4,
         ),
         # `prod-7c2b81` carries `person_weeks`, `depends_on` and `owner` in its
@@ -660,8 +1122,14 @@ def test_check_over_the_seed_corpus_prints_exactly_the_validated_problems(seed_r
     appearing or vanishing is a validation change that got past the refactor.
     """
     records, config, unreadable = load_repo(seed_root)
+    # The real today, and not `PLAN_TODAY`, because `_check` schedules against
+    # `date.today()` and this test's whole claim is that the command relays what
+    # the validator says — computed the way the command computes it, or the pin
+    # is against a second implementation of the command rather than against it.
+    spans, _ = schedule(records, config, date.today())
     problems = sorted(
-        validate_all(records, config), key=lambda p: (p.severity, p.record_id, p.field or "")
+        validate_all(records, config, spans),
+        key=lambda p: (p.severity, p.record_id, p.field or ""),
     )
     blockers = [p for p in problems if p.severity == "blocker"]
 
@@ -796,8 +1264,13 @@ def test_a_stale_vocabulary_still_schedules_and_renders():
 
     from openproj.index import build_index
 
+    # Sized, because the claim is about the two stale WORDS and nothing else: a
+    # record with no appetite gets no span whatever its status says, so leaving
+    # `person_weeks` out would have this test passing or failing on a rule it is
+    # not about.
     stale = parse_text(
-        "---\nid: task-aaa111\nkind: task\ntitle: T\nstatus: wip\npriority: 1\n---\n\nB.\n",
+        "---\nid: task-aaa111\nkind: task\ntitle: T\nstatus: wip\npriority: 1\n"
+        "person_weeks: 1\n---\n\nB.\n",
         "tasks/task-aaa111.md",
     )
     index = build_index([stale], Config(), date(2026, 8, 17))
@@ -847,7 +1320,7 @@ def test_no_message_names_a_field_the_way_the_file_spells_it():
     loop_a, loop_b, SHELVED_ID = "task-f00001", "task-f00002", "task-f00003"
     records = [
         pitch(status="ready", owner=None, reviewers=[], person_weeks=None),
-        task(status="in_progress", assigned_on=None, reviewers=["jackdawrie"], owner="jackdawrie"),
+        task(status="in_progress", start_date=None, reviewers=["jackdawrie"], owner="jackdawrie"),
         project(status="ready", owner=None, reviewers=[]),
         Task(
             id=OTHER_TASK_ID,
@@ -943,7 +1416,7 @@ def test_in_progress_wants_somebody_other_than_the_owner_from_underneath_too():
     reviewing, which is the thing that rule is about."""
     problem = only(
         check(
-            pitch(reviewers=[], status="in_progress", assigned_on=date(2026, 8, 3)),
+            pitch(reviewers=[], status="in_progress", start_date=date(2026, 8, 3)),
             task(reviewers=["jackdawrie"], owner="jackdawrie"),
         ),
         PITCH_ID,
@@ -1013,7 +1486,7 @@ def test_work_in_progress_needs_somebody_on_it():
         check(
             task(
                 status="in_progress",
-                assigned_on=date(2026, 8, 3),
+                start_date=date(2026, 8, 3),
                 assignees=[],
                 created_schema_version=2,
             )
@@ -1053,7 +1526,7 @@ def test_nothing_is_asked_of_a_record_nobody_has_looked_at():
         "assignees": [],
         "reviewers": [],
         "person_weeks": None,
-        "assigned_on": None,
+        "start_date": None,
         "prs": [],
     }
     # The control: the same record one rung up really does collect a handful, so
@@ -1097,3 +1570,261 @@ def test_the_form_is_told_to_ask_for_somebody():
     it."""
     for kind in ("project", "pitch", "task"):
         assert set(required_at(kind)["assignees"]) == {"ready", "in_progress"}, kind
+
+
+# --- §4 and §6: the end date, and dates compared to dates ---------------------
+
+
+def test_a_done_record_needs_the_date_it_ended():
+    """The one fact a finished record holds that nothing can derive.
+
+    Without it the span is the start date twice — a dot on the timeline, an End
+    column showing a start, no elapsed weeks and no overrun — so the field is not
+    bookkeeping: it is what makes every reader of finished work able to say
+    anything at all.
+    """
+    done = task(status="done", prs=["kilnlab/kiln4py#1"], created_schema_version=5)
+    problem = only(check(done), TASK_ID)
+    assert summary(problem) == ("blocker", "end_date", NEEDS_END_DATE, 5)
+    assert check(done.model_copy(update={"end_date": date(2026, 8, 20)})) == []
+
+
+def test_a_record_that_was_already_done_is_warned_and_not_blocked():
+    """Grandfathering, on the rule it was chosen for.
+
+    A corpus of finished work written before this field existed cannot supply it —
+    `tests/fixtures/corpus` says `# was fabricated during migration; unknown` on
+    one of its own start dates — so shipping this rule below `schema_version`
+    would have turned five real files red on the commit that added it, and the
+    rule would have been reverted rather than adopted. Shipped at 5, with
+    `schema_version` moved 4 -> 5 in the same change, it warns about them and
+    blocks everything written from now on.
+    """
+    older = only(check(task(status="done", prs=["x/y#1"], created_schema_version=4)), TASK_ID)
+    newer = only(check(task(status="done", prs=["x/y#1"], created_schema_version=5)), TASK_ID)
+    assert older.severity == "warning"
+    assert newer.severity == "blocker"
+    assert older.message == newer.message == NEEDS_END_DATE
+
+
+def test_the_form_is_told_to_ask_for_the_end_date():
+    """The gate read the way a form reads it, which is how the table's panel and
+    the record page's Save both come to ask for this without either of them
+    knowing the rule."""
+    for kind in ("project", "pitch", "task"):
+        assert set(required_at(kind)["end_date"]) == {"done"}, kind
+
+
+def test_a_record_cannot_have_finished_before_it_began():
+    """Two typed dates and no derivation between them, and nothing compared them.
+
+    A blocker rather than a warning, and version 1 rather than 5, which is the
+    exception this file makes exactly twice: grandfathering exists so a rule
+    invented today does not turn last year's file red, and no file can predate the
+    FIELD. `end_date` arrives at version 5, so anything carrying one was written
+    after this rule existed, whatever version the file declares of itself.
+    """
+    backwards = task(
+        status="done",
+        prs=["x/y#1"],
+        start_date=date(2026, 8, 20),
+        end_date=date(2026, 8, 3),
+        created_schema_version=1,
+    )
+    problem = only(check(backwards), TASK_ID, "end_date")
+    assert summary(problem) == (
+        "blocker",
+        "end_date",
+        "the end date 2026-08-03 is before the start date 2026-08-20, "
+        "so this record finished before it began",
+        1,
+    )
+    assert check(backwards.model_copy(update={"end_date": date(2026, 8, 20)})) == []
+
+
+DATED = Config(cycles={36: (date(2026, 6, 22), date(2026, 8, 14))})
+
+
+def test_a_date_typed_a_year_out_is_reported_rather_than_silently_dropped():
+    """§6's failure, made to say something.
+
+    `2025-09-11` for `2026-09-11` parses, commits and then makes
+    `span.start <= window[1] and span.end >= window[0]` false for every cycle
+    there is — so the record drops out of `counts_in`, out of `Index.load` and out
+    of `carried_into` at once, while `openproj check` reports the plan clean. A
+    cycle loses a person's work and there is no error anywhere to chase.
+    """
+    strayed = task(status="in_progress", start_date=date(2025, 9, 11), person_weeks=1.0)
+    problem = only(check(strayed, config=DATED), TASK_ID, "start_date")
+    assert summary(problem) == (
+        "warning",
+        "start_date",
+        "2025-09-11 is 41 weeks outside every cycle this plan has dated, so this record "
+        "counts towards none of them: check the year",
+        5,
+    )
+
+
+def test_a_date_near_the_plans_cycles_is_left_alone():
+    """The allowance is what keeps the rule from refusing the ordinary case: work
+    bet in the last cycle anybody has dated runs on into the next one, which by
+    definition has no window yet."""
+    for day in (date(2026, 6, 22), date(2026, 8, 14), date(2026, 10, 30), date(2026, 4, 6)):
+        near = task(status="in_progress", start_date=day, person_weeks=1.0)
+        assert [p for p in check(near, config=DATED) if p.field == "start_date"] == [], day
+
+
+def test_a_plan_that_has_dated_no_cycles_checks_no_dates():
+    """The same bargain the roster check makes: a tool that refuses dates before
+    anybody has written a cycles file is a tool nobody finishes setting up."""
+    strayed = task(status="in_progress", start_date=date(2025, 9, 11), person_weeks=1.0)
+    assert [p for p in check(strayed) if p.field == "start_date"] == []
+
+
+def test_the_end_date_is_held_to_the_same_calendar_as_the_start():
+    """Both fields, because a rule enforced on one date and reported on two is the
+    one-fact-two-implementations failure with extra steps."""
+    strayed = task(
+        status="done",
+        prs=["x/y#1"],
+        start_date=date(2026, 7, 6),
+        end_date=date(2027, 9, 11),
+        created_schema_version=5,
+    )
+    problem = only(check(strayed, config=DATED), TASK_ID, "end_date")
+    assert problem.severity == "warning"
+    assert problem.message.startswith("2027-09-11 is 56 weeks outside every cycle")
+
+
+# Two dated cycles with a year of undated months between them, which is the shape
+# a plan takes as soon as it has been running a while: `tests/fixtures/corpus`
+# carries exactly this pair — cycle 28, from before the 2026 numbering and kept
+# only so the throughflow records can be placed, and cycle 34 a year later.
+SPACED = Config(
+    cycles={
+        28: (date(2024, 12, 9), date(2025, 1, 31)),
+        34: (date(2026, 2, 2), date(2026, 3, 27)),
+    }
+)
+
+
+def test_a_year_typed_wrong_is_caught_between_two_cycles_and_not_only_beyond_them():
+    """§6's own motivating typo, over a plan with a hole in the middle of it.
+
+    The distance used to be measured against the ENVELOPE of every dated cycle —
+    earliest first day to latest last day — and an envelope weakens to nothing as
+    a plan accumulates cycles. `2025-09-11` typed for `2026-09-11` falls inside
+    the envelope of these two, so the rule said nothing at all, the door answered
+    200, and the record dropped silently out of `counts_in`, out of `Index.load`
+    and out of `carried_into` for every cycle there is — which is the failure §6
+    opens with, surviving the change written to end it. icon4py-plan is a
+    multi-year plan; this is the shape it will be in.
+
+    Twenty-one weeks and not thirty-two: the number is the distance to the
+    NEAREST window, which is the one a person can hold against the year they
+    meant to type.
+    """
+    strayed = task(status="in_progress", start_date=date(2025, 9, 11), person_weeks=1.0)
+    problem = only(check(strayed, config=SPACED), TASK_ID, "start_date")
+    assert summary(problem) == (
+        "warning",
+        "start_date",
+        "2025-09-11 is 21 weeks outside every cycle this plan has dated, so this record "
+        "counts towards none of them: check the year",
+        5,
+    )
+
+
+def test_the_months_between_two_cycles_are_ordinary_days_to_work_in():
+    """What the envelope was written to protect, and what protects it now.
+
+    The gap between two windows is real days that real work runs through — the
+    demo corpus leaves a whole unnumbered month for the conference and release
+    window — so measuring to the nearest window would nag about the ordinary case
+    if the allowance were tight. It is twelve weeks: comfortably wider than any
+    gap a team leaves between cycles it is actually running, and comfortably
+    narrower than the year a mistyped year moves a date by.
+
+    Both ends of the hole, because a different window answers in each case — the
+    first date is measured from cycle 34's first day and the second from cycle
+    28's last, and an implementation that only ever consulted the outer edges of
+    the plan would pass one of these and fail the other.
+    """
+    for day in (date(2026, 1, 5), date(2025, 4, 1)):
+        near = task(status="in_progress", start_date=day, person_weeks=1.0)
+        assert [p for p in check(near, config=SPACED) if p.field == "start_date"] == [], day
+
+
+def test_a_sentence_about_a_date_is_stored_iso_and_drawn_day_first():
+    """One wording, and the reader picks the format — `Sentence` in `model.py`.
+
+    All three rules that name a date, because the record page draws all three in
+    one list, a few rows under the scheduler's "the 10.08.2026 you set has
+    passed" — a sentence about the very date the first of these is about. They
+    said the same day two ways in one column: this validator formatted ISO
+    because a Problem was a string, and the explanation formatted day-first
+    because that is what the page around it does.
+
+    And the ISO half is not incidental. `openproj check` prints these on a
+    terminal, and `/api/index.json` ships them beside spans whose every date is
+    ISO, which is why the stored form stayed the default and `drawn` is what the
+    pages ask for.
+    """
+    passed = only(
+        check(task(start_date=date(2026, 8, 10)), today=date(2026, 8, 28)),
+        TASK_ID,
+        "start_date",
+    )
+    assert passed.message.startswith("the start date 2026-08-10 has passed")
+    assert passed.drawn.startswith("the start date 10.08.2026 has passed")
+
+    backwards = only(
+        check(
+            task(
+                status="done",
+                prs=["x/y#1"],
+                start_date=date(2026, 8, 20),
+                end_date=date(2026, 8, 3),
+                created_schema_version=1,
+            )
+        ),
+        TASK_ID,
+        "end_date",
+    )
+    assert backwards.message == (
+        "the end date 2026-08-03 is before the start date 2026-08-20, "
+        "so this record finished before it began"
+    )
+    assert backwards.drawn == (
+        "the end date 03.08.2026 is before the start date 20.08.2026, "
+        "so this record finished before it began"
+    )
+
+    strayed = only(
+        check(
+            task(status="in_progress", start_date=date(2025, 9, 11), person_weeks=1.0),
+            config=DATED,
+        ),
+        TASK_ID,
+        "start_date",
+    )
+    assert strayed.message.startswith("2025-09-11 is 41 weeks outside")
+    assert strayed.drawn.startswith("11.09.2025 is 41 weeks outside")
+
+
+def test_a_sentence_built_out_of_a_record_is_never_a_format_string():
+    """The rule `Sentence` carries, asked in the medium a plan file can reach.
+
+    Most of the sentences in this file are built out of what somebody committed —
+    an id, a filename, a `depends_on` naming nothing — and only the rules that
+    name a date write a template with slots in it. Formatted unconditionally,
+    `blocked by {oops}` raises KeyError inside `validate_all`, which is every page
+    down for one bad line in one file: the "a record that fails to load takes the
+    other four hundred with it" failure, arriving through the machinery that
+    reports it. So a sentence with no parts is returned exactly as it was built,
+    in both forms.
+    """
+    problem = only(check(task(depends_on=["{oops}"])), TASK_ID, "depends_on")
+
+    assert problem.message == "blocked by {oops}, which does not exist"
+    assert problem.drawn == problem.message

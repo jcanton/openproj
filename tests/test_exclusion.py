@@ -206,7 +206,7 @@ def test_the_schedule_payload_never_names_an_unplanned_kind(tmp_path: Path, caps
     unplanned = _armed()
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "defaults.yaml").write_text(
-        "schema_version: 2\nnominal_availability: 1.0\ndefault_task_effort: 0.5\n"
+        "schema_version: 2\nnominal_availability: 1.0\n"
     )
     (tmp_path / "tasks").mkdir()
     (tmp_path / "tasks" / "task-c00001.md").write_text(

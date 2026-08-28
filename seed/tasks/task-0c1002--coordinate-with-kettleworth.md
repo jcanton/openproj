@@ -8,7 +8,7 @@ owner: mudlarkish
 assignees: [mudlarkish]
 reviewers: []
 review_waived: true
-assigned_on: 2026-08-17
+start_date: 2026-08-17
 priority: medium
 depends_on: []
 tags: [drumbed-core, drumbed, coordination, upstream, kettleworth]

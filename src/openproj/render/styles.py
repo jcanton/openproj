@@ -349,6 +349,45 @@ thead th {
 """
 
 
+# The connectors that draw a row as a child of the row above it, shared by the
+# two tables that draw a plan as a tree: the table page, where the rungs are
+# computed in the browser over whatever the filters left, and the cycle page's
+# betting table, where a pitch's tasks are drawn under it so their appetites can
+# be typed at the meeting that argues about them.
+#
+# Only the DRAWING is here. Each table hangs it on a different cell — one on a
+# frozen `[data-col="title"]`, the other on the betting table's name column — so
+# the indent and the positioned ancestor these absolute boxes need stay beside
+# the cell that provides them, and each says in its own sheet which rule that is.
+# Sharing those too would mean one selector reaching two tables whose cells have
+# nothing in common but a purpose, which is how a rule meant for one page ends up
+# deciding the geometry of another.
+#
+# The connectors are borders and not characters. `├─` and `└─` line up only in a
+# monospace face and both of these columns are proportional — and a screen reader
+# announces "box drawings light up and right" before every child's title, which
+# is why the wrapper is `aria-hidden` and holds nothing to read.
+_TREE_STYLE = """
+.tree { position: absolute; left: .25rem; top: 0; bottom: 0; display: flex; }
+.tree .rung { position: relative; width: 14px; }
+/* The vertical: full height where the branch carries on past this row, and half
+   of it on the last child drawn, which is the whole difference between `├` and
+   `└`. `blank` draws neither, and it is a rung rather than a margin so that the
+   levels stay in step down the column. */
+.tree .line::before, .tree .tee::before, .tree .end::before {
+  content: ""; position: absolute; left: 6px; top: 0; width: 1px;
+  background: var(--line-strong);
+}
+.tree .line::before, .tree .tee::before { bottom: 0; }
+.tree .end::before { height: 50%; }
+/* The stub, stopping short of the title so the word is not touched by a rule. */
+.tree .tee::after, .tree .end::after {
+  content: ""; position: absolute; left: 6px; top: 50%; width: 6px; height: 1px;
+  background: var(--line-strong);
+}
+"""
+
+
 _SUGGEST_STYLE = """
 /* Absolute against the page, not against the cell it belongs to: `attachSuggest`
    parks the list on the body and writes its `top` and `left` in page

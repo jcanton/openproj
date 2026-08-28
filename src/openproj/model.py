@@ -11,18 +11,34 @@ import io
 import math
 import re
 import secrets
-from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence, Sized
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import networkx as nx
 from frontmatter.default_handlers import YAMLHandler
-from pydantic import BaseModel, PrivateAttr, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    PrivateAttr,
+    ValidationError,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedSeq
 from ruamel.yaml.error import MarkedYAMLError
 from ruamel.yaml.scalarstring import LiteralScalarString
+
+if TYPE_CHECKING:  # pragma: no cover - imported for the annotation and nothing else
+    # `schedule` imports this module, so the arrow only ever points one way at
+    # runtime. `validate_all` still has to name the type it is handed, because
+    # what `_rollup_problems` reads off a span — `budget_weeks` against
+    # `elapsed_weeks` — is a contract with the scheduler and not a loose mapping
+    # of floats that any caller could invent.
+    from .schedule import Span
 
 CONFIG_FILES = ("defaults.yaml", "cycles.yaml", "holidays.yaml", "people.yaml")
 _CYCLE_DIR = "cycles"
@@ -137,18 +153,141 @@ def days_after(day: date, days: float) -> date:
     return day + timedelta(days=round(days))
 
 
-class Problem(BaseModel):
+# A date, the way this app reads one out loud: `14.07.2026`, day first, dots.
+# jcanton, 2026-08-21: "I'd like to reverse the order of the dates in the entire
+# app". Only what is DRAWN — what is stored, sorted, put in a `<input type=date>`
+# and sent over the API stays `2026-07-14`, which is the one format that sorts as
+# text, parses without a locale and cannot be read as a different day in another
+# country.
+#
+# Down here rather than in `render/tokens.py`, where it was written and from where
+# it is still re-exported for the pages that had it. The scheduler's explanations
+# are prose a reader reads on the same pages — "the 10.08.2026 you set has passed"
+# — and `schedule.py` cannot import the renderer, because the renderer imports it.
+# The alternative was a second three-line copy of the format in `_explain`, and a
+# date format written twice is a date format that disagrees with itself the first
+# time somebody changes their mind about the separator.
+def _read_date(value: object) -> str:
+    text = str(value or "")
+    parts = text.split("-")
+    return f"{parts[2]}.{parts[1]}.{parts[0]}" if len(parts) == 3 else text
+
+
+class Sentence(BaseModel):
+    """One wording, and the dates it names held as dates rather than as text.
+
+    A template with named slots and the values that fill them, so that the same
+    sentence comes out ISO for the documents scripts read — `text` — and
+    day-first for the prose people read — `drawn`. `Explanation` (`schedule.py`)
+    and `Problem` below are both one of these, and both for the same reason: they
+    are sentences about dates, drawn on pages where every other date is day-first
+    and printed on a terminal where every other date is ISO.
+
+    This was `Explanation`'s alone, and each half of the app that grew a sentence
+    about a date wrote the format it happened to want into it. `_explain`
+    formatted day-first because the record page draws dates that way, which put
+    `28.08.2026` inside `openproj schedule --json` and on a terminal line beside
+    two ISO columns. `validate_all` formatted ISO because a Problem is a string,
+    which put "the start date 2026-08-10 has passed" on the record page a few
+    rows above the explanation's "the 10.08.2026 you set has passed" — two
+    sentences about the same day, saying it two ways, in one column. A value that
+    carries a format has already chosen for readers it cannot see.
+
+    **Reformatting the finished sentence at the page was the other candidate and
+    it lost twice over.** It means finding dates inside prose by pattern and
+    rewriting the result — the substituting-into-finished-output habit
+    `test_no_page_is_assembled_by_substitution` exists to keep out of these
+    modules — and a pattern is a guess at something the code that wrote the
+    sentence simply knows: which characters were a date. It would also have to be
+    written at each place that draws one, while `openproj check`, `openproj
+    schedule` and `/api/index.json` want none of it: two copies of a format, to
+    unpick a formatting nothing had to do.
+    """
+
+    # A literal written at the rule, never a string built out of data. It is
+    # handed to `str.format` whenever there are parts, so a template assembled
+    # around a login, a record id or a title would let text out of a plan file
+    # name a slot of its own — an owner field of `{0.__class__}` raising
+    # IndexError on every page that draws a schedule. Everything variable is a
+    # value in `parts` instead, and `format` does not look inside those.
+    #
+    # Both halves are excluded from `model_dump`, and that is not tidiness: a
+    # Problem is dumped straight into the table's payload and into the 422 a door
+    # answers with, and `parts` holds `date` objects that Jinja's `tojson` cannot
+    # encode — a page that does not render at all rather than a date in the wrong
+    # format. What a reader is owed is a finished sentence, and both finished
+    # forms travel beside it.
+    sentence: str = Field(exclude=True)
+    parts: dict[str, str | date] = Field(default={}, exclude=True)
+
+    @property
+    def text(self) -> str:
+        """The sentence with its dates the way the files store them: `2026-08-28`.
+
+        `openproj check` and `openproj schedule` on the terminal, their `--json`,
+        and `/api/index.json` — documents read by scripts in which every other
+        date is ISO, and terminal lines whose neighbouring columns are spans.
+        """
+        return self._filled(str)
+
+    # A computed field and not a plain property, because this is the form a PAGE
+    # needs and a page is the one reader that is handed these as data rather than
+    # as an object: the table's cell marks and every refusal banner are drawn by
+    # script out of a dumped payload. `text` reaches its own readers as an
+    # attribute, or under `Problem.message` below.
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def drawn(self) -> str:
+        """The sentence with its dates the way the app reads one out: `28.08.2026`.
+
+        The record page, the table, the timeline's tooltip. The definite article
+        is what makes the distinction worth drawing at all: "the 2026-08-10 you
+        set" names a thing, "the 10.08.2026 you set" names a day.
+        """
+        return self._filled(_read_date)
+
+    def _filled(self, read: Callable[[date], str]) -> str:
+        # A sentence with no parts is returned verbatim, and that is the rule and
+        # not a shortcut: most of these are built out of record data — a title, a
+        # path, an id somebody typed — and `"a file named {oops}.md".format()`
+        # raises KeyError on data this repository has to keep parsing. A sentence
+        # that wants a slot brings the value with it.
+        if not self.parts:
+            return self.sentence
+        return self.sentence.format(
+            **{
+                key: read(part) if isinstance(part, date) else part
+                for key, part in self.parts.items()
+            }
+        )
+
+
+class Problem(Sentence):
     """One validation finding, carrying the rule version that introduced it.
 
     `rule_version` is what makes grandfathering possible: a record is only
     blocked by rules that existed when it was created.
+
+    A `Sentence` rather than a finished string, since the three rules that
+    compare dates: a start date that has passed, an end date before the start it
+    is before, and a date outside every cycle this plan has dated. See there for
+    what the two forms are for.
     """
 
     severity: Literal["blocker", "warning"]
     record_id: str
     field: str | None
-    message: str
     rule_version: int
+
+    # `Sentence.text` under the name every reader of a Problem already calls it —
+    # the CLI's two print lines, `/api/index.json`, the table's payload and the
+    # tests. Renaming that half of the wire would have been a rename across four
+    # test files and five scripts to say the same thing, and `message` is the
+    # better word here anyway: an explanation explains, and a problem is reported.
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def message(self) -> str:
+        return self.text
 
 
 class Unreadable(BaseModel):
@@ -209,7 +348,7 @@ def readable[T](paths: Iterable[str], load: Callable[[str], T]) -> tuple[list[T]
     the guard that was already here.
 
     Fifteen files proved it: no `---` at all, a flow sequence that never closes,
-    a tab where YAML wants spaces, `effort_weeks: three`, `assigned_on: next
+    a tab where YAML wants spaces, `effort_weeks: three`, `start_date: next
     tuesday`, a frontmatter written as a list, a cycle numbered `forty-one`, a
     config file that is half a line. Every one of them answered 500 on `/`,
     `/graph`, `/timeline`, `/people`, `/cycles`, `/detail`, `/new` and
@@ -488,11 +627,26 @@ class Config(BaseModel):
 
     schema_version: int = 1
     nominal_availability: float = 1.0
-    default_task_effort: float = 0.5
+    # `default_task_effort` was here, and it was the one setting that answered a
+    # question nobody had asked the plan: how long an unsized record should be
+    # treated as taking. `size_weeks` says why it went. A plan whose
+    # `config/defaults.yaml` still carries the key loads exactly as before —
+    # `read_config` keeps only the keys `Config` declares — so the removal costs
+    # a stale line in a file and nothing else.
     # Shape Up's cool-down is not build time, so a bet that lands in it did not
     # fit its box. The overrun is measured against the end of BUILD, and this is
     # how many weeks of the window are not build.
     cooldown_weeks: float = 2.0
+    # How far outside the stretch its own cycles cover a plan may still hold a
+    # typed date. See `weeks_outside_every_cycle`, which is the only reader.
+    #
+    # Twelve rather than a rounder number, and both bounds are the argument. It
+    # has to be comfortably MORE than a cycle, because work bet in the last cycle
+    # anybody has dated legitimately runs on into the next one, which by
+    # definition has no window yet. It has to be comfortably LESS than a year,
+    # because the mistake this exists to catch is a mistyped year — and a rule
+    # that admits a date a year out catches nothing at all.
+    dates_within_weeks_of_a_cycle: float = 12.0
     holidays: list[date] = []
     cycles: dict[int, tuple[date, date]] = {}
     # The roster, from config/people.yaml. Empty means the check is off, which is
@@ -898,7 +1052,37 @@ class Record(BaseModel):
     reviewers: list[str] = []
     review_waived: bool = False
 
-    assigned_on: date | None = None
+    # The one date anybody types, and the whole schedule is derived from it.
+    # It was `assigned_on` until 2026-08-27 — a name borrowed from an HR event,
+    # for a field that has only ever meant the day the work began, feeding a
+    # column already called Start. `_SIZE_FIELD`'s one-field-one-word cleanup is
+    # the precedent, and the old key is named in `_RETIRED` rather than quietly
+    # read: a file still saying `assigned_on:` parses clean and would otherwise
+    # lose its date in silence.
+    start_date: date | None = None
+    # The day the work actually finished, and the ONLY end this tool stores.
+    #
+    # **The actual, never the estimate**, and the difference is the whole of why
+    # this field is one line and the forecast is none. A forecast end moves on
+    # inputs nobody edits on this record — a blocker slipping, a worker filling
+    # up, a cycle's review date being set, midnight — so a stored one is stale
+    # the moment anything else in the plan moves. Left alone it says one date
+    # while the index says another, and the timeline, the cycle "until" and the
+    # carryover list all keep using the SPAN, so the number written on the
+    # record would be the one number nothing else on any page agrees with. Kept
+    # fresh it is a commit per record per recompute, on a protected branch under
+    # a single-writer lock, each one invalidating every reader's index and
+    # 409-ing every browser holding a page rendered against the previous head.
+    # That is the same drift `start_date` refuses to store the other end of, and
+    # "derived data never reaches frontmatter" is the invariant behind both.
+    #
+    # A recorded end is the one date on a record that CANNOT be derived, which
+    # is the other half of the argument: without it a finished record's span is
+    # its start date twice, `elapsed_weeks` has nothing to measure, and
+    # `overruns_cycle_weeks` — the one number that says whether a bet landed
+    # inside its cycle — is absent for exactly the records that could answer.
+    # See §4 and §4b of `design/time-model.md`.
+    end_date: date | None = None
     # Named rather than numbered: "priority 2" means nothing to a reader, and a
     # number invites arithmetic on something that is only an ordering. A plain
     # string for the same reason as `status` — see above.
@@ -1336,7 +1520,12 @@ _WORK_FIELDS = (
     "assignees",
     "reviewers",
     "review_waived",
-    "assigned_on",
+    "start_date",
+    # Both ends of the same fact, or the ladder says a codebase reads no start
+    # and reads an end. `_editable_for` and the create form take their boxes from
+    # this list and the validator reports from it, so one date left out of it is
+    # a box offered on a product and a warning about the value typed into it.
+    "end_date",
     "cycle",
     "priority",
     "prs",
@@ -1763,17 +1952,85 @@ def ancestors(record_id: str, by_id: dict[str, Record]) -> list[str]:
     return chain
 
 
-def size_weeks(record: Record, config: Config) -> tuple[float, bool]:
-    """Weeks of work, and whether that number had to be invented.
+def size_weeks(record: Record) -> float | None:
+    """Weeks of work somebody stated, or None where nobody has stated any.
 
     One field on a pitch and a task, and none on a project — a container has no
     size of its own. Read here rather than reached for directly, so the scheduler,
     the index and the pages cannot disagree about what a missing one means.
+
+    **There is no default appetite, and None is what stands where it stood.** An
+    absent size used to come back as `config.default_task_effort` — half a week
+    nobody had typed — with a second return value saying the number was invented;
+    and a flag is only as good as the callers that read it. Three dropped it on
+    the floor, so the invented half-week was summed into a cycle's bet, charged
+    against a person's capacity and turned into a bar on the timeline, each of
+    those places presenting it exactly as it presents a number somebody
+    estimated. The setting is gone rather than defaulted to zero, because zero is
+    a size and this is the absence of one: a caller has to decide what it does
+    about a record nobody has sized, and it cannot decide that if this function
+    keeps answering on its behalf.
     """
     stated = getattr(record, "person_weeks", None)
-    if stated is not None:
-        return float(stated), False
-    return config.default_task_effort, True
+    return None if stated is None else float(stated)
+
+
+def workers_on(record: Record) -> list[str]:
+    """Everyone on the hook for this record, each counted once.
+
+    An owner who is also an assignee — which is most of them — was counted twice,
+    so they were booked twice and, now that the workers divide the size, would
+    have halved it on their own.
+
+    Here rather than in `schedule.py`, where it was written, because two things
+    now ask it. The scheduler divides a size by these people's availabilities to
+    get a duration; `staffing_of` below names how many of them there are in the
+    sentence three pages print, since "the 4.0 the bet buys" is unreadable
+    without them. Both readings have to come off the same list or the sentence
+    explains a number computed from a different set of names than the one it
+    counts.
+    """
+    named = ([record.owner] if record.owner else []) + list(record.assignees)
+    return list(dict.fromkeys(named))
+
+
+def staffing_of(record: Record, staffed_at: float | None) -> str:
+    """Who the appetite was divided by, in words a reader can do the division with.
+
+    **The sentence this replaces was arithmetic nobody could reproduce.** All
+    three surfaces that quote the box said "Bet 3 over 2 people, which buys 3.0
+    weeks" — a headcount beside a number that came from dividing by the summed
+    AVAILABILITY of those people, which is 1.0 on `pitch-7b3e94` because both of
+    them are half-available that cycle. `pitch-5e7b1c` two rows above it says "4
+    over 2 people, which buys 2.0", which teaches a reader that the operation is
+    division, and then the next row breaks the lesson. The design sanctioned the
+    wording (§3 of `design/time-model.md`), so this was the design's own gap
+    rather than a slip in one page.
+
+    Where everybody is at full rate the headcount IS the divisor and the short
+    sentence is honest, so it stays: adding "2 people, 2 full-time between them"
+    to every ordinary bet would be a clause that says nothing on almost every row
+    it appeared on, which is how a sentence stops being read. Where they differ,
+    the divisor is named and the reader can divide.
+
+    `staffed_at` is `Span.staffed_at`, the denominator the scheduler actually
+    used. None where the span carries no box — a container, or a pitch nobody has
+    bet on yet — and then there is no division to explain and the headcount alone
+    is all this can honestly say.
+
+    One function and not a phrase per page, because the three of them were
+    deliberately unified onto one sentence and a fix applied to two of them is the
+    same defect with a smaller blast radius. `:g` on the rate rather than the
+    `.1f` used on the weeks: availabilities are figures somebody typed into a
+    cycle and summed, so 0.25 and 0.5 come to 0.75, which `.1f` would round to 0.8
+    and make the division wrong again in the one sentence written to make it
+    right.
+    """
+    people = len(workers_on(record)) or 1
+    named = "1 person" if people == 1 else f"{people} people"
+    if staffed_at is None or abs(staffed_at - people) < 1e-9:
+        return named
+    return f"{named}, {staffed_at:g} full-time between them"
 
 
 # --------------------------------------------------------------------------- #
@@ -2466,6 +2723,195 @@ def reviewers_under(record_id: str, children: dict[str, list[Record]]) -> list[s
     return list(dict.fromkeys(found))
 
 
+def _appetite_problem(record: Record, sentence: str) -> Iterator[tuple[str, str | None, str, int]]:
+    """The size gate, in the words of the status asking for it.
+
+    Two statuses demand an appetite and both ask the same three questions — does
+    this rung carry a size field, is it empty, and which field is it called —
+    so they ask them in one place. Written out twice, the copy that would rot is
+    the field lookup: `_SIZE_FIELD` is what keeps `person_weeks` from being named
+    in a message, and a second hand-written `getattr(record, "person_weeks")`
+    would be a gate that silently stops firing for a rung added later.
+
+    A container yields nothing rather than a blocker it could never satisfy: a
+    project has no size of its own, which is `size_weeks`' first sentence, and
+    `_SIZE_FIELD` is where that is written down.
+
+    Stamped 1, the version the `ready` gate already carries, because this is that
+    rule reaching one rung further and not a new demand. Grandfathering it under
+    a newer version would demote it to a warning for every record in the corpus
+    — which is every record it was written for, since the unsized-and-running
+    state is one that existing plans are already in.
+    """
+    field = _SIZE_FIELD.get(record.kind)
+    if field is not None and getattr(record, field) is None:
+        # One field and one word now. It was `appetite_weeks` on a pitch and
+        # `effort_weeks` on a task — one quantity under two names, which
+        # `size_weeks` had to paper over on every read.
+        yield "blocker", field, sentence, 1
+
+
+# The statuses at which the work has not begun, read off the ladder rather than
+# written out as three words. `STATUS_ORDER` is the ladder and `in_progress` is
+# where work starts, so everything before it is a forecast; a rung added at the
+# foot — which is exactly what putting `thinking` in front of `shaping` was —
+# joins this set on the commit that adds it, and a hand-written triple would not
+# have. `shelved` falls on the far side by construction, being last: parked work
+# is exempt from every rule anyway (`_parked`), and a date on it is a record of
+# work that was picked up and put down rather than a forecast that has rotted.
+_BEFORE_WORK_BEGINS = STATUS_ORDER[: STATUS_ORDER.index("in_progress")]
+
+
+def start_date_has_passed(record: Record, today: date) -> bool:
+    """Whether this record states a start date that has passed with nothing begun.
+
+    **One function, two callers, and that is the whole reason it is a function.**
+    `web.py` refuses a date TYPED into the past at the door, with a 422; this
+    module warns about one that DRIFTED there, because a date typed as future
+    becomes past by the passage of time with nobody editing anything, and no
+    refusal at any door will ever fire on that. Two situations, two severities and
+    two sentences — but one question, asked once. This repository has been bitten
+    three times by one fact with two implementations (the search blob, the
+    `(none)` sentinel, and `appetite_weeks` reading as three different numbers
+    across three pages), and a second copy of this one would disagree with the
+    first at exactly the boundary that matters, which is whether `in_progress` is
+    inside the rule or outside it.
+
+    **Scoped to status, and it has to be, or a legitimate edit becomes
+    impossible.** At `in_progress` a start date in the past is not merely allowed,
+    it is the correct value and the gate above demands the field: "I started this
+    on Monday and it is now Wednesday" is the ordinary case. Unscoped, a blanket
+    refusal would force somebody to change the status first and backfill the date
+    second — the wrong order, and the one everybody would get wrong. At `done` the
+    date is the whole span.
+
+    A kind the scheduler never sees is outside it too, for the reason
+    `_status_problems` opens with: a rung that reads no dates has no work state to
+    gate, and `unread_fields` already says beside the record that its start date
+    is not read there. A second sentence about the same key would be this file
+    arguing with itself.
+    """
+    if record.start_date is None or record.status not in _BEFORE_WORK_BEGINS:
+        return False
+    if record.kind in RUNG and not RUNG[record.kind].schedules:
+        return False
+    return record.start_date < today
+
+
+# --------------------------------------------------------------------------- #
+# Dates compared to dates
+#
+# There was no such rule until this change, and the gap was not a small one:
+# `_reject_bad_types` asks only whether two fields are numeric, and the date
+# coercion takes any parseable ISO date with no range check at all — the one
+# date-range check in the whole application was the one for cycle files. So
+# `2025-09-11` typed for `2026-09-11` committed with a 200, and then
+# `span.start <= window[1] and span.end >= window[0]` could never be true for
+# any cycle, so the record dropped silently out of `counts_in`, out of
+# `Index.load` and out of `carried_into` while `openproj check` reported the
+# plan clean. A cycle quietly lost a person's work with no error to chase.
+#
+# Both rules below are one predicate with two callers, which is the shape §1b
+# established for `start_date_has_passed` and the shape this repository has been
+# bitten three times for not having.
+# --------------------------------------------------------------------------- #
+
+
+def ends_before_it_starts(record: Record) -> bool:
+    """Whether this record claims to have finished before it began.
+
+    Two typed dates and no derivation between them, which is what makes this the
+    simplest rule in the file and also the one nothing was checking. The damage
+    is not cosmetic: `schedule` builds a done record's span out of exactly this
+    pair, and a span whose end precedes its start is a bar drawn backwards, a
+    negative `elapsed_weeks` handed to `_rollup_problems`, and a `min`/`max`
+    rollup that reports its parent as running from after it finished.
+
+    A door refuses it and `validate_all` blocks it, on the one-predicate-two-
+    callers shape — but unlike `start_date_has_passed` the two callers here reach
+    the same severity, because there is no drift case. Neither date moves on its
+    own; a record that says this said it because somebody wrote both halves.
+    """
+    return (
+        record.start_date is not None
+        and record.end_date is not None
+        and record.end_date < record.start_date
+    )
+
+
+def _days_outside(value: date, window: tuple[date, date]) -> int:
+    """How many days `value` misses one cycle's window by, and 0 if it is inside it.
+
+    Inclusive at both ends, because a cycle's window is: `config/cycles.yaml`
+    records a first day and a last day, and `_matches_predicate` counts a span
+    that touches either of them as in.
+    """
+    start, end = window
+    if value < start:
+        return (start - value).days
+    if value > end:
+        return (value - end).days
+    return 0
+
+
+def weeks_outside_every_cycle(value: date | None, config: Config) -> float | None:
+    """How far this date falls from the nearest cycle window, or None.
+
+    None means "nothing to say", and it covers three cases that are worth
+    separating from a zero. The date is absent. The plan has dated no cycles at
+    all, which is the ordinary state of a repository somebody started this
+    morning and is the same "no roster, no check" bargain `_people_problems`
+    makes — a tool that refuses dates before anybody has written a cycles file is
+    a tool nobody finishes setting up. Or the date is inside some cycle's window,
+    or within `Config.dates_within_weeks_of_a_cycle` of one, which is every date
+    anybody means to type.
+
+    **Measured to the NEAREST window, and it used to be measured against the
+    envelope of all of them — earliest first day to latest last day.** That
+    weakens to nothing as a plan accumulates cycles, and it took §6's own
+    motivating typo with it: over `tests/fixtures/corpus`, whose dated cycles run
+    from 2024-12-09 to 2026-08-14 with a whole undated year between cycle 28 and
+    cycle 34, `2025-09-11` typed for `2026-09-11` sat comfortably inside the
+    envelope. So the rule reported nothing, the door answered 200, and the record
+    dropped silently out of `counts_in`, out of `Index.load` and out of
+    `carried_into` for every cycle there is — which is the exact failure §6 opens
+    with, surviving the change written to stop it. icon4py-plan is a multi-year
+    plan; this is the shape it will be in, and the envelope only ever gets weaker.
+
+    The gap the envelope was written to protect is protected by the allowance
+    instead. The months between two cycles are real days that real work runs
+    through — the demo corpus leaves a whole unnumbered month for the conference
+    and release window — and twelve weeks is comfortably wider than any gap a
+    team leaves between cycles it is actually running. What no allowance wide
+    enough to be worth having can absorb is a year, which is the one mistake this
+    exists to catch.
+
+    The allowance is a configured number of weeks rather than a constant here,
+    because how far from its cycles a plan legitimately reaches is a fact about
+    the team's own planning horizon and not about this tool. The default is wider
+    than a cycle and narrower than the year a mistyped year moves a date by.
+
+    Returns the distance in weeks and not a bool, so that both callers can print
+    it. "21 weeks outside every cycle this plan has dated" and "this date is
+    outside the plan" are different amounts of help: the first is a number
+    somebody can hold against the year they meant to type, and the second is a
+    sentence they have to go and check for themselves.
+    """
+    if value is None or not config.cycles:
+        return None
+    allowed = max(0.0, config.dates_within_weeks_of_a_cycle) * 7
+    days = min(_days_outside(value, window) for window in config.cycles.values())
+    return None if days <= allowed else days / 7
+
+
+# The dates a person types, in the order the record declares them, and the fields
+# both rules above are asked about. Written here rather than at each caller
+# because the door and the validator have to ask about the same ones — a rule
+# enforced on one date and reported on two is the one-fact-two-implementations
+# failure with extra steps.
+DATED_FIELDS = ("start_date", "end_date")
+
+
 def _status_problems(
     record: Record, reviewers: list[str] | None = None
 ) -> Iterator[tuple[str, str | None, str, int]]:
@@ -2512,24 +2958,29 @@ def _status_problems(
             yield "blocker", "owner", "a ready record needs an owner", 1
         # And somebody actually on it. An owner is who answers for the bet, which
         # is not the same question as who is doing the work — the scheduler prices
-        # a record by the people on it (`_people_on`), so a bet with an owner and
+        # a record by the people on it (`workers_on`), so a bet with an owner and
         # nobody assigned is a bet that has been accepted and staffed with nobody.
         # jcanton, 2026-08-22.
         if not record.assignees:
             yield "blocker", "assignees", "a ready record needs somebody on it", 2
         if not (record.review_waived or reviews):
             yield "blocker", "reviewers", "a ready record needs a reviewer, or review waived", 1
-        field = _SIZE_FIELD.get(record.kind)
-        if field is not None and getattr(record, field) is None:
-            # One field and one word now. It was `appetite_weeks` on a pitch and
-            # `effort_weeks` on a task — one quantity under two names, which
-            # `size_weeks` had to paper over on every read.
-            yield "blocker", field, f"a ready {record.kind} needs an appetite", 1
+        yield from _appetite_problem(record, f"a ready {record.kind} needs an appetite")
         # No shaped_by gate any more: a pitch's owner IS who shaped it, and the
         # owner rule above already asks every ready record for one.
     elif record.status == "in_progress":
-        if record.assigned_on is None:
-            yield "blocker", "assigned_on", "work in progress needs the date it was assigned", 1
+        if record.start_date is None:
+            yield "blocker", "start_date", "work in progress needs the date it started", 1
+        # And it needs a size, for the same reason `ready` does and one more.
+        # The gate used to stop at `ready`, so a record could be sized-checked on
+        # the way in, have its appetite deleted, and go on running with none —
+        # and reaching `in_progress` without ever passing `ready` is the ordinary
+        # path rather than a rung somebody skipped, which is why icon4py-plan has
+        # three of these. With no default standing behind them, an unsized record
+        # in flight now has no span, no bar, no weight in its pitch's rollup and
+        # no claim on anybody's capacity: it is work that is happening and that
+        # the plan cannot account for at all.
+        yield from _appetite_problem(record, "work in progress needs an appetite")
         if not record.assignees:
             yield "blocker", "assignees", "work in progress needs somebody on it", 2
         if not record.review_waived and not (set(reviews) - {record.owner}):
@@ -2539,8 +2990,28 @@ def _status_problems(
                 "work in progress needs a reviewer other than its owner, or review waived",
                 1,
             )
-    elif record.status == "done" and not record.prs:
-        yield "blocker", "prs", "a done record needs at least one PR", 1
+    elif record.status == "done":
+        if not record.prs:
+            yield "blocker", "prs", "a done record needs at least one PR", 1
+        # And the day it ended, which is the one fact a finished record holds
+        # that nothing can work out for itself. Without it a done record's span
+        # is its start date twice: a dot on the timeline, an End column showing
+        # a start, no elapsed weeks and no overrun. See `Record.end_date`.
+        #
+        # **Version 5, and the number is the rule.** Grandfathering demotes a
+        # rule NEWER than the record it judges, so a required field only ever
+        # lands safely one version above what the corpus was written at. Stamped
+        # low — 1, say — this turns every already-finished record into a blocker
+        # the day it ships, including the ones the fixture corpus annotates
+        # `# was fabricated during migration; unknown`, for which there is no
+        # date anybody can supply and no way to say so. Stamped 5 with
+        # `schema_version` left at 4, the other way round, nothing ever reaches
+        # version 5, so it warns for ever and blocks nothing — a required field
+        # that is not required. So it is 5 AND `seed/config/defaults.yaml` moves
+        # 4 → 5 in the same change: everything written from now on is held to it,
+        # and everything already in the corpus gets the warning instead.
+        if record.end_date is None:
+            yield "blocker", "end_date", "a done record needs the date it ended", 5
 
 
 def required_at(kind: str | None = None) -> dict[str, tuple[str, ...]]:
@@ -2759,70 +3230,155 @@ def _bet_problems(
     )
 
 
-def _rollup_problems(
-    record: Record, children: dict[str, list[Record]], config: Config
-) -> Iterator[tuple[str, str | None, str, int]]:
-    """Children that add up to more than the bet they sit inside.
+def tasks_occupy(kids: Sized, span: Span | None) -> float | None:
+    """The working weeks the work under a record occupies, or None where there is none.
 
-    The appetite is the box, and its tasks are what somebody proposes to put in
+    **One question, asked in one place, because three surfaces were asking two.**
+    `check` (`_rollup_problems`, below), the record page's Appetite row and the
+    table's size cell all say what a bet's tasks come to, and they used to reach
+    that number by two different routes: this one, and a gate on
+    `index.progress`, which counts a child only if somebody STATED a size for it.
+    Those two populations were the same set of records until §4 of
+    `design/time-model.md` gave a `done` record a typed `end_date` — the size
+    gate stops at `in_progress`, so a task finished without one is ordinary
+    rather than a corner, and it has a real measured interval and no
+    `person_weeks` at all. A pitch bet at 1.0 holding one such task therefore
+    told a reader three things at once: `check` warned that its tasks needed 4.0
+    weeks, the cell said nothing under it had a length yet while carrying that
+    same warning as a mark, and the record page drew a bare appetite with no
+    comparison on it.
+
+    **The interval is the right question and the stated size is the wrong one**,
+    because the number every one of those surfaces prints is measured off the
+    union of the children's intervals (`_occupied_weeks`, `schedule.py`) and
+    never off anybody's `person_weeks`. Asking who was sized asks a person-weeks
+    question about a calendar answer, and it can only ever agree with it by
+    coincidence. A child with no interval contributes nothing to the number, so
+    it is nothing this gate should be reading either — and the two states that
+    produce one, an unsized record with no span at all and a done record written
+    before the end date existed, are precisely the ones the cell's fourth
+    reading (`?`) exists to say out loud.
+
+    `kids` is read for emptiness alone, which is why it is `Sized` rather than a
+    list of anything in particular: the validator holds its children as records
+    and the index holds them as ids, and neither shape is worth converting to ask
+    "is there work under this record". Having children is what separates a
+    parent's rolled-up contents from a leaf's own length — a leaf's
+    `elapsed_weeks` is itself, and printing it beside its own appetite would be
+    the record agreeing with itself.
+    """
+    if not kids or span is None:
+        return None
+    return span.elapsed_weeks
+
+
+def _rollup_problems(
+    record: Record, children: dict[str, list[Record]], spans: Mapping[str, Span] | None
+) -> Iterator[tuple[str, str | None, str, int]]:
+    """A pitch whose tasks, as actually staffed, do not fit in the box it was bet at.
+
+    The appetite is the box and its tasks are what somebody proposes to put in
     it. Nothing compared the two, so a six-week bet holding seven and a half
     weeks of tasks read as a six-week bet everywhere on the site — and the span,
     which is the rollup of the children, quietly ran past it anyway.
 
-    A warning, never a blocker: the answer is to cut scope or to re-bet, and both
-    are decisions for a person. Only stated sizes are compared, on both sides of
-    the comparison. That sentence was true of the parent and false of the
-    children for a while: the guard below returns for an unsized bet, but every
-    unsized child was summed at `config.default_task_effort` — so a warning that
-    tells somebody to cut scope quoted a total partly made of a number nobody
-    typed, and the sentence presented it as what "its tasks add up to".
+    **Calendar against calendar, and it is the span that answers.** This summed
+    the children's person-weeks and held the total against the parent's stated
+    appetite, which answers "is there more work here than we said" — a question
+    nobody is asking in front of a plan. Four person-weeks and one sit
+    comfortably inside an eight person-week bet and still do not fit, if the bet
+    bought four calendar weeks with two people and the tasks need four and a
+    half on the one person holding both. So the box is `Span.budget_weeks` —
+    this record's own appetite over the availability of its own people — and the
+    contents is `Span.elapsed_weeks`, the working days the tasks actually occupy.
+
+    **The placement is what makes shared assignees come out right**, and it is
+    why the sum went. Two tasks of four weeks and half a week are four and a half
+    weeks of calendar if one person holds both and four if they run side by side
+    on different people; a sum reports four and a half in both cases and is wrong
+    in one of them. Nothing new had to be taught about parallelism, because
+    `_place` books workers and a contended person already serialises their own
+    work.
+
+    **Occupied and not enclosed.** The length of the rolled-up span was the
+    contents until an audit read the sentence this yields against a real record:
+    `pitch-7b3e94` holds two tasks worth six weeks, one of them dated to after
+    the plant shutdown, and `max(child.end) - min(child.start)` charged it twenty
+    weeks against a three-week box — fourteen of them a gap in which nobody was
+    working. Cut scope, re-bet it and put more people on it are the three
+    remedies here, and not one of them shortens a wait, so the number named a
+    cause that was not the cause. `_occupied_weeks` (`schedule.py`) measures the
+    union of the children's intervals instead: the two readings agree wherever
+    the work is continuous, which is every case above.
+
+    That also retires a paragraph this docstring used to carry. Only stated sizes
+    were compared, and that sentence was true of the parent and false of the
+    children: every unsized child was summed at the old `config.default_task_effort`,
+    so a warning telling somebody to cut scope quoted a total partly made of a
+    number nobody typed. Both halves of that are gone — the default no longer
+    exists, and an unsized record gets no span at all, so it drops out of the
+    rollup by not being in it rather than by being filtered out of a sum. The
+    conservatism survives the move: a pitch holding four unsized tasks and one
+    sized one rolls up a span covering the sized one alone, which can only be
+    shorter than the truth.
+
+    **A warning, never a blocker**, because every remedy is a decision for a
+    person — and the sentence names the third one the old wording could not see.
+    Staffing shortens a bar, so putting another person on the pitch is as real an
+    answer as cutting scope or re-betting, and the old arithmetic could not say
+    so because people were not in it.
+
+    **Silent without spans.** `validate_all` takes them optionally: the callers
+    that validate one candidate record on its way to being written have no
+    schedule and are reporting on that record, not on the plan around it. This
+    rule is the plan's, and it is asked by `Index.load` and by `openproj check`,
+    which schedule first.
     """
-    kids = children.get(record.id, [])
-    stated, defaulted = size_weeks(record, config)
-    if not kids or defaulted:
+    span = spans.get(record.id) if spans is not None else None
+    if span is None:
         return
-    # The sized ones only. A sized child overrunning the appetite is a statement
-    # somebody actually made — those numbers were typed, and the unsized
-    # siblings can only add to the total, never bring it back under — so firing
-    # on the sized sum alone is both honest and conservative. Counting the
-    # defaults in is the opposite: it invents an overrun (four unsized tasks
-    # under a one-week pitch would read as two weeks nobody proposed), and the
-    # golden corpus already carries the shape — pitch-3c9a41's four tasks are
-    # all unsized, so its old total of 2.0 was invented wholesale and only
-    # stayed quiet because the bet happened to be bigger.
+    # The contents, through the gate the record page and the table read as well,
+    # so that a bet the validator warns about and a bet the page draws a verdict
+    # on are one population and not two that agree most of the time. See
+    # `tasks_occupy` for the pitch that made them disagree.
+    contents = tasks_occupy(children.get(record.id, []), span)
+    # Silent where the parent has no appetite of its own — `budget_weeks` is None
+    # for a container and for a pitch nobody has bet on yet, and a bet that was
+    # never made cannot be exceeded. Silent too where nothing underneath has a
+    # length to occupy: an unscheduled span, whose two dates stand for "no
+    # answer", and a pitch every one of whose tasks is unsized. A bet nothing can
+    # be measured against is not a bet that was exceeded.
     #
-    # A container CAN reach `kids` today: the map above keys on `parent` alone,
-    # with no kind check, so a hand-committed `parent: pitch-x` on a project
-    # file lands it here — `Rung.under` makes that filing a reported containment
-    # problem, not an impossibility, because it governs validation and never the
-    # map. What keeps a mis-filed container out of the sum is this filter
-    # itself: only a pitch and a task carry `person_weeks`, so `size_weeks` on a
-    # container always answers (default, True) and it is left out as unsized
-    # rather than priced at the invented default `_weighed` (`index.py`)
-    # documents. Under the old sum it WAS priced in, at 0.5 weeks nobody typed.
-    sized = [kid for kid in kids if not size_weeks(kid, config)[1]]
-    total = sum(size_weeks(kid, config)[0] for kid in sized)
-    if total <= stated:
+    # A pitch whose every task is FINISHED used to be a third case, because a
+    # done record was a point marker with no length. §4 of
+    # `design/time-model.md` gave it a recorded end, so a finished bet now has a
+    # real interval underneath it and is judged against its box like any other —
+    # which is the only reading under which "did this bet fit" can ever be
+    # answered about the records that already know.
+    if contents is None or span.budget_weeks is None:
         return
-    if len(sized) == len(kids):
-        message = (
-            f"its {len(kids)} tasks add up to {total:g} weeks, more than the "
-            f"{stated:g} it was bet at — cut scope, or re-bet it"
-        )
-    else:
-        # The message counts what was counted. "Its 8 tasks add up to 4 weeks"
-        # over five sized ones and three defaults is the defect this function
-        # had; saying the sized count, and that the rest can only push the total
-        # higher, is the same warning built out of typed numbers alone.
-        left = len(kids) - len(sized)
-        many = len(sized) != 1
-        message = (
-            f"its {len(sized)} sized task{'s' if many else ''} alone "
-            f"{'add' if many else 'adds'} up to {total:g} weeks, more than the "
-            f"{stated:g} it was bet at, and the {left} without a size can only "
-            "add to that — cut scope, or re-bet it"
-        )
-    yield ("warning", _SIZE_FIELD.get(record.kind), message, 4)
+    if contents <= span.budget_weeks:
+        return
+    # Who the appetite was divided by, through `staffing_of` so that this
+    # sentence and the two the pages print name it the same way. It used to be
+    # `len(workers_on(record))` written out here — "the 3.0 the bet buys at 2" —
+    # which is the headcount and not the divisor: `pitch-7b3e94`'s two people are
+    # half-available each, so the 3.0 came from dividing by 1.0 and the sentence
+    # invited a reader to work out 3 ÷ 2 and get a different answer.
+    #
+    # One decimal on the weeks, and not the `:g` the rest of this module uses on
+    # sizes somebody typed. These two are computed reals — an eight-week bet over
+    # two people at 60% is 6.666666666666667 — and `:g` would put five decimal
+    # places of arithmetic noise into a sentence a person is meant to act on.
+    yield (
+        "warning",
+        _SIZE_FIELD.get(record.kind),
+        f"its tasks need {contents:.1f} weeks with the people on them, more than "
+        f"the {span.budget_weeks:.1f} the bet buys over "
+        f"{staffing_of(record, span.staffed_at)} — "
+        "cut scope, re-bet it, or put more people on it",
+        4,
+    )
 
 
 def _carries(record: Record, field: str) -> bool:
@@ -2869,9 +3425,19 @@ _PROMOTION_LINKS = {"pitched_into": "pitched into", "became": "became"}
 # `shaped_by` retired 2026-08-24 — jcanton: owner, shaped_by, assignees and
 # reviewers was one hat too many, so `owner` on a pitch is who shaped it and
 # holds it.
+#
+# `assigned_on` retired 2026-08-27 into `start_date`, and it is here for a
+# sharper reason than the tidiness of the name: a date is the value being
+# stranded. A file that still says `assigned_on:` parses clean, keeps the dead
+# key for ever and loses the one date the whole schedule is derived from, so
+# every record in it snaps to today's floor with nothing on any page to say
+# why. That is not backwards compatibility — the field is gone — but the file
+# is told so.
 _RETIRED = {
     "shaped_by": "owner records who shaped a pitch and holds it — "
     "move the name there and delete this key",
+    "assigned_on": "start_date records when the work began — "
+    "move the date there and delete this key",
 }
 
 
@@ -2882,8 +3448,18 @@ def _problems_for(
     children: dict[str, list[Record]],
     parent_cycles: set[str],
     dep_cycles: set[str],
-) -> Iterator[tuple[str, str | None, str, int]]:
-    """Yield (severity_before_grandfathering, field, message, rule_version)."""
+    spans: Mapping[str, Span] | None,
+    today: date,
+) -> Iterator[tuple[str, str | None, str | Sentence, int]]:
+    """Yield (severity_before_grandfathering, field, message, rule_version).
+
+    The message is a plain string wherever the rule names no date, and a
+    `Sentence` — a wording plus the dates that fill it — wherever it names one.
+    Both, rather than a `Sentence` at all forty-odd yield sites: a rule with no
+    date in its sentence has nothing to hold as a date, and wrapping every
+    f-string in a constructor to say so would be ceremony over a distinction that
+    is real. `validate_all` makes the one out of the other.
+    """
     if not record.title.strip():
         yield "blocker", "title", "title must not be empty", 1
     if not ID_PATTERN.match(record.id):
@@ -2933,10 +3509,13 @@ def _problems_for(
                 yield "warning", field, f"{what}, so its {field} is not read", 1
 
     # Any kind, because a retired key is in nobody's `model_fields` and so lands
-    # in `_unread` wherever it is written. Stamped 5, the version that retired
-    # `shaped_by` — moot for severity, since a warning is what is yielded and
-    # grandfathering only ever demotes, but a Problem's version should still say
-    # which vocabulary it belongs to.
+    # in `_unread` wherever it is written. Stamped 5 for the whole map — the
+    # version that retired `shaped_by`, and the one `assigned_on` retires under
+    # too. Splitting the loop to give each key a number of its own would buy
+    # nothing anybody reads: a warning is what is yielded, grandfathering only
+    # ever demotes, and there is no severity below a warning to demote one to.
+    # The version is still carried, because what it says is which vocabulary a
+    # Problem belongs to.
     for field, where in _RETIRED.items():
         if field in record._unread:
             yield "warning", field, f"{field} is no longer read: {where}", 5
@@ -2953,7 +3532,7 @@ def _problems_for(
     if record.id not in parent_cycles:
         yield from _containment_problems(record, by_id)
         yield from _bet_problems(record, by_id)
-        yield from _rollup_problems(record, children, config)
+        yield from _rollup_problems(record, children, spans)
 
     if record.cycle is not None and record.cycle not in config.cycles:
         # `_overrun` looks the window up with `.get`, so a number nobody has dated
@@ -2980,6 +3559,85 @@ def _problems_for(
     yield from _status_problems(
         record, list(dict.fromkeys([*record.reviewers, *reviewers_under(record.id, children)]))
     )
+    # The drift half of `start_date_has_passed`; the door holds the other half.
+    # A warning and not a blocker, and the difference is not severity for its own
+    # sake: nobody did this. The date was in the future when it was typed and the
+    # calendar moved under it, so there is no edit to refuse and no moment at
+    # which anybody could have been told. What the reader gets instead is the
+    # sentence the schedule is already acting on — `_place` discards the stated
+    # date for the floor, and `_explain` says so on the record's own page.
+    #
+    # Stamped 5, the vocabulary this whole change belongs to, on the same
+    # reasoning `_RETIRED` gives above: a warning is what is yielded,
+    # grandfathering only ever demotes, and there is no severity below a warning
+    # to demote one to. The version still says which vocabulary the Problem is
+    # from.
+    if start_date_has_passed(record, today):
+        yield (
+            "warning",
+            "start_date",
+            # A `Sentence` and not an f-string: this one is drawn on the record
+            # page directly above `Explanation.drawn`'s "the 10.08.2026 you set
+            # has passed", which is the very date it is about, and the two used
+            # to name the same day two ways in one column.
+            Sentence(
+                sentence="the start date {start} has passed and the work has not begun, "
+                "so this is scheduled from today instead: move the date, or say the work "
+                "has started",
+                parts={"start": record.start_date},
+            ),
+            5,
+        )
+    # The two date-versus-date rules, both of which the door refuses as well.
+    #
+    # `ends_before_it_starts` is version 1 rather than 5, which is the exception
+    # `_problems_for` already makes once above for a field a rung does not read,
+    # and it is the same argument: grandfathering exists so that a rule invented
+    # today does not turn a file written last year red, and NO FILE CAN PREDATE
+    # THE FIELD. `end_date` arrives in version 5, so every record that carries
+    # one was written after this rule existed, whatever `created_schema_version`
+    # the file happens to declare. Stamped 5, a hand-written record whose dates
+    # contradict each other would report a warning where it means a blocker, for
+    # ever — and a backwards span is not a missing fact, it is two facts that
+    # cannot both be true.
+    if ends_before_it_starts(record):
+        yield (
+            "blocker",
+            "end_date",
+            Sentence(
+                sentence="the end date {end} is before the start date {start}, "
+                "so this record finished before it began",
+                parts={"end": record.end_date, "start": record.start_date},
+            ),
+            1,
+        )
+    # And a date that is nowhere near this plan, which IS a warning, and for the
+    # reason the drift rule above is one: nobody can be sure. A plan whose cycles
+    # file stops at last spring is a plan whose dates are all legitimately
+    # outside it, and refusing to load work over a config file somebody has not
+    # got round to would be the tool arguing with the team about its own
+    # bookkeeping. The door is where a person is standing and can be told; here
+    # the sentence is what somebody chasing a record that vanished from every
+    # cycle page will actually find. Version 5, and a warning cannot be demoted
+    # below itself — see `_RETIRED`.
+    for field in DATED_FIELDS:
+        away = weeks_outside_every_cycle(getattr(record, field, None), config)
+        if away is not None:
+            yield (
+                "warning",
+                field,
+                Sentence(
+                    sentence="{value} is {away} weeks outside every cycle this plan has "
+                    "dated, so this record counts towards none of them: check the year",
+                    # The distance is a finished string and the date is not. A
+                    # number is read the same way in both halves of the app —
+                    # there is one format for a date here and none for a count of
+                    # weeks — so rounding it at the rule keeps `{away:.0f}` in the
+                    # one place that knows it is weeks.
+                    parts={"value": getattr(record, field), "away": f"{away:.0f}"},
+                ),
+                5,
+            )
     yield from _people_problems(record, config)
 
 
@@ -3111,7 +3769,10 @@ def _identity_problems(records: list[Record]) -> Iterator[Problem]:
                 severity="blocker",
                 record_id=record.id,
                 field="id",
-                message=(
+                # No parts, and no date to hold as one: this sentence is built
+                # out of a record id and a filename, both of them text somebody
+                # committed, so it is returned verbatim rather than formatted.
+                sentence=(
                     f"this record says it is {record.id} and its file is named "
                     f"{Path(record._source).name} — until they agree, a save can land "
                     "on the wrong file"
@@ -3124,7 +3785,7 @@ def _identity_problems(records: list[Record]) -> Iterator[Problem]:
                 severity="blocker",
                 record_id=record.id,
                 field="id",
-                message=(
+                sentence=(
                     f"{', '.join(sorted(others))} claims this id too, so which record "
                     "this is depends on which half of the app you ask"
                 ),
@@ -3147,13 +3808,39 @@ def _parked(record: Record) -> bool:
     return bool(statuses) and record.status == statuses[-1]
 
 
-def validate_all(records: list[Record], config: Config) -> list[Problem]:
+def validate_all(
+    records: list[Record],
+    config: Config,
+    spans: Mapping[str, Span] | None = None,
+    today: date | None = None,
+) -> list[Problem]:
     """Check every record against every rule it is old enough to be held to.
 
     Parked records — those at their own ladder's terminal status, see
     `_parked` — are exempt from all of them: parked work is not broken work,
     and a validator that nags about it teaches people to ignore the validator.
+
+    `spans` is the scheduler's output, and the one rule that reads it —
+    `_rollup_problems`, on whether a pitch's tasks fit in the calendar weeks its
+    bet bought — is simply not applied without it. Optional rather than
+    required, because the two kinds of caller want different answers. `Index.load`
+    and `openproj check` are judging a whole plan and schedule it first, so they
+    pass them. Every write path validates one candidate record against the
+    records around it, before it is a file, to answer "may this be saved" — and
+    a rollup is a fact about the plan the record is joining rather than about the
+    record, so scheduling the whole corpus on each keystroke would buy an answer
+    that is not to the question being asked.
+
+    `today` is the day the plan is judged around, threaded the way `spans` is
+    threaded and for the same reason: an index drawn around a pinned day — the
+    demo corpus is written around one — must not be told a different day by a
+    rule inside it. It defaults rather than switching its rule off, which is where
+    it parts company with `spans`: what day it is always has an honest answer,
+    where a schedule the caller did not run does not, and a date rule that goes
+    quiet when nobody passes an argument is the "0 blockers, 0 warnings on a plan
+    that answers 500" failure with a different cause.
     """
+    today = today or date.today()
     by_id = {record.id: record for record in records}
     parent_cycles = _cyclic_members({e.id: [e.parent] if e.parent else [] for e in records})
     dep_cycles = _cyclic_members({e.id: list(e.depends_on) for e in records})
@@ -3167,15 +3854,21 @@ def validate_all(records: list[Record], config: Config) -> list[Problem]:
         if _parked(record):
             continue
         for severity, field, message, rule_version in _problems_for(
-            record, config, by_id, children, parent_cycles, dep_cycles
+            record, config, by_id, children, parent_cycles, dep_cycles, spans, today
         ):
             grandfathered = rule_version > record.created_schema_version
+            # A rule that named no date yielded a finished string; one that named
+            # a date yielded the wording and the dates apart. Both become the
+            # same kind of Problem here, so that nothing downstream has to ask
+            # which kind of rule reported it.
+            said = message if isinstance(message, Sentence) else Sentence(sentence=message)
             problems.append(
                 Problem(
                     severity="warning" if grandfathered else severity,
                     record_id=record.id,
                     field=field,
-                    message=message,
+                    sentence=said.sentence,
+                    parts=said.parts,
                     rule_version=rule_version,
                 )
             )

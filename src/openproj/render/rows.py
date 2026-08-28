@@ -3,7 +3,18 @@
 from __future__ import annotations
 
 from ..index import Index, _product_of, _project_of, predicates_of
-from ..model import RUNG, Config, size_weeks, unread_fields
+from ..model import RUNG, size_weeks, staffing_of, unread_fields
+
+# The record page's own reading of what a pitch's tasks come to, imported rather
+# than repeated. It is the wrong way up as a dependency — this module is the view
+# model three pages share and that one is a page — and it is still the right
+# import: the alternative is a second gate and a second read of the same span
+# beside a comment promising they agree, which is the exact shape of the defect
+# `_tasks_add_up_to` was itself fixed for. `detail` reaches nothing here, so the
+# graph stays acyclic; the day something else needs this number as well, the
+# function moves down here and the record page imports it back.
+from .detail import _tasks_add_up_to, _tasks_under
+from .tokens import _SIZE_FIELD_NAME
 
 
 def _reviewers_under(index: Index, record_id: str) -> list[str]:
@@ -32,10 +43,189 @@ def _reviewers_under(index: Index, record_id: str) -> list[str]:
     return list(dict.fromkeys(found))
 
 
+def _rollup(index: Index, record_id: str) -> dict | None:
+    """What the work under this record occupies, and how that reads against its bet.
+
+    None wherever there is nothing to say: on a rung that reads no appetite at
+    all (see below) and on every leaf. `_tasks_add_up_to` is what answers the
+    number and is called rather than re-derived, so the sentence the record page
+    prints under Appetite and the cell the table draws are the same fact read
+    once. They said different numbers for a while — the page summed
+    `index.progress[id].total` while `check` summed only the sized children —
+    and then they went on disagreeing about which records had a number at all,
+    because the page kept `index.progress` as its GATE after the arithmetic had
+    moved to the span. Both halves are `tasks_occupy` (`model.py`) now, and
+    `kids` below is the same list the number was computed over rather than a
+    second reading of the child map.
+
+    **Having children is what decides whether there is a cell at all, and it
+    used to be having a NUMBER.** `_tasks_add_up_to` answers None for a pitch
+    none of whose tasks has a length, and returning None with it took the fourth
+    state away from the one plan it was written about: a bet over three `shaping`
+    tasks has nothing sized under it at all, which is strictly worse than the
+    three-sized-and-four-unsized case that did get the `?`, and it drew its bet
+    plainly with no mark, no muted ground and no sentence. So the gate is `kids`
+    — the work under this record — and the missing number is a reading rather
+    than a reason to say nothing. Shelved children are not in that list, so a
+    pitch whose every task is parked still falls out here exactly as it did when
+    the number was the gate: `_progress_of` leaves shelved work out of the
+    rollup, so there was never a number for one of those either.
+
+    **One value, so that the tint and the mark cannot disagree.** The state below
+    is `Span.budget_weeks` against `Span.elapsed_weeks`, which is exactly the
+    comparison `_rollup_problems` (`model.py`) makes and the ONLY one drawn
+    anywhere on this row: the browser is handed a word and looks up a glyph and a
+    class for it, rather than being handed two numbers and asked to compare them
+    a second time. A second comparison would be a second implementation of the
+    rule this repository has already been bitten four times by writing twice, and
+    it would drift in the worst possible direction — a cell painted green over a
+    warning triangle explaining why the bet does not fit.
+
+    The `over` state is the one that carries no tint of its own, and that is the
+    same argument seen from the other side. `_rollup_problems` fires on exactly
+    `elapsed > budget`, `MARK_COLUMN` routes its `person_weeks` field to this
+    column, and `cell()` grounds a cell carrying a warning in `--sev-warn-soft`.
+    Painting a second warn ground from this state would be a second copy of one
+    colour whose only possible future is to disagree with the first.
+
+    **Four states and not three.** With no default appetite left, a pitch holding
+    three sized tasks and four unsized ones occupies only the days of the three —
+    a real number, under the box, and green would say the bet is known to fit
+    when nobody has estimated more than half of it. So a child that adds nothing
+    to the union takes the reading away rather than flattering it, and the
+    sentence says how many did. The same state covers the case where EVERY child
+    adds nothing, and there the cell has no number to print at all — `?` over "no
+    length yet", which is the whole of what is known about that bet.
+
+    A child adds nothing when it has no span at all (nobody sized it, §2 of
+    `design/time-model.md`) or a span with no length (a `done` record written
+    before `end_date` was asked for). Both are read off the span rather than off
+    `person_weeks`, because the span is what the number in the cell was measured
+    from — asking the field would let a child that is sized but contributes
+    nothing pass as though it had been counted.
+
+    Shelved children are not in that count, and the list is the same one
+    `_progress_of` rolls up: parked work is not work anybody is waiting on, and
+    counting it would put a permanent `?` on every pitch that has ever shelved a
+    task.
+
+    And a fifth state for the pitch nobody has bet on yet, which the design's
+    table does not enumerate because it is not a reading of the box — there is no
+    box. It says what its tasks come to and offers no verdict: warning-colouring
+    a record `check` is silent about is how a reader learns that one of the two
+    is lying to them.
+    """
+    record = index.plan[record_id]
+    # Only on a rung that reads an appetite at all. A project has work under it
+    # and no `person_weeks` of its own — `_rollup_problems` says so in as many
+    # words, "a project is not bet, its pitches are" — so a number in its
+    # appetite column would be a box nobody bought, in a column the row's own
+    # rule already says it does not hold. `unread_fields` is that rule, and it is
+    # the same list `_row` below empties every other cell of a container by.
+    #
+    # It is also what keeps this cell and the record page saying the same thing:
+    # `_fact_rows` draws an Appetite row out of the model's fields, so a project
+    # has none there and would have had one here.
+    if _SIZE_FIELD_NAME in unread_fields(record.kind):
+        return None
+    kids = _tasks_under(index, record_id)
+    if not kids:
+        return None
+    silent = [
+        child
+        for child in kids
+        if index.spans.get(child) is None or index.spans[child].elapsed_weeks is None
+    ]
+    contents = _tasks_add_up_to(index, record)
+    # `.get`, because a pitch whose children are ALL unsized is scheduled
+    # nowhere: the rollup branch of `_schedule` takes `min`/`max` over the spans
+    # its children came back with and `continue`s when there are none. That
+    # record has no box either — `budget_weeks` travels on the span — so the
+    # sentence below can name the bet and the people and stops there.
+    span = index.spans.get(record_id)
+    box = span.budget_weeks if span is not None else None
+    # The bet as the FILE states it, and the staffing the scheduler divided it by
+    # to get the box. Both are named because the box alone is not recoverable
+    # from either: this row printed `bet 4.0 weeks` on a record whose file says
+    # `person_weeks: 8`, which invites somebody to go looking for a 4 that is
+    # written nowhere. The appetite is in person-weeks and the box is in calendar
+    # ones, and the sentence has to carry the conversion or it is two units with
+    # the reader left to notice — the defect the record page carried in the same
+    # words.
+    #
+    # `staffing_of` and not a headcount written out here, which is what this was:
+    # "Bet 3 over 2 people, which buys 3.0 weeks" names a number the arithmetic
+    # did not use, because the divisor is the summed availability and the two
+    # people on `pitch-7b3e94` are half-available each. The function is
+    # `model.py`'s so that this row, the record page's Appetite line and the
+    # warning `check` prints say it one way — they were unified onto one sentence
+    # on purpose, and a fix in two of the three is the same defect with a smaller
+    # blast radius.
+    stated = size_weeks(record)
+    staffing = staffing_of(record, span.staffed_at if span is not None else None)
+    bet = f"Bet {stated:g} over {staffing}" if stated is not None else "No bet on this yet"
+    if contents is None:
+        # Nothing underneath has a length, so there is no reading to give — only
+        # the bet, and the fact that nobody has estimated what is meant to go in
+        # it. No count of the silent children, unlike the partial state below:
+        # they are all of them, and "1 of its 1 have no length yet" is a sentence
+        # about one task written as arithmetic.
+        state = "unsized"
+        text = "no length yet"
+        why = (
+            f"{bet}. Nothing under it has a length yet, "
+            "so nothing can be said about whether it fits."
+        )
+    else:
+        text = f"{contents:.1f} in tasks"
+        if box is None:
+            state = "unbet"
+            why = f"{bet}. Its tasks need {contents:.1f} weeks."
+        else:
+            # Three facts in one clause, in the order somebody reads them: what
+            # was bet, over how many people, and what that buys. The last is the
+            # only one of the three the comparison is made against, and it is
+            # quoted in the words `_rollup_problems` uses for it — "the 4.0 the
+            # bet buys" — so the warning in `check` and the sentence on this row
+            # name the same number the same way.
+            held = f"{bet}, which buys {box:.1f} weeks; its tasks need {contents:.1f}"
+            if contents > box:
+                state = "over"
+                why = f"{held} — over the box."
+            elif silent:
+                state = "unsized"
+                why = (
+                    f"{held} — but {len(silent)} of its {len(kids)} have no length yet, "
+                    "so that can only grow."
+                )
+            elif contents == box:
+                state = "level"
+                why = f"{held} — exactly the box."
+            else:
+                state = "under"
+                why = f"{held} — inside the box."
+    return {
+        # Two keys for one number, exactly as `progress` and `progress_text`
+        # below are: the number is what a column sorts by, the text is what the
+        # cell prints. `5.6 in tasks` is the record page's own wording for it,
+        # and a test holds the two together.
+        #
+        # None on both where nothing under this has a length. The column sorts
+        # such a row where it sorts an unsized leaf — `shownBy` reads this key
+        # and `String(null ?? '')` is the empty string — which is the right
+        # company for it, and the alternative was sorting a row by a bet its own
+        # cell no longer shows.
+        "weeks": contents,
+        "text": text,
+        "state": state,
+        "why": why,
+    }
+
+
 def _row(index: Index, record_id: str) -> dict:
     record = index.plan[record_id]
     span = index.spans.get(record_id)
-    size, defaulted = size_weeks(record, Config(default_task_effort=index.default_task_effort))
+    size = size_weeks(record)
     counted = index.progress.get(record_id)
     # What this rung does not read is not on its row. The model defaults `status`
     # to `shaping` and `priority` to `medium` for every record, so a product —
@@ -51,6 +241,56 @@ def _row(index: Index, record_id: str) -> dict:
 
     def read(name, value):
         return None if name in unread else value
+
+    # The two dates this record's own file holds, through `read` like every other
+    # stored value: a rung that does not schedule reads neither, and a
+    # hand-written `start_date` on a product must no more reach the Start column
+    # than it reaches the Owner one.
+    stated_start = read("start_date", record.start_date)
+    stated_end = read("end_date", record.end_date)
+    # **Each date column falls back to the stated date where the scheduler gave
+    # this record no span**, because each of them is the editor for that field
+    # (`_COLUMN_FIELD`, `table.py`) and a cell that edits a field must show what
+    # the field holds. Otherwise you type a date into it, watch the PATCH commit,
+    # and watch the cell stay blank — the one failure a derived column is closed
+    # to editing to avoid, in the columns that were opened.
+    #
+    # Both halves are reachable and neither is exotic. With no default appetite
+    # (§2 of `design/time-model.md`) a `thinking` or `shaping` record gets no span
+    # at all, so a shaping task carrying `start_date: 2026-09-07` drew nothing
+    # while the record page's own Start date row printed it. And `done` does not
+    # demand a start date — deliberately, because migrated history often cannot
+    # name one — so a finished record with a recorded `end_date` and no start
+    # never reaches the scheduler's historical branch and drew nothing either.
+    #
+    # §2 argued for a blank Start on unsized work and it was right about the
+    # forecast: there is none, and inventing one is what that section refuses. It
+    # was written before the column became the editor for the field, and §1b
+    # makes a future `start_date` on a shaping record the legitimate case rather
+    # than the corner. A stated date is not a forecast — `stated` below is what
+    # keeps the two apart on screen.
+    start = span.start if span else stated_start
+    end = span.end if span else stated_end
+    # Which of the two date cells is drawing the date the FILE states, as against
+    # one the scheduler worked out. This was `"derived": span is not None`, a
+    # row-level boolean whose comment said it was here so that "the column can
+    # style itself differently from anything a human typed" — and nothing in any
+    # page ever read it, so no column ever did. The question it was asking is
+    # per-CELL and not per-row: a done record's End is its typed `end_date` while
+    # its Start may be a forecast, and a shaping record's Start is typed while it
+    # has no forecast at all.
+    #
+    # Compared value against value rather than by asking which branch produced
+    # it, because the scheduler hands the stated date straight back on more rungs
+    # than a list here could keep up with — `in_progress` starts when its file
+    # says it started, and a `ready` date that clears the floor survives too.
+    # What a reader needs to know is whether the date in front of them is one
+    # somebody chose, and that is what this compares.
+    stated = [
+        column
+        for column, drawn, typed in (("start", start, stated_start), ("end", end, stated_end))
+        if drawn is not None and drawn == typed
+    ]
 
     return {
         "id": record.id,
@@ -83,13 +323,31 @@ def _row(index: Index, record_id: str) -> dict:
         "review_waived": read("review_waived", record.review_waived),
         "priority": read("priority", record.priority),
         "cycle": read("cycle", record.cycle),
-        "size": None if defaulted else size,
-        "start": span.start.isoformat() if span else None,
-        "end": span.end.isoformat() if span else None,
-        # Every date on this page was computed. Saying so in the payload keeps the
-        # column able to style itself differently from anything a human typed.
-        "derived": span is not None,
-        "estimated": bool(span and span.estimated),
+        # The size somebody stated, and None where nobody has. It used to be
+        # `None if defaulted else size` — the same value, reached by throwing
+        # away an invented half-week the line above had just made up, and the
+        # hover card in `shell.py` read `row.weeks ?? row.size` so the timeline's
+        # copy of this row showed 0.5 for a bet nobody had sized while the
+        # table's showed nothing. One question, one answer, on every page.
+        "size": size,
+        # How the work under this record reads against the box its bet bought,
+        # on every row that has work under it — including the one where nothing
+        # underneath has a length yet, which carries the reading and no number.
+        # The size column draws THIS instead of the bet on such a row, and
+        # refuses to be edited while it does. A cell showing a derived number and
+        # opening an editor on the stored one asks a person to type at a value they cannot
+        # see, which is the rule the two derived-value columns were closed to
+        # editing for in the first place. The bet is still typed on the record's
+        # own page, and on the betting table, which is where a pitch's tasks are
+        # argued about. See `_rollup`.
+        "rollup": _rollup(index, record_id),
+        "start": start.isoformat() if start else None,
+        "end": end.isoformat() if end else None,
+        # The columns above whose value came out of the file rather than out of
+        # the scheduler, so that a cell drawing a forecast can be drawn as one and
+        # a cell drawing somebody's own answer is left alone. See `stated` above,
+        # which is where the whole argument is.
+        "stated": stated,
         "unowned": bool(span and span.unowned),
         "overruns": span.overruns_cycle_weeks if span else None,
         # What is still in the way, not what was ever in the way — jcanton,
@@ -157,12 +415,23 @@ def _row(index: Index, record_id: str) -> dict:
             # it has no stake in, which reads as a field it holds.
             else []
         ),
-        # Two fields that are not columns and are not drawn anywhere on this
+        # Three fields that are not columns and are not drawn anywhere on this
         # page. They are here because the gate names them: a status the table can
         # set demands them, and a row has to be able to answer whether it already
-        # holds one — `size` is the appetite *or the default*, so it cannot
-        # answer for `person_weeks`, and `assigned_on` is on no row at all.
-        "assigned_on": record.assigned_on.isoformat() if record.assigned_on else None,
+        # holds one. The two dates are on no column at all, and `person_weeks` is
+        # answered under its own name because that is the name the gate's message
+        # carries — `size` above holds the same number now that there is no
+        # default standing in for it, but the field a blocker names and the
+        # column a page draws are two vocabularies, and the row answers in both
+        # rather than making the script translate between them.
+        "start_date": record.start_date.isoformat() if record.start_date else None,
+        # And the end, for the same reason and one more: `done` is a status the
+        # table can set, the gate demands this field at it, and unlike the two
+        # beside it this one is empty on EVERY row somebody is about to mark
+        # done. Without it here `missingFor` cannot tell a row that has already
+        # been answered from one that has not, so the panel would ask again for
+        # a date the file already holds.
+        "end_date": record.end_date.isoformat() if record.end_date else None,
         "person_weeks": getattr(record, "person_weeks", None),
         # Not a column, but the control bar offers it: a dropdown whose value the
         # client cannot see is a filter that changes the URL and does nothing.

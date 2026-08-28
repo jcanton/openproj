@@ -8,7 +8,7 @@ owner: firecresta
 assignees: [firecresta, siskinbury]
 reviewers: [jackdawrie, Ptarmigant]
 review_waived: false
-assigned_on: 2026-08-17
+start_date: 2026-08-17
 cycle: 37
 priority: high
 depends_on: []

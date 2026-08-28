@@ -55,6 +55,40 @@ and each says why it is still here.
   `Store.put_drawing` never decodes the bytes, because the store's own line
   merge corrupts a PNG silently and answers 200 while doing it.
 
+- **A container's progress rollup no longer charges its container children half a
+  week.** Found on 2026-08-23, the day the fixture corpus grew products, and
+  unreachable before that: `Rung.under` lets nothing but a product nest a
+  container, so a container could not be somebody's CHILD until one existed.
+  `_progress_of` (`index.py`) weighed every child with `size_weeks`, which
+  documents itself as *"none on a project — a container has no size of its own"*
+  and then answered `config.default_task_effort` anyway, because that fallback
+  was written for an unsized TASK. So a product holding a project that rolled up
+  to 5.0 weeks reported `done=0.0, total=0.5`, drawn on the record page as
+  **"Progress 0/0.5 wk"** with a meter reading *"0 per cent of this bet is
+  done"*. It contradicted `Progress`'s own docstring — *"as far along as its
+  tasks are, weighted by their sizes — half a bet is half its weeks"* — and it
+  reached the table row's fraction and everywhere else `index.progress` is read.
+
+  It stood here rather than being fixed because the fix needed a decision this
+  entry did not contain, and `design/time-model.md` made it. §2 of that document
+  deleted the default appetite outright, so `size_weeks` answers None and
+  `_weighed` (`index.py`) hands back None with it: a child whose weeks nobody
+  typed stays OUT of the denominator rather than being counted at a number nobody
+  chose, and `Progress.of` names who was counted so the panel that lists the
+  contributors cannot list a record the fraction leaves out. The question this
+  entry could not settle was the numerator, and both halves went the way the
+  docstring implied — a container child is weighed by its own rolled-up total
+  through a memoised post-order walk, and its finished weeks roll up beside it,
+  so a project whose pitches are half-built reads half-built instead of zero.
+  Container or leaf is read off `Rung.sized` exactly as this entry asked, so a
+  seventh rung still needs no edit there.
+
+  The guard this entry cited on the other side went with the same change.
+  `_rollup_problems` no longer opens `if not kids or defaulted: return`, because
+  there is no `defaulted` left to read: it is silent on a parent with no children
+  and on a span carrying no budget or no measured contents, which is the same
+  conservatism reached without a flag.
+
 ## What was tried and dropped
 
 - **A `<select>` converted into a button-and-menu, four more times.** The table's
@@ -157,38 +191,6 @@ and each says why it is still here.
   designed and each was attacked; rebase-by-recommit won. It ships in four pieces
   and two of them are bugs that exist today: `deploy/boot.py` never receives
   SIGTERM in production, and `_merge_body` merges two same-text edits wrongly.
-
-- **A container's progress rollup charges its container children half a week.**
-  Found on 2026-08-23, the day the fixture corpus grew products, and unreachable
-  before that: `Rung.under` lets nothing but a product nest a container, so a
-  container could not be somebody's CHILD until one existed.
-
-  `_progress_of` (`index.py`) weighs every child with `size_weeks`, which
-  documents itself as *"none on a project — a container has no size of its own"*
-  and then returns `config.default_task_effort` anyway, because that fallback was
-  written for an unsized TASK. So a product holding a project that rolls up to
-  5.0 weeks reports `done=0.0, total=0.5`, drawn on the record page as
-  **"Progress 0/0.5 wk"** with a meter reading *"0 per cent of this bet is
-  done"*. `prod-6d1a70` says 0.5 where its child rolls up to 1.0. The number in
-  the denominator is one nobody typed.
-
-  It contradicts `Progress`'s own docstring — *"as far along as its tasks are,
-  weighted by their sizes — half a bet is half its weeks"* — and
-  `_rollup_problems` already guards the same hole from the other side with
-  `if not kids or defaulted: return`. It reaches the table row's fraction too,
-  and anywhere else `index.progress` is read.
-
-  **Written down rather than fixed because the fix needs a decision this does not
-  contain.** Weighing a container child by its own rolled-up TOTAL is obvious and
-  needs a post-order pass — the loop that builds `progress` visits records in
-  `plan` order and a child's rollup may not exist yet. What is not obvious is the
-  numerator: a container has no `status: done` of its own worth trusting, so
-  either its DONE weeks roll up the same way (a product is 40% done because its
-  projects are), or a container child counts in the denominator and never in the
-  numerator until every descendant is done. The first is what the docstring
-  implies. The second is what `status == "done"` does today for leaves.
-  `Rung.sized` is the ladder property that tells the two cases apart, so whichever
-  is chosen should be read off it rather than tested for by kind.
 
 - **A chip that overflows into the next column.** jcanton, 2026-08-20, with a
   screenshot of a narrowed window: the status chip runs straight through the

@@ -8,7 +8,7 @@ owner: redpollard
 assignees: [redpollard]
 reviewers: [Whimbrelson]
 review_waived: false
-assigned_on: 2026-08-13
+start_date: 2026-08-13
 cycle: null
 priority: high
 depends_on: []

@@ -116,7 +116,7 @@ id: task-c00001
 parent: pitch-b20000
 owner: ann                 # ann has the upstream contacts
 reviewers: [bo, cy]
-assigned_on: 2026-07-06
+start_date: 2026-07-06
 priority: medium
 tags: [gpu, verification]
 prs: []
@@ -127,9 +127,7 @@ It is not visible in the tapdeck reference data.
 """
 
 SEED = {
-    "config/defaults.yaml": (
-        "schema_version: 2\nnominal_availability: 1.0\ndefault_task_effort: 0.5\n"
-    ),
+    "config/defaults.yaml": "schema_version: 2\nnominal_availability: 1.0\n",
     # Present so that a server which fails to read it is caught. It was not, and
     # the roster check was off in the browser for as long as this file was absent.
     "config/people.yaml": "known_people: [ann, bo, cy]\n",
@@ -141,7 +139,7 @@ SEED = {
         "status: in_progress\n"
         "owner: ann\n"
         "reviewers: [bo]\n"
-        "assigned_on: 2026-07-01\n"
+        "start_date: 2026-07-01\n"
         "priority: high\n"
         "---\n"
         "\nThe standalone driver, on more than one rank.\n"
@@ -190,6 +188,35 @@ SEED = {
         "\nA 2014 paper on halo exchange.\n"
     ),
 }
+
+# A task whose stated start date has gone by with nobody having touched it: the
+# date was typed while it was still next month, and the calendar moved. This is
+# drift — `validate_all` says so as a warning — and it is the state that must not
+# read as somebody typing a date into the past, because a record in it is
+# otherwise fully editable.
+#
+# Deliberately NOT in `SEED`, which every test in this file and in `test_coedit`
+# is written around: a record with a standing warning on it would change what
+# half the assertions about problems and counts in both files are counting.
+# Committed by the tests that want it, over the seeded tree, the way a person
+# with a terminal would.
+DRIFTED = "task-c00004"
+DRIFTED_RECORD = (
+    "---\n"
+    "id: task-c00004\n"
+    "kind: task\n"
+    "title: Chase the halo-exchange regression\n"
+    "parent: pitch-b20000\n"
+    "status: ready\n"
+    "owner: cy\n"
+    "reviewers: [ann]\n"
+    "person_weeks: 1.0\n"
+    "start_date: 2026-07-02\n"
+    "priority: medium\n"
+    "---\n"
+    "\nTyped when it was still next month.\n"
+)
+DRIFTED_SEED = {**SEED, f"tasks/{DRIFTED}.md": DRIFTED_RECORD}
 
 
 @pytest.fixture
@@ -375,7 +402,7 @@ def index_of(client: httpx.Client) -> dict:
 
 
 def bet_rows(page: str) -> list[tuple[str, str, str]]:
-    """(id, kind, status) per row of the betting table.
+    """(id, kind, status) per BET on the betting table.
 
     Read off the markup each column actually draws, and the two are no longer the
     same shape: kind is still a chip, and status is a `<select class="pick st-…">`
@@ -386,13 +413,28 @@ def bet_rows(page: str) -> list[tuple[str, str, str]]:
     Matched on markup and not on cell text, which is the older lesson here: the
     regex that read `<td>ready</td>` did not fail when the cell grew a chip, it
     matched nothing and left three assertions passing over an empty list.
+
+    **The bets, and not every row.** A pitch's tasks are drawn under it now, so
+    that their appetites can be typed where the bet is argued about, and they are
+    rows of this table like any other — but they carry no tick, they take their
+    cycle from the pitch above them, and they are `shaping` and `thinking` as
+    readily as `ready`, because an unsized task is exactly what the room is there
+    to size. Every caller of this asks a question about the things a cycle can
+    be stamped onto, and `data-rung` is exactly what says which rows those are:
+    empty on a bet, a connector on a task. Read as "every row", the order test
+    below would have been asking whether a plan's tasks are sorted by status,
+    which is not a claim anybody made.
     """
-    return re.findall(
-        r'<tr data-id="([^"]+)"[^>]*>.*?<span class="chip kind-(\w+)">'
-        r'.*?<select class="pick st-(\w+)"',
-        page,
-        re.S,
-    )
+    return [
+        (record_id, kind, status)
+        for record_id, rung, kind, status in re.findall(
+            r'<tr data-id="([^"]+)" data-rung="([^"]*)"[^>]*>.*?<span class="chip kind-(\w+)">'
+            r'.*?<select class="pick st-(\w+)"',
+            page,
+            re.S,
+        )
+        if not rung
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -1300,41 +1342,54 @@ def test_a_field_name_cannot_write_its_own_commit_trailer(client: TestClient, re
 
     All four write paths, because the expression was the same expression in all
     four and a fix in one is a fix that drifts.
+
+    **Both doors answer 422 now, where they used to answer 200 with the field
+    dropped from the message.** The record PATCH and the cycle PUT are the two
+    routes `_named` measured as open, and they are open no longer: an undeclared
+    key is refused before anything is patched, so this name never reaches a
+    commit message because it never reaches a commit. The counting inside
+    `_named` is asserted below rather than through a route, because there is no
+    longer a route that can reach it — and it is kept for the reason the second
+    half of this test says.
     """
     before = git_head(repo_path)
     record = client.patch(
         f"/api/record/{TASK}",
         json={"base_commit": before, "fields": {FORGED: "hi"}, "body": None},
     )
-    assert record.status_code == 200, record.text
-    assert trailers_of(repo_path, record.json()["commit"]) == {}, (
-        "a field name off the wire wrote a Co-authored-by: trailer git reads"
-    )
+    assert record.status_code == 422, record.text
 
     cycle = client.put(
         "/api/cycle/41",
         json={
-            "base_commit": head(client),
+            "base_commit": before,
             "fields": {FORGED: "hi", "starts_on": "2026-09-01", "reviews_on": "2026-10-01"},
         },
     )
-    assert cycle.status_code == 200, cycle.text
-    assert trailers_of(repo_path, cycle.json()["commit"]) == {}
+    assert cycle.status_code == 422, cycle.text
+    assert git_head(repo_path) == before, "a refusal writes nothing"
 
 
 def test_a_commit_message_still_names_the_fields_a_save_moved(client: TestClient, repo_path: Path):
     """The allowlist has to leave the log readable, or it has bought safety with
     the thing the log is for. A name the schema declares is said; anything else
     is counted, because a save that wrote something this cannot name is still a
-    save that wrote something."""
+    save that wrote something.
+
+    The counting half is asked of `_named` directly, and that is not the test
+    reaching under the route for convenience: the door in front of it refuses an
+    undeclared key outright, so there is no request that can put one here any
+    more. It is the inner of two guards on one invariant — this function signs a
+    line in a commit, the door is a different function, and a route added later
+    that forgets the door must still not be able to quote a key off the wire.
+    """
+    from openproj.web import RECORD_FIELDS, _named
+
     moved = save(client, TASK, {"priority": "high", "owner": "bo"}).json()["commit"]
     assert commit_at(repo_path, moved).message == f"{TASK}: owner, priority"
 
-    both = client.patch(
-        f"/api/record/{TASK}",
-        json={"base_commit": head(client), "fields": {"status": "in_progress", FORGED: "x"}},
-    )
-    assert commit_at(repo_path, both.json()["commit"]).message == f"{TASK}: status, 1 more"
+    assert _named({"status": "in_progress", FORGED: "x"}, RECORD_FIELDS) == "status, 1 more"
+    assert _named({FORGED: "x"}, RECORD_FIELDS) == "1 unnamed field"
 
 
 def test_the_author_can_never_be_supplied_by_the_client(client: TestClient, repo_path: Path):
@@ -1710,6 +1765,240 @@ def test_a_status_nobody_defined_is_refused_at_both_doors(client: TestClient, re
     assert saved.status_code == 422
     assert "status" in saved.json()["detail"]
     assert "'banana'" in saved.json()["detail"]
+
+    assert git_head(repo_path) == base, "a refusal writes nothing"
+
+
+def test_a_start_date_typed_into_the_past_is_refused_before_work_has_begun(
+    client: TestClient, repo_path: Path
+):
+    """Under the name `assigned_on` a date that had gone by was tolerable; under
+    "Start date" it is a lie. The scheduler discards it — the start is
+    `max(floor, start_date, blocker_ready)` — so you type last Monday on a ready
+    pitch, the Start column answers today, and the file and the page disagree
+    with a 200 in between.
+
+    Two of the three doors here, because a closed writable surface is only closed
+    if every way in is. The create form types the same date into the same field,
+    and the third way in is the co-editing room — the record page hands its form
+    to `COEDIT.save(fields)` whenever the socket is up, so the Save people
+    actually press does not come through this route at all. Naming only these two
+    is how the room came to be the one surface with no rule for a while;
+    `test_a_room_refuses_a_start_date_typed_into_the_past_and_keeps_the_prose`
+    (`tests/test_coedit.py`) is the third, asked over a real socket because that
+    is the medium the answer lives in.
+    """
+    base = git_head(repo_path)
+
+    saved = save(client, PITCH, {"start_date": "2026-07-01"})
+    assert saved.status_code == 422, saved.text
+    assert "start_date" in saved.json()["detail"]
+    assert "2026-07-01" in saved.json()["detail"]
+    # The remedy is named, and it is the one that is usually right: the date is
+    # not wrong so much as the status is behind it.
+    assert "in_progress" in saved.json()["detail"]
+
+    made = create(client, {**VALID_TASK, "start_date": "2026-07-01"})
+    assert made.status_code == 422, made.text
+
+    assert git_head(repo_path) == base, "a refusal writes nothing"
+
+
+def test_a_start_date_in_the_past_is_what_a_record_of_work_in_progress_is_for(
+    client: TestClient,
+):
+    """The rule is scoped to status and it has to be, or a legitimate edit becomes
+    impossible. "I started this on Monday and it is now Wednesday" is the ordinary
+    case, and the `in_progress` gate already demands the field — so an unscoped
+    refusal would force somebody to change the status first and backfill the date
+    second, which is the wrong order and the one everybody would get wrong.
+    """
+    saved = save(client, TASK, {"start_date": "2026-06-01"})
+
+    assert saved.status_code == 200, saved.text
+
+
+def test_the_past_date_refusal_reads_the_record_and_not_only_the_payload(
+    client: TestClient, repo_path: Path
+):
+    """The one case a check written against `fields` cannot see.
+
+    A PATCH carries only what moved. Sending this record back to `ready` names no
+    date at all — and the date it has held since it was seeded, 2026-07-06, has
+    gone by. Read off the payload the refusal never fires and the plan acquires
+    exactly the state the rule exists to prevent; read off the parsed candidate,
+    which is the only place the new status and the old date are true at the same
+    time, it does.
+    """
+    base = git_head(repo_path)
+
+    refused = save(client, TASK, {"status": "ready"})
+
+    assert refused.status_code == 422, refused.text
+    assert "2026-07-06" in refused.json()["detail"]
+    assert git_head(repo_path) == base, "a refusal writes nothing"
+
+
+def test_the_past_date_refusal_names_the_remedies_that_fit_the_write(client: TestClient):
+    """An error says how to fix it, and one sentence cannot fix two writes.
+
+    Moving a record back from `in_progress` to `ready` — the hill ball dragged
+    down a rung, an ordinary correction — was answered with "Pick a date from
+    2026-08-28 on, or set the status to in_progress if it started then", on all
+    four doors. The second remedy is the state the person is deliberately
+    leaving, so the refusal reads as the tool not having understood the gesture,
+    and the remedy that actually fixes it — clear the date, the work has not
+    begun after all — was not named at all.
+
+    The other write is the commoner one and keeps the sentence it had: somebody
+    typing last Monday into a record whose status they are not touching is
+    usually behind on the status rather than wrong about the date.
+    """
+    moved = save(client, TASK, {"status": "ready"})
+    assert moved.status_code == 422, moved.text
+    said = moved.json()["detail"]
+    assert "Clear the start date" in said
+    assert "2026-07-06" in said, "and the date that is standing in the way"
+    assert "in_progress" not in said, "which is the rung this write is leaving"
+
+    typed = save(client, PITCH, {"start_date": "2026-07-01"})
+    assert typed.status_code == 422, typed.text
+    assert "in_progress" in typed.json()["detail"]
+    assert "Clear the start date" not in typed.json()["detail"]
+
+
+def test_a_date_and_the_status_that_makes_it_legal_travel_in_one_payload(client: TestClient):
+    """The interaction that decides which record the rule is asked about.
+
+    "I started this on Monday" is one gesture on the page — the date and the
+    status move together — and it arrives as one PATCH. Judged against the
+    record's CURRENT status this pitch is `ready` and the date is refused, so the
+    only way through would be two saves in the right order, which is the order
+    everybody gets wrong. Judged against the candidate's resulting status it is
+    `in_progress`, which is what the field is for.
+    """
+    saved = save(client, PITCH, {"start_date": "2026-07-01", "status": "in_progress"})
+
+    assert saved.status_code == 200, saved.text
+    stored = index_of(client)["plan"][PITCH]
+    assert (stored["status"], stored["start_date"]) == ("in_progress", "2026-07-01")
+
+
+def test_an_edit_that_touches_neither_the_date_nor_the_status_is_not_this_refusal(
+    client: TestClient, repo_path: Path
+):
+    """Drift is a warning, and a record carrying one is otherwise fully editable.
+
+    The rule was asked of the whole parsed candidate, which reads as "this record
+    is illegal" rather than "this write made it illegal" — and a date that has
+    drifted by makes the candidate illegal whatever the payload says. So renaming
+    this task answered 422 naming `start_date`, a field the payload does not
+    carry, and retagging it, reparenting it by drag and drawing a dependency edge
+    from it were refused the same way. Nobody typed anything; the calendar moved.
+    """
+    commit_directly(repo_path, DRIFTED_SEED, "a task whose date has gone by")
+
+    renamed = save(client, DRIFTED, {"title": "Renamed"})
+
+    assert renamed.status_code == 200, renamed.text
+    assert index_of(client)["plan"][DRIFTED]["title"] == "Renamed"
+    # And the plan still says so, in the register that is meant to: a warning
+    # beside the record, which is what nobody having touched it earns.
+    problems = client.get("/api/index.json").json()["problems"]
+    assert [
+        one
+        for one in problems
+        if one["record_id"] == DRIFTED
+        and one["field"] == "start_date"
+        and one["severity"] == "warning"
+    ]
+
+
+def test_a_problem_travels_with_its_dates_in_both_the_forms_its_readers_need(
+    client: TestClient, repo_path: Path
+):
+    """One wording, and each reader takes the format it draws dates in.
+
+    This payload is two things at once. It is `/api/index.json`, read by scripts
+    beside spans whose every date is ISO and printed by `openproj check` on a
+    terminal; and it is what the table's cell marks, the record page's problem
+    list and every refusal banner are drawn from, on pages where every other date
+    is day-first. A Problem was a finished string formatted ISO, so the record
+    page said "the start date 2026-07-02 has passed" a few rows above the
+    scheduler's own "the 02.07.2026 you set has passed" — one day, said two ways,
+    in one column. See `Sentence` (`model.py`).
+    """
+    commit_directly(repo_path, DRIFTED_SEED, "a task whose date has gone by")
+
+    problems = client.get("/api/index.json").json()["problems"]
+    drifted = [
+        one for one in problems if one["record_id"] == DRIFTED and one["field"] == "start_date"
+    ]
+
+    assert len(drifted) == 1, drifted
+    assert drifted[0]["message"].startswith("the start date 2026-07-02 has passed")
+    assert drifted[0]["drawn"].startswith("the start date 02.07.2026 has passed")
+
+
+def test_one_drifted_row_does_not_refuse_the_whole_bulk_selection(
+    client: TestClient, repo_path: Path
+):
+    """A bulk edit is one commit, so a refusal about any row refuses every row.
+
+    That is the right shape for a payload nobody can apply — and exactly the
+    wrong one for a date that went by on its own in a record somebody happened to
+    have selected. Setting the priority on two tasks answered 422 about a third
+    field in one of them, and the remedy the sentence names is not one anybody
+    could act on from a table with a selection in it.
+    """
+    commit_directly(repo_path, DRIFTED_SEED, "a task whose date has gone by")
+
+    bulk = save_many(client, [OTHER, DRIFTED], {"priority": "high"})
+
+    assert bulk.status_code == 200, bulk.text
+    plan = index_of(client)["plan"]
+    assert [plan[OTHER]["priority"], plan[DRIFTED]["priority"]] == ["high", "high"]
+
+
+def test_a_field_no_record_declares_is_refused_at_every_write_door(
+    client: TestClient, repo_path: Path
+):
+    """`fields` was kept whole but for `id`, and `patch_text` writes what it is
+    handed. So an undeclared key committed with a 200, landed in `record._unread`,
+    was re-emitted verbatim by `serialise` for ever and was read by nothing.
+
+    `assigned_on` is the name that makes it urgent rather than untidy: a tab left
+    open across the deploy that retired it PATCHes `assigned_on`, is told it
+    saved, and commits a dead key holding the one date the whole schedule is
+    derived from — on a protected branch, where the commit cannot be taken back
+    out.
+
+    Three doors and one helper. The bulk write is the worst of them, because one
+    unnamed key there is a dead line in every file in the selection in a single
+    commit; the cycle PUT writes the file every date on every page is derived
+    from.
+    """
+    base = git_head(repo_path)
+
+    saved = save(client, TASK, {"assigned_on": "2026-07-06"})
+    assert saved.status_code == 422, saved.text
+    assert "assigned_on" in saved.json()["detail"]
+    # And it says what a record does hold, so the answer is one somebody can act
+    # on rather than one they have to go and look up.
+    assert "start_date" in saved.json()["detail"]
+
+    bulk = save_many(client, [TASK, OTHER], {"assigned_on": "2026-07-06"})
+    assert bulk.status_code == 422, bulk.text
+
+    cycle = client.put(
+        "/api/cycle/41",
+        json={
+            "base_commit": base,
+            "fields": {"starts_on": "2026-09-01", "reviews_on": "2026-10-01", "notes": "hi"},
+        },
+    )
+    assert cycle.status_code == 422, cycle.text
+    assert "notes" in cycle.json()["detail"]
 
     assert git_head(repo_path) == base, "a refusal writes nothing"
 
@@ -2434,7 +2723,14 @@ def test_the_server_reads_the_same_config_the_cli_does(repo_path: Path):
 
 def test_a_cycle_is_created_and_then_updated_in_place(client: TestClient, repo_path: Path):
     """PUT, not PATCH: a roster is written in one sitting, and a name that is
-    missing means somebody was taken off rather than left alone."""
+    missing means somebody was taken off rather than left alone.
+
+    `cooldown_weeks` went out of this payload and the three like it below. It is
+    a `Config` field and never a cycle's, left over from when a cycle stored
+    lengths rather than two dates; no page has sent it since, and the door now
+    refuses a key no model declares — which is the whole point of the door, met
+    by a test that was quietly writing a dead number into git.
+    """
     base = git_head(repo_path)
     made = client.put(
         "/api/cycle/37",
@@ -2443,7 +2739,6 @@ def test_a_cycle_is_created_and_then_updated_in_place(client: TestClient, repo_p
             "fields": {
                 "starts_on": "2026-08-17",
                 "build_weeks": 4,
-                "cooldown_weeks": 2,
                 "availability": {"ann": 0.5, "bo": 1.0},
             },
             "body": "## Goal\n\nShip it.\n",
@@ -2544,9 +2839,9 @@ def test_a_cycle_field_the_record_cannot_hold_is_refused_not_raised(
         ("owner", ["a", "b"]),
         ("title", {"a": 1}),
         ("title", 5),
-        ("assigned_on", ""),
-        ("assigned_on", "six"),
-        ("assigned_on", 7),
+        ("start_date", ""),
+        ("start_date", "six"),
+        ("start_date", 7),
         ("tags", [None]),
         ("tags", [{"a": 1}]),
         ("parent", 3),
@@ -2584,10 +2879,10 @@ def test_a_record_the_server_could_not_read_back_is_never_committed(
 def test_a_field_the_record_can_hold_is_still_written(client: TestClient, repo_path: Path):
     """The other half: the check must refuse what cannot be read back and nothing
     else. A date, a list of tags and a title all still save."""
-    saved = save(client, TASK, {"title": "A title", "assigned_on": "2026-09-01", "tags": ["gpu"]})
+    saved = save(client, TASK, {"title": "A title", "start_date": "2026-09-01", "tags": ["gpu"]})
 
     assert saved.status_code == 200, saved.text
-    assert index_of(client)["plan"][TASK]["assigned_on"] == "2026-09-01"
+    assert index_of(client)["plan"][TASK]["start_date"] == "2026-09-01"
 
 
 def test_a_date_the_record_can_hold_is_written_in_the_spelling_the_corpus_uses(
@@ -2618,7 +2913,7 @@ def test_a_cycle_record_reaches_the_pages_it_is_for(client: TestClient, repo_pat
         "/api/cycle/41",
         json={
             "base_commit": base,
-            "fields": {"starts_on": "2026-11-02", "build_weeks": 4, "cooldown_weeks": 2},
+            "fields": {"starts_on": "2026-11-02", "build_weeks": 4},
             "body": None,
         },
     )
@@ -2642,7 +2937,6 @@ def test_the_cycle_page_shows_load_against_capacity(client: TestClient, repo_pat
             "fields": {
                 "starts_on": "2026-08-17",
                 "build_weeks": 4,
-                "cooldown_weeks": 2,
                 "availability": {"ann": 0.25},
             },
             "body": None,
@@ -2664,8 +2958,8 @@ def test_a_carried_item_cannot_be_re_stamped_from_the_cycle_page(
     silently forgives the slip — at exactly the moment the slip is happening."""
     # On the pitch, because that is where a bet is made: the task under it is
     # part of that bet and takes the cycle from it.
-    save(client, PITCH, {"cycle": 36, "status": "in_progress", "assigned_on": "2026-07-01"})
-    save(client, TASK, {"status": "in_progress", "assigned_on": "2026-07-01"})
+    save(client, PITCH, {"cycle": 36, "status": "in_progress", "start_date": "2026-07-01"})
+    save(client, TASK, {"status": "in_progress", "start_date": "2026-07-01"})
     client.put(
         "/api/cycle/40",
         json={
@@ -2675,8 +2969,13 @@ def test_a_carried_item_cannot_be_re_stamped_from_the_cycle_page(
         },
     )
     page = client.get("/cycle/40").text
+    # `[^>]*` between the id and the class, because the row carries the tree's
+    # `data-rung` between them now — a task's connector, and empty on a bet. A
+    # regex naming every attribute in the order they happen to be written stops
+    # matching when one is added, and this one did it silently: it matched
+    # nothing and the assertion below is the only reason anybody found out.
     rows = re.findall(
-        r'<tr data-id="([^"]+)" class="([^"]*)">.*?<input type="checkbox"'
+        r'<tr data-id="([^"]+)"[^>]*class="([^"]*)">.*?<input type="checkbox"'
         r' class="bet"([^>]*)>',
         page,
         re.S,
@@ -2885,7 +3184,6 @@ def test_the_proposal_ignores_a_cycle_that_only_a_record_mentions(
             "fields": {
                 "starts_on": "2027-01-04",
                 "build_weeks": 4,
-                "cooldown_weeks": 2,
                 "availability": {"ann": 1.0},
             },
             "body": None,
@@ -3400,11 +3698,21 @@ def test_every_control_on_the_cycle_page_has_a_name(client: TestClient):
     assert "<label" not in setup.split("Builds until")[1]
     assert '<label for="joining"' in page and 'id="joining"' in page
 
-    rows = re.findall(r'<tr data-id="([^"]+)".*?</tr>', page, re.S)
+    # This table's rows and no other's. The page draws three tables and two of
+    # them carry `<tr data-id=`; the delivered block's rows have a title and none
+    # of the controls named below, so a regex over the whole page was asking the
+    # wrong table for a name it never promised.
+    bets = re.search(r'<table id="bets".*?<tbody>(.*?)</tbody>', page, re.S).group(1)
+    rows = re.findall(r'<tr data-id="[^"]+".*?</tr>', bets, re.S)
     assert rows, "the corpus offers nothing to bet"
-    for row in re.findall(r'<tr data-id="[^"]+".*?</tr>', page, re.S):
+    for row in rows:
         title = re.search(r'<a href="[^"]*">([^<]+)</a>', row).group(1)
-        assert f'aria-label="Bet {title} into cycle 37"' in row, title
+        # Only where there is a tick to name. A task is drawn under the bet it is
+        # part of and has none — the cycle is stamped on the bet — so demanding
+        # this label of every row would be demanding a name for a control that is
+        # deliberately not there.
+        if '<input type="checkbox"' in row:
+            assert f'aria-label="Bet {title} into cycle 37"' in row, title
         assert f'aria-label="{title} appetite in weeks"' in row, title
         assert f'aria-label="{title} assignees"' in row, title
         assert f'aria-label="{title} reviewers"' in row, title
@@ -3542,7 +3850,7 @@ def test_a_cycle_record_longer_than_the_calendar_leaves_every_page_readable(
 
 
 def test_a_done_date_at_the_end_of_the_calendar_leaves_a_timeline_you_can_open(client: TestClient):
-    """`31/12/9999` into the detail page's "Assigned on": committed, and
+    """`31/12/9999` into the detail page's "Start date": committed, and
     `/timeline` answered 500 for good.
 
     Worse than the cycle above in one way — `openproj check` reported "0
@@ -3557,7 +3865,7 @@ def test_a_done_date_at_the_end_of_the_calendar_leaves_a_timeline_you_can_open(c
     base = head(client)
 
     saved = client.patch(
-        f"/api/record/{DONE}", json={"base_commit": base, "fields": {"assigned_on": "9999-12-31"}}
+        f"/api/record/{DONE}", json={"base_commit": base, "fields": {"start_date": "9999-12-31"}}
     )
     assert saved.status_code == 200, saved.text
 
@@ -3749,7 +4057,7 @@ def test_a_preview_of_something_that_is_not_text_still_answers(client: TestClien
     (
         ({"title": 12345}, "title"),
         ({"title": ["a", "b"]}, "title"),
-        ({"assigned_on": "not-a-date"}, "assigned_on"),
+        ({"start_date": "not-a-date"}, "start_date"),
         ({"reviewers": [1, 2]}, "reviewers"),
         ({"tags": [None]}, "tags"),
         ({"created_schema_version": "two"}, "created_schema_version"),
@@ -4182,16 +4490,23 @@ def test_a_commit_message_names_only_fields_this_server_knows(client: TestClient
     An allowlist and not an escape. Stripping newlines would leave the next
     person to work out which characters git's trailer parser accepts, and there
     is no denylist of those that is ever finished — where a model's own field
-    names are Python identifiers and cannot spell a trailer at all. What the
-    payload carried beyond them is counted, because a save that wrote something
-    this cannot name is still a save that wrote something.
+    names are Python identifiers and cannot spell a trailer at all.
+
+    The save is refused outright now rather than committed with the name
+    counted: the door in front of this asks the models whether a record has a
+    field by that name before anything is patched. The claim asserted is
+    unchanged and it is asked of git's own parser rather than of a regex written
+    here — over the WHOLE log and not only the last commit, because the point is
+    that no commit in this repository carries a trailer nobody wrote.
     """
     import subprocess
 
     forged = "title\n\nCo-authored-by: Mallory <mallory@users.noreply.github.com>\n\nx"
     answer = save(client, TASK, {forged: "y", "priority": "high"})
-    assert answer.status_code == 200
+    assert answer.status_code == 422, answer.text
 
+    named = save(client, TASK, {"priority": "high"})
+    assert named.status_code == 200, named.text
     message = subprocess.run(
         ["git", "--git-dir", str(repo_path), "log", "-1", "--format=%B"],
         capture_output=True,
@@ -4200,7 +4515,7 @@ def test_a_commit_message_names_only_fields_this_server_knows(client: TestClient
     ).stdout
     assert "Co-authored-by" not in message
     assert "Mallory" not in message
-    assert "priority" in message and "1 more" in message
+    assert "priority" in message
 
     counted = subprocess.run(
         ["git", "--git-dir", str(repo_path), "log", "--format=%(trailers:key=Co-authored-by)"],
@@ -6396,3 +6711,173 @@ def test_the_kind_control_actually_changes_the_kind_in_a_real_browser(
     assert confirming["asking"] == "Make Chaff optics a task?", confirming["asking"]
 
     assert answer[-1] == "true Task", (answer, said)
+
+
+# --------------------------------------------------------------------------- #
+# §4 and §6: the end date, and the two rules that compare dates to dates
+# --------------------------------------------------------------------------- #
+
+# The plan's own calendar, which is what a date is judged against. `SEED` dates
+# no cycles at all, and that is deliberate everywhere else in this file: a plan
+# with no cycles file switches the far-date rule off, which is the same "no
+# roster, no check" bargain the people rule makes and is the ordinary state of a
+# repository somebody started this morning. Every test that wants the rule ON
+# commits this over the tree first.
+DATED_SEED = {
+    **SEED,
+    "config/cycles.yaml": (
+        "cycles:\n  36: [2026-06-22, 2026-08-14]\n  37: [2026-08-17, 2026-10-09]\n"
+    ),
+}
+
+
+def test_an_end_date_before_the_start_is_refused_at_every_write_door(
+    client: TestClient, repo_path: Path
+):
+    """Two typed fields with no derivation between them, and nothing compared them.
+
+    `task-c00001` was seeded starting 2026-07-06, so an end in June is a record
+    that finished before it began — which `schedule` can only draw by throwing the
+    date away, and which no page can present as anything. Both doors, because a
+    writable surface is only closed if every way into it is.
+    """
+    base = git_head(repo_path)
+
+    saved = save(client, TASK, {"end_date": "2026-06-01"})
+    assert saved.status_code == 422, saved.text
+    assert "end_date" in saved.json()["detail"]
+    assert "2026-06-01" in saved.json()["detail"]
+    assert "2026-07-06" in saved.json()["detail"], "and the date it is before"
+
+    made = create(
+        client,
+        {**VALID_TASK, "start_date": "2027-01-04", "status": "done", "prs": ["o/r#1"]}
+        | {"end_date": "2026-12-01"},
+    )
+    assert made.status_code == 422, made.text
+
+    assert git_head(repo_path) == base, "a refusal writes nothing"
+
+
+def test_a_date_typed_a_year_out_is_refused_rather_than_silently_dropped(
+    client: TestClient, repo_path: Path
+):
+    """§6's failure, stopped where somebody can still fix it.
+
+    `2025-09-11` for `2026-09-11` parses and commits with a 200, and then
+    `span.start <= window[1] and span.end >= window[0]` is false for every cycle
+    there is — so the record falls out of `counts_in`, out of `Index.load` and out
+    of `carried_into` at once while `openproj check` calls the plan clean. The
+    only date-range check this application had was the one for cycle files.
+    """
+    commit_directly(repo_path, DATED_SEED, "the plan dates its cycles")
+    base = git_head(repo_path)
+
+    refused = save(client, TASK, {"start_date": "2025-09-11"})
+    assert refused.status_code == 422, refused.text
+    assert "start_date" in refused.json()["detail"]
+    assert "outside every cycle" in refused.json()["detail"]
+    assert "Check the year" in refused.json()["detail"]
+
+    # And a date inside the plan's own stretch of cycles is not this refusal. It
+    # is refused by the rule beside it — the work has not begun — which is what
+    # keeps this assertion honest about which rule answered.
+    fine = save(client, TASK, {"start_date": "2026-09-11"})
+    assert fine.status_code == 200, fine.text
+
+    assert git_head(repo_path) != base, "the second save landed"
+
+
+def test_the_far_date_refusal_reaches_the_bulk_door_as_well(client: TestClient, repo_path: Path):
+    """One commit for the batch, so a refusal about any row refuses every row —
+    which is right for a payload nobody can apply, and this one is exactly that:
+    the same impossible date written over every record named."""
+    commit_directly(repo_path, DATED_SEED, "the plan dates its cycles")
+    base = git_head(repo_path)
+
+    bulk = save_many(client, [TASK, OTHER], {"start_date": "2019-04-01"})
+
+    assert bulk.status_code == 422, bulk.text
+    assert "outside every cycle" in bulk.json()["detail"]
+    assert git_head(repo_path) == base, "a refusal writes nothing"
+
+
+def test_a_write_that_names_no_date_is_not_refused_by_a_date_rule(
+    client: TestClient, repo_path: Path
+):
+    """The delta, which the past-date refusal beside these learned the expensive
+    way and which they share.
+
+    Both states are reachable without anybody writing to the record: a hand edit
+    in git puts contradictory dates in a file, and editing `config/cycles.yaml`
+    moves every window out from under a date that was inside one yesterday. Asked
+    of the STATE, this door would refuse `{"title": "Renamed"}` on such a record,
+    name a field the payload does not carry, refuse a bulk retag over one row in
+    the selection, and refuse every flush of a shaping document in the co-editing
+    room. What a record that merely holds one gets is the warning beside it.
+    """
+    strayed = DRIFTED_RECORD.replace("start_date: 2026-07-02", "start_date: 2019-04-01")
+    commit_directly(
+        repo_path,
+        {**DATED_SEED, f"tasks/{DRIFTED}.md": strayed},
+        "a hand edit with the year wrong",
+    )
+
+    renamed = save(client, DRIFTED, {"title": "Renamed"})
+
+    assert renamed.status_code == 200, renamed.text
+    assert index_of(client)["plan"][DRIFTED]["title"] == "Renamed"
+    problems = index_of(client)["problems"]
+    assert [
+        one
+        for one in problems
+        if one["record_id"] == DRIFTED
+        and one["field"] == "start_date"
+        and one["severity"] == "warning"
+        and "outside every cycle" in one["message"]
+    ], "and the plan says so where nobody typed anything"
+
+
+def test_a_record_created_done_needs_the_date_it_ended(client: TestClient, repo_path: Path):
+    """The gate at the create door, where `validate_all`'s blockers are what
+    refuse.
+
+    Over a plan at `schema_version: 5`, because that is the half of this change
+    that makes the rule bite: a record is created at the repository's own version,
+    and a rule newer than the record it judges may only warn. The same create over
+    the seeded `schema_version: 2` lands with a warning beside it, which is
+    grandfathering doing exactly what it is for.
+    """
+    commit_directly(
+        repo_path,
+        {**SEED, "config/defaults.yaml": "schema_version: 5\nnominal_availability: 1.0\n"},
+        "the plan moves to schema_version 5",
+    )
+    finished = {**VALID_TASK, "status": "done", "prs": ["kilnlab/kiln4py#1"]}
+
+    refused = create(client, finished)
+
+    assert refused.status_code == 422, refused.text
+    assert [p["field"] for p in refused.json()["problems"]] == ["end_date"]
+    assert refused.json()["problems"][0]["message"] == "a done record needs the date it ended"
+
+    made = create(client, {**finished, "end_date": "2026-08-20"})
+    assert made.status_code == 201, made.text
+
+
+def test_a_row_carries_the_end_date_so_the_table_can_tell_what_it_still_needs(
+    client: TestClient,
+):
+    """`missingFor` reads the row, and a field a gate names has to be answerable
+    from it. `end_date` is empty on every row anybody is about to mark done, so
+    without this the panel would ask again for a date the file already holds."""
+    saved = save(client, DONE, {"start_date": "2026-08-03", "end_date": "2026-08-20"})
+    assert saved.status_code == 200, saved.text
+
+    rows = client.get("/api/table.json").json()["rows"]
+    assert rows[DONE]["end_date"] == "2026-08-20"
+    assert rows[TASK]["end_date"] is None
+    # And the span ends there rather than at the start date, which is the column
+    # a reader of that row is actually looking at: a finished record was a dot,
+    # with its End cell showing the day it began.
+    assert (rows[DONE]["start"], rows[DONE]["end"]) == ("2026-08-03", "2026-08-20")

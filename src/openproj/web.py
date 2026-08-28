@@ -39,6 +39,7 @@ import asyncio
 import base64
 import binascii
 import contextlib
+import functools
 import json
 import logging
 import math
@@ -48,7 +49,7 @@ import secrets
 import threading
 import time
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import date
 from pathlib import Path
 from typing import Literal
@@ -74,6 +75,7 @@ from .auth import (
 from .index import Index, build_index, cascade_of
 from .model import (
     CONFIG_FILES,
+    DATED_FIELDS,
     DIRECTORY,
     ID_PATTERN,
     INBOXES,
@@ -91,6 +93,7 @@ from .model import (
     Unreadable,
     _an,
     edited_by_id,
+    ends_before_it_starts,
     in_model_order,
     loop_made,
     mint_id,
@@ -106,9 +109,11 @@ from .model import (
     record_paths_in,
     shaping_document,
     split_front_matter,
+    start_date_has_passed,
     unknown_fields,
     unread_fields,
     validate_all,
+    weeks_outside_every_cycle,
     what_json_can_carry,
     why_it_will_not_read,
 )
@@ -1091,6 +1096,197 @@ def _reject_bad_status(kind: str, fields: dict) -> None:
         )
 
 
+def _reject_a_start_date_this_write_puts_in_the_past(
+    fields: dict, candidate: Record, before: Record | None, today: date
+) -> None:
+    """A start date typed into the past, before it is a file.
+
+    The other half of `start_date_has_passed`, and the reason it is a function
+    with two callers rather than two `if`s: the validator warns about a date that
+    DRIFTED into the past — nobody edited anything, the calendar moved — and this
+    refuses one somebody is typing there right now. Same question, and the
+    severities differ because the situations do. There is somebody at a keyboard
+    here who can be told and can fix it in the same second; there is nobody at all
+    on the drift path.
+
+    **What is refused is the WRITE, and not the state the record is in.** The
+    first version asked the candidate alone, which reads as "this record is
+    illegal" — and a record whose stated date has merely drifted by is illegal by
+    that reading every second of every day, with nobody having touched it. So the
+    door refused every write that so much as passed over one: `{"title":
+    "Renamed"}` on a drifted task answered 422 naming a field the payload did not
+    carry, and a bulk edit refused the entire selection because one row in it had
+    a date that had gone by. Renaming, retagging, reparenting by drag and drawing
+    a dependency edge were all impossible for that record, and the sentence they
+    got named the wrong cause. **The co-editing room was the worst of it**: it ran
+    this on every flush, so a shaping document being written on a drifted record
+    was refused identically on Save, on the twenty-second quiet window and on the
+    last person out — told to copy the work out of the editor, and holding the
+    only copy of the document until the last tab closed.
+
+    The delta is what lets the room keep the gate rather than lose it. Deleting
+    it from `_commit_room` was the first repair and it went a door too far: that
+    function commits the record page's FIELDS as well as its prose — `save()`
+    there hands the form to `COEDIT.save(fields)` whenever the socket is up — so
+    the surface people actually edit on was the one surface with no rule. All four
+    doors ask it now, and the two flushes nobody typed at carry `{}` and fall
+    through, which is exactly the distinction the delta draws.
+
+    So the question is asked of the delta: the candidate is illegal AND this write
+    is what made it so — the payload typed the date, or the record was legal until
+    this write moved its status back onto a date that was already standing in it.
+    Drift with an unrelated payload over it is exactly the case that falls
+    through, and what it earns is `validate_all`'s warning, which is what drift is.
+
+    **`before` is the record as it stands, and `None` means there is none** — the
+    create door, where nothing is standing and therefore every value in the
+    candidate is one somebody has just typed. It is also what a record the index
+    cannot show us reads as, and refusing there is the conservative half of the
+    rule rather than a hole in it.
+
+    It still reads the CANDIDATE and not the payload alone, alone among the
+    `_reject_*` family, and it has to: the rule is about two fields at once and a
+    PATCH carries only the ones that moved. `{"status": "ready"}` sent to a record
+    that already holds a past date is this refusal, and the date is not in
+    `fields`. The parsed candidate is the one place the new status and the old
+    date are true at the same time, which is why this is called after `parse_text`
+    rather than beside its siblings above.
+
+    **The remedies are the write's, and there are two writes here.** One sentence
+    served both and it was wrong about the commoner one. Somebody typing a date
+    into a record whose status they are not touching is usually behind on the
+    status rather than wrong about the date — "I started this on Monday" — and
+    `in_progress` is the remedy that fits. Somebody MOVING the status is the
+    opposite case: dragging the hill ball from `in_progress` back to `ready` is an
+    ordinary correction, and it was answered with "or set the status to
+    in_progress if it started then", which is the state they are deliberately
+    leaving, while clearing the date — the fix — was not named at all. An error
+    that names a remedy the person has just rejected reads as the tool not having
+    understood the gesture, and this one said it on all four doors.
+
+    The status is not quoted back. Three of the four doors run `_reject_bad_status`
+    before this and the room runs none, so the word can be anything a payload
+    carries — and naming the CONTROL rather than its value is the better sentence
+    anyway, by the rule that copy names what a person touched.
+    """
+    if not start_date_has_passed(candidate, today):
+        return
+    if "start_date" not in fields and before is not None and start_date_has_passed(before, today):
+        return
+    if "status" in fields:
+        said = (
+            "the status you are setting says the work has not begun. "
+            f"Clear the start date, or pick one from {today} on."
+        )
+    else:
+        said = (
+            "this record says the work has not begun. "
+            f"Pick a date from {today} on, or set the status to in_progress if it started then."
+        )
+    raise HTTPException(422, f"start_date: {candidate.start_date} has already passed, and {said}")
+
+
+def _reject_dates_this_write_cannot_mean(
+    fields: dict, candidate: Record, calendar: Callable[[], Config]
+) -> None:
+    """The two date-versus-date rules of §6, refused where somebody can fix them.
+
+    There was no such door before this. `_reject_bad_types` asks whether two
+    fields are numeric and the date coercion takes any parseable ISO date, so the
+    only date-RANGE check in the whole application was the one for cycle files —
+    and `2025-09-11` typed for `2026-09-11` committed with a 200. After it,
+    `span.start <= window[1] and span.end >= window[0]` can never be true for any
+    cycle, so the record drops silently out of `counts_in`, out of `Index.load`
+    and out of `carried_into` while `openproj check` reports the plan clean. A
+    cycle quietly loses a person's work and there is no error anywhere to chase.
+
+    **Two rules, one door, because they share their whole shape.** Both are
+    questions about the dates on the record and nothing else; both have a
+    `validate_all` twin, which is where the same predicate reports the case
+    nobody typed; and both take the same delta test below. Split into two
+    functions they would be two identical guards and four call sites at each of
+    the four write doors, and the thing that matters — that a write is judged on
+    what it typed — would be written twice.
+
+    **Asked of the delta, which `_reject_a_start_date_this_write_puts_in_the_past`
+    above learned the expensive way.** A record can arrive in either state
+    without anybody writing to it: a hand edit in git puts two contradictory
+    dates in a file, and editing `config/cycles.yaml` can move every window out
+    from under a date that was inside one yesterday. Asked of the state, this
+    door would then refuse `{"title": "Renamed"}` on that record, name a field
+    the payload does not carry, refuse a bulk retag because one row in the
+    selection was affected, and refuse every flush of a shaping document being
+    written in the co-editing room. So what is refused is the write that typed a
+    date, and what a record that merely holds one gets is the warning
+    `validate_all` reports beside it.
+
+    The candidate rather than the payload's raw values, because `parse_text` has
+    already turned them into dates and this is a rule about dates. The payload
+    decides WHETHER to ask; the parsed record answers.
+
+    `calendar` is a callable and not a `Config` because of the same delta: three
+    of the four doors have no configuration to hand and would have to read one —
+    `_config_at` walks the whole tree at a commit and parses every cycle and
+    every person under it — and the overwhelming majority of writes name no date
+    at all. A retitle, a retag and every quiet flush of the co-editing room would
+    each have paid for a calendar nothing was going to compare against. Passing
+    the read rather than the answer keeps the delta test in one place, which is
+    the other half of why this is one function.
+    """
+    if not set(DATED_FIELDS) & set(fields):
+        return
+    config = calendar()
+    if ends_before_it_starts(candidate):
+        raise HTTPException(
+            422,
+            f"end_date: {candidate.end_date} is before the start date "
+            f"{candidate.start_date}, so this record would have finished before it began.",
+        )
+    for name in DATED_FIELDS:
+        if name not in fields:
+            continue
+        away = weeks_outside_every_cycle(getattr(candidate, name, None), config)
+        if away is not None:
+            raise HTTPException(
+                422,
+                f"{name}: {getattr(candidate, name)} is {away:.0f} weeks outside every cycle "
+                "this plan has dated, so it would count towards none of them. Check the year.",
+            )
+
+
+def _reject_undeclared_fields(fields: dict, known: tuple[str, ...], what: str) -> None:
+    """A key no model declares, refused rather than committed and forgotten.
+
+    Both write doors kept every key the payload carried and handed the lot to
+    `patch_text`, which writes whatever it is given: an undeclared name landed in
+    the frontmatter with a 200, was read back into `record._unread`, re-emitted
+    verbatim by `serialise` for ever, and read by nothing. The case that makes it
+    urgent rather than untidy is a rename — a tab left open across the deploy that
+    retired `assigned_on` PATCHes `assigned_on`, is told it saved, and commits a
+    dead key carrying the one date the whole schedule is derived from, on a
+    protected branch where the commit cannot be taken back out.
+
+    An allowlist, and derived from `model_fields` rather than written down here,
+    which is the same argument `_named` makes about the commit message it builds
+    from these names: a list of fields kept by hand is a list that goes stale on
+    the commit that adds a field, and the models are the only place that cannot.
+
+    The union of every rung's fields, deliberately, and not this record's own kind.
+    Whether a PITCH may carry `person_weeks` is a question the validator already
+    answers beside the record — "a project carries no appetite" — and answering it
+    here as well would make the API door stricter than the hand-written file it
+    has to stay equal to, which is the argument `_reject_bad_status` makes above
+    for a status a kind does not read. What is refused here is a name that means
+    nothing to any record at all.
+    """
+    unknown = sorted(set(fields) - set(known))
+    if unknown:
+        raise HTTPException(
+            422,
+            f"{what} has no field called {unknown[0]!r}; it holds {', '.join(known)}",
+        )
+
+
 async def _sent(request: Request) -> dict:
     """The JSON object a request carried, or a refusal that says so.
 
@@ -1191,16 +1387,23 @@ def _named(fields: dict, known: tuple[str, ...]) -> str:
     parser reads it, `git shortlog --group=trailer:co-authored-by` counts Mallory
     for it, and GitHub puts their avatar on the commit. This branch is what makes
     `Co-authored-by:` the record of who wrote a document, so a forgeable one is
-    worse than none. Measured on the record PATCH and the cycle PUT, which are
-    both on `main` today; the issue and note routes happened to be closed already
-    because their own gates refuse a field name no model declares.
+    worse than none. Measured on the record PATCH and the cycle PUT, which were
+    the two routes that kept a field name no model declares; the issue and note
+    routes were closed already, because their own gates refused one. Both now
+    stand behind `_reject_undeclared_fields`, so the sentence that used to be
+    true of two routes is true of all of them.
 
     An allowlist and not an escape. Stripping newlines would leave the next
     person to work out which characters git's trailer parser accepts, and there
     is no denylist of those that is ever finished — where the model's own field
-    names are Python identifiers and cannot spell a trailer at all. Anything else
-    the payload carried is counted rather than quoted, because a save that wrote
-    something this cannot name is still a save that wrote something.
+    names are Python identifiers and cannot spell a trailer at all.
+
+    `others` is therefore unreachable from those doors now and is kept anyway. It
+    is the second guard on the same invariant and the cheap one: this function
+    signs a line in a commit, the door in front of it is a different function, and
+    a route added later that forgets the door must still not be able to put a key
+    off the wire into a commit message. A save that wrote something this cannot
+    name is still a save that wrote something, and the count says so.
 
     In the model's declaration order, which is fixed here, and deliberately not
     in the order the payload arrived: the sender must not choose even the order
@@ -2723,6 +2926,9 @@ def create_app(
             )
 
         fields = {k: v for k, v in _fields_in(payload).items() if k != "id"}
+        # Before anything asks what a value is: a key no record declares has no
+        # type to be wrong. It used to be written through to the file.
+        _reject_undeclared_fields(fields, RECORD_FIELDS, "a record")
         _reject_bad_types(fields)
         # `parse_text` below deliberately takes any word — a file that arrived
         # in git with one must still load — so without this the PATCH door
@@ -2761,6 +2967,19 @@ def create_app(
         loop = loop_made(candidate, index_now()[1].records.values())
         if loop:
             raise HTTPException(409, loop)
+        # The record as it stands, read out of the same population `loop_made` is
+        # asked about above rather than parsed a second time out of `original`:
+        # the rule needs to know whether this write is what put the date in the
+        # past or whether it had drifted there already, and one memoised index is
+        # cheaper than a second parse of a file this route has already parsed once.
+        _reject_a_start_date_this_write_puts_in_the_past(
+            fields, candidate, index_now()[1].records.get(record_id), today or date.today()
+        )
+        # And the two rules that compare a date against the plan's own calendar.
+        # The config is read at `base` — the commit this write is a delta against
+        # — rather than at HEAD, so that the windows this date is judged by are
+        # the ones the person typing it was looking at.
+        _reject_dates_this_write_cannot_mean(fields, candidate, lambda: _config_at(store, base)[0])
         written = await _write_or_refuse(
             store.write,
             path=path,
@@ -3070,6 +3289,10 @@ def create_app(
         fields = {k: v for k, v in _fields_in(payload).items() if k != "id"}
         if not fields:
             raise HTTPException(422, "no fields to write")
+        # The same door as the save beside it, and a worse blast radius: one
+        # undeclared key here is a dead line committed into every file in the
+        # selection, in one commit, on a protected branch.
+        _reject_undeclared_fields(fields, RECORD_FIELDS, "a record")
         _reject_bad_types(fields)
 
         _, index = index_now()
@@ -3102,6 +3325,11 @@ def create_app(
                 ) from None
             files[path] = content
 
+        # One read of the plan's calendar for the whole batch, and only if a date
+        # is written at all: `_reject_dates_this_write_cannot_mean` asks for it
+        # once and then holds it, rather than walking the tree once per record in
+        # a selection that may be fifty of them.
+        calendar = functools.cache(lambda: _config_at(store, base)[0])
         # The population every candidate is judged against is the plan with all of
         # them already applied. Asked that way round because the batch lands as one
         # commit: a shape that only exists once every record in the selection has
@@ -3114,6 +3342,26 @@ def create_app(
             loop = loop_made(candidate, after.values())
             if loop:
                 raise HTTPException(409, loop)
+            # Per candidate, because the answer is per record: one date and one
+            # status set over a selection lands on records that are at different
+            # rungs, and the whole point of the rule is that `in_progress` is the
+            # one where the date is right. The batch is one commit, so a refusal
+            # about any of them refuses all of them — which is the same shape the
+            # bulk status edit already has when it cannot mark something done, and
+            # the reason this asks about the delta and not about the state: the
+            # state reading refused a selection outright because one row in it
+            # held a date that had gone by on its own, which made a bulk retag
+            # impossible for anybody whose selection touched a drifted record.
+            # `index.records`, the population `after` is built from a line above.
+            _reject_a_start_date_this_write_puts_in_the_past(
+                fields, candidate, index.records.get(candidate.id), today or date.today()
+            )
+            # Per candidate for the same reason, over the plan's calendar as it
+            # stands at the commit this batch is a delta against. The read is
+            # memoised across the loop by `calendar` below: one payload of fields
+            # is written over every id here, so if it names a date at all it names
+            # it for all of them, and the windows do not move between two records.
+            _reject_dates_this_write_cannot_mean(fields, candidate, calendar)
 
         written = await _write_or_refuse(
             store.write_all,
@@ -3231,6 +3479,10 @@ def create_app(
         original = store.read(base, path) or "---\n---\n"
         fields = _fields_in(payload)
         fields["cycle"] = number
+        # The other door `_named` measured and found open. A cycle's frontmatter
+        # takes an undeclared key exactly as a record's does, and the file it goes
+        # into is the one every date on every page is derived from.
+        _reject_undeclared_fields(fields, CYCLE_FIELDS, "a cycle")
         _reject_bad_cycle(fields)
 
         content = _patched(original, fields, body, path)
@@ -3645,6 +3897,19 @@ def create_app(
             raise HTTPException(
                 422, f"that would not read back as a record: {why_it_will_not_read(error)}"
             ) from None
+        # The same refusal the save route makes, on the other door, and it cannot
+        # be left to the list below: what `validate_all` says about a stated date
+        # that has passed is a WARNING — nobody typed it, the calendar moved — and
+        # this filters to blockers. Somebody typing it into a create form is the
+        # other half of that rule and the half a person can act on.
+        #
+        # With no `before` at all, which is not an omission: a record that does
+        # not exist yet has nothing standing in it, so nothing here can have
+        # drifted and every value in this candidate is one somebody has just typed.
+        _reject_a_start_date_this_write_puts_in_the_past(
+            fields, candidate, None, today or date.today()
+        )
+        _reject_dates_this_write_cannot_mean(fields, candidate, lambda: config)
         problems = [
             p
             # A file already in the plan that will not parse is not this record's
@@ -3983,7 +4248,51 @@ def create_app(
             # The same gate the PATCH route stands behind, and for the same
             # reason: a record that will not read back takes every page down for
             # everybody, on a branch where the commit cannot be force-pushed away.
-            parse_text(content, room.path)
+            candidate = parse_text(content, room.path)
+            # **A room commits frontmatter, not only prose, and that is why this
+            # gate is here.** `save()` on the record page ends at
+            # `if (COEDIT.live()) { COEDIT.save(fields); return; }` — while the
+            # socket is up, which is the ordinary case, the form's fields come
+            # through this function and never through `PATCH /api/record`. So a
+            # start date typed into the past on the primary editing surface was
+            # answered 422 by the door nobody was using and committed by the one
+            # everybody was: the same field, the same record, two answers, and the
+            # file left saying a ready pitch began last month.
+            #
+            # It is asked in the DELTA form the other three doors use, and the
+            # delta is the whole of what was wrong with the version that stood
+            # here before. That one asked the parsed candidate alone — "is this
+            # record illegal" — and a date that has merely drifted by makes it
+            # illegal every second of every day with nobody having touched it. It
+            # therefore fired on all three of the ways a room reaches git: Save,
+            # the twenty-second quiet window and the last person out. Three people
+            # writing a shaping document on a drifted record were told to copy
+            # their work out of the editor, and the document existed in the room
+            # and in no file until the last tab closed it. In this form a flush
+            # carrying no fields cannot be refused by it at all — the timer and the
+            # last person out send `{}`, and a body edit is never what makes a date
+            # late — so what is refused is the press that typed the date, and the
+            # prose stays in the room to be saved again the moment it is corrected.
+            #
+            # `before` is the record as the file has it at the room's own base,
+            # which is what this write is a delta against; the guard is there
+            # because a file in git can be anything `patch_text` will round-trip
+            # and `parse_text` will not read, and `None` there means the
+            # conservative half of the rule, as it does on the create door.
+            try:
+                before = parse_text(original, room.path)
+            except ValueError:
+                before = None
+            _reject_a_start_date_this_write_puts_in_the_past(
+                fields, candidate, before, today or date.today()
+            )
+            # The room is the surface people actually edit on, so it gets every
+            # rule the PATCH door has or it is the one door with none. A flush
+            # that carries no fields carries no date either, and falls straight
+            # through — see the delta argument above, which is this rule's too.
+            _reject_dates_this_write_cannot_mean(
+                fields, candidate, lambda: _config_at(store, room.base)[0]
+            )
 
             message = f"{room.record_id}: {_named(fields, RECORD_FIELDS) or 'body'}"
             if others:
@@ -4355,6 +4664,12 @@ def create_app(
                     fields = dict(fields) if isinstance(fields, dict) else {}
                     fields.pop("id", None)
                     try:
+                        # Here rather than only in `_commit_room`, which stands
+                        # behind this and would refuse the same key: this is where
+                        # the refusal reaches the person who typed it, as a
+                        # sentence in their own room, instead of arriving as a
+                        # failed commit with nothing said about which key.
+                        _reject_undeclared_fields(fields, RECORD_FIELDS, "a record")
                         _reject_bad_types(fields)
                         # The room writes through the same gate as PATCH — the
                         # comment on `writer` above says exactly that — so the

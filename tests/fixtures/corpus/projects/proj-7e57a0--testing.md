@@ -6,7 +6,7 @@ parent: prod-6d1a70
 status: in_progress
 owner: jackdawrie
 reviewers: [merganserly]
-assigned_on: null
+start_date: null
 cycle: null
 priority: medium
 depends_on: []

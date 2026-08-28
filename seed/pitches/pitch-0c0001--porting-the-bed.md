@@ -8,14 +8,14 @@ owner: mudlarkish
 assignees: [mudlarkish, jackdawrie]
 reviewers: [jackdawrie, hoopoegrove]
 review_waived: false
-assigned_on: 2026-08-17
+start_date: 2026-08-17
 cycle: 37
 priority: high
 depends_on: [pitch-0b0001]
 tags: [drumbed-core, drumbed, bed-surface, hearth, airflow-coupling, kiln4py]
 prs: []
 created_schema_version: 2
-person_weeks: 5.0
+person_weeks: 6.0
 ---
 
 # Porting the bed
@@ -30,7 +30,7 @@ fixed usecase it resolves to a static flattened pipeline, which lowers to hearth
 
 ## Appetite
 
-Five weeks — one vertical slice coupled in-KILN, not a bed model.
+Six weeks, two people — one vertical slice coupled in-KILN, not a bed model.
 
 ## Solution
 

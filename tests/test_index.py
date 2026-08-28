@@ -43,7 +43,6 @@ TODAY = date(2026, 8, 13)
 CONFIG = Config(
     schema_version=2,
     nominal_availability=1.0,
-    default_task_effort=0.5,
     cycles={36: (date(2026, 6, 22), date(2026, 8, 14))},
 )
 
@@ -223,10 +222,24 @@ def test_spans_and_explanations_come_from_the_scheduler():
 
 
 def test_problems_come_from_validate_all():
+    """With the SPANS, which is not a detail of the call. `validate_all` applies
+    the rollup rule only when it is handed a schedule — whether a pitch's tasks
+    fit is a comparison between two numbers the scheduler computes, and
+    `model.py` cannot reach the scheduler to compute them — so an index that
+    passed only the records would carry a strictly smaller problem set than
+    `openproj check` reports about the same plan, and the page and the CLI would
+    disagree about a bet with nothing to say why.
+    """
     records = a_family()
     index = build_index(records, CONFIG, TODAY)
+    spans, _ = schedule(records, CONFIG, TODAY)
 
-    assert index.problems == validate_all(records, CONFIG)
+    # `TODAY` on both sides. One rule compares a date against the day the plan is
+    # drawn around — a start date that has gone by with the work not begun — so
+    # asking the index about one day and the validator about another is a
+    # comparison of two different questions that would agree until the pinned day
+    # and the real one fell on opposite sides of a corpus date.
+    assert index.problems == validate_all(records, CONFIG, spans, TODAY)
     assert index.problems, "the pitch has no owner, so the family cannot validate clean"
 
 
@@ -485,7 +498,7 @@ def test_the_missing_required_fields_predicate_reads_the_problems():
             assignees=["alice"],
             reviewers=["bob"],
             status="in_progress",
-            assigned_on=TODAY,
+            start_date=TODAY,
         ),
         a_pitch(
             "pitch-b00001",
@@ -707,7 +720,7 @@ def test_a_pitchs_dependency_is_inherited_by_its_tasks(seed_index: Index):
     produced them, in `test_schedule.py`.
     """
     assert seed_index.plan["task-7c8e40"].depends_on == []
-    assert seed_index.plan["task-7c8e40"].assigned_on is None
+    assert seed_index.plan["task-7c8e40"].start_date is None
     assert seed_index.plan["pitch-7b3e94"].depends_on == ["pitch-6f2d18"]
 
     ends = seed_index.spans["pitch-6f2d18"].end
@@ -848,20 +861,35 @@ def test_the_seed_incomplete_records_are_the_ones_missing_fields(seed_index: Ind
     the tests built in memory, which proves the rule and not the reading of a
     file. Do not tidy it; the file's own body says so too.
 
-    The NINE planned records of the hearth island are all absent, and that is the
-    other half of the assertion: they are `created_schema_version: 2`, so this is
-    the first corpus where grandfathering is a contrast inside one directory
-    rather than a rule with nothing on either side of it."""
+    `pitch-7b3e94` is in here for a third reason, and it is a rule finding
+    something rather than a file being wrong. Its two tasks are bet at 1.0 and
+    2.0 against its own 3.0, which fits exactly as effort — and Whimbrel and
+    Stonechat are each half-available in cycle 38, and the second task waits for
+    the first, so as calendar it is six weeks in a three-week box. That warning
+    did not exist while the comparison was a sum of person-weeks against an
+    undivided appetite; it is the whole point of the move to calendar-against-
+    calendar, and the record is named here rather than dropped from the list
+    below so that the list stays a claim about clean files.
+
+    The remaining SEVEN of the nine planned records written at
+    `created_schema_version: 2` are absent, and that is the other half of the
+    assertion: this is the first corpus where grandfathering is a contrast inside
+    one directory rather than a rule with nothing on either side of it."""
     incomplete = set(apply_filters(seed_index, {"predicate": ["missing_required_fields"]}, ""))
 
-    assert {"pitch-1b3f9a", "pitch-48ea9e", "task-3e07b2", "prod-7c2b81"} <= incomplete
+    assert {
+        "pitch-1b3f9a",
+        "pitch-48ea9e",
+        "task-3e07b2",
+        "prod-7c2b81",
+        "pitch-7b3e94",
+    } <= incomplete
     assert "task-3d84e9" not in incomplete
     assert incomplete.isdisjoint(
         {
             "prod-6d1a70",
             "proj-9a4c25",
             "pitch-6f2d18",
-            "pitch-7b3e94",
             "task-6a5c02",
             "task-6b7d31",
             "task-7c8e40",
@@ -877,7 +905,9 @@ def test_the_seed_index_carries_the_scheduler_and_validator_output(seed_root: Pa
 
     assert index.spans == spans
     assert index.explanations == explanations
-    assert index.problems == validate_all(records, config)
+    # `TODAY` for the reason `test_problems_come_from_validate_all` gives: the
+    # problem set is a function of the day the plan is drawn around now.
+    assert index.problems == validate_all(records, config, spans, TODAY)
 
 
 def test_searching_the_seed_corpus_finds_the_task_by_its_title(seed_index: Index):
@@ -919,6 +949,15 @@ def _two_cycles() -> Config:
     )
 
 
+def _three_cycles() -> Config:
+    """`_two_cycles` with the one before them, so a bet can be made in a cycle
+    that is over and then asked about in two that are not."""
+    two = _two_cycles()
+    return two.model_copy(
+        update={"cycles": {35: (date(2026, 4, 27), date(2026, 6, 19)), **two.cycles}}
+    )
+
+
 def test_work_bet_in_an_earlier_cycle_and_still_running_counts_against_this_one():
     """`cycle:` records where a bet was MADE and is never re-stamped (D-C1), which
     is what keeps an overrun accusing. It also means a filter on `cycle == N`
@@ -931,7 +970,7 @@ def test_work_bet_in_an_earlier_cycle_and_still_running_counts_against_this_one(
             person_weeks=3.0,
             cycle=36,
             status="in_progress",
-            assigned_on=date(2026, 8, 3),
+            start_date=date(2026, 8, 3),
         ),
     ]
     index = build_index(records, _two_cycles(), TODAY)
@@ -949,11 +988,187 @@ def test_work_finished_in_the_earlier_cycle_is_not_carried_into_this_one():
             cycle=36,
             status="done",
             prs=["kilnlab/kiln4py#1"],
-            assigned_on=date(2026, 7, 1),
+            start_date=date(2026, 7, 1),
         ),
     ]
     index = build_index(records, _two_cycles(), TODAY)
     assert index.load(37) == {}
+    assert index.carried_into(37) == []
+
+
+def test_work_nobody_has_sized_charges_nobody_and_is_counted_where_it_went():
+    """The half of `load` that used to be invisible because it was invented.
+
+    Shaping work carries no appetite by design — the validator asks for one at
+    `ready` and never before — and `counts_in` says it is still what somebody's
+    next weeks are spent on, so each of these used to be charged the default half
+    a week. Charging nothing is the right answer and a smaller total with no
+    explanation is not, so the records that could not be counted are counted
+    themselves, per person, and the pages draw the pair.
+    """
+    records = [
+        a_task("task-c00001", owner="ann", person_weeks=2.0, cycle=37, status="ready"),
+        a_pitch("pitch-b00001", owner="ann", cycle=37, status="shaping"),
+        # Two names on one unsized bet: one record on the cycle's count, and one
+        # on each of their rows.
+        a_pitch("pitch-b00002", owner="ann", assignees=["bo"], cycle=37, status="shaping"),
+    ]
+    index = build_index(records, _two_cycles(), TODAY)
+
+    assert index.load(37) == {"ann": 2.0}
+    assert index.unsized_in(37) == {
+        "ann": ["pitch-b00001", "pitch-b00002"],
+        "bo": ["pitch-b00002"],
+    }
+    # The same three gates on both answers, which is why they are one walk: a
+    # cycle nobody has bet this into counts none of it either way.
+    assert index.load(36) == {} and index.unsized_in(36) == {}
+
+
+def test_a_pitch_with_children_is_no_more_unsized_than_it_is_charged():
+    """A rollup charges nothing because its children do, and for exactly the same
+    reason it cannot be missing from the total: it was never in it."""
+    records = [
+        a_pitch("pitch-b00001", owner="ann", cycle=37, status="shaping"),
+        a_task("task-c00001", parent="pitch-b00001", owner="ann", cycle=37, status="shaping"),
+    ]
+    index = build_index(records, _two_cycles(), TODAY)
+
+    assert index.load(37) == {}
+    assert index.unsized_in(37) == {"ann": ["task-c00001"]}
+
+
+def test_a_bet_nobody_has_sized_is_counted_where_it_was_bet_and_carried_into_nothing():
+    """A bet is a fact somebody stated; a placement is what says it is still
+    running. An unsized bet has the first and not the second, so it counts once.
+
+    `counts_in` used to answer True for a record with no span in every dated
+    cycle after the one it was bet into, on the reading that no span meant the
+    scheduler had tried and failed and that losing such a record was worse than
+    counting it late. With no default appetite, no span is instead the normal
+    state of every `shaping` and `thinking` bet — the exact population
+    `unsized_in` exists to count — so this pitch was in the badge on cycle 36,
+    37 and every cycle after them for ever, and `carried_into` named it as
+    carryover in cycles it has nothing to do with. The sized task beside it is
+    the control: real carryover is decided by the dates and still is.
+    """
+    records = [
+        a_pitch("pitch-b00001", owner="ann", cycle=35, status="shaping"),
+        a_task(
+            "task-c00001",
+            owner="ann",
+            person_weeks=1.0,
+            cycle=35,
+            status="in_progress",
+            start_date=date(2026, 6, 22),
+        ),
+    ]
+    index = build_index(records, _three_cycles(), TODAY)
+
+    assert index.unsized_in(35) == {"ann": ["pitch-b00001"]}
+    assert index.unsized_in(36) == {} and index.unsized_in(37) == {}
+    # The task runs 22–26 June, which is inside 36's window and finished long
+    # before 37's opens: the same walk drops it from one and not the other.
+    assert index.carried_into(36) == ["task-c00001"]
+    assert index.carried_into(37) == []
+
+
+def test_work_that_has_started_is_counted_where_it_is_running_even_with_no_size():
+    """The other half of the rule above, and the one dropping the `span is None`
+    disjunct overshot.
+
+    Unsized-and-`in_progress` is reachable through the normal path rather than by
+    skipping a rung — the size gate is `ready` only, and §2 of
+    `design/time-model.md` records three such records in icon4py-plan. Such a task
+    has no span, so it fell out of every cycle after the one it was bet in,
+    including the one it is being worked on in right now: no weeks, which is
+    right, and no `· N not sized` beside them either, which is the silent shrink
+    the badge exists to prevent.
+
+    The three records under this pitch are the discriminator. The sized sibling
+    is carried by its dates as it always was; the running one is carried because
+    it started and has not stopped; the `shaping` one has neither and stays in
+    cycle 35 alone, which is what the test above pins from the other direction.
+    """
+    records = [
+        a_pitch(
+            "pitch-b00001",
+            owner="ann",
+            cycle=35,
+            status="in_progress",
+            start_date=date(2026, 6, 1),
+        ),
+        a_task(
+            "task-c00001",
+            parent="pitch-b00001",
+            owner="ann",
+            status="in_progress",
+            start_date=date(2026, 6, 1),
+        ),
+        a_task(
+            "task-c00002",
+            parent="pitch-b00001",
+            owner="ann",
+            person_weeks=8.0,
+            status="in_progress",
+            start_date=date(2026, 6, 1),
+        ),
+        a_task("task-c00003", parent="pitch-b00001", owner="ann", status="shaping"),
+    ]
+    index = build_index(records, _three_cycles(), TODAY)
+
+    # Cycle 35 is where the bet was made, so everything under it is counted there
+    # whatever its state.
+    assert index.unsized_in(35) == {"ann": ["task-c00001", "task-c00003"]}
+    # 13 August is in 36's window, and the running task is running in it.
+    assert index.unsized_in(36) == {"ann": ["task-c00001"]}
+    # 37 has not opened. Nobody has said how long this task takes, so there is no
+    # forecast that reaches into it — and inventing one forwards is exactly the
+    # haunting the disjunct was removed for.
+    assert index.unsized_in(37) == {}
+    # The badge and the bar are one set, drawn from one walk over one gate: the
+    # cycle page names its carryover to explain the weeks, and the record the
+    # badge counts is in that list rather than in a count with nothing behind it.
+    assert index.load(36) == {"ann": 8.0}
+    assert index.carried_into(36) == ["pitch-b00001", "task-c00001", "task-c00002"]
+    assert index.carried_into(37) == []
+
+
+def test_the_scheduler_having_no_answer_is_not_the_same_as_there_being_nothing_to_place():
+    """The two states the old `span is None` clause could not tell apart, which is
+    why it counted both for ever.
+
+    A record the scheduler genuinely cannot place — these two wait on each other
+    — is given an `unscheduled` span at today rather than nothing, so it goes on
+    being counted where today is, which is what that clause was written to
+    protect and it no longer needs the clause to do it. Having no span at all now
+    means having no length anybody stated, and that is the pitch.
+    """
+    records = [
+        a_task(
+            "task-c00001",
+            owner="ann",
+            person_weeks=1.0,
+            cycle=35,
+            status="ready",
+            depends_on=["task-c00002"],
+        ),
+        a_task(
+            "task-c00002",
+            owner="ann",
+            person_weeks=1.0,
+            cycle=35,
+            status="ready",
+            depends_on=["task-c00001"],
+        ),
+        a_pitch("pitch-b00001", owner="bo", cycle=35, status="shaping"),
+    ]
+    index = build_index(records, _three_cycles(), TODAY)
+
+    assert index.spans["task-c00001"].unscheduled and index.spans["task-c00002"].unscheduled
+    assert "pitch-b00001" not in index.spans
+    # 13 August is in 36's window, and an unscheduled span is that date twice.
+    assert index.carried_into(36) == ["task-c00001", "task-c00002"]
     assert index.carried_into(37) == []
 
 
@@ -968,7 +1183,7 @@ def test_an_undated_cycle_counts_only_what_was_bet_into_it_by_name():
             person_weeks=3.0,
             cycle=36,
             status="in_progress",
-            assigned_on=date(2026, 8, 3),
+            start_date=date(2026, 8, 3),
         ),
     ]
     index = build_index(records, _two_cycles(), TODAY)
@@ -985,7 +1200,7 @@ def test_a_carried_parent_charges_nothing_because_its_children_already_did():
             person_weeks=4.0,
             cycle=36,
             status="in_progress",
-            assigned_on=date(2026, 8, 3),
+            start_date=date(2026, 8, 3),
         ),
         a_task(
             "task-c00001",
@@ -994,13 +1209,13 @@ def test_a_carried_parent_charges_nothing_because_its_children_already_did():
             person_weeks=1.0,
             cycle=36,
             status="in_progress",
-            assigned_on=date(2026, 8, 3),
+            start_date=date(2026, 8, 3),
         ),
     ]
     index = build_index(records, _two_cycles(), TODAY)
 
     # Charged to 36, which is the cycle the work is actually in: it is in
-    # progress and was assigned on 3 August, so it runs 08-03 to 08-07, inside
+    # progress and started on 3 August, so it runs 08-03 to 08-07, inside
     # 36's window. It used to charge 37 only because the floor at `today` pushed
     # every live span forward into the next cycle — an artefact, not a carry.
     assert index.load(36) == {"ann": 1.0}
@@ -1036,7 +1251,7 @@ def test_a_pitch_is_as_far_along_as_its_tasks_weighted_by_their_sizes():
 
 
 def test_a_container_is_weighed_by_what_is_under_it_and_not_by_half_a_week():
-    """`size_weeks` says a container "has no size of its own" and then returns
+    """`size_weeks` said a container "has no size of its own" and then returned
     `config.default_task_effort` anyway, because that fallback was written for an
     unsized TASK. Nothing noticed until a product existed: `Rung.under` lets
     nothing but a product nest a container, so a container could not be somebody's
@@ -1044,7 +1259,8 @@ def test_a_container_is_weighed_by_what_is_under_it_and_not_by_half_a_week():
 
     The moment one could, a product holding a project worth five weeks reported
     `0/0.5 wk` on the record page, under a meter reading "0 per cent of this bet
-    is done" — a denominator nobody typed.
+    is done" — a denominator nobody typed. The fallback is gone and this is the
+    test that keeps the answer: what a container weighs is what is under it.
     """
     records = [
         a_product("prod-a00001"),
@@ -1160,7 +1376,7 @@ def test_a_task_under_a_pitch_is_counted_in_the_cycle_its_pitch_was_bet_into():
             cycle=36,
             person_weeks=4.0,
             status="in_progress",
-            assigned_on=date(2026, 7, 1),
+            start_date=date(2026, 7, 1),
         ),
         a_task(
             "task-c00001",
@@ -1168,7 +1384,7 @@ def test_a_task_under_a_pitch_is_counted_in_the_cycle_its_pitch_was_bet_into():
             owner="ann",
             person_weeks=2.0,
             status="in_progress",
-            assigned_on=date(2026, 7, 1),
+            start_date=date(2026, 7, 1),
         ),
     ]
     index = build_index(records, _two_cycles(), TODAY)
@@ -1187,7 +1403,7 @@ def test_a_ready_task_carried_into_this_cycle_is_counted_by_its_dates():
             cycle=36,
             person_weeks=4.0,
             status="in_progress",
-            assigned_on=date(2026, 7, 1),
+            start_date=date(2026, 7, 1),
         ),
         a_task("task-c00001", parent="pitch-b00001", owner="ann", person_weeks=2.0, status="ready"),
     ]
@@ -1197,6 +1413,144 @@ def test_a_ready_task_carried_into_this_cycle_is_counted_by_its_dates():
     assert span.start <= date(2026, 10, 9) and span.end >= date(2026, 8, 17), "it lands in 37"
     assert index.load(37) == {"ann": 2.0}
     assert index.carried_into(37) == ["pitch-b00001", "task-c00001"]
+
+
+def _blocks_naming(index: Index, record_id: str) -> list[int]:
+    """The cycles whose Delivered block lists this record, lowest first.
+
+    Every assertion below is about how MANY blocks name a record and not merely
+    about one of them containing it, because the defect was a record named by
+    none: asking `record_id in index.delivered_in(35)` passes just as happily
+    with the record listed under all six cycles as with it listed under one.
+    """
+    return sorted(number for number in index.cycles if record_id in index.delivered_in(number))
+
+
+def test_finished_work_ending_between_two_cycles_is_delivered_by_the_nearer_one(seed_root: Path):
+    """The day that fell down the crack between two windows, and was delivered
+    nowhere at all.
+
+    The windows do not tile the calendar. Both shipped corpora leave the month
+    between cycle 35 and cycle 36 unnumbered — the conference and release window
+    — so `window[0] <= end_date <= window[1]`, asked of each cycle in turn, had a
+    third answer nobody had written a branch for. A done record ending in there
+    was refused by `counts_in` for being done, named by no Delivered block, and
+    close enough to the plan that `weeks_outside_every_cycle` said nothing
+    either: a cycle silently losing a person's work, which is the failure §6 of
+    `design/time-model.md` was written to end.
+
+    Two records, one on each side of the middle of that month, because "somewhere
+    rather than nowhere" is met just as well by a rule that always picks the
+    earlier window and would be wrong half the time. Nearest is a claim about
+    each date, and only a pair straddling the midpoint can tell the two apart.
+    """
+    records, config, _ = load_repo(seed_root)
+    # The gap this is about, read off the corpus rather than restated: 35 closes
+    # on 22 May and 36 opens on 22 June, and the day exactly between them is the
+    # 6th of June and a half.
+    assert (config.cycles[35][1], config.cycles[36][0]) == (date(2026, 5, 22), date(2026, 6, 22))
+    records += [
+        a_pitch(
+            "pitch-9f0001",
+            "Ported before the shutdown",
+            owner="ann",
+            cycle=34,
+            person_weeks=2.0,
+            status="done",
+            start_date=date(2026, 5, 4),
+            end_date=date(2026, 6, 3),
+        ),
+        a_pitch(
+            "pitch-9f0002",
+            "Ported after it",
+            owner="ann",
+            cycle=34,
+            person_weeks=2.0,
+            status="done",
+            start_date=date(2026, 5, 4),
+            end_date=date(2026, 6, 15),
+        ),
+        # The ordinary case, kept beside them so the two claims are drawn from
+        # one list: a date inside a window is claimed by containment, which beats
+        # every nearness there is because a day inside a window is nought days
+        # from it.
+        a_pitch(
+            "pitch-9f0003",
+            "Landed inside the window",
+            owner="ann",
+            cycle=36,
+            person_weeks=1.0,
+            status="done",
+            start_date=date(2026, 6, 29),
+            end_date=date(2026, 7, 30),
+        ),
+    ]
+    index = build_index(records, config, TODAY)
+
+    assert _blocks_naming(index, "pitch-9f0001") == [35]
+    assert _blocks_naming(index, "pitch-9f0002") == [36]
+    # And not by the stamp, which is the other candidate §5 rejects: both were
+    # bet in 34, and filing them there would put a June date under a cycle that
+    # closed in March with nothing on the page to say why.
+    assert "pitch-9f0001" not in index.delivered_in(34)
+    # Chronologically, and the whole point of the sort: a record claimed by
+    # nearness ended before its window opened or after it closed, so it lands at
+    # one end of the block rather than in the middle of the cycle's own story.
+    assert index.delivered_in(36)[0] == "pitch-9f0002"
+
+
+def test_a_date_exactly_between_two_windows_goes_to_the_cycle_it_came_out_of():
+    """The tie the rule above has to break, and it breaks towards the earlier
+    window: on the day halfway across an unnumbered gap, the cycle the work was
+    running in when it closed is a better claim than the one it never reached.
+
+    Pinned because `min` over a key is deterministic whatever the key says, so
+    nothing else in the suite would notice this changing sides.
+    """
+    config = CONFIG.model_copy(
+        update={
+            "cycles": {
+                36: (date(2026, 6, 22), date(2026, 8, 14)),
+                # Three days between them, so 16 August is two from each end.
+                37: (date(2026, 8, 18), date(2026, 10, 9)),
+            }
+        }
+    )
+    records = [
+        a_pitch(
+            "pitch-b00001",
+            owner="ann",
+            cycle=36,
+            person_weeks=2.0,
+            status="done",
+            start_date=date(2026, 7, 6),
+            end_date=date(2026, 8, 16),
+        )
+    ]
+    index = build_index(records, config, TODAY)
+
+    assert _blocks_naming(index, "pitch-b00001") == [36]
+
+
+def test_finished_work_with_no_end_date_is_still_claimed_by_the_cycle_it_was_bet_in(
+    seed_index: Index,
+):
+    """The grandfathered case, unmoved by the rule above.
+
+    `end_date` is a blocker at rule version 5 and everything written before that
+    warns instead, so the corpus's five done records carry none. Nothing about
+    them can be tested against a window, near or otherwise, and they stay listed
+    under the stamp their bet was made with — which is the only thing anything
+    knows about when they happened. A nearest-window rule that reached them would
+    have to invent the date it measured from.
+    """
+    assert _blocks_naming(seed_index, "pitch-2a7f3e") == [34], "bet in 34, no end date"
+    assert _blocks_naming(seed_index, "pitch-3c9a41") == [28]
+    # The invariant the change is for, over the whole corpus rather than over the
+    # two records above: everything finished is claimed, and claimed once.
+    for record in seed_index.plan.values():
+        if record.status == "done":
+            assert len(_blocks_naming(seed_index, record.id)) == 1, record.id
 
 
 def test_a_checklist_in_the_body_is_counted_once_into_the_index():

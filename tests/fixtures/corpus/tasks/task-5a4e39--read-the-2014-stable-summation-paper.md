@@ -8,7 +8,7 @@ owner: jackdawrie
 reviewers: []          # REQUIRED from schema_version 1; not in source
 person_weeks: 0.1
 assignees: []
-assigned_on: null
+start_date: null
 cycle: 36
 priority: medium
 depends_on: []

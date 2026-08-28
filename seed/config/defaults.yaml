@@ -9,14 +9,20 @@
 #
 # Every record in this corpus is created_schema_version 2, so every rule of
 # version 2 or older — including the version-2 rule that a ready record must
-# name assignees — applies to all of them as a blocker. There is no
-# grandfathered record here to exercise the warning path.
-schema_version: 4
+# name assignees — applies to all of them as a blocker. The version-5 rule that
+# a done record must record the date it ended is newer than all of them, so it
+# would only warn here — which is why both done tasks in this corpus carry an
+# `end_date` rather than relying on the demotion.
+#
+# 4 -> 5 on 2026-08-27, with `end_date`. A required field only lands safely one
+# version above the corpus it is joining, and a rule stamped above
+# `schema_version` never blocks anything at all — so the rule's number and this
+# line are one decision made twice. See `_status_problems` for the whole of it.
+schema_version: 5
 # The rate one person works at when nobody has said otherwise. A size is
 # PERSON-weeks (D-C4), so the people on a bet divide it, each at their own rate;
 # per-cycle figures override this one.
 nominal_availability: 1.0
-default_task_effort: 0.5    # weeks assumed when a record states no size
 # Of each cycle's window, how much is cool-down rather than build. An overrun is
 # measured against the end of build: cool-down is for the mess afterwards, so
 # work that lands in it did not fit its box.

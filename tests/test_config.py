@@ -5,22 +5,25 @@ from openproj.model import Config, Problem, load_config
 
 
 def test_problem_carries_the_rule_version_that_introduced_the_rule():
+    """`sentence` is what is stored and `message` is what is read: a Problem is a
+    `Sentence`, so that the three rules comparing dates can hold theirs as dates
+    and each reader can have them ISO or day-first."""
     problem = Problem(
         severity="warning",
         record_id="pitch-1b3f9a",
         field="assignees",
-        message="a ready record needs somebody on it",
+        sentence="a ready record needs somebody on it",
         rule_version=2,
     )
     assert problem.severity == "warning"
     assert problem.rule_version == 2
+    assert problem.message == "a ready record needs somebody on it"
 
 
 def test_config_defaults_stand_alone():
     config = Config()
     assert config.schema_version == 1
     assert config.nominal_availability == 1.0
-    assert config.default_task_effort == 0.5
     assert config.holidays == []
     assert config.cycles == {}
 
@@ -30,7 +33,6 @@ def test_load_config_merges_the_three_seed_files(seed_root: Path):
     # schema_version 2 is what NEW records are created at; the corpus is still 1.
     assert config.schema_version == 2
     assert config.nominal_availability == 1.0
-    assert config.default_task_effort == 0.5
     assert config.cycles[36] == (date(2026, 6, 22), date(2026, 8, 14))
     assert date(2026, 8, 1) in config.holidays
 

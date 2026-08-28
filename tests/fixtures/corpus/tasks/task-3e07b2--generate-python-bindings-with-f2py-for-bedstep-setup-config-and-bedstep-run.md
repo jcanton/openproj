@@ -9,7 +9,7 @@ reviewers: []          # REQUIRED from schema_version 1; not in source
 person_weeks: null
 assignees:
   - yellowhammer7
-assigned_on: null
+start_date: null
 cycle: 28
 priority: high
 depends_on: []
@@ -34,4 +34,4 @@ wrappers, for `bedstep_setup_config` and `bedstep_run`, are to be built as one.
 No effort is recorded for this step — the board has no effort column and the note's Progress
 checklist was left as the empty template. The `done` status follows from the board entry and from
 the cycle-34 pitch confirming the CPU `f2py` bindings work. The assignee is the pitch's single
-named developer; no per-task assignment date is stated, so `assigned_on` is null.
+named developer; no per-task start date is stated, so `start_date` is null.

@@ -10,7 +10,7 @@ person_weeks: 2.0
 assignees:
   - nightjarelli
   - Oxpeckerly
-assigned_on: null
+start_date: null
 cycle: 35
 priority: medium
 depends_on: []

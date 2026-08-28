@@ -8,8 +8,10 @@ Filter state lives in the query string. That makes every view a shareable URL,
 makes the back button work, and deletes the entire saved-views feature request.
 
 Derived values are drawn differently from stated ones throughout. A date the tool
-computed, a size it guessed and work nobody owns are all forecasts, and a forecast
-that looks like a commitment is how a timeline stops being believed.
+computed and work nobody owns are both forecasts, and a forecast that looks like a
+commitment is how a timeline stops being believed. A size it guessed was on that
+list until there was no such thing: nothing here invents an appetite, and a record
+nobody has sized is drawn as one rather than as a small one.
 """
 
 # A facade, and every name below is re-exported because something outside this

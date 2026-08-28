@@ -5,7 +5,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from ..model import KINDS as KIND_LADDER
-from ..model import PARENT_KINDS, STATUS_ORDER, Record, required_at, unread_fields
+from ..model import (
+    PARENT_KINDS,
+    STATUS_ORDER,
+    Record,
+    # Day-first dates moved down to `model.py` when the scheduler's explanations
+    # needed the same format and could not reach up here. Re-exported from this
+    # module unchanged, because the pages, the Jinja `on()` global and the tests
+    # all name it here and there is one implementation either way.
+    _read_date,
+    required_at,
+    unread_fields,
+)
 from .icons import _ICON_SVG
 
 
@@ -64,7 +75,13 @@ EDITABLE: dict[str, str] = {
     "depends_on": "list",
     "prs": "list",
     "cycle": "number",
-    "assigned_on": "date",
+    "start_date": "date",
+    # Beside the start and after it, because they are one fact read left to
+    # right and because the page's order is when-it-sits-and-when. It is the
+    # only editable field a status GATE asks for that is blank on every record
+    # until the day the work finishes — see `Record.end_date` for why the other
+    # end of the pair is derived and this one is typed.
+    "end_date": "date",
     # The inbox-only fields, after everything above: they were not in the order
     # jcanton gave because no planned kind reads them, and trailing the shared
     # fields keeps his order intact on every kind rather than threading gaps
@@ -424,14 +441,38 @@ LABELS = {
     "assignees": "Assignees",
     "reviewers": "Reviewers",
     "review_waived": "Review waived",
-    "assigned_on": "Assigned on",
+    "start_date": "Start date",
+    # "End date" and not "Ended", to pair with the label above it: the two are
+    # one control each side of a hyphen on the page, and a reader scanning for
+    # the second of a pair is scanning for the first one's shape.
+    "end_date": "End date",
     "priority": "Priority",
     "cycle": "Cycle",
     "parent": "Parent",
     "depends_on": "Blocked by",
     "tags": "Tags",
     "prs": "PRs",
-    "person_weeks": "Appetite (person-weeks)",
+    # No unit in this one, and it carried "(person-weeks)" until 2026-08-28. The
+    # row it names is two different readings depending on what is filed under the
+    # record: a leaf draws its own stored appetite, which IS in person-weeks, and
+    # a pitch with tasks under it draws the box that bet bought beside the days
+    # those tasks occupy, which are both CALENDAR weeks. So the `<dt>` read
+    # "Appetite (person-weeks)" over `2.0 the bet buys · 5.6 in tasks` — a unit
+    # named for a line neither of whose numbers is in it, on a record whose file
+    # says `person_weeks: 4.0`, which is the same defect the table's own sentence
+    # was rewritten to fix. There is no parenthetical that is true of both
+    # readings, and a `<dt>` is read as belonging to whatever the `<dd>` says.
+    #
+    # The unit did not go, it moved to the two places it is actually needed. Each
+    # value in that row now names its own unit in words — `1.0 person-weeks` on a
+    # leaf, `Bet 4 over 2 people, which buys 2.0 weeks` on a rollup, which is the
+    # table's wording for the same fact — and the EDIT view, where the box under
+    # this label takes person-weeks and nothing else, is covered by
+    # `FIELD_TEACH["person_weeks"]` below: edit-only copy, rendered directly under
+    # that control and announced with it. So a reader is told the unit by the
+    # value and a writer is told it by the control, and the label is left saying
+    # the one thing that is true in both modes and on every rung.
+    "person_weeks": "Appetite",
     "reported_by": "Reported by",
     "written_by": "Written by",
     "pitched_into": "Pitched into",
@@ -552,8 +593,22 @@ def _human(value: object) -> str:
 # reads as an import beside this codebase's own voice — in the team's own words
 # the licence question never arises. The long form is `docs/shape-up.md`.
 FIELD_TEACH = {
+    # The second sentence is here because `LABELS` stopped naming the unit. The
+    # label had to lose it — over a rollup it named the unit of neither number on
+    # the line — and the one moment somebody needs to be told which unit to type
+    # in is the moment they are typing, which is exactly this slot: edit-only,
+    # under the box, in the box's `aria-describedby`. It fails the "does it change
+    # what somebody does at that moment" test nowhere: 8 meaning eight weeks of
+    # one person's time and 8 meaning eight weeks on the wall are different bets,
+    # and the scheduler divides by the people on the record to tell them apart.
+    # Both facts in one sentence rather than two: the unit was appended as a
+    # second sentence and took the lesson to 150 characters, which
+    # `test_no_lesson_runs_to_wallpaper` caps at 100 and
+    # `test_the_sentence_follows_the_ball` measures at three wrapped lines in a
+    # 295px column. A lesson nobody finishes reading teaches nothing, and the
+    # budget-not-estimate point is the one that must survive the cut.
     "person_weeks": (
-        "Appetite is a budget, not an estimate: how much this is worth, not how long it will take."
+        "A budget in person-weeks, not an estimate: what this is worth, not how long it takes."
     ),
     # The circuit breaker, and the one Shape Up idea the scheduler most quietly
     # assumes. A newcomer reading a derived end date otherwise expects a slip to
@@ -658,18 +713,6 @@ def _ago(epoch: int, now: int) -> str:
         return "an hour ago" if hours == 1 else f"{hours} hours ago"
     days = gone // 86400
     return "a day ago" if days == 1 else f"{days} days ago"
-
-
-# A date, the way this app reads one out loud: `14.07.2026`, day first, dots.
-# jcanton, 2026-08-21: "I'd like to reverse the order of the dates in the entire
-# app". Only what is DRAWN — what is stored, sorted, put in a `<input type=date>`
-# and sent over the API stays `2026-07-14`, which is the one format that sorts as
-# text, parses without a locale and cannot be read as a different day in another
-# country.
-def _read_date(value: object) -> str:
-    text = str(value or "")
-    parts = text.split("-")
-    return f"{parts[2]}.{parts[1]}.{parts[0]}" if len(parts) == 3 else text
 
 
 # Fields that name a person. They get a datalist of everyone already in the corpus,

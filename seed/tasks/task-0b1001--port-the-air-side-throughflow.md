@@ -8,7 +8,8 @@ owner: jackdawrie
 assignees: [jackdawrie]
 reviewers: [hoopoegrove, turnstonegru]
 review_waived: false
-assigned_on: 2026-06-22
+start_date: 2026-06-22
+end_date: 2026-07-22
 priority: high
 depends_on: []
 tags: [airflow, throughflow, hearth, module, verification]

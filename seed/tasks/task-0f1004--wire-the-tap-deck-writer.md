@@ -4,11 +4,11 @@ kind: task
 title: Wire the tap-deck writer to the new reader
 parent: pitch-0f0001
 status: ready
-owner: Ptarmigant
-assignees: [Ptarmigant]
+owner: siskinbury
+assignees: [siskinbury]
 reviewers: [firecresta]
 review_waived: false
-assigned_on: 2026-08-17
+start_date: 2026-08-17
 priority: medium
 depends_on: [task-0f1003]
 tags: [tapdeck, hearth, writer]
@@ -37,7 +37,10 @@ manifest — sizes, shapes and dtypes in the reader's stable order — beside th
 One week, because the interface is the work and the manifest is thirty lines.
 
 Bet in cycle 37 under the scan pitch rather than under `pitch-0f0003`, because what makes it
-worth doing now is the stable interface and not the rest of the tap-deck rewrite.
+worth doing now is the stable interface and not the rest of the tap-deck rewrite. Siskin carries
+it beside the benchmark rather than Ptarmigan, whose own pitch is on the shelf: the bet is the
+scan pitch's, so the hands on it have to be the scan pitch's, or the weeks that bet buys are
+measured over people who are not working on it.
 
 It waits on `task-0f1003`, which is shelved, and `openproj check` says so as a warning on this
 file. That is the honest state and not a mistake to tidy up: the manifest this writes is defined

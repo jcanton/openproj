@@ -8,7 +8,7 @@ owner: hoopoegrove
 reviewers: [ibisbillie]
 person_weeks: 1
 assignees: []
-assigned_on: null
+start_date: null
 cycle: 36
 priority: medium
 depends_on: [task-5c1d84, task-5f062b]   # synthetic, see seed/README.md

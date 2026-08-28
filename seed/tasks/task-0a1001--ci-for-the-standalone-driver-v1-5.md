@@ -5,16 +5,16 @@ title: CI for the standalone driver v1.5
 parent: pitch-0a0001
 status: in_progress
 owner: jackdawrie
-assignees: [jackdawrie, nightjarelli]
-reviewers: [merganserly, ibisbillie]
+assignees: [jackdawrie, merganserly]
+reviewers: [nightjarelli, ibisbillie]
 review_waived: false
-assigned_on: 2026-06-29
+start_date: 2026-08-17
 priority: high
 depends_on: []
 tags: [kiln4py, standalone-driver, distributed, ci, gpu]
 prs: ["kilnlab/kiln4py#2211"]
 created_schema_version: 2
-person_weeks: 3.5
+person_weeks: 3.0
 ---
 
 ## Problem
@@ -30,7 +30,7 @@ is first in the field loop, but now it hides the regression.
 
 ## Appetite
 
-3.5 weeks, carried over from cycle 36; the long pole of the pitch.
+Three weeks, two people; the long pole of the pitch.
 
 ## Solution
 

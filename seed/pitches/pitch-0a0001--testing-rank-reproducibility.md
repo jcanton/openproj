@@ -5,10 +5,10 @@ title: Testing rank reproducibility
 parent: proj-000001
 status: in_progress
 owner: merganserly
-assignees: [merganserly, jackdawrie]
+assignees: [merganserly, jackdawrie, sanderlingly]
 reviewers: [jackdawrie, hoopoegrove]
 review_waived: false
-assigned_on: 2026-08-17
+start_date: 2026-08-17
 cycle: 37
 priority: high
 depends_on: []
@@ -32,7 +32,7 @@ all batch-dependent. Face blends (4x4) are clean, hence the core solver looked i
 
 ## Appetite
 
-Six weeks, two people — the cycle-37 continuation of the distributed-driver work.
+Six weeks, three people — the cycle-37 continuation of the distributed-driver work.
 
 ## Solution
 

@@ -17,7 +17,7 @@ from .controls import (
 from .env import _compiled
 from .rows import _row
 from .shell import STATIC, Links, _page, _titles
-from .styles import _SCROLL_STYLE, _SUGGEST_STYLE
+from .styles import _SCROLL_STYLE, _SUGGEST_STYLE, _TREE_STYLE
 from .tokens import (
     _KIND_MODELS,
     DRAFT_MARKS,
@@ -35,49 +35,145 @@ from .tokens import (
 
 # Columns the table shows that are computed rather than owned, each with what the
 # cell answers when somebody tries to edit it. `size` is the least obvious: it
-# shows person_weeks *or an assumed default*, so a control on it would let
-# somebody commit the assumption without meaning to.
+# shows the appetite of the record itself, and on a pitch it is the bet rather
+# than what the tasks under it come to — two numbers one cell cannot hold, and an
+# editor opened on the wrong one writes the wrong one.
 #
 # The names and the sentences are one map because they were two: the script
 # carried its own literal list of four, so a fifth derived column would have kept
 # its editor open and refused with `undefined`. A cell that will not be edited and
 # will not say why is indistinguishable from a cell that is broken.
+#
+# **`end` was in here and is not, and the sentence it carried was the reason.**
+# It read "Derived from the start and the appetite", which stopped being true of
+# every `done` record when §4b of `design/time-model.md` gave the done branch a
+# typed `end_date` to end at. On such a row the cell shows what the file states,
+# the validator's `a done record needs the date it ended` now marks that same
+# cell — and the tooltip underneath it claimed the value was computed and offered
+# no way to supply it. The mark reached the right cell and the cell refused the
+# one edit that would clear it. The End column is the editor for `end_date` now,
+# exactly as Start is for `start_date`, and `_TABLE_SHOWS` is where it says which
+# of the two dates a given cell is drawing.
 _TABLE_WHY = {
-    "end": "Derived from the start and the appetite.",
     "blocked_by": "Counted from depends_on, minus the ones already done or shelved.",
     "progress": "Counted from the task list in the body. Tick the boxes there.",
 }
 _TABLE_DERIVED = tuple(_TABLE_WHY)
 
-# The two columns that SHOW a derived value and EDIT the written one underneath
-# it. jcanton, 2026-08-27: "the appetite is not an editable field in the /table
-# (dunno why) make it editable in /table please. start date as well".
+# Every column of this table whose header is not the name of the field beneath
+# it, written down once and read in both directions below. A column and a field
+# that happen to share a word need no entry: `owner` is `owner` everywhere, and
+# listing the identities would be a list to keep in step with `_TABLE_COLUMNS`.
 #
-# The reason it was not is in `_TABLE_WHY`, where both used to sit: `size` is the
-# pitch's appetite *or* the task's effort *or* the default when neither is set,
-# and `start` is `assigned_on` after the scheduler has moved it for the
-# dependencies and for what the people on it are already doing. Both cells are
-# forecasts, and typing over a forecast is how a plan stops being believed.
+# It is one map because it was two, and the two disagreed in exactly the way
+# this repository keeps being bitten by. `_COLUMN_FIELD` knew `start` was
+# `start_date`; the script's `MARK_COLUMN` knew `person_weeks` was `size` and
+# `depends_on` was `blocked_by`, and neither of them knew about the dates. So
+# every problem the validator reports about a start or an end — a start date
+# that has passed, an end missing at `done`, an end before its start, a date
+# outside every cycle this plan has dated — hung its mark on the ID cell, while
+# the tooltip on that mark says the fix "is to edit the cell the sentence is
+# on". The reader was sent to the one cell that cannot be wrong.
+_COLUMN_SHOWS = {
+    "size": "person_weeks",
+    "start": "start_date",
+    "end": "end_date",
+    "blocked_by": "depends_on",
+}
+
+# The three columns that SHOW one value and EDIT the written one underneath it.
+# jcanton, 2026-08-27: "the appetite is not an editable field in the /table (dunno
+# why) make it editable in /table please. start date as well".
 #
-# What makes them editable is that the editor opens on the WRITTEN field and
-# never on the number in the cell. Double-clicking a size cell showing `2 wk`
-# that nobody chose opens an empty box, because `person_weeks` is empty — so
-# there is no assumption to commit by accident, which is the same rule the draft
-# row has followed since it was written (`_editable_for`). Type into it and the
-# cell goes back to being the scheduler's on the next draw.
+# The reason they were not is in `_TABLE_WHY`, where all three used to sit: `size`
+# on a pitch with tasks is the bet and not what those tasks come to, and `start`
+# is `start_date` after the scheduler has moved it for the dependencies and for
+# what the people on it are already doing. Those two cells are forecasts, and
+# typing over a forecast is how a plan stops being believed.
 #
-# A kind that reads neither field is still refused, and by the mechanism that
-# already existed rather than a new one: `reads()` asks `unread_fields`, which
-# puts `person_weeks` on any rung that is not `sized` and `assigned_on` on any
+# **`end` is the third, and it is the one whose cell is not always a forecast.**
+# A `done` record's span ends at the `end_date` its file states (§4b of
+# `design/time-model.md`), so the End cell on that row shows a value somebody
+# typed — and the record page has had an editable End date row for it all along.
+# The table now agrees, which is what the two surfaces have to do: a person who
+# learns the model from one page must not be taught something else by the other.
+#
+# What makes all three editable is that the editor opens on the WRITTEN field and
+# never on the value in the cell, which is the same rule the draft row has
+# followed since it was written (`_editable_for`). Type into it and the cell goes
+# back to being the scheduler's on the next draw — where the scheduler has an
+# answer at all.
+#
+# A kind that reads none of these fields is still refused, and by the mechanism
+# that already existed rather than a new one: `reads()` asks `unread_fields`,
+# which puts `person_weeks` on any rung that is not `sized` and both dates on any
 # rung that does not schedule. A product's size cell has never been editable and
 # still is not.
-_COLUMN_FIELD = {"size": "person_weeks", "start": "assigned_on"}
+#
+# Derived from the map above rather than listed beside it, and `_TABLE_DERIVED`
+# is the whole of the difference: a column with a sentence in `_TABLE_WHY` has no
+# editor at all — `whyOf` closes the cell before `EDITABLE` is ever consulted —
+# so `blocked_by` drops out here for the reason it was written into `_TABLE_WHY`
+# in the first place. Listing this trio by hand instead is what would let a sixth
+# column be added above and silently open an editor on a forecast, which is the
+# thing this comment spends four paragraphs refusing.
+_COLUMN_FIELD = {
+    column: field for column, field in _COLUMN_SHOWS.items() if column not in _TABLE_DERIVED
+}
 
-# What the tooltip adds on those two, because "double-click to edit appetite" on
-# a cell reading `2 wk` does not explain why the box opens empty.
+# The same map read the other way: a `Problem` names a FIELD and a mark hangs on
+# a COLUMN, so the browser needs the inverse of what the editors need. Inverted
+# here rather than typed out in the script, because two hand-written halves of
+# one mapping is precisely how the dates came to have a route in and none back.
+_MARK_COLUMN = {field: column for column, field in _COLUMN_SHOWS.items()}
+
+# How a rollup's size cell reads against the box the bet bought, as one mark per
+# state of `_rollup` (`rows.py`). Colour is the first channel and this is the
+# second, because colour is the one channel a dichromat loses and the difference
+# between "this fits" and "this does not" is the whole reason the cell is drawn.
+#
+# Shipped as a map keyed by the state rather than as a character on every row,
+# which is what `GLYPHS` and `RUNGS` already do with the status and priority
+# marks: a constant repeated once per record is a constant that arrives in the
+# payload four hundred times and can still only ever say one thing.
+#
+# `unbet` has no mark, and that is the state saying so. There is no box to be
+# under, level with or over, so a mark here would be a verdict on a bet nobody
+# has made — the same silence `_rollup_problems` keeps about that record.
+_ROLLUP_GLYPH = {"under": "▾", "level": "=", "over": "▴", "unsized": "?", "unbet": ""}
+
+# The columns whose cell draws a date, which is the pair that can be showing
+# either the file's own value or the scheduler's. Written once and read three
+# ways below — how the cell is formatted, whether it is drawn as computed, and
+# which half of its tooltip it gets — because "start and end are the dates" was
+# three literals in this script and a fourth idea in the payload.
+_TABLE_DATES = ("start", "end")
+
+# What the tooltip adds on those three, because "double-click to edit appetite"
+# on a cell reading `2 wk` does not explain what the number in it is.
+#
+# **A date column gets two sentences and not one, because it shows two different
+# things.** `start` was a single sentence beginning "Shows the scheduled start",
+# and a row with no span draws the date its own file states — so the sentence
+# named a forecast that does not exist over a value somebody typed. `end` is the
+# same fault with the halves swapped: it said "Derived from the start and the
+# appetite" from `_TABLE_WHY`, which a `done` record's End cell has not been
+# since it began ending at the `end_date` its file records. Which of the two a
+# given cell holds is `row.stated` (`rows.py`), and `showsIn` below picks the
+# sentence with it.
 _TABLE_SHOWS = {
-    "size": "Shows the appetite, the task effort, or the default when neither is set.",
-    "start": "Shows the scheduled start. Editing sets assigned_on, the earliest it may begin.",
+    "size": "Shows the appetite this record was bet at. Blank means nobody has sized it.",
+    "start": {
+        "stated": "Shows start_date, which this record states. "
+        "Editing sets start_date, the earliest it may begin.",
+        "derived": "Shows the scheduled start. Editing sets start_date, the earliest it may begin.",
+    },
+    "end": {
+        "stated": "Shows end_date, the day this record records that it ended. "
+        "Editing sets end_date.",
+        "derived": "Shows the scheduled end, derived from the start and the appetite. "
+        "Editing sets end_date, the day the work actually stopped.",
+    },
 }
 
 # What this view can be done to, said once, beside the search box. Three gestures
@@ -265,7 +361,7 @@ _TABLE = """
     box that appeared, and nothing more. -#}
 <div id="row-conflict" role="status" aria-live="polite" hidden></div>
 {#- What the status about to be saved demands and the row has not got. A panel
-    and not a column: `assigned_on` beside `start` and `end` is a third date on a
+    and not a column: `start_date` beside `start` and `end` is a third date on a
     row that already carries two derived ones, and the question is only ever
     asked at the moment the status moves. -#}
 <div id="askfor" hidden></div>
@@ -306,10 +402,17 @@ const human = value => HUMAN[value] ?? (value ?? '');
 // it at runtime. One column out of step shifts every cell one column left.
 const keys = {{ columns|map(attribute=0)|list|tojson }};
 
-// Which column carries a complaint about a field the table has no column for.
-// Anything still unplaced falls to the id cell, because a row that says
-// something is wrong and will not say what is worse than no marker at all.
-const MARK_COLUMN = {person_weeks: 'size', depends_on: 'blocked_by'};
+// Which column carries a complaint about a field whose column is not called by
+// its name — `_COLUMN_SHOWS` inverted, shipped rather than written out here.
+// This was a literal of two entries and `_COLUMN_FIELD` was a literal of two
+// others, so the table drew a Start column and an End column that no problem
+// about a start or an end could ever reach.
+//
+// A field with no column at all — `parent`, which the tree draws instead, and
+// the inbox fields no planned row carries — still falls to the id cell, because
+// a row that says something is wrong and will not say what is worse than no
+// marker at all.
+const MARK_COLUMN = {{ mark_column|tojson }};
 const SEV_CLASS = {blocker: 'blocker', warning: 'warn'};
 
 let MARKS = {};     // record id -> column -> {severity, messages}
@@ -334,7 +437,9 @@ function regroup(problems) {
     const mark = columns[column]
       || (columns[column] = {severity: problem.severity, messages: []});
     if (problem.severity === 'blocker') mark.severity = 'blocker';
-    mark.messages.push(problem.message);
+    // `drawn`, the day-first form: this hangs on a cell in a table whose own
+    // Start and End columns are drawn that way. Every Problem carries both.
+    mark.messages.push(problem.drawn);
   }
   // Two predicates are read straight off this list (index.py,
   // `_matches_predicate`), so they are the two a save can change. Recomputed
@@ -385,14 +490,68 @@ function stored(row, key) {
 // have arrived with no class and no sentence.
 const WHY = {{ why|tojson }};
 
+// The mark each rollup state wears, from `_ROLLUP_GLYPH`.
+const ROLLUP_GLYPH = {{ rollup_glyph|tojson }};
+
+// What this row's work adds up to, where this is the column that draws it.
+// Three things ask — what the cell prints, what ground it takes, and why it
+// cannot be edited — and the column name is written here rather than at each of
+// them, because "the appetite column is the one that can be a rollup" is one
+// fact and a row carrying `rollup` with a cell that ignored it would be a cell
+// showing a bet under a ground describing its tasks.
+const rollupOn = (row, key) => key === 'size' ? row.rollup : null;
+
+// Why THIS cell refuses a double-click, which is the column's sentence for all
+// but one. A size cell over a record with tasks under it draws what those tasks
+// occupy and not the bet, so the reason it cannot be edited is a fact about the
+// row rather than about the column — and the row already carries the sentence,
+// written where the comparison it describes was made.
+//
+// One function and not a second flag, because four things have to agree about
+// it: whether the cell is a control, whether it is drawn as derived, what a
+// double-click answers, and whether the keyboard stops there. They were four
+// reads of `key in WHY`, and a fifth answer that only some of them knew about is
+// how a cell ends up looking editable and refusing to open.
+function whyOf(row, key) {
+  const rollup = rollupOn(row, key);
+  return rollup ? rollup.why : (WHY[key] || '');
+}
+
 // The two columns whose cell shows one thing and edits another — `size` shows the
 // scheduler's number and writes `person_weeks`, `start` shows the scheduled day
-// and writes `assigned_on`. Everything below asks `fieldOf(key)` rather than
+// and writes `start_date`. Everything below asks `fieldOf(key)` rather than
 // using the column name as a field name, which is what they were the same thing
 // for every other column.
 const COLUMN_FIELD = {{ fields|tojson }};
 const SHOWS = {{ shows|tojson }};
 const fieldOf = key => COLUMN_FIELD[key] || key;
+
+// The columns that draw a date, from `_TABLE_DATES`.
+const DATES = {{ dates|tojson }};
+
+// Whether the value in this cell was worked out rather than typed. It decides
+// one thing — the muted italic `.derived` — and it used to be `!editable && why`
+// written at that one site, which is the same answer for every column BUT the
+// two dates: those show the scheduler's answer on one row and the file's own on
+// the next, and the row says which (`row.stated`, `rows.py`).
+//
+// A column that is derived by construction stays derived however its cell reads,
+// which is why `whyOf` is asked first: the appetite cell on a pitch draws what
+// its tasks occupy, and that is computed whatever the file says.
+function computedIn(row, key) {
+  if (whyOf(row, key)) return true;
+  return DATES.includes(key) && !!row[key] && !(row.stated || []).includes(key);
+}
+
+// What this cell is showing, on the columns where that is not what editing
+// writes. A string is the whole answer; a pair is one sentence for the date the
+// file states and one for the date the scheduler worked out, because a cell that
+// draws either must not describe both as a forecast.
+function showsIn(row, key) {
+  const said = SHOWS[key];
+  if (!said) return '';
+  return typeof said === 'string' ? said : said[computedIn(row, key) ? 'derived' : 'stated'];
+}
 
 // Which kind may hold which — `model.PARENT_KINDS`, shipped rather than retyped.
 // It decides three things on this page: which rows grow a handle, which rows
@@ -590,7 +749,29 @@ function shown(row, key) {
   //
   // The stored value is untouched: this is the cell's text, the row still carries
   // the ISO string, and the sort still reads that.
-  if (key === 'start' || key === 'end') return value ? shortDate(value) : '';
+  if (DATES.includes(key)) return value ? shortDate(value) : '';
+  // A record with work under it shows what that work occupies — `5.6 in tasks`,
+  // the record page's own sentence for the same number — and not the bet it was
+  // made at. The bet is not printed beside it: jcanton, 2026-08-27, "the colour
+  // already says whether it is under, level or over, so repeating the bet is a
+  // number for nothing". Nor are the records that make up the sum named, for the
+  // reason the table needs no help saying it: they are the rows directly
+  // underneath, because this is a tree.
+  //
+  // The mark leads, so a column of these reads as one column of verdicts rather
+  // than as numbers with something after them — and it is first inside the cell
+  // for the same reason the status chip's mark is.
+  //
+  // Named, not `aria-hidden` like the chip's mark: there the word beside it says
+  // the same thing, and here the words are `5.6 in tasks`, which is the one half
+  // of this cell that does NOT say whether the bet fits. A reader who cannot see
+  // the tint would otherwise be given the number and no reading of it. The
+  // sentence is the row's own, so the mark, the ground and the tooltip are three
+  // channels of one value rather than three that could come apart.
+  const rollup = rollupOn(row, key);
+  if (rollup)
+    return `<span class="rollmark" role="img" aria-label="${esc(rollup.why)}"` +
+      `>${esc(ROLLUP_GLYPH[rollup.state] || '')}</span>${esc(rollup.text)}`;
   // Unreachable for `reviewers`, which is handled above — kept as one line so
   // the two list columns stay one branch.
   return esc(stored(row, key));
@@ -736,13 +917,36 @@ function cell(row, key, place) {
   // is refused because a product reads no `person_weeks` — the rule that was
   // already there, reached by the right name.
   const field = fieldOf(key);
-  const editable = EDITABLE && field in EDITABLE && reads(row, field);
+  // A cell that has a reason it cannot be edited is not editable, and that is
+  // the whole of the rule rather than a second list beside `EDITABLE`. It is
+  // what makes a rollup's size cell read-only without teaching this page a
+  // second way for a cell to be closed: `whyOf` is the one answer, and the four
+  // reads below take it from there.
+  const why = whyOf(row, key);
+  const rollup = rollupOn(row, key);
+  const editable = EDITABLE && field in EDITABLE && reads(row, field) && !why;
   // One class list rather than three returns. The tags clamp used to be written
   // only into the editable branch, so on a rendered file the column kept the
   // reveal button and showed every tag beside it anyway.
   const classes = [
     editable ? 'edit' : '',
-    !editable && key in WHY ? 'derived' : '',
+    // The value in this cell was worked out rather than typed. `computedIn` and
+    // not `!editable && why`, which was the same answer by a narrower route:
+    // being a control and being a forecast are two questions, and the two date
+    // columns are both — a scheduled start is muted and italic like every other
+    // computed value, and the same cell showing the date this record's own file
+    // states is left in the page's ink, because it is not a forecast.
+    computedIn(row, key) ? 'derived' : '',
+    // How this record's contents read against the box its bet bought. The class
+    // is written for every state and the stylesheet paints only what it should:
+    // `under` and `unsized` have a ground of their own, `level` shares the
+    // declaration `.inherited` already carries, `unbet` is drawn plain because
+    // there is no box to read against — and `over` takes the severity fill,
+    // because the warning `_rollup_problems` yields about exactly that
+    // comparison already reaches this cell through `MARK_COLUMN`. A second warn
+    // ground written for it would be a second copy of one colour, and the only
+    // thing two copies of a colour can do is disagree.
+    rollup ? 'roll-' + rollup.state : '',
     CLAMPED.has(key) ? 'clamp' : '',
     // Inherited, not typed. The ground says the value came from the work under
     // this record rather than from its own file, which is the difference between
@@ -793,9 +997,9 @@ function cell(row, key, place) {
                // what editing writes. Before the sentence about editing, because
                // it is the answer to "why is this number here" and the other is
                // the answer to "how do I change it".
-               editable && SHOWS[key] ? SHOWS[key] : '',
+               editable ? showsIn(row, key) : '',
                editable ? 'Double-click to edit ' + named
-                        : key === 'id' && EDITABLE ? moveTip(row) : WHY[key] || '']
+                        : key === 'id' && EDITABLE ? moveTip(row) : why]
     .filter(Boolean).join('\\n');
   // Reachable without a mouse. This table is the app's primary editing surface
   // and it was double-click-only, so half the room could not change a single
@@ -807,14 +1011,14 @@ function cell(row, key, place) {
   // The id cell joins them, and it is not editable: it is the one place a move
   // can be started without a mouse, and a gesture that only a mouse can make is
   // a gesture half the room does not have.
-  const reachable = EDITABLE && (editable || key in WHY || key === 'id');
+  const reachable = EDITABLE && (editable || !!why || key === 'id');
   // `row.id` is escaped like anything else here. An id that fails its pattern is
   // a *reported* blocker and not a refusal, so the record still loads and still
   // draws a row: one shaped `task-000001"><img src=x onerror=…>` put ten
   // elements into the table body while the text beside them read correctly.
   return `<td data-col="${key}"` +
     `${editable ? ` data-record="${esc(row.id)}" data-field="${esc(field)}"` : ''}` +
-    `${!editable && key in WHY ? ` data-why="${esc(WHY[key])}"` : ''}` +
+    `${!editable && why ? ` data-why="${esc(why)}"` : ''}` +
     `${rungs ? ` data-rungs="${esc(rungs)}"` : ''}` +
     `${reachable ? ' tabindex="-1"' : ''}` +
     ` class="${classes}"${tip ? ` title="${esc(tip)}"` : ''}>${body}</td>`;
@@ -1035,9 +1239,16 @@ function draw() {
   // heads the status column and `high, low, medium` is not an order anybody
   // means by priority. Everything else really is alphabetical.
   const rank = DATA.choices[sort];
+  // A column sorts by the number it is showing. On `size` those are two
+  // different numbers on a row with work under it — the cell draws what the
+  // tasks occupy and the field holds the bet — and sorting a column of `5.6 in
+  // tasks` by a bet nobody can see puts a row between two others for a reason
+  // that is nowhere on the page. Every other column shows its own field, so this
+  // reaches exactly the rows the cell reads differently on.
+  const shownBy = row => rollupOn(row, sort) ? rollupOn(row, sort).weeks : row[sort];
   const key = rank
     ? row => String(rank.indexOf(row[sort])).padStart(3, '0')
-    : row => String(row[sort] ?? '');
+    : row => String(shownBy(row) ?? '');
   const found = Object.values(DATA.rows).filter(matches);
   // The tree is the id sort's, and no other column's. Sorted by owner, a parent
   // is wherever its owner's name falls and its children are three screens away:
@@ -1233,37 +1444,63 @@ function missingFor(row, status) {
     .filter(([field, statuses]) => statuses.includes(status))
     .map(([field]) => field)
     .filter(field => EDITABLE[field] && !(field === 'reviewers' && row.review_waived))
-    .filter(field => {
-      const held = row[field];
-      return held === null || held === undefined || held === ''
-        || (Array.isArray(held) && held.length === 0);
-    });
+    .filter(field => !holds(row, field));
+}
+
+// Whether this row has a value for that field at all. Lifted out of the filter
+// above because `saveCells` now asks the same question of a whole selection
+// before it writes one answer across it, and the four ways a field can be unset
+// — absent, null, the empty string, the empty list — are not a list anybody
+// would write out twice and get right twice. An `assignees: []` that read as a
+// value would be a row silently exempted from a gate; an `assignees: []` that
+// read as unset in one copy and as a value in the other would be a row the panel
+// asks about and then refuses to write.
+function holds(row, field) {
+  const value = row[field];
+  return !(value === null || value === undefined || value === ''
+    || (Array.isArray(value) && value.length === 0));
 }
 
 // Fields a span is computed from. Editing one of these from the table changes
 // `start` and `end`, which are columns nothing in the browser can work out — so
 // the rows are re-read from the server rather than patched in place.
-const DERIVES_DATES = new Set(['assigned_on', 'person_weeks', 'cycle']);
-
-// Today, in the reader's own timezone. `toISOString` is UTC, so on a laptop east
-// of Greenwich in the evening it offers tomorrow — which is a date somebody
-// accepts without reading, because it is prefilled and it is nearly right.
-function today() {
-  const now = new Date();
-  return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
-    .toISOString().slice(0, 10);
-}
+// `end_date` is in it for a reason of its own rather than by symmetry: a done
+// record's span ENDS at the date it records, so answering the panel changes the
+// End column of a row whose Status cell is what was clicked. Left out, the row
+// would go on showing the start date in both date columns, styled `derived` like
+// a real forecast, until a reload. The End cell is a control of its own now, and
+// the same entry covers it — a date typed there is a date the scheduler ends the
+// span at, so the row has to come back from the server rather than be patched.
+const DERIVES_DATES = new Set(['start_date', 'end_date', 'person_weeks', 'cycle']);
 
 // The one question a status change is allowed to ask. It is asked BEFORE the
 // write, so the answer travels in the same PATCH as the status: a row that goes
 // `in_progress` and then has a date added is two commits, and for the length of
 // the first one the plan holds a record the validator refuses.
-function askFor(cell, status, fields) {
+//
+// `commit` is what to do with the answers, and it is a parameter because the
+// panel now serves both write paths. One cell hands back `saveCell`; a
+// selection hands back `saveCells`, whose whole gesture is one answer written
+// over every picked row in one commit. The alternative was a second panel with
+// the same markup, the same keyboard handling and the same prefill, which is
+// the shape that lets one of the two quietly stop prefilling.
+//
+// `about` is the sentence over the boxes. A selection has to say how far the
+// answer reaches, because "Done needs this" over one date box, above a table
+// with nine rows marked, does not say that all nine are about to get it.
+function askFor(cell, status, fields, commit, about) {
   const panel = document.getElementById('askfor');
   const named = fields.map(field => {
     const label = FIELD_LABELS[field] || field;
     const type = EDITABLE[field] === 'date' ? 'date' : 'text';
-    const value = field === 'assigned_on' ? today() : '';
+    // Every date this panel can ask for is prefilled with today, and the rule is
+    // the TYPE rather than a list of field names — which is what it was, naming
+    // `start_date` alone, so `end_date` arrived beside it offering an empty box
+    // in the one place the answer is nearly always today. A status change is a
+    // statement about now: the work started today, or it finished today. Any
+    // other field is left blank, because there is no value a form may guess at
+    // for an owner or an appetite.
+    const value = EDITABLE[field] === 'date' ? today() : '';
     // `data-type` and `data-suggest` are what `openEditor` writes on the box it
     // builds, for the same widget: `data-type` is not decoration — the widget
     // reads `dataset.type === 'list'` to complete the last comma-separated
@@ -1276,7 +1513,8 @@ function askFor(cell, status, fields) {
       ` value="${esc(value)}"></label>`;
   }).join('');
   panel.innerHTML =
-    `<p class="asking">${esc(human(status))} needs ${fields.length === 1 ? 'this' : 'these'}` +
+    `<p class="asking">${esc(about ||
+      `${human(status)} needs ${fields.length === 1 ? 'this' : 'these'}`)}` +
     `</p>${named}` +
     `<span class="acts"><button type="button" id="asked" class="primary">Save</button>` +
     `<button type="button" id="unasked">Cancel</button></span>`;
@@ -1310,7 +1548,7 @@ function askFor(cell, status, fields) {
     }
     panel.hidden = true;
     panel.innerHTML = '';
-    saveCell(cell, status, extra);
+    commit(extra);
   };
   // Enter saves and Escape gives up, which is what every other box on this page
   // answers to — a panel that has to be dismissed with the mouse is a panel that
@@ -1397,27 +1635,83 @@ function sayPicked() {
 // a loop over the singular route: the second call in a loop is written against
 // the commit the first one made, so a conflict halfway leaves half the selection
 // written on a protected branch with no way to say which half.
-async function saveCells(cell, value) {
+async function saveCells(cell, value, extra) {
   const field = cell.dataset.field;
   const ids = pickableRows().filter(id => PICKED.has(id));
   const box = document.getElementById('row-conflict');
   box.hidden = true;
   box.textContent = '';
   let coerced;
+  let sending;
   try {
     coerced = coerce(EDITABLE[field], value);
+    sending = {[field]: coerced};
+    for (const [name, raw] of Object.entries(extra || {}))
+      sending[name] = coerce(EDITABLE[name], raw);
   } catch (error) {
     announce(`${field} ${error.message}`);
     return;
   }
-  // The status gate, asked of every row before any of them is written. One row
-  // that cannot be `ready` without an assignee refuses the whole edit and says
-  // which rows they are — the singular route ASKS, through `askFor`, and asking
-  // here would be one panel per row over a gesture whose whole point is doing it
-  // once. Naming them is what lets somebody fix them and try again.
-  if (field === 'status') {
-    const short = ids.filter(id => missingFor(DATA.rows[id] || {}, coerced).length);
-    if (short.length) {
+  // The status gate, asked of every row before any of them is written, and this
+  // is where a refusal turned into a question. It used to refuse outright and
+  // name the rows — which was right while every field a gate could want was one
+  // a person answers per record. `end_date` is not: a done record needs the day
+  // it finished, that field is empty on EVERY row anybody is about to mark done,
+  // and so "select the finished tasks, set Done, one commit" — the gesture this
+  // whole selection mechanism exists for — would have met the refusal every
+  // single time, about every single row, for ever.
+  //
+  // So the panel asks ONCE and the answer travels to every row that was short of
+  // it, because "these all finished today" is one fact about the batch — and to
+  // those rows only, which is the paragraph below. Anything the panel
+  // cannot ask that way still refuses and still names the rows: an owner, an
+  // appetite and a reviewer are one fact PER record, and prefilling nine rows
+  // with one appetite would commit a number nobody meant, in one commit, on a
+  // protected branch. The type is what decides — a date is the shape of thing a
+  // batch can share — which is the same rule `askFor` prefills by.
+  //
+  // **And the one answer only ever lands where there is nothing to overwrite.**
+  // It used to land on every selected record, held value included, on the
+  // argument that the splat IS the gesture — and that argument is true of
+  // `end_date` and was made about every date the gate can ask for. `wanted` is
+  // the UNION of what the rows are missing, so one row with nothing raises the
+  // question for all of them: select nine rows to mark `in_progress`, three of
+  // which were finished in the spring and carry the day they really started,
+  // and the panel prefills today because SOME row is short of a date — and
+  // three real start dates are replaced with today, in one commit, on a
+  // protected branch. `start_date` is history and not a statement about the
+  // selection; "these all finished today" is a coherent thing to mean, "these
+  // all started today" said over a record that started in March is not.
+  //
+  // The rule is universal rather than a list of fields allowed to splat, and
+  // the reason is that `end_date` only LOOKED safe: it is empty on every row at
+  // the moment of the transition, which is a fact about those rows and not
+  // about the field. A recorded end is as much history as a recorded start, and
+  // there is no field whose stored value one box is entitled to correct nine
+  // rows at a time. So a wanted field that any selected row already holds
+  // refuses the batch and names those rows, which is the same shape as the
+  // refusal above and for the same reason: nothing is written until every row
+  // can take the write. Those rows need no answer anyway — the gate they are
+  // being held against is already satisfied for them — so the way out is to set
+  // them on their own, which is a second deliberate commit rather than a lost
+  // gesture.
+  //
+  // The narrower fix, sending the answer to the rows that lack it and the
+  // status to all of them, is two field maps and therefore two PATCHes: the
+  // loop `PATCH /api/records` exists to refuse, where the second write is made
+  // against the commit the first one made and a conflict between them leaves
+  // half a selection written with no way to say which half.
+  //
+  // A warning would not have done. The panel already says how far the answer
+  // reaches — "for all 9 selected records" — and that sentence is what stood
+  // between somebody and the overwrite; it is now true rather than load-bearing,
+  // because every row it reaches is a row that was missing the field.
+  if (field === 'status' && !extra) {
+    const wanted = [...new Set(ids.flatMap(id => missingFor(DATA.rows[id] || {}, coerced)))];
+    const cannot = wanted.filter(name => EDITABLE[name] !== 'date');
+    if (cannot.length) {
+      const short = ids.filter(id =>
+        missingFor(DATA.rows[id] || {}, coerced).some(name => cannot.includes(name)));
       box.hidden = false;
       box.textContent = short.length === ids.length
         ? `None of these can be ${human(coerced)} yet: ${short.join(', ')}. `
@@ -1426,13 +1720,37 @@ async function saveCells(cell, value) {
           + 'Fix those rows, or take them out of the selection.';
       return;
     }
+    // Asked of the stored value and not of `missingFor`, which answers a
+    // narrower question: a row of a kind the gate does not reach is "not
+    // missing" a field it holds, and the answer would have been written over
+    // that one too.
+    const clashes = wanted.filter(name => ids.some(id => holds(DATA.rows[id] || {}, name)));
+    if (clashes.length) {
+      const held = ids.filter(id => clashes.some(name => holds(DATA.rows[id] || {}, name)));
+      const named = clashes.length === 1
+        ? `a ${(FIELD_LABELS[clashes[0]] || clashes[0]).toLowerCase()}`
+        : clashes.map(name => (FIELD_LABELS[name] || name).toLowerCase()).join(' and ');
+      box.hidden = false;
+      box.textContent =
+        `${held.join(', ')} already ${held.length === 1 ? 'has' : 'have'} ${named}, and one `
+        + 'answer here is written to every selected record. Nothing was written. Take '
+        + `${held.length === 1 ? 'that row' : 'those rows'} out of the selection and set `
+        + `${held.length === 1 ? 'it' : 'them'} on ${held.length === 1 ? 'its' : 'their'} own.`;
+      return;
+    }
+    if (wanted.length) {
+      askFor(cell, value, wanted, answers => saveCells(cell, value, answers),
+        `${human(coerced)} needs ${wanted.length === 1 ? 'this' : 'these'} `
+        + `for all ${ids.length} selected record${ids.length === 1 ? '' : 's'}`);
+      return;
+    }
   }
   dispatchEvent(new Event('openproj:writing'));
   let committed = null;
   try {
     const response = await fetch('/api/records', {
       method: 'PATCH', headers: {'content-type': 'application/json'},
-      body: JSON.stringify({base_commit: BASE.value, ids, fields: {[field]: coerced}}),
+      body: JSON.stringify({base_commit: BASE.value, ids, fields: sending}),
     });
     const answer = await answerOf(response);
     if (response.status === 409) {
@@ -1448,7 +1766,7 @@ async function saveCells(cell, value) {
     BASE.value = answer.commit;
     for (const id of ids) {
       markSaved(answer, id);
-      Object.assign(DATA.rows[id], {[field]: coerced});
+      Object.assign(DATA.rows[id], sending);
     }
     announce(`${ids.length} ${(FIELD_LABELS[field] || field).toLowerCase()} `
       + `cell${ids.length === 1 ? '' : 's'} saved in one commit`);
@@ -1456,6 +1774,10 @@ async function saveCells(cell, value) {
     // nobody meant, from a gesture as small as opening the next cell.
     unpick(false);
     draw();
+    // The same re-read the single save makes, and for the same reason: the panel
+    // just wrote a date the Start and End columns of every selected row are
+    // derived from, and those columns are not the one that was edited.
+    if (Object.keys(extra || {}).some(name => DERIVES_DATES.has(name))) await refreshRows();
     await refreshProblems();
     draw();
   } finally {
@@ -1487,7 +1809,10 @@ async function saveCell(cell, value, extra) {
   // through here with it must not ask again.
   if (field === 'status' && !extra) {
     const wanted = missingFor(DATA.rows[cell.dataset.record] || {}, coerced);
-    if (wanted.length) { askFor(cell, value, wanted); return; }
+    if (wanted.length) {
+      askFor(cell, value, wanted, answers => saveCell(cell, value, answers));
+      return;
+    }
   }
   let sending;
   try {
@@ -1788,7 +2113,7 @@ function draftRowHtml() {
     // `size` — so it agrees with the box that then opens. The placeholder is
     // inside a cell of a column fitted to its own contents, and putting the
     // field's name there made `size` read `appetite` and `start` read
-    // `assigned on`: both wider than their columns, both wrapping, and the draft
+    // `start date`: both wider than their columns, both wrapping, and the draft
     // row went from 30px to 50px — a row twice the height of every other row,
     // which `test_the_draft_rows_marks_are_drawn` measures and caught.
     const named = (FIELD_LABELS[field || key] || field || key).toLowerCase();
@@ -1951,7 +2276,7 @@ function refused(lines) {
 // about, and there are no named controls on a table.
 function refusalLines(answer, status) {
   const problems = answer.problems || [];
-  return problems.length ? problems.map(problem => problem.message)
+  return problems.length ? problems.map(problem => problem.drawn)
                          : [refusal(answer, status)];
 }
 
@@ -3462,6 +3787,7 @@ frozenEdge();
 
 _TABLE_STYLE = (
     _SCROLL_STYLE
+    + _TREE_STYLE
     + """
 th[data-sort] { cursor: pointer; user-select: none; }
 /* (0,1,1) over the shared block's bare `th` at (0,0,1): the sorted column keeps
@@ -3537,10 +3863,10 @@ thead [data-col="title"] { box-shadow: inset 0 -1px 0 var(--line); }
    padding at (0,0,2) and the frozen column's (0,1,0), which is the whole of what
    it has to beat: nothing else on this page sets padding on a cell.
 
-   The connectors are borders, not characters. `├─` and `└─` line up only in a
-   monospace face and this column is proportional — and a screen reader announces
-   "box drawings light up and right" before every child's title, which is why the
-   wrapper is `aria-hidden` and holds nothing to read.
+   The drawing itself is `_TREE_STYLE` in `styles.py`, shared with the cycle
+   page's betting table, which grew the same tree for the same reason. What stays
+   here is the pair of facts that are this table's: the indent, and what the
+   absolute boxes are positioned against.
 
    Absolute, against the title cell's own `position: sticky`. That is a real
    dependency and it is worth writing down: sticky is a positioned value, so it
@@ -3548,29 +3874,13 @@ thead [data-col="title"] { box-shadow: inset 0 -1px 0 var(--line); }
    that freezes the column. If that ever stops being sticky the connectors are
    the second thing to go — they would hang off the scroll container and slide
    away from their rows — and this comment is the note that they go together.
-   `top: 0; bottom: 0` is the reason to do it this way at all: the vertical line
-   is then exactly the height of the row it is in, whatever that row holds, which
-   an inline box guessing at a line height cannot promise. */
+   `top: 0; bottom: 0` in the shared block is the reason to do it this way at
+   all: the vertical line is then exactly the height of the row it is in,
+   whatever that row holds, which an inline box guessing at a line height cannot
+   promise. */
 tr.d1 > td[data-col="title"] { padding-left: calc(.5rem + 14px); }
 tr.d2 > td[data-col="title"] { padding-left: calc(.5rem + 28px); }
 tr.d3 > td[data-col="title"] { padding-left: calc(.5rem + 42px); }
-.tree { position: absolute; left: .25rem; top: 0; bottom: 0; display: flex; }
-.tree .rung { position: relative; width: 14px; }
-/* The vertical: full height where the branch carries on past this row, and half
-   of it on the last child drawn, which is the whole difference between `├` and
-   `└`. `blank` draws neither, and it is a rung rather than a margin so that the
-   levels stay in step down the column. */
-.tree .line::before, .tree .tee::before, .tree .end::before {
-  content: ""; position: absolute; left: 6px; top: 0; width: 1px;
-  background: var(--line-strong);
-}
-.tree .line::before, .tree .tee::before { bottom: 0; }
-.tree .end::before { height: 50%; }
-/* The stub, stopping short of the title so the word is not touched by a rule. */
-.tree .tee::after, .tree .end::after {
-  content: ""; position: absolute; left: 6px; top: 50%; width: 6px; height: 1px;
-  background: var(--line-strong);
-}
 /* A row that is not an answer to what was asked, kept because something under it
    is: the pitch over three tasks that matched, so that a filtered table is still
    a plan and not a list of orphans. It is a record like any other — its title
@@ -3631,8 +3941,56 @@ td.refused { background: var(--surface-2); }
    ground is the one that survives a clamped cell showing one name and a `+2`.
    `--st-ready-soft` and not a colour of its own: the five status tints are the
    palette this table already reads in, and this is a tint from it rather than a
-   sixth thing to learn. */
-td.inherited { background: var(--st-ready-soft); }
+   sixth thing to learn.
+
+   `.roll-level` is the same declaration and not a second rule holding the same
+   value, because it is the same sentence: a bet whose tasks fill it exactly is a
+   cell whose number came from the work underneath, and jcanton settled it that
+   way on 2026-08-27 — "the class already means this value came from the work
+   under this record, which is what this is". Purple was the alternative and lost
+   because purple is shaping's hue; a sixth ground meaning what a fifth already
+   means is one visual language becoming two. */
+td.inherited, .roll-level { background: var(--st-ready-soft); }
+/* How the work under a record reads against the box its bet bought, as a ground
+   under `_ROLLUP_GLYPH`'s mark. Two channels, because the fill is the one a
+   dichromat loses and this cell is where "will this fit" is answered.
+
+   THREE STATES AND NOT FOUR. `over` is drawn by `td.sev-cell-warn` above,
+   because `_rollup_problems` fires on exactly the comparison this ground would
+   be describing and `MARK_COLUMN` routes its warning to this column. A
+   `.roll-over` rule would be a second copy of `--sev-warn-soft` whose only
+   possible future is to disagree with the first — a cell painted warn with no
+   sentence to act on, or worse, a green cell over a ⚠.
+
+   `under` takes the ladder's own green rather than `--drop`, which is the other
+   pale green in the palette: `--drop` means "the row in your hand would land
+   here", a thing that is only ever true for the length of a drag, and a cell
+   wearing it permanently teaches that colour a second meaning. The ladder is the
+   palette this table already reads in — see `.inherited` above, which borrows
+   from it one rung up and gives the argument in full.
+
+   `unsized` is the panel tint and NOT a green, which is the whole reason the
+   state exists: a pitch holding three sized tasks and four unsized ones occupies
+   only the days of the three, and painting that green says a bet is known to fit
+   when nobody has estimated half of it. Recessed says "no answer here", which is
+   what it is.
+
+   ONE CLASS EACH AND NO ELEMENT, so these are (0,1,0). Every severity ground is
+   (0,1,1) and every one of them beats these on weight alone, whichever order
+   this sheet ends up in — a blocker on the appetite of a record whose tasks
+   happen to fit must not be painted green. `tr.context > td` at (0,1,2) takes
+   them too, which is the same bargain the severity fills already make there: a
+   row kept only for context keeps the mark and gives up the fill. */
+.roll-under { background: var(--st-done-soft); }
+.roll-unsized { background: var(--surface-2); }
+/* The mark, in the page's own ink and upright inside a cell that is neither.
+   `.derived` in the shell makes every computed cell muted and italic, which is
+   right for the number — it is the scheduler's — and wrong for the one glyph
+   that has to be legible at a glance in the state that most needs reading. An
+   italic `=` at muted weight is the least readable thing this cell could carry.
+   Upright also keeps the four marks the same width apart from each other, which
+   is what makes a column of them scannable. */
+.rollmark { margin-right: .3rem; color: var(--fg); font-style: normal; }
 td.clamp { white-space: nowrap; overflow: hidden; }
 /* A row, so that what gets cut is the value and never the badge. Laid out
    inline, the `+2` is simply the last thing on an overflowing line: a clamped
@@ -4078,20 +4436,20 @@ def _new_row_fields() -> dict[str, dict[str, str]]:
     is asked of the same two places rather than written down a third time:
     `EDITABLE` says which fields a person owns at all, and `model_fields` says
     which of them this kind has. A project has no `person_weeks`, so it gets no
-    box under Appetite; `assigned_on` would be here if the table had a column
-    for it, and the day it does this map grows the entry on its own.
+    box under Appetite.
 
     A column missing from a kind's map is a column that kind cannot be typed into
     — which is three different sentences and all of them true: `id` is the
-    server's, `start` is the scheduler's, and Appetite is a thing a project does
-    not have. The row draws each of them differently and says which it is.
+    server's, Blockers is counted rather than written, and Appetite is a thing a
+    project does not have. The row draws each of them differently and says which
+    it is.
 
-    `size` is the one column that is not simply its own field. It *shows*
-    person_weeks or an assumed default, which is why no stored row lets it be
-    typed into (`_TABLE_WHY`) — but a row that does not exist yet has no assumed
-    value standing in for a decision, so there is nothing here to commit by
-    accident. Typing 3 into it writes `person_weeks: 3`, and the cell goes back
-    to being the scheduler's the moment the row is a record.
+    `size`, `start` and `end` are the columns that are not simply their own
+    field, which is why the value in a stored row's cell is never what an editor
+    opens on (`_COLUMN_SHOWS`) — and a row that does not exist yet has nothing
+    standing in any of the three, so there is nothing here to commit by accident.
+    Typing 3 into Appetite writes `person_weeks: 3`, and the cell goes back to
+    being the scheduler's the moment the row is a record.
     """
     per_kind: dict[str, dict[str, str]] = {}
     # Planned rungs only: the table is a plan view, and its draft row offers
@@ -4145,8 +4503,11 @@ def render_table(
         # in the language the rest of this file's drawings are written in.
         marks=DRAFT_MARKS,
         why=_TABLE_WHY,
+        rollup_glyph=_ROLLUP_GLYPH,
         fields=_COLUMN_FIELD,
+        mark_column=_MARK_COLUMN,
         shows=_TABLE_SHOWS,
+        dates=_TABLE_DATES,
         # The sentence about this view, in the slot the graph and the timeline
         # already put theirs in — jcanton, 2026-08-25, asking for the table to be
         # "consistent with the timeline and graph pages". It moved out of the row

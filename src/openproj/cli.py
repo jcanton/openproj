@@ -65,6 +65,13 @@ def _parser() -> argparse.ArgumentParser:
 
     check = commands.add_parser("check", help="validate a plan repository")
     check.add_argument("repo", type=Path)
+    # The same flag `render` and `schedule` carry, and for the reason those two
+    # have it: one rule now compares a stated start date against the day the plan
+    # is judged around, so a plan drawn around a pinned day has to be checkable
+    # around that same day. Without it `openproj check seed/` reports eleven
+    # start dates as passed that `openproj demo`, which pins 2026-08-17, draws as
+    # future — the tool disagreeing with itself about one corpus.
+    check.add_argument("--today", type=date.fromisoformat, default=None)
 
     new = commands.add_parser(
         "new",
@@ -413,7 +420,7 @@ def _commit_one(repo: Path, relative: str, message: str) -> str:
     return str(handle.create_commit("HEAD", who, who, message, tree, parents))
 
 
-def _check(repo: Path) -> int:
+def _check(repo: Path, today: date | None) -> int:
     """Every file that is not a record, then every problem, then the count.
 
     The files come first and are counted as blockers because they are the worst
@@ -422,6 +429,18 @@ def _check(repo: Path) -> int:
     to raise on the first one — a traceback instead of a report, and no word
     about the second bad file until the first was fixed — which is the same
     failure as "0 blockers, 0 warnings" on a plan that answered 500 everywhere.
+
+    **Through the index, and not through a schedule and a validation of its
+    own.** Two of the rules are questions only a schedule can answer — whether a
+    pitch's tasks fit in the calendar weeks its bet bought, and whether a stated
+    start date has gone by — so this command has to schedule before it validates,
+    and `build_index` is the one place that pairs the two around a single day.
+    Written out here instead, it was a second such pairing, and it read the clock
+    where the index takes the day it is drawn around: `openproj demo` pins
+    2026-08-17 for the seed corpus, so `openproj check seed/` reported eleven
+    start dates as passed that every page of the running demo drew as future.
+    The two now take the same day by the same route, and `--today` is how a
+    person names it.
     """
     records, config, unreadable = load_repo(repo)
     for one in unreadable:
@@ -429,8 +448,10 @@ def _check(repo: Path) -> int:
             f"blocker: {one.path}: this file is not a record, so nothing in it is in the plan: "
             f"{one.why}"
         )
+    index = build_index(records, config, today or date.today(), unreadable)
     problems = sorted(
-        validate_all(records, config), key=lambda p: (p.severity, p.record_id, p.field or "")
+        index.problems,
+        key=lambda p: (p.severity, p.record_id, p.field or ""),
     )
     for problem in problems:
         print(f"{problem.severity}: {problem.record_id}: {problem.field}: {problem.message}")
@@ -769,6 +790,12 @@ def _schedule(repo: Path, as_json: bool, today: date | None) -> int:
                     "today": when.isoformat(),
                     "plan": sorted(index.plan),
                     "spans": {i: json.loads(s.model_dump_json()) for i, s in index.spans.items()},
+                    # `text` and never `drawn`: this is the document a script
+                    # pipes, `today` and every span date in it are ISO, and a
+                    # sentence saying `28.08.2026` in the middle of that is a
+                    # date nothing else here would parse. The pages ask the same
+                    # explanation for `drawn` and get the same wording read out
+                    # the way they draw every other date.
                     "explanations": {i: e.text for i, e in sorted(index.explanations.items())},
                 },
                 indent=1,
@@ -778,6 +805,12 @@ def _schedule(repo: Path, as_json: bool, today: date | None) -> int:
     for record_id in sorted(index.spans, key=lambda i: (index.spans[i].start, i)):
         span = index.spans[record_id]
         note = index.explanations.get(record_id)
+        # The first two columns are the span's own dates, printed as the model
+        # holds them, so the sentence after them is asked for the same format.
+        # It briefly was not, and the line read
+        # `2026-08-28  2026-09-15  task-0a1002  Starts on 28.08.2026: …` — the
+        # same day written both ways with sixty characters between them, which
+        # invites the reader to work out what the difference means.
         print(f"{span.start}  {span.end}  {record_id:16}  {note.text if note else ''}")
     return 0
 
@@ -788,7 +821,7 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as exit_code:  # argparse exits 2 on a bad command line
         return int(exit_code.code or 2)
     if args.command == "check":
-        return _check(args.repo)
+        return _check(args.repo, args.today)
     if args.command == "new":
         return _new(args)
     if args.command == "render":

@@ -7,6 +7,7 @@ guesses, and which work is late.
 """
 
 import json
+import math
 import re
 from datetime import date
 from pathlib import Path
@@ -269,10 +270,16 @@ def test_the_table_carries_the_whole_plan_and_its_derived_dates(rendered: Path, 
     )
     assert set(payload["rows"]) == set(seed_index.plan)
     scheduled = payload["rows"]["task-53a9f0"]
-    # Its own `assigned_on`, because it is in progress: work under way started
+    # Its own `start_date`, because it is in progress: work under way started
     # when it started, and the floor at today applies to what has not begun.
     assert scheduled["start"] == "2026-08-13"
-    assert scheduled["derived"] is True
+    # And the row says that date is the record's own and not the scheduler's, so
+    # the cell can be drawn in the page's ink rather than as a forecast. This
+    # asserted `derived is True` — a row-level boolean saying only that the
+    # record had been given a span, which no page ever read, and which could not
+    # have answered this question anyway: the same row's End IS a forecast.
+    assert scheduled["stated"] == ["start"]
+    assert scheduled["end"] > scheduled["start"], "the far end of it is the scheduler's"
     # And nothing beyond what the script reads. `facets` and `predicates` were the
     # whole facet index inlined into every table page for a control bar that is
     # rendered by the server and re-read from its own `<select>`s — dead weight
@@ -781,45 +788,60 @@ def test_every_status_a_node_can_hold_reaches_cytoscape_as_a_colour(rendered: Pa
     assert not missing, missing
 
 
-def test_the_timeline_hatches_what_it_is_guessing(rendered: Path, tmp_path: Path):
-    """An estimated or unowned span is a forecast, not a commitment. If the two
-    look alike, a guess gets read as a promise.
+def test_the_timeline_hatches_what_it_cannot_promise(rendered: Path, tmp_path: Path):
+    """Work that is over and work nobody is on are not forecasts like the rest of
+    the bars, and if all three look alike a record of the past reads as a promise
+    about the future.
 
-    Built from a constructed index rather than the seed: every seed record now
-    states a size, so the corpus no longer exercises the defaulted path at all.
+    The first of those marks used to be `estimated`, "the length of this bar came
+    from a default appetite". There is no default and therefore no such bar, so
+    the channel went to `historical`, which every done record's span has carried
+    since it was written and nothing drew.
+
+    Built from a constructed index rather than the seed, because a corpus where
+    every record is sized and owned exercises neither mark.
     """
     from datetime import date
 
     from openproj.model import Config, Task
 
-    assert 'id="hatch-estimated-st-ready"' in read(rendered, "timeline.html")
+    assert 'id="hatch-historical-st-done"' in read(rendered, "timeline.html")
     assert 'id="hatch-unowned-st-ready"' in read(rendered, "timeline.html")
 
-    guessed = Task(id="task-000001", kind="task", title="No size given", owner="ann")
+    finished = Task(
+        id="task-000001",
+        kind="task",
+        title="Already done",
+        status="done",
+        owner="ann",
+        person_weeks=1.0,
+        start_date=date(2026, 8, 3),
+        prs=["kilnlab/kiln4py#1"],
+    )
     nobodys = Task(id="task-000002", kind="task", title="Nobody owns this", person_weeks=1.0)
-    index = build_index([guessed, nobodys], Config(), date(2026, 8, 17))
+    index = build_index([finished, nobodys], Config(), date(2026, 8, 17))
     out = tmp_path / "guesses"
     render_static(index, out)
     body = read(out, "timeline.html")
 
-    assert 'data-id="task-000001" class="bar estimated' in body
+    assert 'data-id="task-000001" class="bar historical' in body
     assert 'data-id="task-000002" class="bar unowned' in body
     # The patterns were declared and then referenced by nothing, so the class was
     # the whole of the encoding and the bar looked exactly like a commitment. The
     # legend draws itself from the same patterns, so only the plot is counted.
     plot = body[body.index("<svg width=") :]
-    # The rung these two bars stand on is whatever a record with nothing typed in
-    # it opens at, which is the model's default and not a word to write down here:
-    # this test named `shaping` and started failing on the commit that put a rung
-    # below it, about a hatch that was drawing perfectly well. The subject is the
-    # hatch, so the status is asked of the record rather than asserted.
-    opens = guessed.status
-    assert plot.count(f'class="mark mark-estimated st-{opens}"') == 1
+    # The rung the unowned bar stands on is whatever a record with nothing typed
+    # in it opens at, which is the model's default and not a word to write down
+    # here: this test named `shaping` and started failing on the commit that put a
+    # rung below it, about a hatch that was drawing perfectly well. The subject is
+    # the hatch, so the status is asked of the record rather than asserted.
+    opens = nobodys.status
+    assert plot.count('class="mark mark-historical st-done"') == 1
     assert plot.count(f'class="mark mark-unowned st-{opens}"') == 1
-    assert f"rect.mark-estimated.st-{opens} {{ fill: url(#hatch-estimated-st-{opens}); }}" in body
+    assert "rect.mark-historical.st-done { fill: url(#hatch-historical-st-done); }" in body
     assert f"rect.mark-unowned.st-{opens} {{ fill: url(#hatch-unowned-st-{opens}); }}" in body
     # The outline channel says one thing only, and it is not this one.
-    assert "rect.estimated { stroke" not in body
+    assert "rect.historical { stroke" not in body
 
 
 def test_a_hatch_is_drawn_in_the_ink_of_the_bar_it_covers(rendered: Path):
@@ -835,7 +857,7 @@ def test_a_hatch_is_drawn_in_the_ink_of_the_bar_it_covers(rendered: Path):
 
     assert "--hatch" not in body, "one hatch colour cannot serve the whole ladder"
     for status in STATUSES:
-        for mark in ("estimated", "unowned"):
+        for mark in ("historical", "unowned"):
             pattern = re.search(rf'<pattern id="hatch-{mark}-st-{status}".*?</pattern>', body, re.S)
             assert pattern, (mark, status)
             assert f'stroke="var(--st-{status}-ink)"' in pattern.group(0), (mark, status)
@@ -1057,7 +1079,7 @@ def test_the_timeline_names_every_colour_it_draws(rendered: Path):
     for status in STATUSES:
         assert f'<span class="swatch st-{status}" aria-hidden="true">' in body, status
         assert STATUS_GLYPH[status] in body, status
-    assert "appetite assumed" in legend
+    assert "already happened" in legend
     assert "nobody on it" in legend
     assert "overruns its cycle" in legend
     assert "today" in legend
@@ -1066,11 +1088,15 @@ def test_the_timeline_names_every_colour_it_draws(rendered: Path):
 
 def test_every_explanation_reaches_the_reader(rendered: Path, seed_index: Index):
     """The per-date explanation is the trust mechanism, not decoration: the first
-    unexplained surprising date is when people stop believing the timeline."""
+    unexplained surprising date is when people stop believing the timeline.
+
+    `drawn` and not `text`: the page draws the sentence with its dates day-first,
+    like the axis under it, and the same sentence goes to `openproj schedule`
+    with them ISO."""
     body = read(rendered, "timeline.html")
     assert seed_index.explanations
     for record_id, explanation in seed_index.explanations.items():
-        assert explanation.text in body, record_id
+        assert explanation.drawn in body, record_id
 
 
 def test_a_span_less_record_is_listed_but_not_drawn(rendered: Path, seed_index: Index):
@@ -1125,7 +1151,7 @@ def test_the_detail_page_shows_the_derived_dates_and_the_explanation(
 ):
     body = read(rendered, "detail.html")
     record_id, explanation = next(iter(seed_index.explanations.items()))
-    assert explanation.text in body
+    assert explanation.drawn in body
     assert seed_index.spans[record_id].start.isoformat() in body
 
 
@@ -1419,6 +1445,217 @@ def test_weeks_bet_into_another_cycle_are_counted_beside_this_one(
         assert re.search(
             rf'\+<span class="num">{weeks:.1f}</span>\s+weeks in other cycles', group.group(0)
         ), login
+
+
+def test_the_pages_that_add_weeks_up_say_how_many_they_could_not_count():
+    """A smaller number with no explanation is the defect this prevents.
+
+    Shaping work carries no appetite by design, and `counts_in` says it is still
+    what somebody's next weeks are spent on — so it used to be charged half a
+    week apiece out of a config default. Charging nothing is right; a cycle total
+    that quietly drops with no reason on the page is not, so both pages carry the
+    count of what the weeks leave out beside the weeks themselves.
+    """
+    from openproj.model import Config, Cycle, Pitch
+    from openproj.render import ROUTES, render_cycle, render_people
+
+    plan = Cycle(
+        cycle=37,
+        starts_on=date(2026, 8, 17),
+        reviews_on=date(2026, 9, 14),
+        availability={"ann": 1.0},
+    )
+    config = Config(
+        cycles={37: (date(2026, 8, 17), date(2026, 10, 9))},
+        plans={37: plan},
+        known_people=["ann"],
+    )
+    records = [
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="Bet and sized",
+            status="ready",
+            owner="ann",
+            cycle=37,
+            person_weeks=3.0,
+        ),
+        *[
+            Pitch(id=f"pitch-00000{n}", kind="pitch", title="Shaping", owner="ann", cycle=37)
+            for n in (2, 3)
+        ],
+    ]
+    index = build_index(records, config, date(2026, 8, 24))
+
+    cycle = render_cycle(index, 37, ROUTES)
+    assert "3.0 wk" in cycle, "the weeks somebody actually stated"
+    assert "2 not sized" in cycle
+
+    people = render_people(index)
+    assert "2 not sized" in people
+    # And not the sentence that was true only while the default invented weeks
+    # for the two unsized bets: they are on ann's plate, whatever their appetite.
+    assert "nothing bet in cycle" not in people
+
+
+# The Delivered block, parsed rather than matched. The regex takes the slice and
+# the parser reads it, which is the split the neighbours above use for the same
+# reason: a substring cannot tell an id inside a `data-id` from an id inside a
+# title, and the betting table further down the page carries `data-id` on every
+# row of its own.
+def _delivered(page: str) -> dict[str, list[str]]:
+    """Each row of the cycle page's Delivered table: id, and what its cells say.
+
+    Cell by cell rather than the row's own text, because adjacent `<td>` elements
+    carry no whitespace between them and a row read whole comes back as
+    `Lower the scan operator8.0 wk11.09.2026` — three values that a browser and a
+    screen reader both keep apart and only a concatenation runs together.
+    """
+    table = re.search(r'<table class="delivered[^"]*".*?</table>', page, re.S)
+    rows: dict[str, list[str]] = {}
+    cells: list[str] | None = None
+    for element in elements(table.group(0)) if table else []:
+        if element.tag == "tr" and element.attrs.get("data-id"):
+            cells = rows.setdefault(element.attrs["data-id"], [])
+        elif element.tag == "td" and cells is not None:
+            cells.append(element.text)
+    return rows
+
+
+def _one_done_cycle(**fields: object) -> Index:
+    """Cycle 37 with ann in it at full rate, and one finished pitch of hers.
+
+    Built through `with_plans` rather than by handing `Config` a `plans` dict,
+    because two of the three tests below turn on `builds_until` — and a `Cycle`
+    that has not been resolved carries None there, which `build_end` reads as the
+    first day of the window. Every bet would then have overrun by its whole
+    length, which is a fixture agreeing with itself about a date nobody set.
+    """
+    from openproj.model import Config, Cycle, Pitch
+
+    plan = Cycle(
+        cycle=37,
+        starts_on=date(2026, 8, 17),
+        reviews_on=date(2026, 9, 28),
+        availability={"ann": 1.0},
+    )
+    config = Config(known_people=["ann"]).with_plans([plan])
+    record = Pitch(
+        id="pitch-370004",
+        kind="pitch",
+        title="Lower the scan operator",
+        owner="ann",
+        cycle=37,
+        person_weeks=8.0,
+        start_date=date(2026, 8, 17),
+        **fields,
+    )
+    return build_index([record], config, date(2026, 10, 9))
+
+
+def test_a_cycle_says_what_it_delivered_once_its_bars_have_gone_to_zero():
+    """§5 of `design/time-model.md`, which opens on this page after a review.
+
+    `counts_in` refuses `done` on its first line and is the only gate in
+    `Index.load`, so the moment the room marked cycle 37's work finished every
+    person on cycle 37's page read `0.0 wk` of their capacity: the weeks they had
+    just spent stopped counting, and the over-capacity flag could only ever be
+    true about the future.
+
+    Both halves are asserted together, and that is the shape of the fix rather
+    than half a test. The gate is deliberately NOT widened — it answers what a
+    person's NEXT weeks are spent on, which is what the load bars and the
+    capacity percentages are readings of — so the bar still has to read zero
+    while the page stops saying nothing.
+    """
+    from openproj.render import ROUTES, render_cycle
+
+    index = _one_done_cycle(status="done", end_date=date(2026, 9, 11))
+    page = render_cycle(index, 37, ROUTES)
+
+    assert index.load(37) == {}, "a done bet is still nobody's next week"
+    assert "0.0 wk" in page, "the planned figures keep the meaning they had"
+    assert (frozenset(), "Delivered") in [
+        (frozenset(e.attrs.get("class", "").split()), e.text)
+        for e in elements(page)
+        if e.tag == "h2"
+    ]
+    assert _delivered(page) == {"pitch-370004": ["Lower the scan operator", "8.0 wk", "11.09.2026"]}
+
+
+def test_a_bet_that_ran_past_its_cycle_says_so_where_the_cycle_lists_it():
+    """The one number that says whether a bet landed inside its box, on the page
+    the room reads at the review.
+
+    It could not be asked of a finished record at all until §4b: `_overrun` was
+    reached on the two forecast branches only, so `overruns_cycle_weeks` was None
+    for exactly the population that could answer it. The cycle travels beside the
+    number on the span, so the sentence here names the box the arithmetic used
+    and not this page's own number — a task under a pitch bet in 36 can be
+    delivered in 37, and the box it missed is still 36's.
+    """
+    from openproj.render import ROUTES, render_cycle
+
+    # Build ends 25.09; a week and five days past it, inside a window that runs
+    # to 11.10 — so this is delivered in 37 AND late, which are two questions.
+    index = _one_done_cycle(status="done", end_date=date(2026, 10, 7))
+    page = render_cycle(index, 37, ROUTES)
+
+    assert index.delivered_in(37) == ["pitch-370004"]
+    assert _delivered(page) == {
+        "pitch-370004": [
+            "Lower the scan operator",
+            "8.0 wk",
+            "07.10.2026 · ▲ 1.7 wk past cycle 37",
+        ]
+    }
+
+
+def test_work_shelved_in_a_cycle_is_not_work_that_cycle_delivered():
+    """`counts_in` refuses `done` and `shelved` on one line because neither is
+    anybody's next week, and it is right to. They part company here: a list
+    headed by what a cycle produced is the one place in the tool where dropping a
+    bet must not read like landing one."""
+    from openproj.render import ROUTES, render_cycle
+
+    index = _one_done_cycle(status="shelved", end_date=date(2026, 9, 11))
+
+    assert index.delivered_in(37) == []
+    assert _delivered(render_cycle(index, 37, ROUTES)) == {}
+
+
+def test_finished_work_with_no_end_date_is_named_under_the_cycle_it_was_bet_in(
+    seed_index: Index,
+):
+    """The grandfathered case, and it is most of the corpus rather than an edge.
+
+    `end_date` is a blocker at rule version 5 and every record written before
+    that warns instead, which is the only way a required field can be added at
+    all — so the frozen corpus's five done records carry none, three of them
+    annotated `# was fabricated during migration; unknown`. Nothing about them
+    can be tested against a window.
+
+    Dropping them would make the block under-report exactly the cycles whose work
+    predates the field, with nothing on the page to say why. They are listed
+    under the cycle their bet was stamped with, which is the only thing anything
+    knows about when they happened, and the row says the end date is missing
+    rather than showing the start date in its place — which is what the End
+    column did until §4b, on the same records.
+    """
+    from openproj.render import ROUTES, render_cycle
+
+    page = render_cycle(seed_index, 28, ROUTES)
+    rows = _delivered(page)
+
+    assert set(rows) == {"pitch-3c9a41", "task-31f6c4", "task-3a52d8", "task-3e07b2"}
+    assert rows["pitch-3c9a41"] == ["Throughflow 1D CPU single node", "4.0 wk", "no end date"]
+    assert rows["task-3a52d8"][1:] == ["not sized", "no end date"]
+    # Neither an invented date nor an overrun measured against one. `_overrun` is
+    # handed the START date on this branch for want of anything else, so a page
+    # printing its answer beside a missing end would be claiming a bet landed
+    # inside a box using a day it did not land on.
+    assert "▲" not in page.split("Delivered", 1)[1].split("<h2>Goal", 1)[0]
+    assert "A record written before the end date existed has none to show" in " ".join(page.split())
 
 
 def test_a_cycle_with_no_record_is_weeks_bet_against_no_roster(unrecorded_cycle: Index):
@@ -2732,10 +2969,20 @@ def test_one_quantity_is_called_appetite_wherever_it_is_read(rendered: Path):
     """APPETITE (WEEKS) on detail, EFFORT (WEEKS) on the create form and WEEKS in
     the table were one number under three names — over two storage fields that are
     one field now. Appetite is still the reader's word; the unit is in the field
-    name because the unit is what D1 got wrong."""
+    name, because the unit is what D1 got wrong.
+
+    **And no longer in the label, which is what this line used to pin.** It read
+    `"Appetite (person-weeks)"`, and the record page draws that `<dt>` over a row
+    that is in person-weeks on a leaf and in CALENDAR weeks on a pitch with tasks
+    under it — the box the bet bought beside the days those tasks occupy. So the
+    label named a unit neither number under it was in. Both readings say their own
+    unit in words now, so the two labels this test holds together are the same
+    word exactly, which is what "called Appetite wherever it is read" was always
+    claiming.
+    """
     from openproj.render import LABELS
 
-    assert LABELS["person_weeks"] == "Appetite (person-weeks)"
+    assert LABELS["person_weeks"] == "Appetite" == LABELS["size"]
     assert "Effort" not in read(rendered, "detail.html")
     index = read(rendered, "table.html")
     header = re.search(r'<th data-col="size"[^>]*>(.*?)</th>', index, re.S).group(1)
@@ -3361,7 +3608,7 @@ def test_load_is_charged_where_the_assignees_are(demo_rendered: tuple[Path, Inde
 def test_a_size_is_split_evenly_between_the_people_on_it(demo_rendered: tuple[Path, Index]):
     """Even split, decided 2026-08-16: one number to maintain instead of one per
     person per task."""
-    from openproj.model import Config, size_weeks
+    from openproj.model import size_weeks
 
     _, index = demo_rendered
     # `counts_in` and not `e.cycle == 37`: a task takes its cycle from the pitch
@@ -3371,7 +3618,7 @@ def test_a_size_is_split_evenly_between_the_people_on_it(demo_rendered: tuple[Pa
         for e in index.plan.values()
         if index.counts_in(e, 37) and len(e.assignees) > 1 and not index.children.get(e.id)
     )
-    size, _ = size_weeks(shared, Config(default_task_effort=index.default_task_effort))
+    size = size_weeks(shared)
     held = index.load(37)
     people = list(dict.fromkeys(([shared.owner] if shared.owner else []) + shared.assignees))
 
@@ -3820,24 +4067,36 @@ def test_the_timeline_lists_beside_the_chart_what_the_chart_draws(rendered: Path
 
 
 def test_the_hatching_says_in_words_what_it_says_in_texture(demo_rendered: tuple[Path, Index]):
-    """An assumed appetite, work nobody is on and a bet that overruns its cycle
-    are a texture and a stroke over a bar, and neither reaches anybody who is not
+    """Work that is over, work nobody is on and a bet that overruns its cycle are
+    a texture and a stroke over a bar, and neither reaches anybody who is not
     looking at the plot."""
     from openproj.model import Config, Task
     from openproj.render import _MARK_WORDS, _timeline
 
-    # A task with no effort and nobody on it: both marks at once, which the
-    # shipped corpora do not happen to contain.
-    bare = build_index(
-        [Task(id="task-000009", kind="task", title="Nobody has this", status="ready")],
-        Config(),
-        date(2026, 8, 17),
+    # One bar per mark, and they cannot be the same bar: a done record's span is
+    # built on the historical branch, which books nobody and never asks who is on
+    # it. The shipped corpora happen to carry neither, so both are built here.
+    nobodys = Task(
+        id="task-000009", kind="task", title="Nobody has this", status="ready", person_weeks=1.0
     )
-    guessed = _timeline(bare)["bars"][0]
+    finished = Task(
+        id="task-000008",
+        kind="task",
+        title="Over and done with",
+        status="done",
+        owner="ann",
+        person_weeks=1.0,
+        start_date=date(2026, 8, 3),
+        prs=["kilnlab/kiln4py#1"],
+    )
+    marked = build_index([nobodys, finished], Config(), date(2026, 8, 17))
+    bars = {bar["id"]: bar for bar in _timeline(marked)["bars"]}
 
-    assert guessed["marks"] == ["estimated", "unowned"]
-    for mark in guessed["marks"]:
-        assert _MARK_WORDS[mark] in guessed["reads"].lower(), mark
+    assert bars["task-000009"]["marks"] == ["unowned"]
+    assert bars["task-000008"]["marks"] == ["historical"]
+    for bar in bars.values():
+        for mark in bar["marks"]:
+            assert _MARK_WORDS[mark] in bar["reads"].lower(), mark
 
     # And the outline that means a bet does not fit the cycle it was made in.
     _, index = demo_rendered
@@ -3949,7 +4208,7 @@ def test_the_deck_still_inlines_a_picture_after_the_prefix_moved():
 def _index_reaching_the_end_of_the_calendar(seed_root: Path) -> Index:
     """The seed corpus with one `done` task dated at the end of the calendar.
 
-    A `done` span is whatever `assigned_on` says and no rule refuses a date, so
+    A `done` span is whatever `start_date` says and no rule refuses a date, so
     this is what one keystroke too many in the detail page's date box leaves in
     the repository — permanently, on a protected branch.
     """
@@ -3959,7 +4218,7 @@ def _index_reaching_the_end_of_the_calendar(seed_root: Path) -> Index:
     # `/timeline` broke.
     marked = [e for e in records if e.id == "task-3e07b2"]
     assert marked, "the fixture corpus no longer holds the record this test edits"
-    marked[0].assigned_on = date.max
+    marked[0].start_date = date.max
     return build_index(records, config, date(2026, 8, 17))
 
 
@@ -4919,10 +5178,33 @@ def test_a_pitch_draws_its_tasks_as_the_progress_it_has_made(rendered: Path, see
     panels = re.findall(r'<section class="progress read">.*?</section>', page, re.S)
 
     assert panels, "the corpus has pitches with tasks under them"
-    # Ticked from status, both ways round somewhere on the page: the corpus holds
-    # finished tasks and unfinished ones under the same pitches.
-    assert any("☑" in panel for panel in panels)
     assert any("☐" in panel for panel in panels)
+    # The ticked half is asked of a pitch built here rather than of the corpus.
+    # Only a child with weeks is in the fraction at all now that no default
+    # invents them, and every done record in the corpus is unsized — so the tick
+    # would be a claim about which files happen to carry `person_weeks`, which is
+    # the corpus accident this test has already been caught by twice below.
+    from openproj.model import Config, Pitch, Task
+    from openproj.render import render_detail
+
+    finished = build_index(
+        [
+            Pitch(id="pitch-000001", kind="pitch", title="A bet", person_weeks=2.0),
+            Task(
+                id="task-000001",
+                kind="task",
+                title="Over and done with",
+                parent="pitch-000001",
+                status="done",
+                person_weeks=2.0,
+                prs=["kilnlab/kiln4py#1"],
+            ),
+        ],
+        Config(),
+        date(2026, 8, 17),
+    )
+    ticked = render_detail(finished, only="pitch-000001")
+    assert "☑" in re.search(r'<section class="progress read">.*?</section>', ticked, re.S).group(0)
     # And every line is a link to the CHILD it counts, whatever rung that child is
     # on, which is the other half of moving this out of the prose. This asked for
     # `task-[0-9a-f]{6}` and passed on a corpus accident: nothing but a pitch could
@@ -4936,12 +5218,79 @@ def test_a_pitch_draws_its_tasks_as_the_progress_it_has_made(rendered: Path, see
     assert kinds == {"task", "pitch", "project"}, kinds
 
 
-def test_a_pitch_says_what_its_tasks_add_up_to_beside_what_it_was_bet_at(rendered: Path):
+def test_a_pitchs_appetite_row_names_the_bet_the_people_and_what_that_buys(
+    rendered: Path, seed_index: Index
+):
     """An appetite read on its own says nothing about whether the work still fits.
-    The corpus's pitch-5e7b1c was bet at four weeks and holds 8.1 of tasks."""
+
+    **And two numbers either side of a dot are a comparison, so they have to be
+    comparable.** This line drew the field's own text on the left — four
+    PERSON-weeks — and the days its tasks occupy on the right, in calendar ones:
+    `4 · 5.6 in tasks`, two units in a sentence that reads as one, with only the
+    colour computed from the pair that actually decides anything. The left half
+    is the box now, which is that same bet divided by the two people on it, and
+    each half says in words which it is.
+
+    **What this test asserted before, and why it was wrong.** It pinned
+    `"2.0 the bet buys · "`, and that half-fixed the row: the two numbers were
+    comparable at last, but they were both CALENDAR weeks under a `<dt>` reading
+    "Appetite (person-weeks)", so the label named the unit of neither figure
+    beneath it — and the 4 the file actually states appeared nowhere in the
+    reading view at all. A reader could see that 2.0 was bought and not what
+    bought it, which is the same defect `_rollup` (`rows.py`) was rewritten out
+    of when its cell printed `bet 4.0 weeks` on a record whose file says 8. So
+    the row names all three now, in that cell's own words rather than a third
+    phrasing of one fact, and the label is plain "Appetite".
+
+    The corpus's pitch-5e7b1c was bet at four weeks with two people on it, so the
+    box it bought is two calendar weeks, and its tasks as they are actually
+    staffed occupy 28 working days — 5.6 — the number here used to be 8.1, which
+    was the same tasks summed as person-weeks and held against the undivided bet.
+    Same pitch, same verdict, different question: this one is "will this fit", and
+    the other was "is there more work here than we said".
+
+    5.6 and not the 5.2 the same corpus reads four days earlier, and the
+    difference is the floor rather than the arithmetic: four of the five tasks are
+    `ready` with no start date, so the chain they form begins on `seed_index`'s
+    2026-08-17 and only its tail past the one `in_progress` task is counted, which
+    is longer the later that day is. The same number is pinned against `check` in
+    `test_the_seed_corpus_reports_exactly_this_problem_set`, which schedules
+    around the same day — the two must not be allowed to drift apart, which is
+    the whole reason `_tasks_add_up_to` reads the span rather than counting again.
+    """
+    from openproj.render.rows import _rollup
+
     page = read(rendered, "detail.html")
-    assert "8.1 in tasks" in page
-    assert 'class="overrun">8.1 in tasks' in page, "over the bet, and said so"
+    assert "5.6 in tasks" in page
+    assert 'class="overrun">5.6 in tasks' in page, "over the box the bet bought, and said so"
+    # All three, in one clause, in the order somebody reads them: what the file
+    # says, who it is divided by, and what that comes to. Recoverable without
+    # opening the record, and the conversion is on the line rather than left for
+    # the reader to work out.
+    assert "Bet 4 over 2 people, which buys 2.0 weeks · " in page
+    # Word for word the table's, and taken OFF the table rather than written down
+    # twice here: the two surfaces are one fact, and a literal copied into this
+    # file would let them drift apart while both tests stayed green.
+    said = _rollup(seed_index, "pitch-5e7b1c")["why"]
+    assert said.startswith("Bet 4 over 2 people, which buys 2.0 weeks;"), said
+    assert said.split(",")[0] + "," in page, said
+    # And the `<dt>` no longer names a unit the value is not in. Both figures on
+    # that line are calendar weeks and the label read "Appetite (person-weeks)",
+    # so no label on this page carries the unit any more — the values do, each in
+    # the one it is actually in. Asserted of every `<dt>` rather than of this one,
+    # because the label is a shared map and the next field to grow a parenthetical
+    # unit would be the same defect on a different row.
+    assert re.search(r"<dt[^>]*>Appetite</dt>", page)
+    assert not re.search(r"<dt[^>]*>[^<]*person-weeks", page)
+    # A leaf has no box and no contents, so its row is the stored field alone —
+    # which IS in person-weeks and now has to say so, since the label stopped.
+    assert "1.0 person-weeks" in page
+    # The stated appetite is also no longer standing where the box goes: this is
+    # the exact line the row used to render. Written out in full rather than as a
+    # search for `4 · `, which the page answers on its own — a derived end of
+    # `2026-09-14 · <span …>overruns cycle 36…` matches that on the same corpus,
+    # and a test that passes on a date is a test about nothing.
+    assert '4 · <span class="overrun">5.6 in tasks' not in page
 
 
 def test_a_pitch_that_keeps_a_checklist_as_well_as_tasks_is_told_which_one_counts():
@@ -5001,8 +5350,237 @@ def test_a_pitch_with_no_appetite_yet_is_not_accused_of_exceeding_it():
         if r["label"].startswith("Appetite")
     )
 
-    assert "3 in tasks" in row["display"]
+    assert "3.0 in tasks" in row["display"]
     assert 'class="quiet"' in row["display"], "no bet to be over"
+
+
+def test_the_number_the_page_prints_in_tasks_is_the_number_check_warns_on():
+    """One fact, one implementation, pinned across all three surfaces that say it.
+
+    This repository has been bitten three times by one fact written twice — the
+    search blob, the `(none)` sentinel, and `appetite_weeks` reading as three
+    different numbers across three pages — and this is the fourth: the reading
+    view read `index.progress[id].total`, which charged the old default for every
+    unsized child, while `_rollup_problems` summed only the sized ones. The page
+    therefore printed a larger number than the one `check` was warning about, and
+    could print one where `check` said nothing at all, under a docstring that
+    claimed the two "cannot disagree". Both now read `Span.elapsed_weeks`, and a
+    test that only pinned one of them would have passed all the way through that.
+
+    **And a test that pinned only the number went on passing through the
+    second half of the same defect.** The arithmetic moved to the span and the
+    GATE did not: the page kept asking `index.progress`, which counts a child
+    only if somebody stated a size for it, while `check` asked the span whether
+    anything underneath had a length. Those two populations were the same set of
+    records until §4 of `design/time-model.md` gave a `done` record a typed
+    `end_date` — the size gate stops at `in_progress`, so a task finished without
+    an appetite is ordinary — and then one bet was described three different ways
+    at once: `check` warned that its tasks needed 4.0 weeks against a 1.0 box,
+    the table's cell said nothing under it had a length yet while carrying that
+    same warning as a mark in the same cell, and the record page drew a bare
+    appetite with no comparison at all. The third plan below is that bet, and it
+    is here because neither shipped corpus contains one.
+
+    So all three are read, on the same records, on the same day: the cell's
+    state, the sentence under Appetite, and what `check` says. Both directions
+    too, because the expensive half of the original defect was the silent one: a
+    page shouting in warning colour where the validator says nothing teaches a
+    reader that one of the two is lying, and they will pick the wrong one.
+    """
+    from openproj.model import Config, Pitch, Task, validate_all
+    from openproj.render import STATIC, _fact_rows
+    from openproj.render.detail import _tasks_add_up_to
+    from openproj.render.rows import _rollup
+
+    def family(*tasks: dict) -> list:
+        return [
+            Pitch(
+                id="pitch-000001",
+                kind="pitch",
+                title="Q",
+                person_weeks=8.0,
+                assignees=["jackdawrie", "merganserly"],
+            ),
+            *(
+                Task(id=f"task-00000{at}", kind="task", title="T", parent="pitch-000001", **task)
+                for at, task in enumerate(tasks, start=1)
+            ),
+        ]
+
+    held = {"person_weeks": 4.0, "assignees": ["jackdawrie"]}
+    # The first two plans are the same three records twice, and the only
+    # difference is whose name is on the half-week task: one person holding both
+    # has to do them in turn, two people do them at once. That is the whole
+    # reason the comparison is against a span rather than a sum, so it is what
+    # the agreement is pinned over.
+    plans = {
+        "two people, side by side": (
+            family(held, {"person_weeks": 0.5, "assignees": ["merganserly"]}),
+            True,
+        ),
+        "one person, in turn": (
+            family(held, {"person_weeks": 0.5, "assignees": ["jackdawrie"]}),
+            False,
+        ),
+        # The unsized-but-dated done child. It has no `person_weeks` at all, so
+        # nothing sizes it and it is in no progress rollup; it has two typed
+        # dates, so the days it occupied are a measurement and the pitch above it
+        # ran six weeks against the four its bet bought. Nothing in the bet's own file
+        # changed — this is the same pitch bet at 8.0 over two people — so the
+        # only thing that can make a surface disagree here is which population it
+        # asked about.
+        "a finished task nobody sized": (
+            family(
+                {
+                    "status": "done",
+                    "assignees": ["jackdawrie"],
+                    "start_date": date(2026, 8, 17),
+                    "end_date": date(2026, 9, 25),
+                }
+            ),
+            False,
+        ),
+    }
+    for name, (records, fits) in plans.items():
+        index = build_index(records, Config(), date(2026, 8, 17))
+        said = [
+            p
+            # The same day the index was built around: one rule reads it, and a
+            # page and a check drawn around two different days is the disagreement
+            # this test exists to rule out.
+            for p in validate_all(records, Config(), index.spans, date(2026, 8, 17))
+            if p.record_id == "pitch-000001" and p.field == "person_weeks"
+        ]
+        row = next(
+            r
+            for r in _fact_rows(index, index.plan["pitch-000001"], STATIC)
+            if r["label"].startswith("Appetite")
+        )
+        cell = _rollup(index, "pitch-000001")
+        printed = _tasks_add_up_to(index, index.plan["pitch-000001"])
+
+        assert printed is not None, f"{name}: its tasks occupy days somebody can count"
+        assert f"{printed:.1f} in tasks" in row["display"], f"{name}: the page prints what it read"
+        # The cell is the third reader, and the one that used to answer "no length
+        # yet" over a warning triangle explaining how long that same work took.
+        assert cell["weeks"] == printed, f"{name}: {cell}"
+        assert cell["text"] == f"{printed:.1f} in tasks", f"{name}: {cell}"
+        assert cell["state"] != "unsized", (
+            f"{name}: the cell says nothing is known about a bet the other two are measuring"
+        )
+        assert bool(said) is not fits, name
+        assert ('class="overrun"' in row["display"]) is not fits, (
+            f"{name}: the colour on the page and the warning in `check` are one verdict"
+        )
+        assert (cell["state"] == "over") is not fits, (
+            f"{name}: the tint in the table is that same verdict, {cell['state']}"
+        )
+        if said:
+            assert f"its tasks need {printed:.1f} weeks" in said[0].message, (
+                f"{name}: the same number, to the digit a person reads"
+            )
+            assert f"its tasks need {printed:.1f}" in cell["why"], (
+                f"{name}: and the tooltip quotes it in the same words"
+            )
+
+
+def test_the_box_the_bet_buys_names_the_number_it_was_divided_by():
+    """**The sentence is arithmetic, so a reader has to be able to do it.**
+
+    All three surfaces said "Bet 3 over 2 people, which buys 3.0 weeks" — a
+    HEADCOUNT beside a number that came from dividing by the summed availability,
+    which is 1.0 when both of those people are half-available. The corpus reads
+    worse than that sentence alone does: `pitch-5e7b1c` says "4 over 2 people,
+    which buys 2.0", teaching the reader that the operation is division, and
+    `pitch-7b3e94` breaks the lesson on the next row.
+
+    So where everybody is at full rate the headcount IS the divisor and the short
+    sentence stays; where they are not, the sentence says what it divided by. Both
+    cases are here, and the division is done in the test rather than asserted as a
+    literal — a pinned string cannot tell a sentence that adds up from one that
+    does not.
+
+    All three surfaces together, for the reason the test above this one gives:
+    they were deliberately unified onto one sentence, and a fix applied to two of
+    them is the same defect with a smaller blast radius.
+    """
+    from openproj.model import Config, Cycle, Pitch, Task, validate_all
+    from openproj.render import STATIC, _fact_rows
+    from openproj.render.rows import _rollup
+
+    def plan(availability: dict[str, float]) -> tuple[list, Config]:
+        records = [
+            Pitch(
+                id="pitch-000001",
+                kind="pitch",
+                title="Q",
+                cycle=37,
+                person_weeks=3.0,
+                assignees=["jackdawrie", "merganserly"],
+            ),
+            *(
+                Task(
+                    id=f"task-00000{n}",
+                    kind="task",
+                    title="T",
+                    parent="pitch-000001",
+                    person_weeks=3.0,
+                    assignees=[who],
+                )
+                for n, who in enumerate(("jackdawrie", "merganserly"), start=1)
+            ),
+        ]
+        cycle = Cycle(
+            cycle=37,
+            starts_on=date(2026, 8, 17),
+            reviews_on=date(2026, 9, 14),
+            availability=availability,
+        )
+        return records, Config().with_plans([cycle])
+
+    full = {"jackdawrie": 1.0, "merganserly": 1.0}
+    half = {"jackdawrie": 0.5, "merganserly": 0.5}
+    for name, rates, expected in (
+        # Two full-time people divide a three-week bet into 1.5 weeks, and "over 2
+        # people" is that divisor written out. Nothing is added.
+        ("everybody full-time", full, "Bet 3 over 2 people"),
+        # Two half-time people are one full-time person between them, so the bet
+        # buys three weeks and not one and a half. This is the sentence that used
+        # to read exactly like the one above it.
+        ("everybody at a half", half, "Bet 3 over 2 people, 1 full-time between them"),
+    ):
+        records, config = plan(rates)
+        index = build_index(records, config, date(2026, 8, 17))
+        span = index.spans["pitch-000001"]
+        cell = _rollup(index, "pitch-000001")
+        row = next(
+            r
+            for r in _fact_rows(index, index.plan["pitch-000001"], STATIC)
+            if r["label"].startswith("Appetite")
+        )
+        said = [
+            p
+            for p in validate_all(records, config, index.spans, date(2026, 8, 17))
+            if p.record_id == "pitch-000001" and p.field == "person_weeks"
+        ]
+
+        # The clause is the same words in the cell and on the page, which is what
+        # "one sentence" means.
+        held = f"{expected}, which buys {span.budget_weeks:.1f} weeks"
+        assert cell["why"].startswith(held + ";"), f"{name}: {cell['why']}"
+        assert held + " · " in row["display"], f"{name}: {row['display']}"
+        # And the warning quotes the same box and the same staffing.
+        assert said, f"{name}: two three-week tasks do not fit a three-week bet"
+        assert f"the {span.budget_weeks:.1f} the bet buys over {expected.split('over ')[1]}" in (
+            said[0].message
+        ), f"{name}: {said[0].message}"
+
+        # The arithmetic itself: three person-weeks over the divisor the sentence
+        # names is the box the sentence quotes, up to the whole working days the
+        # scheduler lays a duration out over.
+        divisor = sum(rates.values())
+        assert span.staffed_at == pytest.approx(divisor), name
+        assert span.budget_weeks == pytest.approx(math.ceil(3.0 / divisor * 5) / 5), name
 
 
 def test_the_progress_column_appears_only_once_a_plan_has_a_checklist(seed_index: Index):
@@ -6243,7 +6821,13 @@ def test_a_carried_row_may_be_repriced_but_not_re_bet(server_pages: dict[str, st
     now matters less than it did has to be able to say so.
     """
     page = server_pages["cycle"]
-    carried = re.findall(r'<tr data-id="[^"]*" class="carried">.*?</tr>', page, re.S)
+    # `[^>]*` between the id and the class, because the row carries the tree's
+    # `data-rung` between them now. A regex that names every attribute in the
+    # order they happen to be written is a regex that stops matching when one is
+    # added — silently, and this one skipped rather than failed.
+    carried = re.findall(
+        r'<tr data-id="[^"]*"[^>]*class="[^"]*\bcarried\b[^"]*">.*?</tr>', page, re.S
+    )
     if not carried:
         pytest.skip("the frozen corpus has no carried bet in this cycle")
     for row in carried:
@@ -6257,12 +6841,183 @@ def test_a_carried_row_may_be_repriced_but_not_re_bet(server_pages: dict[str, st
             )
 
 
+def test_the_betting_table_puts_a_bets_tasks_under_it(
+    server_pages: dict[str, str], seed_index: Index
+):
+    """**Where the contents of a bet is actually changed.**
+
+    The appetite the room argues about is the pitch's; the thing that has to move
+    for it to be met is a task's. Until the tasks were drawn here, saying "that
+    one is really three weeks, not one" at the betting table meant leaving the
+    page it was said on. They sit under their bet, in the tree the table page
+    already draws, and their appetites are typed in the same box.
+
+    What a task does not get is a tick. `is_bettable` is what put the pitch on
+    this table and left the task off it, and it is the same answer here: a cycle
+    is stamped on the bet, and stamping a task too would put a second cycle on
+    one decision.
+
+    Finished and shelved tasks are left out, and for two different reasons that
+    land in the same place. A shelved task is not in the bet. A done one is, and
+    nobody in the room can change it — its appetite is history, and no amount of
+    re-sizing it makes the rest fit. What is left is what the meeting can move,
+    which includes the `shaping` work nobody has sized yet: those are the rows
+    this column is here for.
+    """
+    page = server_pages["cycle"]
+    # This table's own body and no other. The cycle page draws three tables, and
+    # two of them carry `<tr data-id=`; a regex over the whole page reads the
+    # delivered block's rows as bets, which is how the first draft of this passed
+    # over a table it was not looking at.
+    body = re.search(r'<table id="bets".*?<tbody>(.*?)</tbody>', page, re.S)
+    assert body, "the betting table has no body"
+    body = body.group(1)
+    drawn = re.findall(r'<tr data-id="([^"]+)" data-rung="([^"]*)"', body)
+    assert drawn, "the betting table drew no rows at all"
+
+    holder, under = "", {}
+    for record_id, rung in drawn:
+        if rung:
+            under.setdefault(holder, []).append((record_id, rung))
+        else:
+            holder = record_id
+    assert under, "no bet on this table drew anything underneath it"
+
+    for bet, kids in under.items():
+        # Every child of that bet the room can still do something about, in id
+        # order, and nothing else.
+        expected = sorted(
+            one
+            for one in seed_index.children[bet]
+            if one in seed_index.plan and seed_index.plan[one].status not in ("shelved", "done")
+        )
+        assert [one for one, _ in kids] == expected, bet
+        # `└─` on the last one drawn and `├─` on the rest, which is the whole of
+        # the drawing at the one depth a bet has.
+        assert [rung for _, rung in kids] == ["tee"] * (len(kids) - 1) + ["end"], bet
+
+    rows = {
+        record_id: block
+        for record_id, block in re.findall(
+            r'<tr data-id="([^"]+)"(.*?)(?=<tr data-id=|\Z)', body, re.S
+        )
+    }
+    for bet, kids in under.items():
+        assert '<input type="checkbox"' in rows[bet], f"{bet} cannot be bet on"
+        for record_id, _ in kids:
+            block = rows[record_id]
+            assert '<input type="checkbox"' not in block, (
+                f"{record_id} offers a tick of its own, so one decision can be stamped twice"
+            )
+            # The appetite is typed here, which is the whole reason the row is
+            # drawn, and it writes the field the model stores.
+            assert 'data-field="person_weeks"' in block, record_id
+            # And the tree is drawn in the name column, where the indent is the
+            # cell's own padding rather than a drawing laid over the word.
+            assert '<td class="betname"><span class="tree"' in block, record_id
+
+
+def test_the_betting_tables_connectors_follow_what_is_on_screen(
+    server_pages: dict[str, str], tmp_path: Path
+):
+    """The drawing describes the rows that are visible, not the plan.
+
+    The search hides rows, so a `├─` rendered over what turns out to be the last
+    task on screen promises a sibling that is not there — the defect the table
+    page's `connectors()` was written for, met again here by a different route.
+    And a task whose bet the search hid loses the drawing entirely rather than
+    indenting under whatever happens to precede it: a connector between two rows
+    that are not related is a lie about the plan.
+
+    Sorting takes the tree with it for the same reason. Sorted by appetite a task
+    sits wherever its number falls and its bet is somewhere else, so the indent
+    would point at a stranger.
+
+    In Chrome, because two of the three answers are whether something is drawn.
+    `display: none` from a class the script toggles is a claim about pixels, and
+    a resolved stylesheet is not one — this asks the browser what it painted.
+    """
+    from browser import chrome, measured_in
+
+    got = measured_in(
+        chrome(),
+        server_pages["cycle"],
+        tmp_path / "bets-tree.html",
+        1400,
+        """
+        const rows = () => [...BETS.tBodies[0].rows];
+        const drawn = row => getComputedStyle(row.querySelector('.tree')).display;
+        const kid = rows().find(one => one.dataset.rung);
+        const holder = rows()[rows().indexOf(kid) - 1];
+        const family = [];
+        for (let i = rows().indexOf(holder) + 1;
+             i < rows().length && rows()[i].dataset.rung; i++) family.push(rows()[i]);
+        const marks = () => family.map(one => one.querySelector('.tree .rung').className);
+        const out = {siblings: family.length, rendered: marks()};
+
+        // A task the search kept and a bet it did not.
+        BETFIND.value = kid.querySelector('td.betname a').textContent.trim();
+        betSearch();
+        out.holderHidden = holder.hidden;
+        out.kidShown = !kid.hidden;
+        out.orphanDrawn = drawn(kid);
+        out.orphanIndent = getComputedStyle(kid.querySelector('td.betname')).paddingLeft;
+        BETFIND.value = '';
+        betSearch();
+        out.backDrawn = drawn(kid);
+        out.backIndent = getComputedStyle(kid.querySelector('td.betname')).paddingLeft;
+
+        // The last one on screen ends the branch, whichever one that is.
+        family[family.length - 1].hidden = true;
+        betTree();
+        out.afterHiding = marks();
+        family[family.length - 1].hidden = false;
+        betTree();
+
+        // And a sort is not an order a tree can be drawn over.
+        betSort(1, false);
+        out.sortedDrawn = drawn(kid);
+        out.sortedIndent = getComputedStyle(kid.querySelector('td.betname')).paddingLeft;
+        return out;
+        """,
+        height=1400,
+        patience=2500,
+    )
+
+    assert got["siblings"] >= 2, (
+        "this corpus draws no bet with two tasks under it, so nothing here is a test of "
+        "which one ends the branch"
+    )
+    assert got["rendered"] == ["rung tee"] * (got["siblings"] - 1) + ["rung end"], got["rendered"]
+
+    # A task on screen whose bet is not: no connector, no indent, drawn as a row
+    # of its own rather than as a child of the row above it.
+    assert got["kidShown"] and got["holderHidden"], got
+    assert got["orphanDrawn"] == "none", got
+    assert got["orphanIndent"] == got["sortedIndent"], got
+    # And it comes back when the search does.
+    assert got["backDrawn"] != "none", got
+    assert got["backIndent"] != got["orphanIndent"], got
+
+    # The last VISIBLE sibling ends the branch, so the row above the gap stops
+    # promising one that is not there. Two `end`s at the tail: the second is the
+    # row that was hidden, which nothing draws and which is left saying what it
+    # would say if it came back — the function answers about every row rather
+    # than skipping the ones it cannot see, and skipping them would mean deciding
+    # a second time on the way back.
+    assert got["afterHiding"] == ["rung tee"] * (got["siblings"] - 2) + ["rung end", "rung end"], (
+        got["afterHiding"]
+    )
+
+    assert got["sortedDrawn"] == "none", got
+
+
 def test_the_create_form_opens_with_no_date_in_the_box(server_pages: dict[str, str]):
     """jcanton, 2026-08-26: "assigned date default to empty would be better than
     default=today".
 
     It was today, on the argument that a date field which starts empty is a date
-    field somebody leaves empty. That was answering the wrong risk. `assigned_on`
+    field somebody leaves empty. That was answering the wrong risk. `start_date`
     is the one date the whole schedule is derived FROM, and a record created
     today is very often work that starts next cycle, or work somebody is writing
     down so as not to lose it. Prefilling today does not stop anybody leaving it
@@ -6275,8 +7030,8 @@ def test_the_create_form_opens_with_no_date_in_the_box(server_pages: dict[str, s
     then says so beside itself — which is why the box still carries
     `data-required-at`.
     """
-    box = re.search(r'<input[^>]*id="new-assigned_on"[^>]*>', server_pages["new"])
-    assert box, "the create form has no assigned-on box"
+    box = re.search(r'<input[^>]*id="new-start_date"[^>]*>', server_pages["new"])
+    assert box, "the create form has no start-date box"
     assert 'value=""' in box.group(0), (
         f"the create form opens with a date already in it: {box.group(0)}"
     )
@@ -6349,3 +7104,46 @@ def test_a_rendered_file_offers_no_way_to_change_a_kind(rendered: Path):
     assert not re.search(r'class="chip kind-\w+ kindchip"', body)
     assert not re.search(r'<div class="rekinding"', body)
     assert not re.search(r'<select class="becomes"', body)
+
+
+# --- §4b: the overrun sentence names the cycle it was measured against --------
+
+
+def test_the_overrun_sentence_names_the_cycle_the_bet_was_made_in(demo_root: Path):
+    """ "▲ overruns cycle None by 4.7 weeks" — the one sentence in the tool that
+    says a bet did not fit its box, with the box unnamed.
+
+    The number came from `_overrun`, which measures against `cycle_of` — the
+    cycle the BET was made in, which for a task under a pitch is the pitch's —
+    while this page formatted `record.cycle`. A task carries no cycle of its own,
+    so every task page whose file happened not to write one read `None`. It was
+    hidden from the tests because 11 of the frozen corpus's 15 tasks do write one.
+
+    The task below is exactly that shape in the shipped demo: it states no cycle,
+    it is filed under a pitch bet into 36, and it runs past the end of that
+    cycle's build. The measured cycle travels on the span beside the number now,
+    so the display and the computation cannot pick different ones — and the
+    assertion is written against the span rather than against a number typed
+    here, which is what keeps it from becoming a second copy of the arithmetic.
+    """
+    from datetime import date
+
+    from openproj.render import ROUTES, render_detail
+
+    records, config, _ = load_repo(demo_root)
+    index = build_index(records, config, date(2026, 8, 17))
+    over = [
+        record_id
+        for record_id, span in index.spans.items()
+        if span.overruns_cycle_weeks
+        and index.plan[record_id].kind == "task"
+        and index.plan[record_id].cycle is None
+    ]
+    assert over, "the demo should hold a task with no cycle of its own that overran"
+
+    for record_id in over:
+        span = index.spans[record_id]
+        page = render_detail(index, ROUTES, only=record_id)
+        said = f"overruns cycle {span.overruns_cycle} by {span.overruns_cycle_weeks:.1f} weeks"
+        assert said in " ".join(page.split()), record_id
+        assert "overruns cycle None" not in page, record_id

@@ -5,10 +5,10 @@ title: Aroma transport convergence
 parent: proj-000001
 status: in_progress
 owner: Oxpeckerly
-assignees: [Oxpeckerly, nightjarelli, jackdawrie]
+assignees: [Oxpeckerly, nightjarelli]
 reviewers: [jackdawrie, hoopoegrove]
 review_waived: false
-assigned_on: 2026-06-22
+start_date: 2026-06-22
 cycle: 36
 priority: high
 depends_on: []
@@ -32,13 +32,13 @@ MPI), and a drum convergence study.
 
 ## Appetite
 
-Six weeks from cycle 36; the study slipping into 37 is accepted, not a surprise.
+Six weeks from cycle 36, two people; the study slipping into 37 is accepted, not a surprise.
 
 ## Solution
 
-Coefficients first, then the exchange, then the study: `linear_2nd_order` FLUME on a
-doubly-periodic drum at refinement factors 1/2/4/8, fitting a slope to the L1 and L-infinity
-errors against an analytic reference, tolerance band 0.4.
+Coefficients and the exchange side by side — they touch different files — then the study behind
+the exchange: `linear_2nd_order` FLUME on a doubly-periodic drum at refinement factors 1/2/4/8,
+fitting a slope to the L1 and L-infinity errors against an analytic reference, tolerance band 0.4.
 
 ## Rabbit hole
 

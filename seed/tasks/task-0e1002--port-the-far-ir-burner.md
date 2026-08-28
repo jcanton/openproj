@@ -4,17 +4,17 @@ kind: task
 title: Port the far-IR burner
 parent: pitch-0e0001
 status: ready
-owner: yellowhammer7
-assignees: [yellowhammer7]
-reviewers: [kittiwaker, hoopoegrove]
+owner: hoopoegrove
+assignees: [hoopoegrove, kittiwaker]
+reviewers: [turnstonegru, jackdawrie]
 review_waived: false
-assigned_on: 2026-08-17
+start_date: 2026-08-17
 priority: medium
 depends_on: [task-0e1001]
 tags: [radiation, far-infrared, no-scatter-solver, emission-source, hearth]
 prs: []
 created_schema_version: 2
-person_weeks: 2.5
+person_weeks: 2.0
 ---
 
 # Port the far-IR burner
@@ -29,8 +29,8 @@ transport.
 
 ## Appetite
 
-2.5 weeks, chained behind `task-0e1001` for its `kdist.py`, chunked `(Cell, Gpt, K)` handling and
-host-side g-point reduction.
+Two weeks, the same pair, chained behind `task-0e1001` for its `kdist.py`, chunked
+`(Cell, Gpt, K)` handling and host-side g-point reduction.
 
 ## Solution
 

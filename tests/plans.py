@@ -58,9 +58,7 @@ def build(
         (root / d).mkdir(parents=True)
     people = [f"dev{n}" for n in range(8)]
     (root / "config/people.yaml").write_text(f"known_people: [{', '.join(people)}]\n")
-    (root / "config/defaults.yaml").write_text(
-        "schema_version: 2\nnominal_availability: 1.0\ndefault_task_effort: 0.5\n"
-    )
+    (root / "config/defaults.yaml").write_text("schema_version: 2\nnominal_availability: 1.0\n")
 
     made, ids = [], {"product": [], "project": [], "pitch": [], "task": []}
 

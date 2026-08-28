@@ -15,6 +15,7 @@ because they are the source of most off-by-one arguments:
 testing the scheduler and starts testing the calendar.
 """
 
+import re
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -31,7 +32,6 @@ MONDAY = date(2026, 8, 17)
 
 CONFIG = Config(
     nominal_availability=1.0,
-    default_task_effort=0.5,
     holidays=[],
     cycles={36: (date(2026, 6, 22), date(2026, 8, 14)), 37: (date(2026, 8, 17), date(2026, 10, 9))},
 )
@@ -159,15 +159,77 @@ def test_step2_a_dependency_cycle_leaves_its_members_and_descendants_unscheduled
     caught = ("task-aaa001", "task-aaa002", "task-aaa003")
     assert [spans[i].unscheduled for i in caught] == [True, True, True]
     assert spans["task-aaa001"].start == spans["task-aaa001"].end == MONDAY
-    assert spans["task-aaa004"] == Span(start=MONDAY, end=date(2026, 8, 21))
+    assert spans["task-aaa004"] == Span(
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
+    )
 
 
-def test_step3_done_work_is_a_historical_point_marker_or_no_span_at_all():
-    dated = task("aaa001", status="done", assigned_on=date(2026, 7, 1))
+def test_a_record_nobody_has_sized_gets_no_floor_span_from_a_dependency_cycle_either():
+    """The stalled path wrote its placeholder before anybody asked about the size.
+
+    Two unsized tasks pointing at each other came back at `start=end=today`,
+    `unscheduled=True` — which the table draws as Start 27 Aug / End 27 Aug,
+    styled `derived` exactly like a forecast and sorting to the top of a
+    Start-ascending sort, because only the timeline reads that flag. That is the
+    symptom §2 of the design and the leaf path's own comment both argue at length
+    must never happen, reached by the one route neither of them was guarding.
+    """
+    records = [
+        task("aaa001", size=None, depends_on=["task-aaa002"]),
+        task("aaa002", owner="bo", size=None, depends_on=["task-aaa001"]),
+    ]
+    spans, _ = run(records)
+    assert spans == {}
+
+
+def test_an_unsized_child_caught_in_a_cycle_does_not_pin_its_pitch_to_today():
+    """The other half of the same floor span, one level up.
+
+    The rollup is `min(child.start)`/`max(child.end)` and cannot see
+    `unscheduled`, so a stalled unsized child at today dragged its pitch's start
+    back to today and had its overrun measured against a fabricated end — with
+    nothing on the parent row to mark that any of it was invented.
+    """
+    records = [
+        pitch("bbb001", owner="cy"),
+        task("aaa001", parent="pitch-bbb001", size=None, depends_on=["task-aaa002"]),
+        task("aaa002", owner="bo", size=None, depends_on=["task-aaa001"]),
+        task("aaa003", parent="pitch-bbb001", size=2.0, start_date=date(2026, 9, 7)),
+    ]
+    spans, _ = run(records)
+    assert "task-aaa001" not in spans
+    assert spans["pitch-bbb001"].start == date(2026, 9, 7)
+
+
+def test_step3_done_work_with_no_recorded_end_is_a_point_marker_or_no_span_at_all():
+    """The grandfathered shape, which is still reachable and therefore still
+    pinned: a record finished before `end_date` existed carries none, and what it
+    gets is exactly the point marker it always had."""
+    dated = task("aaa001", status="done", start_date=date(2026, 7, 1))
     spans, _ = run([dated, task("aaa002", status="done")])
     july = date(2026, 7, 1)
-    assert spans["task-aaa001"] == Span(start=july, end=july, historical=True)
+    assert spans["task-aaa001"] == Span(
+        start=july, end=july, historical=True, budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=None
+    )
     assert "task-aaa002" not in spans
+
+
+def test_step3_a_done_record_with_no_end_has_no_length_rather_than_a_fifth_of_a_week():
+    """Without a recorded end these two dates are one day, and one day is not a
+    length.
+
+    Read back as an interval it was 0.2 — a fifth of a week, which is today twice
+    and which the comment beside `Span.elapsed_weeks` names as the thing it must
+    not store. It travelled: a done pitch bet at eight printed "8.0 · 0.2 in
+    tasks" on its own page, and `_rollup_problems` could not fire on a finished
+    bet at any size, because a fifth of a week is inside every box there is.
+
+    `_occupied_weeks` cannot make this decision for itself — handed one interval
+    it will honestly report the day it covers — so the branch is what keeps a
+    record with no recorded end out of the arithmetic.
+    """
+    spans, _ = run([task("aaa001", status="done", start_date=date(2026, 7, 1), size=8.0)])
+    assert spans["task-aaa001"].elapsed_weeks is None
 
 
 def test_step3_a_done_parent_stays_historical_even_with_a_live_child():
@@ -178,12 +240,475 @@ def test_step3_a_done_parent_stays_historical_even_with_a_live_child():
 
 def test_step4_duration_is_the_stated_size_at_nominal_availability():
     spans, _ = run([task("aaa001", size=2.0)])
-    assert spans["task-aaa001"] == Span(start=MONDAY, end=date(2026, 8, 28))
+    assert spans["task-aaa001"] == Span(
+        start=MONDAY, end=date(2026, 8, 28), budget_weeks=2.0, staffed_at=1.0, elapsed_weeks=2.0
+    )
 
 
-def test_step4_a_missing_size_falls_back_to_the_default_and_is_marked_estimated():
-    spans, _ = run([task("aaa001", size=None)])
-    assert spans["task-aaa001"] == Span(start=MONDAY, end=date(2026, 8, 19), estimated=True)
+def test_step4_a_record_nobody_has_sized_gets_no_span_at_all():
+    """Not a span marked as a guess, and not an `unscheduled` one either.
+
+    It used to be the first: half a week nobody had typed, placed, booked against
+    its worker and drawn as a bar with `estimated=True` on it — a flag three of
+    its readers dropped. An `unscheduled` span would be the second, and that is
+    `start=end=today`: the table would draw Start and End of today, styled
+    `derived` exactly like a real forecast and sorting to the top of a
+    Start-ascending sort, while the timeline left the record out. No span is the
+    answer a childless project already gives, and every view already copes.
+    """
+    spans, explanations = run([task("aaa001", size=None), task("aaa002", size=2.0)])
+    assert "task-aaa001" not in spans
+    assert "task-aaa001" not in explanations
+    # And it books nothing: the sized task starts on the floor rather than after
+    # a week of somebody else's invented work.
+    assert spans["task-aaa002"] == Span(
+        start=MONDAY, end=date(2026, 8, 28), budget_weeks=2.0, staffed_at=1.0, elapsed_weeks=2.0
+    )
+
+
+def test_step4_an_unsized_child_leaves_its_parent_the_dates_of_the_rest():
+    """A floor span would be worse than none, and this is where it would show.
+
+    The rollup is `min(child.start)`/`max(child.end)` with no `unscheduled` in
+    its constructor, so one unsized child at `start=end=today` would pin the
+    pitch's start to today and measure its overrun against a fabricated end,
+    with nothing on the parent row marking it.
+    """
+    records = [
+        pitch("bbb001"),
+        task("aaa001", parent="pitch-bbb001", size=None),
+        task("aaa002", parent="pitch-bbb001", size=2.0, depends_on=["task-aaa003"]),
+        task("aaa003", size=1.0, owner="di"),
+    ]
+    spans, _ = run(records)
+    assert "task-aaa001" not in spans
+    assert spans["pitch-bbb001"] == spans["task-aaa002"].model_copy(
+        update={
+            "overruns_cycle_weeks": spans["pitch-bbb001"].overruns_cycle_weeks,
+            # And the parent's own box, which is its own and not its child's: this
+            # pitch carries no appetite, so there is nothing for `_rollup_problems`
+            # to hold the rolled-up length against, while the task under it was bet
+            # at two weeks. `elapsed_weeks` is deliberately NOT neutralised here —
+            # the parent's dates are exactly the one sized child's, so its length
+            # has to be too, and that is half of what this test is claiming.
+            #
+            # `staffed_at` goes with it, because the two are one division:
+            # `_box_fields` writes both or neither, and a box of None beside a
+            # divisor would be a denominator explaining nothing.
+            "budget_weeks": None,
+            "staffed_at": None,
+        }
+    )
+
+
+def test_a_pitch_whose_children_are_all_unsized_is_not_scheduled_as_a_leaf():
+    """Being a container is a property of the plan, not of who came back with a span.
+
+    Every live child used to get one, so an empty `kids` meant "no children" and
+    nothing else. With no default appetite it also means "children, none of them
+    placeable" — and a pitch in that state fell past the rollup into the LEAF
+    path, where it was placed against its own bet and BOOKED its own assignees.
+    That breaks the second invariant in the module docstring: the pitch holds a
+    booking while `Index._charged` skips it as a rollup and charges nobody, so
+    the same person is priced twice by the scheduler and once by the ledger. The
+    sized task below is the visible half — it queued behind a bet that should
+    never have taken a slot.
+    """
+    records = [
+        pitch("bbb001", owner="ann", size=2.0),
+        task("aaa001", parent="pitch-bbb001", size=None),
+        task("aaa002", parent="pitch-bbb001", size=None, owner="bo"),
+        task("aaa003", owner="ann", size=1.0),
+    ]
+    spans, _ = run(records)
+    assert "pitch-bbb001" not in spans, "a container with nothing placeable under it draws nothing"
+    assert spans["task-aaa003"] == Span(
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
+    )
+
+
+def test_a_task_that_exactly_fills_its_bet_is_level_with_the_box_and_not_over():
+    """The box and the contents are both read in whole working days, or `=` cannot happen.
+
+    `working_days_after` lays 2.5 weeks out as `ceil(12.5)` = thirteen days and
+    `_occupied_weeks` counts them back as 2.6, so the contents were ALWAYS the
+    ceiling of the box: equal only when the size happened to be a multiple of a
+    fifth of a week, and larger otherwise. `_rollup_problems` fires on strict
+    `>`, so this pitch — bet at 2.5, holding one task bet at 2.5 on the same
+    person, the design's `=` row exactly — warned that it needed 2.6 more than
+    the 2.5 it had. Any fractional availability makes that the normal case.
+    """
+    records = [
+        pitch("bbb001", owner="ann", size=2.5),
+        task("aaa001", parent="pitch-bbb001", owner="ann", size=2.5),
+    ]
+    spans, _ = run(records)
+    box = spans["pitch-bbb001"]
+    assert box.budget_weeks == box.elapsed_weeks == pytest.approx(2.6)
+    # And the leaf agrees with itself, which is where the bias came from: its box
+    # and its contents are the same placement read from two ends.
+    leaf = spans["task-aaa001"]
+    assert leaf.budget_weeks == leaf.elapsed_weeks == pytest.approx(2.6)
+
+
+def test_a_gap_between_two_tasks_is_not_charged_to_the_bet():
+    """The contents is the union of what the tasks occupy, not the stretch enclosing it.
+
+    A pitch's length used to be `max(child.end) - min(child.start)`, which counts
+    the weeks between one task finishing and the next one starting — weeks in
+    which nobody on this pitch is working. `pitch-7b3e94` in the fixture corpus
+    is the live example: two tasks worth six weeks between them, one deliberately
+    dated to after the plant shutdown, and a warning saying it needed twenty
+    weeks against a three-week box. The sentence that warning carries offers to
+    cut scope, re-bet, or add people, and not one of those recovers a gap.
+
+    Two people here, so the tasks do not queue and the gap is entirely the second
+    one's stated start date.
+    """
+    records = [
+        pitch("bbb001", size=4.0),
+        task("aaa001", parent="pitch-bbb001", owner="ann", size=1.0),
+        task("aaa002", parent="pitch-bbb001", owner="bo", size=1.0, start_date=date(2026, 11, 2)),
+    ]
+    spans, _ = run(records)
+    box = spans["pitch-bbb001"]
+    # The bar does not move: a pitch still runs from its first task to its last,
+    # and the gap is part of how long it is in flight on the wall.
+    assert (box.start, box.end) == (MONDAY, date(2026, 11, 6))
+    assert box.elapsed_weeks == pytest.approx(2.0), "twelve calendar weeks, two of them worked"
+
+
+def test_a_done_task_with_no_recorded_end_contributes_nothing_to_what_its_pitch_holds():
+    """A point marker has no length, and the rollup used to read one back off it.
+
+    A finished record with no `end_date` gets `start=end=start_date` and an
+    `elapsed_weeks` of None. `min(child.start)`/`max(child.end)` read those same
+    two dates straight back out, so the None was undone one level up: a pitch
+    holding a task that started in January was charged for every week since. What
+    it contributes to the union is nothing at all, which is the same answer an
+    unsized child gets and for the same reason — there is no length to add.
+
+    A finished task that DOES record its end contributes the days it really ran;
+    that is the test two below.
+    """
+    records = [
+        pitch("bbb001", size=4.0),
+        task("aaa001", parent="pitch-bbb001", status="done", start_date=date(2026, 1, 5)),
+        task("aaa002", parent="pitch-bbb001", owner="ann", size=1.0),
+    ]
+    spans, _ = run(records)
+    box = spans["pitch-bbb001"]
+    assert (box.start, box.end) == (date(2026, 1, 5), date(2026, 8, 21))
+    assert box.elapsed_weeks == pytest.approx(1.0), "the live task, and nothing for the done one"
+
+
+def test_a_pitch_whose_tasks_all_finished_undated_has_no_contents_to_measure():
+    """None, exactly as each of its children has None, and not a number.
+
+    Zero would be a measurement — the good tint, a bet that took no time — and
+    what is true here is that nothing under this pitch has a length to report.
+    The rollup used to answer with the distance between the two finished tasks'
+    start dates, which is a length nobody forecast and nobody spent.
+    """
+    records = [
+        pitch("bbb001", size=4.0),
+        task("aaa001", parent="pitch-bbb001", status="done", start_date=date(2026, 1, 5)),
+        task("aaa002", parent="pitch-bbb001", status="done", start_date=date(2026, 6, 1)),
+    ]
+    spans, _ = run(records)
+    assert spans["pitch-bbb001"].elapsed_weeks is None
+
+
+def test_a_finished_bet_holds_its_tasks_and_not_its_own_idle_calendar():
+    """The contents of a box are what is in the box, on the historical branch too.
+
+    That branch set `elapsed_weeks` from the record's OWN start and end dates
+    whether or not anything hung underneath, and `_rollup_problems`,
+    `_tasks_add_up_to` and the appetite cell all read that number as its tasks.
+    So this pitch — bet at 8.0, started 5 January, finished 30 June, holding one
+    week of work — was reported as needing 25.4 weeks with the people on it: the
+    127 working days of its own span, five idle months of them, offered under
+    three remedies of which none shortens a wait. That is the enclosing reading
+    §3 of `design/time-model.md` threw out for live pitches, arriving on the
+    finished ones §4b exists to serve, and by the ordinary lifecycle — ready →
+    in_progress → done leaves a record carrying both dates.
+
+    The span itself does not move. Those two dates are when this bet was in
+    flight and they stay its bar and its End column; it is only the number the
+    box is compared against that stops being that stretch.
+    """
+    records = [
+        pitch(
+            "bbb001",
+            size=8.0,
+            status="done",
+            start_date=date(2026, 1, 5),
+            end_date=date(2026, 6, 30),
+        ),
+        task("aaa001", parent="pitch-bbb001", size=1.0),
+    ]
+    box = run(records)[0]["pitch-bbb001"]
+    assert (box.start, box.end) == (date(2026, 1, 5), date(2026, 6, 30))
+    assert box.budget_weeks == pytest.approx(8.0), "the bet is still the bet"
+    assert box.elapsed_weeks == pytest.approx(1.0), "the one task, and none of the months around it"
+
+
+def test_a_finished_bet_over_finished_tasks_is_measured_by_the_tasks():
+    """The same rule where every record involved is done, which is the normal end
+    of a lifecycle rather than the mixed case above.
+
+    Both tasks ran inside the pitch's dates and neither ran for long: 1–5 June
+    and 15–19 June are five working days each, sharing no day, so the union is
+    ten and the pitch holds 2.0 against a bet that bought 8.0. Its own interval
+    is 25.4, and reading that would have said a bet at eight overran by
+    seventeen — a verdict on the one population that already knows what it cost.
+    """
+    records = [
+        pitch(
+            "bbb001",
+            size=8.0,
+            status="done",
+            start_date=date(2026, 1, 5),
+            end_date=date(2026, 6, 30),
+        ),
+        task(
+            "aaa001",
+            parent="pitch-bbb001",
+            status="done",
+            start_date=date(2026, 6, 1),
+            end_date=date(2026, 6, 5),
+        ),
+        task(
+            "aaa002",
+            parent="pitch-bbb001",
+            status="done",
+            start_date=date(2026, 6, 15),
+            end_date=date(2026, 6, 19),
+        ),
+    ]
+    box = run(records)[0]["pitch-bbb001"]
+    assert box.elapsed_weeks == pytest.approx(2.0)
+
+
+def test_a_pitch_with_no_dates_of_its_own_does_not_hide_its_tasks_from_its_project():
+    """A record in the middle that has nothing to contribute contributes nothing,
+    and passes on everything.
+
+    A pitch finished before `end_date` existed and never given a start date gets
+    no span at all — `test_step3_a_done_parent_stays_historical_even_with_a_live_child`
+    pins that — and the contents of a box used to be assembled one level at a
+    time, so it wrote no interval of its own and the week of work still running
+    inside it reached the project as nothing. What a project holds is the days
+    its leaves take, wherever they hang, so this is 2.0: one week under the
+    dateless pitch and one under the pitch beside it, on two people and in two
+    different months.
+
+    Those days are not all inside the project's own dates, and that is a
+    different question with an older answer: a rollup takes `min`/`max` over the
+    children that HAVE spans, so a pitch with none is invisible to the bar
+    whatever hangs beneath it. Charging the project for work it holds is right
+    either way — drawing it is what the missing span costs.
+    """
+    records = [
+        model.Project(id="proj-000001", kind="project", title="M"),
+        pitch("bbb001", parent="proj-000001", status="done"),
+        task("aaa001", parent="pitch-bbb001", size=1.0, start_date=date(2026, 9, 1)),
+        pitch("bbb002", parent="proj-000001"),
+        task("aaa002", parent="pitch-bbb002", owner="bo", size=1.0),
+    ]
+    spans, _ = run(records)
+    assert "pitch-bbb001" not in spans
+    assert spans["proj-000001"].elapsed_weeks == pytest.approx(2.0)
+
+
+# --------------------------------------------------------------------------- #
+# §4b: what a recorded end date makes readable
+# --------------------------------------------------------------------------- #
+
+
+def test_a_finished_record_ends_where_its_end_date_says():
+    """The End column and the timeline bar, which is where §4b starts.
+
+    The done branch built `end=start_date`, so a finished record's End cell showed
+    its own START and its bar was a dot however long the work had taken. It ends
+    at the recorded date now, and the span is still `historical` — a record of
+    what happened rather than a forecast of what will, which is the channel the
+    timeline hatches.
+    """
+    finished = task(
+        "aaa001",
+        status="done",
+        start_date=date(2026, 6, 22),
+        end_date=date(2026, 7, 17),
+        size=4.0,
+    )
+    span = run([finished])[0]["task-aaa001"]
+    assert (span.start, span.end) == (date(2026, 6, 22), date(2026, 7, 17))
+    assert span.historical
+
+
+def test_a_finished_record_measures_the_weeks_it_actually_took():
+    """The one number on any span that is measured rather than forecast.
+
+    22 June is a Monday and 17 July is the Friday four weeks later, with no
+    holiday in `CONFIG` between them: 5 + 5 + 5 + 5 = 20 working days, and 20 / 5
+    is 4.0. The box beside it is 4.0 too and that is a coincidence of this fixture
+    rather than the same arithmetic — the budget is the bet divided by the people
+    on it, and one of the two below moves it without touching the dates.
+    """
+    ran_to_time = task(
+        "aaa001", status="done", start_date=date(2026, 6, 22), end_date=date(2026, 7, 17), size=4.0
+    )
+    assert run([ran_to_time])[0]["task-aaa001"].elapsed_weeks == pytest.approx(4.0)
+
+    # Three working days longer, and nothing else about the record different.
+    ran_late = ran_to_time.model_copy(update={"end_date": date(2026, 7, 22)})
+    span = run([ran_late])[0]["task-aaa001"]
+    assert span.elapsed_weeks == pytest.approx(4.6)
+    assert span.budget_weeks == pytest.approx(4.0), "the bet did not move; the actual did"
+
+
+def test_a_finished_task_contributes_the_days_it_really_ran_to_its_pitch():
+    """§3's clause, arriving.
+
+    A child with no length contributes nothing to the union its bet is judged
+    against, and a finished record was in that state by construction. With a
+    recorded end it has a real interval and starts contributing honestly — which
+    is the only reading under which "did this bet fit" can be answered about the
+    records that already know.
+
+    Two tasks on two different people, deliberately: the done one ran 22 June to
+    17 July (20 working days) and the live one is placed from the floor, Monday 17
+    August, for one week (5 days). They share no day, so the union is 25 working
+    days — 5.0 weeks — and the enclosing span is very much longer than that.
+    """
+    records = [
+        pitch("bbb001", size=4.0),
+        task(
+            "aaa001",
+            parent="pitch-bbb001",
+            status="done",
+            start_date=date(2026, 6, 22),
+            end_date=date(2026, 7, 17),
+            size=4.0,
+        ),
+        task("aaa002", parent="pitch-bbb001", owner="bo", size=1.0),
+    ]
+    box = run(records)[0]["pitch-bbb001"]
+    assert (box.start, box.end) == (date(2026, 6, 22), date(2026, 8, 21))
+    assert box.elapsed_weeks == pytest.approx(5.0)
+
+
+def test_a_finished_record_says_whether_it_landed_inside_its_cycle():
+    """`_overrun` was reached on the two forecast branches and never on this one,
+    so the one number that says whether a bet landed inside its cycle was None for
+    exactly the population that could answer it.
+
+    Cycle 36 runs 22 June to 14 August in `CONFIG`, with no cycle record, so build
+    ends `cooldown_weeks` before the window does: 14 August minus 14 days is 31
+    July. A record that ended on the 31st is inside it — the comparison is `<=` —
+    and one that ended on 7 August is seven days past, which is 1.0 week.
+    """
+
+    def ending(day: date) -> Span:
+        finished = task(
+            "aaa001", status="done", cycle=36, start_date=date(2026, 6, 22), end_date=day, size=4.0
+        )
+        return run([finished])[0]["task-aaa001"]
+
+    assert ending(date(2026, 7, 31)).overruns_cycle_weeks is None
+    assert ending(date(2026, 8, 7)).overruns_cycle_weeks == pytest.approx(1.0)
+
+
+def test_the_cycle_an_overrun_is_measured_against_travels_beside_the_number():
+    """The bug §4b names, and the shape that ends it.
+
+    `_overrun` measures against `cycle_of`, which walks UP to the pitch holding
+    the bet — a task carries no cycle of its own — while the record page formatted
+    `record.cycle`. So four seed task pages read "▲ overruns cycle None by 4.7
+    weeks": the one sentence that says a bet did not fit its box, with the box
+    unnamed. The task below is exactly that shape, and the two answers are
+    asserted apart.
+    """
+    records = [
+        pitch("bbb001", cycle=36, size=4.0),
+        task(
+            "aaa001",
+            parent="pitch-bbb001",
+            status="done",
+            start_date=date(2026, 6, 22),
+            end_date=date(2026, 8, 7),
+            size=4.0,
+        ),
+    ]
+    finished = [r for r in records if r.id == "task-aaa001"][0]
+    span = run(records)[0]["task-aaa001"]
+    assert finished.cycle is None, "the task states no cycle: the bet is on the pitch"
+    assert span.overruns_cycle == 36
+    assert span.overruns_cycle_weeks == pytest.approx(1.0)
+
+
+def test_a_span_never_names_a_cycle_it_did_not_measure_against():
+    """The two fields are written by one helper, so there is no arrangement of the
+    three `Span` constructions in which a span holds a cycle and no number, or a
+    number and no cycle. Asserted over a whole plan rather than over one record,
+    because the claim is about every branch.
+    """
+    records = [
+        pitch("bbb001", cycle=36, size=4.0),
+        task("aaa001", parent="pitch-bbb001", size=8.0),
+        task("aaa002", parent="pitch-bbb001", owner="bo", size=1.0, cycle=37),
+        task(
+            "aaa003",
+            parent="pitch-bbb001",
+            status="done",
+            start_date=date(2026, 6, 22),
+            end_date=date(2026, 8, 7),
+            size=4.0,
+        ),
+        task("aaa004", owner="cy", depends_on=["task-aaa004"], size=1.0),
+    ]
+    spans, _ = run(records)
+    assert len(spans) >= 5
+    for record_id, span in spans.items():
+        assert (span.overruns_cycle is None) == (span.overruns_cycle_weeks is None), record_id
+    assert any(s.overruns_cycle is not None for s in spans.values()), "and one of them overran"
+
+
+def test_an_end_date_before_the_start_is_read_as_no_end_at_all():
+    """A plan in git is a fact the scheduler draws rather than refuses.
+
+    Both doors and `validate_all` call this pair a blocker, but a file committed
+    by hand can hold anything, and every other reading of it is worse. Drawn
+    literally it is a bar with a negative width, a negative length handed to the
+    rollup, and a pitch reported as starting after it finished. Clamped to the
+    start it becomes a one-day span, and one day read back as an interval is the
+    0.2 this branch spent a release learning is not a length. So it lands where a
+    record written before the field existed lands: a point marker with nothing to
+    measure, and one blocker beside it saying why.
+    """
+    backwards = task(
+        "aaa001",
+        status="done",
+        start_date=date(2026, 7, 17),
+        end_date=date(2026, 6, 22),
+        size=4.0,
+        # So that the one blocker asserted below is the one this test is about;
+        # `done` gates a PR as well and this fixture is not about that.
+        prs=["kilnlab/kiln4py#1"],
+    )
+    span = run([backwards])[0]["task-aaa001"]
+    assert (span.start, span.end) == (date(2026, 7, 17), date(2026, 7, 17))
+    assert span.elapsed_weeks is None
+    # And the blocker beside it, asserted here rather than only in
+    # `test_validate.py`, because the two halves are one claim: the scheduler is
+    # allowed to draw nothing about this record only because something else says
+    # out loud that it is wrong.
+    assert [
+        p.field
+        for p in model.validate_all([backwards], CONFIG)
+        if p.severity == "blocker" and p.record_id == "task-aaa001"
+    ] == ["end_date"]
 
 
 def test_step5_ordering_is_by_priority_then_id():
@@ -201,25 +726,31 @@ def test_step5_a_cycle_closed_by_a_containment_edge_does_not_raise():
     lexicographical_topological_sort raises NetworkXUnfeasible here and takes the
     whole page down over one bad record."""
     records = [
-        pitch("bbb001", owner="bo"),
+        # Bet at something, because the pitch is what this asserts a span for and
+        # a record nobody has sized gets none — not even the `unscheduled`
+        # placeholder this pair lands on. A pitch IS a bet, so a size on it is the
+        # normal case rather than a prop for the test.
+        pitch("bbb001", owner="bo", size=2.0),
         task("aaa001", parent="pitch-bbb001", depends_on=["pitch-bbb001"]),
     ]
     spans, _ = run(records)
     assert {"pitch-bbb001", "task-aaa001"} <= set(spans)
 
 
-def test_step6_a_past_assignment_date_does_not_pull_work_into_the_past():
-    """ready is max(today, assigned_on, blockers) — not `assigned_on or today`,
-    which would schedule an item that was assigned last week into last week."""
-    spans, _ = run([task("aaa001", assigned_on=date(2026, 8, 13), size=2.0)])
-    assert spans["task-aaa001"] == Span(start=MONDAY, end=date(2026, 8, 28))
+def test_step6_a_past_start_date_does_not_pull_work_into_the_past():
+    """ready is max(today, start_date, blockers) — not `start_date or today`,
+    which would schedule an item whose start date was last week into last week."""
+    spans, _ = run([task("aaa001", start_date=date(2026, 8, 13), size=2.0)])
+    assert spans["task-aaa001"] == Span(
+        start=MONDAY, end=date(2026, 8, 28), budget_weeks=2.0, staffed_at=1.0, elapsed_weeks=2.0
+    )
 
 
-def test_step6_a_leaf_waits_for_today_its_assignment_date_and_its_blockers():
+def test_step6_a_leaf_waits_for_today_its_start_date_and_its_blockers():
     records = [
         task("aaa001"),
         task("aaa002", owner="bo", depends_on=["task-aaa001"]),
-        task("aaa003", owner="cy", assigned_on=date(2026, 9, 1)),
+        task("aaa003", owner="cy", start_date=date(2026, 9, 1)),
     ]
     spans, _ = run(records)
     assert spans["task-aaa002"].start == date(2026, 8, 24)  # the working day after Friday's end
@@ -234,7 +765,16 @@ def test_step7_one_item_per_worker_at_a_time_but_unowned_work_is_unlimited():
         task("aaa004", owner="bo"),
     ]
     spans, _ = run(records)
-    assert spans["task-aaa001"] == Span(start=MONDAY, end=date(2026, 8, 21), unowned=True)
+    assert spans["task-aaa001"] == Span(
+        start=MONDAY,
+        end=date(2026, 8, 21),
+        unowned=True,
+        # Nobody on it is one notional person at the nominal rate, which is what
+        # `_duration_weeks` divides by — so an unowned week is still a week.
+        budget_weeks=1.0,
+        staffed_at=1.0,
+        elapsed_weeks=1.0,
+    )
     assert spans["task-aaa002"].start == MONDAY
     assert spans["task-aaa004"].start == MONDAY  # reviewing is not doing
 
@@ -242,7 +782,9 @@ def test_step7_one_item_per_worker_at_a_time_but_unowned_work_is_unlimited():
 def test_step7_assignees_consume_capacity_and_are_not_unowned():
     records = [task("aaa001", owner=None, assignees=["cy"]), task("aaa002", owner="cy")]
     spans, _ = run(records)
-    assert spans["task-aaa001"] == Span(start=MONDAY, end=date(2026, 8, 21))
+    assert spans["task-aaa001"] == Span(
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
+    )
     assert spans["task-aaa002"].start == date(2026, 8, 24)
 
 
@@ -253,7 +795,13 @@ def test_step8_a_parent_spans_from_its_first_child_to_its_last():
         task("aaa002", owner="bo", parent="pitch-bbb001", depends_on=["task-aaa001"]),
     ]
     spans, _ = run(records)
-    assert spans["pitch-bbb001"] == Span(start=MONDAY, end=date(2026, 8, 28))
+    # The two numbers differ here, and this is the shape they were added for: the
+    # bet buys four weeks with cy on it, and the two tasks under it take two — one
+    # each, on different people, so they run side by side. `_rollup_problems` is
+    # the reader, and this is the case where it stays quiet.
+    assert spans["pitch-bbb001"] == Span(
+        start=MONDAY, end=date(2026, 8, 28), budget_weeks=4.0, staffed_at=1.0, elapsed_weeks=2.0
+    )
 
 
 def test_step9_finishing_after_the_cycle_builds_records_the_overrun_in_weeks():
@@ -298,7 +846,9 @@ def test_regression_children_are_ordered_before_their_parent():
         task("aaa002", owner="bo", priority="low", parent="pitch-bbb001", size=2.0),
     ]
     spans, _ = run(records)
-    assert spans["pitch-bbb001"] == Span(start=MONDAY, end=date(2026, 8, 28))
+    # No size on the pitch, so no box: `budget_weeks` stays None while the rolled
+    # up length is a real two weeks. A bet nobody made cannot be exceeded.
+    assert spans["pitch-bbb001"] == Span(start=MONDAY, end=date(2026, 8, 28), elapsed_weeks=2.0)
 
 
 def test_step9_a_cycle_with_no_configured_dates_is_not_an_overrun():
@@ -369,7 +919,7 @@ def test_regression_a_task_and_a_pitch_of_the_same_size_take_the_same_time():
 
 
 def test_regression_done_work_neither_occupies_the_future_nor_consumes_capacity():
-    finished = task("aaa001", status="done", assigned_on=date(2026, 7, 1), size=4.0)
+    finished = task("aaa001", status="done", start_date=date(2026, 7, 1), size=4.0)
     records = [finished, task("aaa002")]
     spans, _ = run(records)
     assert spans["task-aaa001"].end == date(2026, 7, 1)
@@ -379,13 +929,21 @@ def test_regression_done_work_neither_occupies_the_future_nor_consumes_capacity(
 def test_regression_a_parent_does_not_double_book_the_owner_of_its_only_child():
     records = [pitch("bbb001", size=2.0), task("aaa001", parent="pitch-bbb001", size=2.0)]
     spans, _ = run(records)
-    child = Span(start=MONDAY, end=date(2026, 8, 28))
+    # Identical down to the two weeks numbers: the pitch was bet at the same size
+    # as its only child and holds the same person, so the box and the contents are
+    # the same two weeks whichever end you read them from.
+    child = Span(
+        start=MONDAY, end=date(2026, 8, 28), budget_weeks=2.0, staffed_at=1.0, elapsed_weeks=2.0
+    )
     assert spans["pitch-bbb001"] == spans["task-aaa001"] == child
 
 
 def test_regression_depending_on_an_ancestor_is_rejected_and_degrades_gracefully():
     child = task("aaa001", parent="pitch-bbb001", depends_on=["pitch-bbb001"])
-    records = [pitch("bbb001", owner="bo"), child]
+    # Sized for the same reason as the containment-cycle test above: the claim
+    # here is that both records still come back, and an unsized one comes back
+    # from nowhere at all.
+    records = [pitch("bbb001", owner="bo", size=2.0), child]
     problems = model.validate_all(records, CONFIG)
     assert any(
         p.record_id == "task-aaa001" and p.field == "depends_on" and p.severity == "blocker"
@@ -405,8 +963,23 @@ def test_a_blocker_bound_start_is_explained_by_naming_the_blocker():
     _, explanations = run(records)
     assert explanations["task-aaa002"] == Explanation(
         record_id="task-aaa002",
-        text="Cannot start before 2026-08-24: task-aaa001 finishes on 2026-08-21.",
+        sentence="Cannot start before {start}: {blocker} finishes on {ends}.",
+        parts={
+            "start": date(2026, 8, 24),
+            "blocker": "task-aaa001",
+            "ends": date(2026, 8, 21),
+        },
         blocker_id="task-aaa001",
+    )
+    # And the two readings of that one sentence, which is the whole reason the
+    # dates are still dates by the time it gets here.
+    assert (
+        explanations["task-aaa002"].text
+        == "Cannot start before 2026-08-24: task-aaa001 finishes on 2026-08-21."
+    )
+    assert (
+        explanations["task-aaa002"].drawn
+        == "Cannot start before 24.08.2026: task-aaa001 finishes on 21.08.2026."
     )
 
 
@@ -414,14 +987,97 @@ def test_a_worker_bound_start_is_explained_by_naming_the_worker():
     _, explanations = run([task("aaa001"), task("aaa002")])
     assert explanations["task-aaa002"] == Explanation(
         record_id="task-aaa002",
-        text="Cannot start before 2026-08-24: ann is busy until 2026-08-21.",
+        sentence="Cannot start before {start}: {worker} is busy until {until}.",
+        parts={"start": date(2026, 8, 24), "worker": "ann", "until": date(2026, 8, 21)},
         worker_busy_until=date(2026, 8, 21),
+    )
+    assert (
+        explanations["task-aaa002"].drawn
+        == "Cannot start before 24.08.2026: ann is busy until 21.08.2026."
     )
 
 
 def test_work_that_starts_today_needs_no_explanation():
     _, explanations = run([task("aaa001")])
     assert "task-aaa001" not in explanations
+
+
+def test_a_stated_start_the_floor_overrode_is_the_one_case_that_needs_a_sentence():
+    """`if start <= floor: return None` was the whole of this branch, and it is
+    exactly where a reader needs a sentence most: the record says 2026-08-10 in
+    its frontmatter, the page says 2026-08-17 under a column labelled "Start
+    date", and nothing between the two said why. Nothing is holding this up — no
+    blocker, no busy worker — so the two fields that name those stay empty and the
+    sentence names the calendar instead.
+
+    The definite article is what makes the format worth choosing at all: "the
+    2026-08-10 you set" names a thing and "the 10.08.2026 you set" names a day.
+    The choice is the reader's, though, and not this sentence's — the record page
+    draws every other date day-first and `openproj schedule` prints its two
+    columns ISO — so what is pinned here is that the date reaches both of them as
+    a date, and reads correctly whichever asks.
+    """
+    _, explanations = run([task("aaa001", status="ready", start_date=date(2026, 8, 10))])
+
+    assert explanations["task-aaa001"] == Explanation(
+        record_id="task-aaa001",
+        sentence="Starts on {start}: the {passed} you set has passed and work has not begun.",
+        parts={"start": date(2026, 8, 17), "passed": date(2026, 8, 10)},
+    )
+    assert (
+        explanations["task-aaa001"].drawn
+        == "Starts on 17.08.2026: the 10.08.2026 you set has passed and work has not begun."
+    )
+    assert (
+        explanations["task-aaa001"].text
+        == "Starts on 2026-08-17: the 2026-08-10 you set has passed and work has not begun."
+    )
+
+
+def test_a_start_date_a_record_is_already_working_to_is_not_explained_away():
+    """The same date on a record that says the work began is not overridden at
+    all — `_place` takes it as the start — so there is nothing to explain, and a
+    sentence saying it "has passed and work has not begun" would contradict the
+    status two rows above it on the same page."""
+    began = [task("aaa001", status="in_progress", start_date=date(2026, 8, 10))]
+
+    spans, explanations = run(began)
+
+    assert spans["task-aaa001"].start == date(2026, 8, 10)
+    assert "task-aaa001" not in explanations
+
+
+def test_a_sentence_carries_one_format_at_a_time_across_the_whole_corpus(seed_root: Path):
+    """The sweep, over every sentence the real corpus produces rather than over
+    the three this file names one at a time.
+
+    `_explain` writes three sentences and only one of them was flagged in review,
+    which is exactly how a half-swept format survives: the two nobody looked at go
+    on printing `2026-08-21` beside a page whose every other date says
+    `21.08.2026`. Three literals asserted one by one cannot notice a fourth
+    sentence arriving in the old format, and a fourth sentence is the next thing
+    anybody adds here.
+
+    Both directions, because the first version of this test only had one and the
+    format then swept the wrong way: every sentence went day-first, including the
+    ones printed inside `openproj schedule --json` next to an ISO `today`. So
+    `drawn` may hold no stored date and `text` may hold no drawn one — the same
+    wording, and neither reading mixed. Ids are left alone, and `task-7d9f52` is
+    why the pattern is anchored on digits rather than on hyphens.
+    """
+    records, config, _ = model.load_repo(seed_root)
+    _, explanations = schedule(records, config, MONDAY)
+
+    assert explanations, "a corpus that explains nothing cannot fail this"
+    stored = re.compile(r"\d{4}-\d{2}-\d{2}")
+    read_out = re.compile(r"\d{2}\.\d{2}\.\d{4}")
+    assert {i: e.drawn for i, e in explanations.items() if stored.search(e.drawn)} == {}
+    assert {i: e.text for i, e in explanations.items() if read_out.search(e.text)} == {}
+    # Neither claim can pass by there being no dates in the corpus's sentences at
+    # all, which is what a pair of "nothing matched" assertions is one edit away
+    # from becoming.
+    assert [i for i, e in explanations.items() if stored.search(e.text)]
+    assert [i for i, e in explanations.items() if read_out.search(e.drawn)]
 
 
 # --------------------------------------------------------------------------- #
@@ -450,7 +1106,7 @@ def dags(draw: st.DrawFn) -> list[Record]:
                 person_weeks=draw(st.sampled_from([None, 0.1, 0.5, 1.0, 2.0])),
                 priority=draw(st.sampled_from(["high", "medium", "low"])),
                 parent=PARENT_ID if draw(st.booleans()) else None,
-                assigned_on=draw(st.sampled_from([None, MONDAY, MONDAY + timedelta(days=10)])),
+                start_date=draw(st.sampled_from([None, MONDAY, MONDAY + timedelta(days=10)])),
                 depends_on=[f"task-{d:06x}" for d in deps],
             )
         )
@@ -468,8 +1124,19 @@ def workers_of(record: Record) -> list[str]:
 def test_property_no_dependent_ever_starts_before_its_blocker_has_finished(records: list[Record]):
     spans, _ = run(records)
     for record in records:
+        # Every leaf the generator sizes is placed, and every leaf it does not is
+        # absent — asserted rather than worked around, because the loop below has
+        # to skip the absent ones and a skip that is never checked is a property
+        # that quietly stops testing anything.
+        if record.kind == "task":
+            assert (record.person_weeks is not None) == (record.id in spans)
         for blocker in record.depends_on:
-            assert spans[record.id].start > spans[blocker].end
+            # A blocker with no span holds nothing back: `_place` skips a target
+            # that is not in `spans`, which is the branch a childless project has
+            # always taken and is now also the one an unsized record takes. The
+            # claim is about the pairs the scheduler placed.
+            if record.id in spans and blocker in spans:
+                assert spans[record.id].start > spans[blocker].end
 
 
 @settings(deadline=None)
@@ -480,7 +1147,7 @@ def test_property_a_worker_never_holds_two_overlapping_spans(records: list[Recor
         booked = sorted(
             (spans[e.id].start, spans[e.id].end)
             for e in records
-            if e.kind == "task" and worker in workers_of(e)
+            if e.kind == "task" and worker in workers_of(e) and e.id in spans
         )
         assert all(a[1] < b[0] for a, b in zip(booked, booked[1:], strict=False))
 
@@ -533,10 +1200,10 @@ GOLDEN_TODAY = date(2026, 8, 17)
 #   task-53a9f0  size 2.0, one worker  -> 2 elapsed weeks, 08-17 .. 08-28
 #   pitch-48ea9e size 2.0, two workers -> 1 elapsed week,  08-17 .. 08-21
 # Three of these moved when work already in progress stopped being floored at
-# today. `task-53a9f0` is `in_progress` and assigned 2026-08-13, four days before
+# today. `task-53a9f0` is `in_progress` and starts 2026-08-13, four days before
 # GOLDEN_TODAY, so it now starts on the day it actually started; `pitch-5e7b1c`
 # is its parent and rolls up to it; `pitch-1b3f9a` is `ready` with no
-# `assigned_on` and moves earlier only because a worker comes free sooner. Each
+# `start_date` and moves earlier only because a worker comes free sooner. Each
 # was re-derived by hand against the new rule, not copied out of a failure.
 #
 # The seven hearth-island keys were added 2026-08-23. Every one of the eleven
@@ -597,12 +1264,12 @@ GOLDEN_SPANS = {
 #   task-6a5c02  size 1.5; workers dedup to [redpollard, chiffchaffy] (redpoll is
 #                owner AND assignee and counts once); cycle 37 rates 0.5 + 0.25
 #                = 0.75; 1.5 / 0.75 = 2.0 weeks = 10 working days. No blockers.
-#                `in_progress` with an `assigned_on`, so `begun`: starts on
+#                `in_progress` with a `start_date`, so `begun`: starts on
 #                2026-08-17 and today does not move it.
 #                08-17,18,19,20,21,24,25,26,27,28          -> 08-17 .. 08-28
 #
 #   task-6b7d31  size 0.5; one worker [redpollard] at 0.5; 0.5 / 0.5 = 1.0 week
-#                = 5 working days. `begun`, assigned 2026-08-13 — FOUR DAYS
+#                = 5 working days. `begun`, starting 2026-08-13 — FOUR DAYS
 #                BEFORE GOLDEN_TODAY, so the floor does not apply.
 #                08-13,14,17,18,19                          -> 08-13 .. 08-19
 #                redpollard is already booked 08-17..08-28 by task-6a5c02 and
@@ -614,7 +1281,7 @@ GOLDEN_SPANS = {
 #   task-7c8e40  size 1.0; one worker [Whimbrelson] at 0.5 (cycle 38, read
 #                although the span lands in September — the rate belongs to the
 #                bet, not to the calendar); 1.0 / 0.5 = 2.0 weeks = 10 days.
-#                It has NO `depends_on` and NO `assigned_on`. Its start comes
+#                It has NO `depends_on` and NO `start_date`. Its start comes
 #                entirely from `pitch-7b3e94`'s `depends_on: [pitch-6f2d18]`,
 #                INHERITED through `blockers_of`'s ancestor loop: pitch-6f2d18
 #                ends 08-28, next working day 08-31.
@@ -628,7 +1295,7 @@ GOLDEN_SPANS = {
 #                in `live`, not in `spans`, and skipped by the `target in spans`
 #                guard — it contributes NOTHING, which is the whole of the
 #                `off_plan_deps` claim; and pitch-6f2d18, which loses at 08-28.
-#                Then `assigned_on: 2026-12-21` beats all of it: start 12-21.
+#                Then `start_date: 2026-12-21` beats all of it: start 12-21.
 #                Twenty working days stepping over 12-24, 12-25, 12-31 and
 #                01-01 (12-26 is a Saturday and costs nothing):
 #                  12-21,22,23 | 12-28,29,30 | 01-04,05,06,07,08 |
@@ -650,7 +1317,7 @@ GOLDEN_SPANS = {
 # parent product absent from `live` and hands back the project, whose own
 # `cycle` is null.
 
-# Every done record in the corpus has a null assigned_on, and the shelved one is
+# Every done record in the corpus has a null start_date, and the shelved one is
 # out of the graph, so none of them appear on the timeline at all. The hearth
 # island adds nothing here: none of its records is `done`, and its two PRODUCTS
 # never enter `live` at all, because `RUNG["product"].schedules` is False. This
@@ -706,7 +1373,7 @@ def test_the_seed_corpus_golden_overruns_and_flags(seed_root: Path):
     assert not GOLDEN_ABSENT & spans.keys()
     overruns = {i: s.overruns_cycle_weeks for i, s in spans.items() if s.overruns_cycle_weeks}
     assert overruns == pytest.approx(GOLDEN_OVERRUNS)
-    assert not [s for s in spans.values() if s.estimated or s.unowned]
+    assert not [s for s in spans.values() if s.unowned]
     assert not [s for s in spans.values() if s.unscheduled or s.historical]
 
 
@@ -791,13 +1458,15 @@ def test_a_record_too_large_for_the_calendar_is_unscheduled_and_says_why():
     assert spans["task-aaa001"].start == spans["task-aaa001"].end == MONDAY
     assert "runs past the end of the calendar" in explanations["task-aaa001"].text
     # The plan around it is untouched: one absurd number is one absurd row.
-    assert spans["task-aaa002"] == Span(start=MONDAY, end=date(2026, 8, 21))
+    assert spans["task-aaa002"] == Span(
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
+    )
 
 
 def test_a_done_date_at_the_end_of_the_calendar_costs_its_dependent_and_nothing_else():
-    """A `done` span is whatever `assigned_on` says, and no rule refuses a date.
+    """A `done` span is whatever `start_date` says, and no rule refuses a date.
 
-    `assigned_on: 9999-12-31` typed into the detail page committed, and then
+    `start_date: 9999-12-31` typed into the detail page committed, and then
     `_next_working_day` — walking from the blocker's last day to the day after
     it — stepped one day off the calendar and raised OverflowError out of
     `build_index`. Every page that reads the index answered 500 to every reader,
@@ -810,16 +1479,27 @@ def test_a_done_date_at_the_end_of_the_calendar_costs_its_dependent_and_nothing_
     """
     spans, explanations = run(
         [
-            task("aaa001", status="done", assigned_on=date.max, prs=["o/r#1"]),
+            task("aaa001", status="done", start_date=date.max, prs=["o/r#1"]),
             task("aaa002", owner="bo", depends_on=["task-aaa001"]),
             task("aaa003", owner="cy"),
         ]
     )
 
-    assert spans["task-aaa001"] == Span(start=date.max, end=date.max, historical=True)
+    assert spans["task-aaa001"] == Span(
+        start=date.max,
+        end=date.max,
+        historical=True,
+        budget_weeks=1.0,
+        staffed_at=1.0,
+        # No length: this record states no end date, so it is a point marker, and
+        # one day read back as a fifth of a week is a measurement of nothing.
+        elapsed_weeks=None,
+    )
     assert spans["task-aaa002"].unscheduled
     assert "runs past the end of the calendar" in explanations["task-aaa002"].text
-    assert spans["task-aaa003"] == Span(start=MONDAY, end=date(2026, 8, 21))
+    assert spans["task-aaa003"] == Span(
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
+    )
 
 
 def test_a_worker_booked_to_the_end_of_the_calendar_does_not_spin():
@@ -831,7 +1511,7 @@ def test_a_worker_booked_to_the_end_of_the_calendar_does_not_spin():
     started = time.monotonic()
     spans, explanations = run(
         [
-            task("aaa001", status="done", assigned_on=date.max, prs=["o/r#1"]),
+            task("aaa001", status="done", start_date=date.max, prs=["o/r#1"]),
             task("aaa002", depends_on=["task-aaa001"]),
             task("aaa003"),  # same owner as aaa002, so it queues behind it
         ]
@@ -839,7 +1519,9 @@ def test_a_worker_booked_to_the_end_of_the_calendar_does_not_spin():
 
     assert time.monotonic() - started < 5.0
     assert spans["task-aaa002"].unscheduled
-    assert spans["task-aaa003"] == Span(start=MONDAY, end=date(2026, 8, 21))
+    assert spans["task-aaa003"] == Span(
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
+    )
 
 
 @pytest.mark.parametrize("size", [float("inf"), float("nan")])
@@ -854,7 +1536,9 @@ def test_a_size_that_is_not_a_number_is_one_bad_row(size: float):
     spans, _ = run([task("aaa001", size=size), task("aaa002", owner="bo")])
 
     assert spans["task-aaa001"].unscheduled
-    assert spans["task-aaa002"] == Span(start=MONDAY, end=date(2026, 8, 21))
+    assert spans["task-aaa002"] == Span(
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -924,8 +1608,11 @@ def test_a_loop_that_only_inheritance_closes_costs_those_records_and_no_others()
     failure this scheduler is built to avoid."""
     spans, _ = run(
         [
-            pitch("aaa001", depends_on=["pitch-aaa002"]),
-            pitch("aaa002"),
+            pitch("aaa001", depends_on=["pitch-aaa002"], size=1.0),
+            # Both bet at something: the assertion below is that the deadlocked
+            # records come back marked unscheduled, and an unsized record has no
+            # span to mark.
+            pitch("aaa002", size=1.0),
             task("bbb001", parent="pitch-aaa001", size=1.0, owner="ann"),
             task("bbb002", parent="pitch-aaa002", size=1.0, owner="bo", depends_on=["task-bbb001"]),
             task("ccc001", size=1.0, owner="cy"),
@@ -933,9 +1620,9 @@ def test_a_loop_that_only_inheritance_closes_costs_those_records_and_no_others()
     )
 
     assert any(spans[i].unscheduled for i in ("pitch-aaa002", "task-bbb002"))
-    assert spans["task-ccc001"] == Span(start=MONDAY, end=date(2026, 8, 21)), (
-        "an unrelated task keeps its dates"
-    )
+    assert spans["task-ccc001"] == Span(
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
+    ), "an unrelated task keeps its dates"
 
 
 def test_a_project_with_no_pitches_draws_nothing():
@@ -949,7 +1636,9 @@ def test_a_project_with_no_pitches_draws_nothing():
     )
 
     assert "proj-000001" not in spans
-    assert spans["task-aaa001"] == Span(start=MONDAY, end=date(2026, 8, 21))
+    assert spans["task-aaa001"] == Span(
+        start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
+    )
 
 
 def test_a_project_with_pitches_is_still_their_rollup():
@@ -960,7 +1649,15 @@ def test_a_project_with_pitches_is_still_their_rollup():
         ]
     )
 
-    assert spans["proj-000001"] == spans["pitch-aaa001"]
+    # Everything but the box, which a container does not have: `Rung.sized` says a
+    # project carries no appetite of its own, so `budget_weeks` is None on it while
+    # its only pitch was bet at a week. The dates and the rolled-up length are the
+    # pitch's exactly, which is what "still their rollup" means.
+    assert spans["proj-000001"] == spans["pitch-aaa001"].model_copy(
+        # And the divisor with it: `_box_fields` writes the box and what it was
+        # divided by together, so a record with no box has neither.
+        update={"budget_weeks": None, "staffed_at": None}
+    )
 
 
 def test_work_in_progress_starts_when_it_started_and_not_today():
@@ -974,8 +1671,8 @@ def test_work_in_progress_starts_when_it_started_and_not_today():
     after the review meeting that closed the cycle, while the two `done` ones sat
     correctly back in July.
     """
-    began = task("aaa001", status="in_progress", assigned_on=date(2026, 6, 22))
-    waiting = task("aaa002", owner="bo", status="ready", assigned_on=date(2026, 6, 22))
+    began = task("aaa001", status="in_progress", start_date=date(2026, 6, 22))
+    waiting = task("aaa002", owner="bo", status="ready", start_date=date(2026, 6, 22))
     spans, _ = schedule([began, waiting], CONFIG, date(2026, 8, 17))
 
     assert spans["task-aaa001"].start == date(2026, 6, 22)
@@ -997,8 +1694,8 @@ def test_two_things_one_person_is_already_doing_are_drawn_at_once():
     moving a date that has already happened.
     """
     both = [
-        task("aaa001", status="in_progress", assigned_on=date(2026, 6, 22)),
-        task("aaa002", status="in_progress", assigned_on=date(2026, 6, 22)),
+        task("aaa001", status="in_progress", start_date=date(2026, 6, 22)),
+        task("aaa002", status="in_progress", start_date=date(2026, 6, 22)),
     ]
     spans, _ = schedule(both, CONFIG, date(2026, 8, 17))
 

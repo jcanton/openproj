@@ -8,7 +8,7 @@ owner: redpollard
 assignees: [redpollard, chiffchaffy]
 reviewers: [Whimbrelson]
 review_waived: false
-assigned_on: 2026-08-17
+start_date: 2026-08-17
 priority: high
 depends_on: []
 tags: [hearth, scan-operator, gpu]

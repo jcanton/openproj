@@ -3695,7 +3695,11 @@ function refusals(answer, status) {
     // whole refusal rather than one line of it.
     const control = problem.field
       && document.querySelector(`[data-type][name="${CSS.escape(problem.field)}"]`);
-    return control ? `${labelOf(control)}: ${problem.message}` : problem.message;
+    // `drawn` and not `message`: this is prose drawn into the page, beside a
+    // form whose date boxes and whose "Why then" row read day-first. `message`
+    // is the same sentence with its dates ISO, which is what the CLI and
+    // `/api/index.json` take.
+    return control ? `${labelOf(control)}: ${problem.drawn}` : problem.drawn;
   });
 }
 

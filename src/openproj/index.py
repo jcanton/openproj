@@ -27,6 +27,7 @@ from .model import (
     Problem,
     Record,
     Unreadable,
+    _days_outside,
     ancestors,
     checklist,
     cycle_of,
@@ -35,17 +36,10 @@ from .model import (
     under,
     unread_fields,
     validate_all,
+    workers_on,
 )
 from .query import QueryError, evaluate, parse
 from .schedule import Explanation, Span, schedule
-
-
-def _people_on(record: Record) -> list[str]:
-    """Everyone answerable for the work, each once. The same set the scheduler
-    divides a size among, so the page and the timeline cannot disagree."""
-    named = ([record.owner] if record.owner else []) + list(record.assignees)
-    return list(dict.fromkeys(named))
-
 
 COMPUTED_PREDICATES = (
     "blocked",
@@ -124,9 +118,7 @@ class Progress(BaseModel):
         return f"{self.done:g}/{self.total:g} {'wk' if self.unit == 'weeks' else 'items'}"
 
 
-def _weighed(
-    kid: Record, config: Config, rolled: Callable[[str], Progress | None]
-) -> tuple[float, float] | None:
+def _weighed(kid: Record, rolled: Callable[[str], Progress | None]) -> tuple[float, float] | None:
     """One child's (done, total) weeks, or None when it carries no weeks at all.
 
     **The total is what was BET on that child.** A sized rung carries its own
@@ -135,13 +127,16 @@ def _weighed(
     the mismatch `_rollup_problems` exists to report rather than to hide. A
     container carries no appetite, so its total is what is under it.
 
-    `size_weeks` says in its own docstring that a container "has no size of its
-    own" and then returns `config.default_task_effort` anyway, because that
-    fallback was written for an unsized TASK. Nothing noticed until a product
-    existed, because `Rung.under` lets nothing but a product nest a container —
-    and then a product holding a project worth five weeks reported `0/0.5 wk`
-    with a meter reading "0 per cent of this bet is done", on a denominator
-    nobody typed.
+    **A sized rung nobody has sized weighs nothing, and is left out of the
+    fraction rather than counted at zero.** `size_weeks` used to answer
+    `config.default_task_effort` for it — a fallback written for an unsized task,
+    and applied to a container as readily, so a product holding a project worth
+    five weeks reported `0/0.5 wk` under a meter reading "0 per cent of this bet
+    is done", on a denominator nobody typed. Now that the answer is None, the
+    same `return None` an empty container already takes is the honest one: a
+    denominator this record cannot contribute to is a denominator it stays out
+    of, and `Progress.of` names who was counted so the panel that lists them
+    cannot list a record the fraction does not include.
 
     **The done half rolls up.** A child that is `done` counts for the whole of
     it — that is the only completion this model stores, and `Progress` says so.
@@ -163,7 +158,10 @@ def _weighed(
     """
     below = rolled(kid.id)
     if RUNG[kid.kind].sized:
-        total = size_weeks(kid, config)[0]
+        stated = size_weeks(kid)
+        if stated is None:
+            return None
+        total = stated
     elif below is not None and below.unit == "weeks":
         total = below.total
     else:
@@ -178,7 +176,6 @@ def _weighed(
 def _progress_of(
     record: Record,
     children: list[Record],
-    config: Config,
     rolled: Callable[[str], Progress | None],
 ) -> Progress | None:
     """A container's progress from what is under it, a leaf's from its own
@@ -186,7 +183,7 @@ def _progress_of(
     caller, because a container's weight is not known until its descendants are.
     """
     if children:
-        weighed = [(kid, _weighed(kid, config, rolled)) for kid in children]
+        weighed = [(kid, _weighed(kid, rolled)) for kid in children]
         counted = [(kid, half) for kid, half in weighed if half is not None]
         if counted:
             return Progress(
@@ -195,9 +192,14 @@ def _progress_of(
                 unit="weeks",
                 of=[kid.id for kid, _ in counted],
             )
-        # Every child is a container with nothing under it. There is no honest
-        # fraction here, so there is none — the same answer a leaf with no
-        # checklist gives, and for the same reason.
+        # Nothing under here weighs anything: every child is a container with
+        # nothing under it, or a sized rung nobody has sized. There is no honest
+        # fraction either way, so there is none — the same answer a leaf with no
+        # checklist gives, and for the same reason. A pitch whose tasks are all
+        # unsized therefore draws no progress panel at all, where it used to draw
+        # one over a denominator made entirely of the default: `2/2 wk` on four
+        # tasks nobody had estimated, which is a measurement of nothing presented
+        # as a measurement of the bet.
         return None
     ticked, items = checklist(record.body)
     return Progress(done=ticked, total=items, unit="items") if items else None
@@ -248,7 +250,9 @@ class Index(BaseModel):
     cycles: dict[int, tuple[date, date]]
     plans: dict[int, Cycle]
     today: date
-    default_task_effort: float
+    # `default_task_effort` was carried here too, for the four renderers that
+    # rebuilt a one-field `Config` out of it to ask `size_weeks` a question it no
+    # longer answers. Nothing computes with it, so nothing carries it.
     nominal_availability: float = 1.0
     # Carried for the same reason the windows are: the timeline has to draw where
     # a cycle stops building, and it is handed no Config to ask.
@@ -309,8 +313,70 @@ class Index(BaseModel):
         cycle counts only what was bet into it by name: a number nobody has given
         a window to is a hypothetical, and letting it absorb every running item
         would put the whole plan's load on a page for a cycle that may never run.
-        A record with no span is the other way round — it is live work in a dated
-        window, and silence about it is the failure this method exists to fix.
+
+        **A record with no span carries into nothing it has not started.** The
+        last line read `span is None or (...)`, written when no span meant the
+        scheduler had tried and failed: a rare record, live work in a dated
+        window, and worth counting late rather than losing. It stopped meaning
+        that when the default appetite went. An unsized record now leaves the
+        placer by a `continue` and gets no span at all, which is the normal state
+        of every `shaping` and `thinking` bet — precisely the population
+        `unsized_in` exists to count — so each of them was carried into every
+        dated cycle after its own, for ever. The `· N not sized` badge that exists
+        to explain a shrinking total over-reported on all of them, and
+        `carried_into` listed bets nobody has shaped as carryover into cycles they
+        have nothing to do with. A bet is a fact somebody stated and it counts
+        where it was stated, which the `mine == cycle` line above has already
+        answered.
+
+        **A placement is not the only thing that says work is still running.**
+        Dropping that disjunct outright overshot in the other direction. The size
+        gate is `ready` only, so unsized-and-`in_progress` is reachable by the
+        normal path rather than by skipping a rung — §2 of `design/time-model.md`
+        counts three such records in icon4py-plan — and each of them vanished
+        from the very cycle somebody is working on it in: no weeks, which is
+        right, and no `· N not sized` beside them, which is the silent shrink the
+        badge was added to prevent. `in_progress` plus a start date is what is
+        left when there is no span, and what it can honestly claim is the stretch
+        from that date to today. Not one day further: nobody has said how long
+        this takes, so a forecast would be an invention, and inventing one
+        forwards is precisely the haunting above. `today >= window[0]` is that
+        limit written down — a cycle that has not opened can never pick this up.
+        A record `in_progress` with no start date at all is a blocker at the door;
+        here it is bounded at today, so it counts in the cycle running now and in
+        no earlier one.
+
+        **Only where there is no span at all**, and the sized sibling in
+        `test_work_that_has_started_is_counted_where_it_is_running_even_with_no_size`
+        is the boundary. A record the scheduler placed is answered by its dates,
+        because a status nobody has kept up to date is not a second calendar: a
+        task that ran 22–26 June and is still marked `in_progress` is carried by
+        its span into the cycles that span touches and no others. Reading the
+        status there too would put every stale record into every cycle from its
+        start to today — the same haunting, differently sourced.
+
+        **The state that clause was written for is nearly gone, and what is left
+        of it has no weeks in it.** A record the scheduler tried to place and
+        could not — a duration that outruns the calendar — is given
+        `Span(unscheduled=True)` at the floor rather than nothing, so it is still
+        counted, in the cycle today falls in. The other branch, the one for a
+        dependency cycle, `continue`s wherever there is no duration to lay out,
+        and that is two populations: a leaf nobody has sized, which is the case
+        above arriving by a second route, and every CONTAINER, since a project
+        carries no size field at all and `_duration_weeks` is None for one
+        however complete it is. So a project caught in a dependency cycle has no
+        span here, and this said for a while that nothing did.
+
+        What that costs is carryover, and only for a rung with no weeks to carry.
+        The stamp answers on its own for the cycle a record was bet into — the
+        `mine == cycle` line below returns True with no span in it — so a span is
+        what decides whether an EARLIER bet is still running in this one, and
+        what a spanless container is missing from is later cycles' carryover
+        lists and nothing else. No bar and no percentage moves with it, because
+        `_charged` skips anything holding children as a rollup and never charged
+        it in the first place. That is the same landing an empty project already
+        has, and the alternative is the invented pair of dates §2 of
+        `design/time-model.md` argues against at length.
 
         Carryover is decided by the dates and not by the status. It asked for
         `in_progress`, which dropped a `ready` task sitting under a carried pitch
@@ -333,7 +399,15 @@ class Index(BaseModel):
         if window is None:
             return False
         span = self.spans.get(record.id)
-        return span is None or (span.start <= window[1] and span.end >= window[0])
+        if span is not None:
+            return span.start <= window[1] and span.end >= window[0]
+        if record.status != "in_progress":
+            return False
+        # The one measurement an unsized record has. `or self.today` is a bound
+        # and never a date this returns or draws: with no start date the stretch
+        # collapses to today, which is the cycle the work is demonstrably in.
+        began = record.start_date or self.today
+        return began <= window[1] and self.today >= window[0]
 
     def build_end(self, cycle: int | None) -> date | None:
         """The last day of a cycle's build.
@@ -363,18 +437,79 @@ class Index(BaseModel):
         Nothing in the plan records how much of a bet is done — the checklist in
         its body is a hint, not a measurement — and an invented percentage is a
         worse answer than a known overcount that a person can see and argue with.
+
+        Work nobody has sized charges nobody, and `unsized_in` is how a page says
+        so — read them together or the number is smaller than it was last week
+        for a reason nothing on the screen gives.
+        """
+        return self._charged(cycle)[0]
+
+    def unsized_in(self, cycle: int) -> dict[str, list[str]]:
+        """Ids counted against this cycle that state no size, by the person they
+        are on the hook for.
+
+        The other half of `load`. `thinking` and `shaping` work is legitimately
+        unsized — a bet nobody has shaped yet has no appetite, and the validator
+        deliberately does not demand one — but `counts_in` says all of it is what
+        somebody's next weeks are spent on, so it used to be charged half a week
+        each and quietly held up a total. With the default gone the total is the
+        weeks somebody actually stated, which is smaller and correct, and a
+        smaller number arriving with no explanation is exactly the defect this
+        pairing prevents.
+
+        **Where it was bet, and then wherever it is actually being worked on.**
+        Everything that lands in here is a sized-nothing leaf, and a leaf with no
+        size gets no span, so this list and `counts_in`'s carryover arm are two
+        readings of one condition — which is why it is that method that answers
+        both, and not a second rule written here. A bet nobody has started is
+        counted once, in the cycle it was stated in, and haunts nothing after it;
+        one that is `in_progress` is counted again in each cycle between its start
+        date and today, because that is where somebody's weeks are going. Both of
+        those are `counts_in`'s wording, so the count on a page and the weeks
+        beside it are over one set of records rather than two that agree most of
+        the time.
+
+        Keyed by person rather than counted, because the two callers want
+        different arithmetic over the same walk: a person's own figure names the
+        records on their own hook, and a cycle's names the distinct records
+        behind every figure on the page — a record with two assignees is one
+        unsized bet on the cycle card and one on each of their rows.
+        """
+        return self._charged(cycle)[1]
+
+    def _charged(self, cycle: int) -> tuple[dict[str, float], dict[str, list[str]]]:
+        """One walk, both answers: the weeks charged and the records that could
+        not be.
+
+        Two methods over one loop rather than two loops, because the three gates
+        that decide whether a record is charged at all — `counts_in`, having
+        somebody on it, and not being a rollup of its own children — are what a
+        second walk would get subtly wrong, and a person's load disagreeing with
+        the count of what is missing from it is worse than either number alone.
+
+        Which is why running-but-unsized work was answered by widening
+        `counts_in` rather than by giving `unsized_in` a question of its own. A
+        badge drawn over a wider set than the bar beside it, and than the
+        carryover list the page prints underneath to explain the bar, is the same
+        disagreement the carryover arm was just fixed for, moved one method along
+        — and a count of records nothing on the page names is a number you cannot
+        act on.
         """
         held: dict[str, float] = {}
+        unsized: dict[str, list[str]] = {}
         for record in self.plan.values():
             if not self.counts_in(record, cycle):
                 continue
-            people = _people_on(record)
+            people = workers_on(record)
             if not people or self.children.get(record.id):
                 continue
-            size, _ = size_weeks(record, Config(default_task_effort=self.default_task_effort))
+            size = size_weeks(record)
             for who in people:
-                held[who] = held.get(who, 0.0) + size / len(people)
-        return held
+                if size is None:
+                    unsized.setdefault(who, []).append(record.id)
+                else:
+                    held[who] = held.get(who, 0.0) + size / len(people)
+        return held, {who: sorted(ids) for who, ids in unsized.items()}
 
     def carried_into(self, cycle: int) -> list[str]:
         """Ids counted against this cycle that were bet in an earlier one."""
@@ -383,6 +518,154 @@ class Index(BaseModel):
             for record in self.plan.values()
             if cycle_of(record, self.plan) != cycle and self.counts_in(record, cycle)
         )
+
+    def delivered_in(self, cycle: int) -> list[str]:
+        """Ids of the finished work this cycle can claim, earliest first.
+
+        **The counterpart to `counts_in`, and deliberately not a widening of it.**
+        `counts_in` returns False for `done` on its first line and is the only
+        gate in `load` and `carried_into`, so after a review every person on
+        cycle 37's page read `0.0 wk of 4.0`: a cycle's whole output stopped
+        counting the moment somebody marked it done, and the over-capacity flag
+        could only ever be true about the future. The fix is not to let finished
+        work back into that gate — it answers "what are this person's next weeks
+        spent on", which the load bars and the capacity percentages are readings
+        of, and admitting last quarter's work would change what every one of
+        those numbers means. §5 of `design/time-model.md` says so in as many
+        words. So this is a second question with a second answer, and the planned
+        figures keep the meaning they have.
+
+        **The window decides, not the stamp.** `cycle:` records where a bet was
+        made and is never re-stamped (D-C1) — that is what keeps an overrun
+        accusing — so a pitch bet in 36 and finished in October delivered in 37,
+        and reading the stamp would file it under the cycle it slipped out of.
+        The date somebody wrote down is the only thing that says when work
+        landed, which is why §4 made it a stored field rather than a derived one.
+
+        **Every finished record with an end date is delivered somewhere, because
+        the windows do not tile the calendar.** This was `window[0] <= end_date
+        <= window[1]` asked of the queried cycle and nothing else, which has a
+        third answer nobody had written a branch for: a done record whose end
+        date is in no window at all took the dated arm, matched no cycle, and
+        appeared in no Delivered block anywhere. Both shipped corpora have a real
+        gap for it to fall into — the unnumbered month between cycles 35 and 36,
+        the conference and release window that `weeks_outside_every_cycle`'s
+        docstring names — and that date is inside `dates_within_weeks_of_a_cycle`
+        of the plan, so no warning fired either, while `counts_in` had already
+        refused the record for being done. A cycle silently losing a person's
+        work is the failure §6 exists to end, and it was living inside the block
+        written to report what a cycle produced. So a date in no window is
+        claimed by the window it is nearest to; see `_claiming_cycle`.
+
+        **Nearest, and not the cycle the bet was stamped with.** That was the
+        other candidate and it loses twice. It is the reading the paragraph above
+        rejects — a bet made in 34 and finished in the gap before 36 would be
+        filed under 34, the cycle it slipped out of — and it is the choice that
+        cannot show itself: a row under cycle 34 printing an end date from June
+        gives the reader nothing to work with. Nearest puts the row against the
+        window it sits just outside, and that window is printed at the top of the
+        same page as Starts on and Cool-down ends, so the date in the row is
+        readable against it. The sort below keeps such a row at the head or the
+        foot of the block rather than in the middle of it, which is the rest of
+        what a reader needs to see that it is there by nearness.
+
+        **A done record with no end date is listed under the cycle it was bet
+        in.** Nothing about it can be tested against a window, and there are
+        such records by design: `end_date` is a blocker at rule version 5 and
+        every record written before that warns instead, so the corpus carries
+        five of them annotated `# was fabricated during migration; unknown`.
+        Dropping them would make this block quietly under-report exactly the
+        cycles whose work predates the field — a shorter list with nothing on the
+        page to say why, which is the defect the `· N not sized` badge exists to
+        prevent one method along. They are named here and the page says the end
+        date is missing rather than inventing one; a record carrying neither an
+        end date nor a bet cycle is claimed by no cycle, because there is nothing
+        left to claim it by.
+
+        **`done` and not `shelved`.** `counts_in` refuses both on one line
+        because neither is anybody's next week, and it is right to. They part
+        company here: work that was dropped delivered nothing, and putting it in
+        a list headed by what a cycle produced would be the one place in the tool
+        where abandoning a bet reads as landing it.
+
+        **No rollup or ownerless exclusion, unlike `load`.** Those two are there
+        because `load` SUMS, and a pitch charging its own appetite beside its
+        children's counts one bet twice. This is a list and adds nothing up, so
+        both belong on it: the pitch is the bet the room made, and its tasks are
+        the work somebody actually did all cycle — which is the complaint at the
+        top of §5, and dropping either half of it answers half the complaint.
+        """
+        dated: list[Record] = []
+        undated: list[Record] = []
+        for record in self.plan.values():
+            if record.status != "done":
+                continue
+            # `and self.cycles`: a plan that has dated no cycle at all — the
+            # ordinary state of a repository somebody started this morning, and
+            # the same bargain `weeks_outside_every_cycle` strikes — has no
+            # window for a date to be near, so its finished work falls to the
+            # stamp arm below with the undated records rather than to no arm at
+            # all. Which is this method's whole rule: everything finished is
+            # claimed by some cycle, or by none only because nothing is left to
+            # claim it by.
+            if record.end_date is not None and self.cycles:
+                if self._claiming_cycle(record.end_date) == cycle:
+                    dated.append(record)
+            elif cycle_of(record, self.plan) == cycle:
+                undated.append(record)
+        # Chronological, because a review reads a cycle as the story of one, and
+        # the records nothing can date after them rather than interleaved at a
+        # position no date put them in. Two sorted lists rather than one key with
+        # a placeholder date in it: a placeholder that never decides anything is
+        # still a date somebody has to read past to see that it does not.
+        #
+        # It also does the reader one favour for free: a record claimed by
+        # nearness rather than by containment ended before this window opened or
+        # after it closed, so it sorts to the head or the foot of the block and
+        # never into the middle of the cycle's own story.
+        dated.sort(key=lambda record: (record.end_date, record.id))
+        undated.sort(key=lambda record: record.id)
+        return [record.id for record in dated + undated]
+
+    def _claiming_cycle(self, day: date) -> int:
+        """Which dated cycle a finished record's end date is filed under.
+
+        The window that holds the day, and where no window does, the window it is
+        nearest to. Only `delivered_in` asks, and it has already checked that
+        `self.cycles` is non-empty: a plan that has dated nothing gets no answer
+        here rather than a poor one.
+
+        Distance is to the window and not to its midpoint — a day is zero from a
+        window it is inside, and otherwise as many days as lie between it and the
+        nearer end of one. Written as one `min` over a key rather than as a
+        containment pass followed by a nearness pass, because a day inside a
+        window is zero away from it and beats every day outside one by that
+        alone; two passes would be two places to keep that precedence true.
+
+        Ties go to the earlier window: a day exactly halfway across an unnumbered
+        month is filed under the cycle the work was running in when that cycle
+        ended, rather than under the one it never reached. The same clause
+        decides the other tie nothing forbids — a hand-written `cycles.yaml` may
+        overlap two windows, and a day inside both is claimed by the earlier of
+        them instead of being listed under both, which is the one answer this
+        method may not give.
+
+        The per-window arithmetic is `_days_outside`, shared with
+        `weeks_outside_every_cycle` rather than written a second time here: both
+        turn on the same inclusive reading of a window's two ends, and one fact
+        with two implementations is what this repository has been bitten three
+        times by. What the two rules do with those distances is where they part.
+        That one takes the smallest and asks whether it is past an allowance,
+        because a date in the gap between two windows is an ordinary date nobody
+        should be warned about; this one has to name a cycle, so it keeps the
+        window the smallest distance belongs to.
+        """
+
+        def distance(number: int) -> tuple[int, date, int]:
+            window = self.cycles[number]
+            return _days_outside(day, window), window[0], number
+
+        return min(self.cycles, key=distance)
 
 
 def _project_of(record: Record, by_id: dict[str, Record]) -> str | None:
@@ -619,7 +902,7 @@ def build_index(
         # already a containment problem, and counting it into a pitch's progress
         # would let the bad file move a number on the table.
         kids = [plan[k] for k in children[record_id] if k in plan and plan[k].status != "shelved"]
-        rolling[record_id] = _progress_of(plan[record_id], kids, config, _rolled)
+        rolling[record_id] = _progress_of(plan[record_id], kids, _rolled)
         return rolling[record_id]
 
     # Facets, progress and deferred scope are PLAN facts: an unplanned kind in a
@@ -646,7 +929,15 @@ def build_index(
         blocks=blocks,
         spans=spans,
         explanations=explanations,
-        problems=validate_all(parsed, config),
+        # With the spans, which is what turns `_rollup_problems` on: whether a
+        # pitch's tasks fit is a comparison between two numbers the scheduler
+        # computed, and `model.py` cannot reach the scheduler to compute them.
+        # `schedule` ran above, so this costs nothing beyond passing the dict.
+        # `today` for the same reason, and it is not `date.today()`'s business to
+        # answer here: this index may be drawn around a pinned day — `openproj
+        # demo` pins one — and a rule that asked the clock instead would report a
+        # start date as passed on a plan whose whole calendar says otherwise.
+        problems=validate_all(parsed, config, spans, today),
         unreadable=list(unreadable),
         facets={field: _ordered(field, values) for field, values in facets.items()}
         | {"predicate": sorted(COMPUTED_PREDICATES)},
@@ -659,7 +950,6 @@ def build_index(
         repositories=config.repositories,
         icons={login: person.icon for login, person in config.people.items() if person.icon},
         today=today,
-        default_task_effort=config.default_task_effort,
         holidays=config.holidays,
         progress=progress,
         for_later=for_later,

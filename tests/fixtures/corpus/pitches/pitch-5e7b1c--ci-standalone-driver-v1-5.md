@@ -8,7 +8,7 @@ owner: null            # REQUIRED from schema_version 1; not in source
 reviewers: []          # REQUIRED from schema_version 1; not in source
 person_weeks: 4.0
 assignees: [jackdawrie, merganserly]
-assigned_on: 2026-05-26
+start_date: 2026-05-26
 cycle: 36
 priority: high
 depends_on: []
@@ -58,9 +58,10 @@ and neither of those is a pull request. Related work elsewhere in the repository
 further down. Promoting any of it into the field would make this record claim credit for somebody
 else's merge.
 
-**`assigned_on` is the betting-table date**, 2026-05-26 — the day the room agreed to this, which is
-also the day the shaping note was written. It is not the day anybody started typing, and nothing
-here pretends that it is.
+**`start_date` is the betting-table date**, 2026-05-26 — the day the room agreed to this, which is
+also the day the shaping note was written. It is the only date the source carries, and this record
+is `in_progress`, so it stands as the day the work began. Nobody wrote down a later one, and this
+note is here so that the date is read as the best thing available rather than as a measurement.
 
 ---
 

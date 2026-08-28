@@ -110,11 +110,11 @@ def test_optional_fields_still_accept_real_values():
         person_weeks=1.0,
         owner="merganserly",
         reviewers=["jackdawrie"],
-        assigned_on=date(2026, 8, 13),
+        start_date=date(2026, 8, 13),
         depends_on=["task-5a4e39"],
     )
     assert pitch.person_weeks == 1.0
-    assert pitch.assigned_on == date(2026, 8, 13)
+    assert pitch.start_date == date(2026, 8, 13)
 
 
 def test_status_and_kind_are_still_constrained():

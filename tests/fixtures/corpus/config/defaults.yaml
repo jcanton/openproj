@@ -8,4 +8,3 @@
 # created from now on.
 schema_version: 2
 nominal_availability: 1.0   # single global figure (D4); per-person overrides not used
-default_task_effort: 0.5    # weeks assumed when a record states no size

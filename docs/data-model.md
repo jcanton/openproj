@@ -9,8 +9,8 @@ has the pages these structures are drawn on; this file is the structures.
 ## One type, six kinds
 
 There is one record type. `Record` (`model.py`) carries what every kind shares — `id`, `kind`,
-`title`, `parent`, `status`, `owner`, `assignees`, `reviewers`, `review_waived`, `assigned_on`,
-`priority`, `depends_on`, `cycle`, `tags`, `prs`, `body` — and `kind` says which rung it is on. The
+`title`, `parent`, `status`, `owner`, `assignees`, `reviewers`, `review_waived`, `start_date`,
+`end_date`, `priority`, `depends_on`, `cycle`, `tags`, `prs`, `body` — and `kind` says which rung it is on. The
 six rungs are subclasses that add fields. They are not six different things: one model, one parser,
 one write path, one page.
 
@@ -112,10 +112,17 @@ flowchart LR
 ## Sizes, dependencies, requiredness
 
 A size is `person_weeks` on a pitch and on a task, and the people on it divide it, each at their own
-availability. A pitch with tasks takes its dates and its capacity from them, which makes its own
-appetite the **bet**: what the room agreed to spend, kept as written. Where the tasks add up to more,
-the page says so and `openproj check` warns; nothing refuses the save, and neither a pitch nor a
-cycle over its capacity is ever a CI failure.
+availability. **There is no default.** A record nobody has sized is not scheduled, weighs nothing in
+its parent's progress and charges nobody's capacity, and every page that adds weeks up says how many
+records it could not count — a number the tool invented is a number that arrives everywhere looking
+like one somebody estimated. Shaping and thinking work is unsized by definition and stays that way;
+`ready` and `in_progress` both demand a size. A pitch with tasks takes its dates and its capacity
+from them, which makes its own appetite the **bet**: what the room agreed to spend, kept as written.
+The comparison against it is calendar against calendar — the bet over the people on it is a number
+of weeks, and the days its tasks occupy are another — so a bet that holds the work as effort can
+still fail to hold it as time, when one person has to do two things in turn. Where the tasks do not
+fit, the page says so and `openproj check` warns; nothing refuses the save, and neither a pitch nor
+a cycle over its capacity is ever a CI failure.
 
 Only `depends_on` is stored, on the dependent. Any kind may block any kind, and an edge written on a
 pitch is inherited by everything inside it. The one forbidden direction is your own containment
@@ -154,8 +161,8 @@ accusing. Everything under a pitch takes the pitch's, and a project therefore ha
 filename and is not a field**: nothing points at a person, so a second copy would only give the two
 halves of the app something to disagree about.
 
-**`Config`** — `config/*.yaml`: `schema_version`, `nominal_availability`, `default_task_effort`,
-`cooldown_weeks`, `holidays`, the cycle windows, and `known_people`, the **roster**. Empty means the
+**`Config`** — `config/*.yaml`: `schema_version`, `nominal_availability`, `cooldown_weeks`,
+`holidays`, the cycle windows, and `known_people`, the **roster**. Empty means the
 check is off; when it does name people, somebody who is not on it is a warning and never a blocker.
 
 **`Problem` and `Unreadable`** — a `Problem` is keyed by record id, so every page hangs it on that

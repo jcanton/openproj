@@ -5,16 +5,16 @@ title: Port the near-IR burner
 parent: pitch-0e0001
 status: ready
 owner: kittiwaker
-assignees: [kittiwaker]
-reviewers: [hoopoegrove, turnstonegru]
+assignees: [kittiwaker, hoopoegrove]
+reviewers: [turnstonegru, jackdawrie]
 review_waived: false
-assigned_on: 2026-08-17
+start_date: 2026-08-17
 priority: high
 depends_on: []
 tags: [radiation, near-infrared, two-stream, hearth]
 prs: []
 created_schema_version: 2
-person_weeks: 3.5
+person_weeks: 3.0
 ---
 
 # Port the near-IR burner
@@ -29,7 +29,7 @@ g-point reduction this task lands first.
 
 ## Appetite
 
-3.5 weeks, longer than far-IR because the shared infrastructure is charged here.
+Three weeks, two people, longer than far-IR because the shared infrastructure is charged here.
 
 ## Solution
 
