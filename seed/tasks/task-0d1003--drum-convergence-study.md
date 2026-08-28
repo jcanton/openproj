@@ -4,9 +4,9 @@ kind: task
 title: Convergence study on the drum mesh
 parent: pitch-0d0001
 status: ready
-owner: jackdawrie
-assignees: [jackdawrie, Oxpeckerly]
-reviewers: [Oxpeckerly, avocetline]
+owner: nightjarelli
+assignees: [nightjarelli, Oxpeckerly]
+reviewers: [avocetline, jackdawrie]
 review_waived: false
 start_date: 2026-08-17
 priority: high
@@ -30,7 +30,7 @@ the test.
 
 ## Appetite
 
-Two and a half weeks: the measurement harness is the work, the runs are minutes.
+Two and a half weeks, two people: the measurement harness is the work, the runs are minutes.
 
 ## Solution
 

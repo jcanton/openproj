@@ -10,11 +10,11 @@ reviewers: [firecresta, avocetline]
 review_waived: false
 start_date: 2026-08-17
 priority: high
-depends_on: [task-0f1001]
+depends_on: []
 tags: [hearth, scan-operator, benchmark, gpu]
 prs: []
 created_schema_version: 2
-person_weeks: 1.5
+person_weeks: 1.0
 ---
 
 # Bench the scan against the CPU reference
@@ -30,6 +30,12 @@ a green tick from a tolerance that was widened to fit.
 The two lowerings do not sum a column in the same order and will not be bitwise equal. That is
 expected and it is exactly why an unexplained delta must not be allowed to hide behind an
 expected one.
+
+This carries no `depends_on` edge to `task-0f1001`, and that is the shape the betting table
+asked for: the meshes, the harness and the CSV writer are most of the work and none of them needs
+the second lowering to exist. Only the last two boxes below do, and by then the lowering is on a
+branch somebody can point the harness at. A hard edge here would have parked Siskin for a
+fortnight to no purpose.
 
 ## Solution
 

@@ -5,8 +5,8 @@ title: Port the bed solver
 parent: pitch-0c0001
 status: ready
 owner: jackdawrie
-assignees: [jackdawrie]
-reviewers: [mudlarkish, hoopoegrove]
+assignees: [jackdawrie, mudlarkish]
+reviewers: [hoopoegrove, turnstonegru]
 review_waived: false
 start_date: 2026-08-17
 priority: high
@@ -14,7 +14,7 @@ depends_on: [task-0f1001]
 tags: [drumbed-core, bed-heat, scan-operator, tap-points, hearth, kiln4py]
 prs: []
 created_schema_version: 2
-person_weeks: 4.0
+person_weeks: 3.5
 ---
 
 # Port the bed solver
@@ -31,7 +31,7 @@ Missing: the other half of the solve, and any validation against real KILN outpu
 
 ## Appetite
 
-Four weeks.
+Three and a half weeks, two people.
 
 ## Solution
 

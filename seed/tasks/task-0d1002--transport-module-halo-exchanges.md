@@ -5,12 +5,12 @@ title: Halo exchanges in the transport module
 parent: pitch-0d0001
 status: in_progress
 owner: Oxpeckerly
-assignees: [Oxpeckerly, nightjarelli]
+assignees: [Oxpeckerly]
 reviewers: [nightjarelli, hoopoegrove]
 review_waived: false
-start_date: 2026-06-29
+start_date: 2026-06-22
 priority: high
-depends_on: [task-0d1001]
+depends_on: []
 tags: [griddle, transport, halo-exchange, mpi, kiln4py]
 prs: ["kilnlab/kiln4py#2108"]
 created_schema_version: 2
@@ -27,6 +27,12 @@ nor FMA contraction noise — it is a stale halo, either a missing exchange or o
 wrong point in the substep. Second order is what changes this: first-order upwind
 only needs the donor cell, so its halo width need not survive a reconstruction over the whole
 `C2F2C` patch and a flux gathering over `F2C`.
+
+Nothing here waits on the blend coefficients, which is why this carries no `depends_on` edge to
+`task-0d1001` however much the pitch names them first. The audit is about which field crosses
+which boundary at which point in the substep, and the exchange calls read the same stencil access
+pattern whether the reconstruction is first or second order. The two ran side by side and the
+coefficients landed first by a week.
 
 ## Appetite
 

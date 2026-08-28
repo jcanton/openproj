@@ -5,17 +5,17 @@ title: Second-order FLUME blend coefficients
 parent: pitch-0d0001
 status: done
 owner: nightjarelli
-assignees: [nightjarelli, Dunnocksen]
+assignees: [nightjarelli]
 reviewers: [Oxpeckerly, hoopoegrove]
 review_waived: false
-start_date: 2026-02-02
-end_date: 2026-02-13
+start_date: 2026-06-22
+end_date: 2026-07-03
 priority: high
 depends_on: []
 tags: [griddle, transport, least-squares, interpolation, drum]
 prs: ["kilnlab/kiln4py#2341", "kilnlab/kiln4py#2384"]
 created_schema_version: 2
-person_weeks: 3.0
+person_weeks: 2.0
 ---
 
 # Second-order FLUME blend coefficients
@@ -29,7 +29,7 @@ it as `blend_pinv`. kiln4py had the flux stencils but not the coefficients.
 
 ## Appetite
 
-Three weeks. Init-time numpy, so the cost is matching KILN's conventions, not performance.
+Two weeks. Init-time numpy, so the cost is matching KILN's conventions, not performance.
 
 ## Solution
 

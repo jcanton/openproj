@@ -14,7 +14,7 @@ depends_on: []
 tags: [kiln4py, distributed, reductions, numpy, bitwise-reproducibility]
 prs: []
 created_schema_version: 2
-person_weeks: 2.5
+person_weeks: 2.0
 ---
 
 ## Problem
@@ -28,7 +28,7 @@ the old answer, and we handle that by not upgrading.
 
 ## Appetite
 
-2.5 weeks; branch `deterministic-means` is a starting point, not a blank page.
+Two weeks; branch `deterministic-means` is a starting point, not a blank page.
 
 ## Solution
 

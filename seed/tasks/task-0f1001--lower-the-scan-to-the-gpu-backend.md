@@ -14,7 +14,7 @@ depends_on: []
 tags: [hearth, scan-operator, gpu, lowering]
 prs: ["kilnlab/hearth#437"]
 created_schema_version: 2
-person_weeks: 2.5
+person_weeks: 2.0
 ---
 
 # Lower the scan to the GPU backend
