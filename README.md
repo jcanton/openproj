@@ -91,8 +91,10 @@ uv run openproj schedule seed     # the derived dates, one line per record, with
 
 `check` is the load-bearing one, and it is deliberately quiet about warnings. A warning that fails
 the build is a rule that gets reverted rather than adopted, so only a blocker is worth gating a
-merge on. All three take a plan repository as their first argument; `schedule` and `render` also
-take `--today`, because half of what they print depends on which day it is.
+merge on. All three take a plan repository as their first argument, and all three take `--today`,
+because half of what they say depends on which day it is — `check` included, since one rule now asks
+whether a start date has gone by. `seed/` is written around 2026-08-17, so
+`openproj check seed --today 2026-08-17` is the check that agrees with what `openproj demo` draws.
 
 ## From anywhere, with nothing installed
 

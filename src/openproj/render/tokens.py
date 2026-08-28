@@ -5,7 +5,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from ..model import KINDS as KIND_LADDER
-from ..model import PARENT_KINDS, STATUS_ORDER, Record, required_at, unread_fields
+from ..model import (
+    PARENT_KINDS,
+    STATUS_ORDER,
+    Record,
+    # Day-first dates moved down to `model.py` when the scheduler's explanations
+    # needed the same format and could not reach up here. Re-exported from this
+    # module unchanged, because the pages, the Jinja `on()` global and the tests
+    # all name it here and there is one implementation either way.
+    _read_date,
+    required_at,
+    unread_fields,
+)
 from .icons import _ICON_SVG
 
 
@@ -658,18 +669,6 @@ def _ago(epoch: int, now: int) -> str:
         return "an hour ago" if hours == 1 else f"{hours} hours ago"
     days = gone // 86400
     return "a day ago" if days == 1 else f"{days} days ago"
-
-
-# A date, the way this app reads one out loud: `14.07.2026`, day first, dots.
-# jcanton, 2026-08-21: "I'd like to reverse the order of the dates in the entire
-# app". Only what is DRAWN — what is stored, sorted, put in a `<input type=date>`
-# and sent over the API stays `2026-07-14`, which is the one format that sorts as
-# text, parses without a locale and cannot be read as a different day in another
-# country.
-def _read_date(value: object) -> str:
-    text = str(value or "")
-    parts = text.split("-")
-    return f"{parts[2]}.{parts[1]}.{parts[0]}" if len(parts) == 3 else text
 
 
 # Fields that name a person. They get a datalist of everyone already in the corpus,

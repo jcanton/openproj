@@ -39,6 +39,7 @@ from .model import (
     RUNG,
     Config,
     Record,
+    _read_date,
     ancestors,
     cycle_of,
     days_after,
@@ -884,6 +885,16 @@ def _explain(
     DID type sitting in the frontmatter two rows above. This branch returned None
     there, which is silence at precisely the point where the page contradicts the
     file.
+
+    **Every date here is drawn day-first**, through the same `_read_date` the
+    table, the record page and the cards read theirs out with. These sentences are
+    prose set beside those dates — on the record page, in the timeline's tooltip
+    and in `openproj schedule` — and an ISO date inside one reads as an
+    identifier rather than as a day. It was worst behind a definite article, where
+    "the 2026-08-10 you set" is a thing with a name and "the 10.08.2026 you set" is
+    a date. The two neighbouring sentences are swept with it rather than left
+    speaking the format this function used to: one function saying the same day two
+    ways is worse than either way on its own.
     """
     if start <= floor:
         if passed is not None:
@@ -893,20 +904,27 @@ def _explain(
                 # this up. The constraint is the calendar, and the two fields
                 # beside `text` name the two things that are not it.
                 text=(
-                    f"Starts on {start}: the {passed} you set has passed and work has not begun."
+                    f"Starts on {_read_date(start)}: the {_read_date(passed)} you set "
+                    "has passed and work has not begun."
                 ),
             )
         return None
     if busy_until is not None and busy_until >= blocker_ready:
         return Explanation(
             record_id=record_id,
-            text=f"Cannot start before {start}: {busy_worker} is busy until {busy_until}.",
+            text=(
+                f"Cannot start before {_read_date(start)}: "
+                f"{busy_worker} is busy until {_read_date(busy_until)}."
+            ),
             worker_busy_until=busy_until,
         )
     if blocker_id is not None:
         return Explanation(
             record_id=record_id,
-            text=f"Cannot start before {start}: {blocker_id} finishes on {spans[blocker_id].end}.",
+            text=(
+                f"Cannot start before {_read_date(start)}: "
+                f"{blocker_id} finishes on {_read_date(spans[blocker_id].end)}."
+            ),
             blocker_id=blocker_id,
         )
     return None

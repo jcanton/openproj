@@ -131,6 +131,29 @@ def test_the_shipped_demo_corpus_validates_clean(demo_root: Path, capsys):
     )
 
 
+def test_check_is_asked_about_a_day_rather_than_reading_the_clock(demo_root: Path, capsys):
+    """`openproj demo` draws `seed/` around 2026-08-17, which the corpus writes
+    down four times; `check` read `date.today()`. So from any day after that one
+    the two disagreed about the same files: eleven records are `ready` with a
+    start date of the first day of cycle 37, and the command reported every one of
+    them as a date that has gone by while every page of the running demo drew them
+    as future. Both take the day the same way now — through `build_index`, which
+    is the one place a schedule and a validation are paired around a single day —
+    and this is the flag that names it.
+
+    Asserted in both directions on purpose. "No such line at the pinned day"
+    passes just as well on a command that has stopped reporting the rule at all,
+    so the other day has to show the eleven the first one is claiming to have
+    silenced.
+    """
+    assert main(["check", str(demo_root), "--today", "2026-08-17"]) == 0
+    passed = "has passed and the work has not begun"
+    assert passed not in capsys.readouterr().out
+
+    assert main(["check", str(demo_root), "--today", "2026-12-01"]) == 0
+    assert capsys.readouterr().out.count(passed) == 11
+
+
 def test_serve_is_reachable_from_the_command_line():
     """The README promises `openproj serve`; a parser that has never heard of it
     turns that promise into a stack trace at the worst moment."""

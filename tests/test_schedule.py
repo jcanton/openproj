@@ -15,6 +15,7 @@ because they are the source of most off-by-one arguments:
 testing the scheduler and starts testing the calendar.
 """
 
+import re
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -656,7 +657,7 @@ def test_a_blocker_bound_start_is_explained_by_naming_the_blocker():
     _, explanations = run(records)
     assert explanations["task-aaa002"] == Explanation(
         record_id="task-aaa002",
-        text="Cannot start before 2026-08-24: task-aaa001 finishes on 2026-08-21.",
+        text="Cannot start before 24.08.2026: task-aaa001 finishes on 21.08.2026.",
         blocker_id="task-aaa001",
     )
 
@@ -665,7 +666,7 @@ def test_a_worker_bound_start_is_explained_by_naming_the_worker():
     _, explanations = run([task("aaa001"), task("aaa002")])
     assert explanations["task-aaa002"] == Explanation(
         record_id="task-aaa002",
-        text="Cannot start before 2026-08-24: ann is busy until 2026-08-21.",
+        text="Cannot start before 24.08.2026: ann is busy until 21.08.2026.",
         worker_busy_until=date(2026, 8, 21),
     )
 
@@ -682,12 +683,16 @@ def test_a_stated_start_the_floor_overrode_is_the_one_case_that_needs_a_sentence
     date", and nothing between the two said why. Nothing is holding this up — no
     blocker, no busy worker — so the two fields that name those stay empty and the
     sentence names the calendar instead.
+
+    Day-first, because the definite article is what exposed it: "the 2026-08-10
+    you set" names a thing, "the 10.08.2026 you set" names a day, and the record
+    page this sentence is printed on draws every other date the second way.
     """
     _, explanations = run([task("aaa001", status="ready", start_date=date(2026, 8, 10))])
 
     assert explanations["task-aaa001"] == Explanation(
         record_id="task-aaa001",
-        text="Starts on 2026-08-17: the 2026-08-10 you set has passed and work has not begun.",
+        text="Starts on 17.08.2026: the 10.08.2026 you set has passed and work has not begun.",
     )
 
 
@@ -702,6 +707,31 @@ def test_a_start_date_a_record_is_already_working_to_is_not_explained_away():
 
     assert spans["task-aaa001"].start == date(2026, 8, 10)
     assert "task-aaa001" not in explanations
+
+
+def test_no_explanation_reads_a_date_out_in_the_format_the_files_store_it_in(seed_root: Path):
+    """The sweep, over every sentence the real corpus produces rather than over
+    the three this file names one at a time.
+
+    `_explain` writes three sentences and only one of them was flagged in review,
+    which is exactly how a half-swept format survives: the two that were not
+    looked at go on printing `2026-08-21` beside a page whose every other date
+    says `21.08.2026`. Three literals asserted one by one cannot notice a fourth
+    sentence arriving in the old format, and a fourth sentence is the next thing
+    anybody adds here. This scans what the scheduler actually said.
+
+    ISO is still what the *files* hold and what the API sends — see `_read_date`
+    (`model.py`) — so the claim is narrow on purpose: no ISO date in the prose a
+    person reads. Ids are left alone, and `task-7d9f52` is why the pattern is
+    anchored on digits rather than on hyphens.
+    """
+    records, config, _ = model.load_repo(seed_root)
+    _, explanations = schedule(records, config, MONDAY)
+
+    assert explanations, "a corpus that explains nothing cannot fail this"
+    stored = re.compile(r"\d{4}-\d{2}-\d{2}")
+    said = {i: e.text for i, e in explanations.items() if stored.search(e.text)}
+    assert said == {}
 
 
 # --------------------------------------------------------------------------- #

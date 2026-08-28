@@ -5042,14 +5042,23 @@ def test_a_pitch_says_what_its_tasks_add_up_to_beside_what_it_was_bet_at(rendere
 
     The corpus's pitch-5e7b1c was bet at four weeks with two people on it, so the
     box it bought is two calendar weeks, and its tasks as they are actually
-    staffed run 5.2 — the number here used to be 8.1, which was the same tasks
-    summed as person-weeks and held against the undivided bet. Same pitch, same
-    verdict, different question: this one is "will this fit", and the other was
-    "is there more work here than we said".
+    staffed occupy 28 working days — 5.6 — the number here used to be 8.1, which
+    was the same tasks summed as person-weeks and held against the undivided bet.
+    Same pitch, same verdict, different question: this one is "will this fit", and
+    the other was "is there more work here than we said".
+
+    5.6 and not the 5.2 the same corpus reads four days earlier, and the
+    difference is the floor rather than the arithmetic: four of the five tasks are
+    `ready` with no start date, so the chain they form begins on `seed_index`'s
+    2026-08-17 and only its tail past the one `in_progress` task is counted, which
+    is longer the later that day is. The same number is pinned against `check` in
+    `test_the_seed_corpus_reports_exactly_this_problem_set`, which schedules
+    around the same day — the two must not be allowed to drift apart, which is
+    the whole reason `_tasks_add_up_to` reads the span rather than counting again.
     """
     page = read(rendered, "detail.html")
-    assert "5.2 in tasks" in page
-    assert 'class="overrun">5.2 in tasks' in page, "over the box the bet bought, and said so"
+    assert "5.6 in tasks" in page
+    assert 'class="overrun">5.6 in tasks' in page, "over the box the bet bought, and said so"
 
 
 def test_a_pitch_that_keeps_a_checklist_as_well_as_tasks_is_told_which_one_counts():

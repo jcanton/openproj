@@ -923,9 +923,13 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
     already does and nothing had ever said: nine tasks carrying a `cycle` that
     belongs to the pitch they are part of, one task hung straight off a project —
     which is allowed now, and was the shape the first real import needed — and
-    one pitch whose five tasks propose twice the work it was bet at. All
-    warnings: the corpus is created_schema_version 2 and these rules are 4, so
-    nothing written before them breaks.
+    TWO pitches whose tasks, as they are actually staffed, need more calendar than
+    the bets bought. It said one, and one was true while that comparison was a sum
+    of person-weeks against an undivided appetite; moving it to calendar-against-
+    calendar found `pitch-7b3e94` as well, whose two tasks fit its bet as effort
+    and cannot fit it as time. All warnings: the corpus is
+    created_schema_version 2 and these rules are 4, so nothing written before them
+    breaks.
 
     The corpus grew from 17 files to 30 on 2026-08-23, and this set grew by
     exactly four entries — all four on records the growth added, none on a record
@@ -937,12 +941,21 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
     records, config, _ = load_repo(seed_root)
     assert len(records) == 30
     # Scheduled, because one rule reads spans — see `rolled_up`. At `PLAN_TODAY`
-    # rather than the real one so the snapshot is a snapshot, though the three
-    # rollup entries below come out identical for every "today" from 2025 to
-    # 2030: their children are `done` and `in_progress` records carrying start
-    # dates of their own, so nothing about them floats with the floor. That is
-    # what lets the CLI half of this pin schedule against the real today and
-    # still agree with this set.
+    # rather than the real one, and that is now the whole reason the numbers below
+    # can be written down at all. This comment used to claim the rollup entries
+    # came out identical for every "today" from 2025 to 2030, on the grounds that
+    # their children carry start dates of their own; that was true of the enclosing
+    # span and is false of the days the children occupy. Four of `pitch-5e7b1c`'s
+    # five tasks are `ready` with no start date, so the chain they form begins on
+    # the floor and moves with it, while the fifth is `in_progress` from a stated
+    # 13 August and does not — and what the union counts from the chain is only
+    # its tail past that fixed stretch, which is two working days longer from the
+    # 17th than from the 13th. So the same corpus reads 5.2 at one and 5.6 at the
+    # other, and this set is a snapshot only because the day is named here.
+    # `pitch-7b3e94`'s 6.0 is steadier — both its tasks are held by dates rather
+    # than by the floor, one behind `pitch-6f2d18`'s in-progress children and one
+    # by its own stated 2026-12-21 — but steadier is not still, and the argument
+    # for pinning the day is the pair of them and not either alone.
     spans, _ = schedule(records, config, PLAN_TODAY)
     inherits = (
         "the bet is on the pitch, so this task takes its cycle from {}; the number here is ignored"
@@ -995,27 +1008,32 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         ("warning", "task-5c1d84", "cycle", inherits.format("pitch-5e7b1c"), 4),
         ("warning", "task-5f062b", "cycle", inherits.format("pitch-5e7b1c"), 4),
         # v4: the migration hung this one straight off the project
-        # v4: three pitches whose tasks, as actually staffed, do not fit in the
+        # v4: two pitches whose tasks, as actually staffed, do not fit in the
         # calendar weeks their bets bought. `pitch-5e7b1c` was the only one of
         # these before, on the person-week sum — "its 5 tasks add up to 8.1
-        # weeks, more than the 4 it was bet at" — and the other two are the
-        # move to the calendar finding what that sum could not: work that fits
-        # inside a bet as effort and does not fit as time, because the people
-        # holding it hold it one piece at a time. Each is a real shape in the
-        # corpus rather than a file written wrong on purpose, which is the
-        # argument for the rule.
+        # weeks, more than the 4 it was bet at" — and `pitch-7b3e94` is the move
+        # to the calendar finding what that sum could not: 1.0 and 2.0 against a
+        # bet of 3.0 is a perfect fit as effort, and six weeks against three as
+        # time, because Whimbrel and Stonechat are each half-available and the
+        # second task waits for the first. Both are real shapes in the corpus
+        # rather than files written wrong on purpose, which is the argument for
+        # the rule.
+        #
+        # `pitch-6f2d18` was here as a third and is not any more, and the reason
+        # is the union rather than a softened rule. Its two tasks overlap on
+        # purpose — cycle 37's own record says in as many words that the lowering
+        # and the benchmark were left running alongside rather than queued behind
+        # each other, both under Redpoll — so the days they share are counted
+        # once: 13 August to 28 August is 12 working days, where adding their
+        # placements up gives 15. Twelve against the 14 that 2.0 person-weeks buys
+        # Redpoll at a half and Chiffchaff at a quarter is a bet that fits, and a
+        # sum of 15 was a bet that did not. This entry going is the union doing
+        # the thing it was added for.
         (
             "warning",
             "pitch-5e7b1c",
             "person_weeks",
-            OVER_THE_BOX.format("5.2", "2.0", 2),
-            4,
-        ),
-        (
-            "warning",
-            "pitch-6f2d18",
-            "person_weeks",
-            OVER_THE_BOX.format("3.0", "2.7", 2),
+            OVER_THE_BOX.format("5.6", "2.0", 2),
             4,
         ),
         (

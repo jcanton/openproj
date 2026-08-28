@@ -861,20 +861,35 @@ def test_the_seed_incomplete_records_are_the_ones_missing_fields(seed_index: Ind
     the tests built in memory, which proves the rule and not the reading of a
     file. Do not tidy it; the file's own body says so too.
 
-    The NINE planned records of the hearth island are all absent, and that is the
-    other half of the assertion: they are `created_schema_version: 2`, so this is
-    the first corpus where grandfathering is a contrast inside one directory
-    rather than a rule with nothing on either side of it."""
+    `pitch-7b3e94` is in here for a third reason, and it is a rule finding
+    something rather than a file being wrong. Its two tasks are bet at 1.0 and
+    2.0 against its own 3.0, which fits exactly as effort — and Whimbrel and
+    Stonechat are each half-available in cycle 38, and the second task waits for
+    the first, so as calendar it is six weeks in a three-week box. That warning
+    did not exist while the comparison was a sum of person-weeks against an
+    undivided appetite; it is the whole point of the move to calendar-against-
+    calendar, and the record is named here rather than dropped from the list
+    below so that the list stays a claim about clean files.
+
+    The remaining SEVEN of the nine planned records written at
+    `created_schema_version: 2` are absent, and that is the other half of the
+    assertion: this is the first corpus where grandfathering is a contrast inside
+    one directory rather than a rule with nothing on either side of it."""
     incomplete = set(apply_filters(seed_index, {"predicate": ["missing_required_fields"]}, ""))
 
-    assert {"pitch-1b3f9a", "pitch-48ea9e", "task-3e07b2", "prod-7c2b81"} <= incomplete
+    assert {
+        "pitch-1b3f9a",
+        "pitch-48ea9e",
+        "task-3e07b2",
+        "prod-7c2b81",
+        "pitch-7b3e94",
+    } <= incomplete
     assert "task-3d84e9" not in incomplete
     assert incomplete.isdisjoint(
         {
             "prod-6d1a70",
             "proj-9a4c25",
             "pitch-6f2d18",
-            "pitch-7b3e94",
             "task-6a5c02",
             "task-6b7d31",
             "task-7c8e40",

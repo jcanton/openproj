@@ -145,6 +145,26 @@ def days_after(day: date, days: float) -> date:
     return day + timedelta(days=round(days))
 
 
+# A date, the way this app reads one out loud: `14.07.2026`, day first, dots.
+# jcanton, 2026-08-21: "I'd like to reverse the order of the dates in the entire
+# app". Only what is DRAWN — what is stored, sorted, put in a `<input type=date>`
+# and sent over the API stays `2026-07-14`, which is the one format that sorts as
+# text, parses without a locale and cannot be read as a different day in another
+# country.
+#
+# Down here rather than in `render/tokens.py`, where it was written and from where
+# it is still re-exported for the pages that had it. The scheduler's explanations
+# are prose a reader reads on the same pages — "the 10.08.2026 you set has passed"
+# — and `schedule.py` cannot import the renderer, because the renderer imports it.
+# The alternative was a second three-line copy of the format in `_explain`, and a
+# date format written twice is a date format that disagrees with itself the first
+# time somebody changes their mind about the separator.
+def _read_date(value: object) -> str:
+    text = str(value or "")
+    parts = text.split("-")
+    return f"{parts[2]}.{parts[1]}.{parts[0]}" if len(parts) == 3 else text
+
+
 class Problem(BaseModel):
     """One validation finding, carrying the rule version that introduced it.
 
