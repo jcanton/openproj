@@ -1713,11 +1713,14 @@ async function saveCells(cell, value, extra) {
       const short = ids.filter(id =>
         missingFor(DATA.rows[id] || {}, coerced).some(name => cannot.includes(name)));
       box.hidden = false;
+      // By title. Every row this names is selected and on the screen behind the
+      // banner, and both remedies — fix it, or take it out of the selection —
+      // are done by finding it in the table, which a person does by its name.
       box.textContent = short.length === ids.length
-        ? `None of these can be ${human(coerced)} yet: ${short.join(', ')}. `
+        ? `None of these can be ${human(coerced)} yet: ${short.map(titleOf).join(', ')}. `
           + 'Each needs a field it has not got.'
-        : `${short.join(', ')} cannot be ${human(coerced)} yet, so nothing was written. `
-          + 'Fix those rows, or take them out of the selection.';
+        : `${short.map(titleOf).join(', ')} cannot be ${human(coerced)} yet, so nothing `
+          + 'was written. Fix those rows, or take them out of the selection.';
       return;
     }
     // Asked of the stored value and not of `missingFor`, which answers a
@@ -1731,8 +1734,10 @@ async function saveCells(cell, value, extra) {
         ? `a ${(FIELD_LABELS[clashes[0]] || clashes[0]).toLowerCase()}`
         : clashes.map(name => (FIELD_LABELS[name] || name).toLowerCase()).join(' and ');
       box.hidden = false;
+      // By title, for the reason on the banner above it.
       box.textContent =
-        `${held.join(', ')} already ${held.length === 1 ? 'has' : 'have'} ${named}, and one `
+        `${held.map(titleOf).join(', ')} already `
+        + `${held.length === 1 ? 'has' : 'have'} ${named}, and one `
         + 'answer here is written to every selected record. Nothing was written. Take '
         + `${held.length === 1 ? 'that row' : 'those rows'} out of the selection and set `
         + `${held.length === 1 ? 'it' : 'them'} on ${held.length === 1 ? 'its' : 'their'} own.`;
@@ -1747,6 +1752,14 @@ async function saveCells(cell, value, extra) {
   }
   dispatchEvent(new Event('openproj:writing'));
   let committed = null;
+  // Whether the commit is known to exist. The `try` below does not stop at the
+  // write: `refreshRows` and `refreshProblems` await bare fetches of their own
+  // with no `catch`, so a connection dropped AFTER the commit landed rejects
+  // inside them and arrives here. Without this flag the catch says "not saved"
+  // and "press it again" over a write that is already in git — false in both
+  // halves, and the second half is advice to re-send against a `BASE.value` that
+  // has already moved on.
+  let landed = false;
   try {
     const response = await fetch('/api/records', {
       method: 'PATCH', headers: {'content-type': 'application/json'},
@@ -1763,6 +1776,7 @@ async function saveCells(cell, value, extra) {
       return;
     }
     committed = answer.commit;
+    landed = true;
     BASE.value = answer.commit;
     for (const id of ids) {
       markSaved(answer, id);
@@ -1784,6 +1798,36 @@ async function saveCells(cell, value, extra) {
     if (Object.keys(sending).some(name => DERIVES_DATES.has(name))) await refreshRows();
     await refreshProblems();
     draw();
+  } catch (error) {
+    // Two different failures reach here, and they get two different sentences.
+    //
+    // `landed` — the commit came back and the re-read after it did not. The
+    // write is in git, `BASE.value` has already moved to it, the selection has
+    // already been dropped, and the only thing wrong is that the Start, End and
+    // problem columns on screen are one commit behind. Nothing to press again.
+    //
+    // Otherwise the write itself never got an answer. With no `catch` at all the
+    // rejection escaped unhandled and the selection sat there looking exactly as
+    // it did before the press — every row still picked, every cell still showing
+    // the old value, and nothing to say whether one commit had rewritten all of
+    // them. A bulk write is the one gesture here where "nothing happened" and
+    // "fifty records changed" look the same on screen. The selection is left up
+    // on this branch, unlike the landed one: it is what the repeat needs.
+    //
+    // No claim about what reached the server — a fetch rejects when the answer
+    // is lost as readily as when the request never left. The repeat is safe
+    // because it is the SAME write, not because the store would refuse it:
+    // `BASE.value` is untouched, the same values go out again, and
+    // `_merge_frontmatter` skips every key whose stored value already equals the
+    // one being sent, so a write that did land merges with itself and answers
+    // 200. This used to promise a refusal the store does not give.
+    announce(landed
+      ? `${ids.length} cell${ids.length === 1 ? '' : 's'} saved, but the page could `
+        + `not read the plan back — ${error.message}. The write went through; `
+        + 'reload to see what it changed.'
+      : `${ids.length} cell${ids.length === 1 ? '' : 's'} not saved — `
+        + `${error.message}. Press it again: it sends the same values against the `
+        + 'same base, so a write that did land is not repeated.');
   } finally {
     dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
   }
@@ -1829,6 +1873,12 @@ async function saveCell(cell, value, extra) {
   }
   dispatchEvent(new Event('openproj:writing'));
   let committed = null;
+  // Whether the commit is known to exist — the same flag, for the same reason,
+  // as the bulk save above: `refreshRows` and `refreshProblems` are inside this
+  // `try` and await bare fetches with no `catch` of their own, so a connection
+  // dropped after the commit landed rejects in one of them and arrives at the
+  // catch below.
+  let landed = false;
   try {
     // One key, taken from the cell. Sending the row would overwrite whatever
     // somebody else changed while this tab was open, and would turn two people
@@ -1857,6 +1907,7 @@ async function saveCell(cell, value, extra) {
     // The page moves forward with the repository, or its next save collides with
     // the commit it just made.
     committed = answer.commit;
+    landed = true;
     BASE.value = answer.commit;
     markSaved(answer, cell.dataset.record);
     Object.assign(DATA.rows[cell.dataset.record], sending);
@@ -1885,6 +1936,37 @@ async function saveCell(cell, value, extra) {
     draw();
     await refreshProblems();
     draw();
+  } catch (error) {
+    // Two different failures reach here, and they get two different sentences.
+    //
+    // `landed` — the commit came back and the re-read after it did not. The save
+    // is in git, `BASE.value` has already moved to it, and what is stale is the
+    // Start and End columns and the problem markers. Nothing to edit again.
+    //
+    // Otherwise the write itself never got an answer. With no `catch` at all the
+    // rejection escaped unhandled and nothing was said: the cell simply went back
+    // to the value the page holds, which is exactly what a save that landed also
+    // looks like on this page. `reparent` one screen down already had this catch,
+    // for the same gesture on the same table.
+    //
+    // Said and not drawn, the way every non-409 refusal on this path is said. No
+    // claim about what reached the server — a fetch rejects when the answer is
+    // lost as readily as when the request never left. The repeat is safe because
+    // it is the SAME write, not because the store would refuse it: `BASE.value`
+    // is untouched, the same value goes out again, and `_merge_frontmatter` skips
+    // every key whose stored value already equals the one being sent, so a save
+    // that did land merges with itself and answers 200.
+    //
+    // The row by title, like every other sentence this table says about one: the
+    // cell is still on screen with the value in it, and "Edit it again" is an
+    // instruction about that row and not about a file.
+    announce(landed
+      ? `${titleOf(cell.dataset.record)}: ${field} saved, but the page could not `
+        + `read the plan back — ${error.message}. The save went through; reload to `
+        + 'see what it changed.'
+      : `${titleOf(cell.dataset.record)}: ${field} not saved — ${error.message}. `
+        + 'Edit it again: it sends the same value against the same base, so a save '
+        + 'that did land is not written twice.');
   } finally {
     // Announced even when the save was refused, or one 409 leaves every event
     // after it held back and the banner never appears again.
@@ -2541,9 +2623,45 @@ async function createDraft() {
     // scheduler fills in.
     const fresh = await refreshRows();
     draw();
-    announce(fresh ? `Created ${answer.id}` : `Created ${answer.id} — reload to see it in place`);
+    // Title AND id, and this is the one announcement on the page that needs
+    // both. The id was minted by the server a moment ago and nobody has seen it
+    // before — it is what a link, a `depends_on` and a `git show` are written
+    // with — while the title is the only half the person who just typed it
+    // recognises. Off `fields` rather than `namedOf(answer.id)`: on the `!fresh`
+    // branch the rows were not re-read, so the new row is not in `DATA.rows` and
+    // the name would fall back to the id twice over. `fields.title` is the
+    // string this press refused to go out without, six lines up.
+    const made = `${String(fields.title).trim()} (${answer.id})`;
+    announce(fresh ? `Created ${made}` : `Created ${made} — reload to see it in place`);
     const add = document.getElementById('add-row');
     if (add) add.focus();
+  } catch (error) {
+    // The connection went while the request was in the air. With no `catch` the
+    // rejection escaped unhandled — the `announce` above had already put a
+    // present-continuous sentence in the live region ("Creating this task…"),
+    // and nothing took it back out, so the page went on saying a record was
+    // being made about a request that had stopped.
+    //
+    // `refused` is the shape a rejected create already has on this page: it puts
+    // the draft row back with the reason on it, and the `finally` below clears
+    // `CREATING` and redraws. No claim about what reached the server — a fetch
+    // rejects when the answer is lost as readily as when the request never
+    // left — and this press MINTS a record, so the advice is to look before
+    // pressing again rather than to press again.
+    //
+    // **And the looking must not be a reload.** This said "Reload before pressing
+    // Create again", one line under the call that has just put the typed row back
+    // on screen: `DRAFT` is a plain `let` that deliberately does not survive a
+    // reload (the reason is written at its declaration), so following that
+    // instruction threw away everything the sentence had just preserved. A second
+    // tab is the place that outlives the draft — and the table is the right page
+    // to look at, because its draft row offers planned kinds only (`NEW_ROW`), so
+    // anything created here does appear on it. The create FORM's twin sentence
+    // cannot say "the table" for the same reason, and does not.
+    refused([`Not created — ${error.message}. The row is still here and nothing `
+             + 'typed is lost. Look for it in a second tab before pressing Create '
+             + 'again, because a second press that both landed would make two '
+             + 'records — reloading this tab would take the row with it.']);
   } finally {
     // Cleared on every way out of here — refused, thrown, or a 500 that never
     // parsed — because a flag that survives its own request is a row that can
@@ -2582,10 +2700,16 @@ function refuses(childId, parentId) {
   // Dropping a row on itself is where it started, not a move, and the kind rule
   // would refuse it anyway — but "a task belongs to a pitch, not to a task" is
   // an odd thing to be told about the row under your own hand.
-  if (childId === parentId) return `${childId} cannot hold itself`;
+  //
+  // By title throughout, through `titleOf` below. This is said about two rows
+  // that are both on the screen — one under the hand, one under the cursor — so
+  // what a reader is checking is which pieces of work they are, and a pair of
+  // ids is the one form of that answer they cannot check without opening both.
+  if (childId === parentId) return `${titleOf(childId)} cannot hold itself`;
   if (!(PARENT_KINDS[child.kind] || []).includes(parent.kind))
     return `a ${child.kind} belongs to ${holders(child.kind)}, not to a ${parent.kind}`;
-  if (child.parent === parentId) return `${childId} is already in ${parentId}`;
+  if (child.parent === parentId)
+    return `${titleOf(childId)} is already in ${titleOf(parentId)}`;
   return '';
 }
 
@@ -2594,7 +2718,7 @@ function refuses(childId, parentId) {
 // belonging to nothing, which is only a move when there is something to leave.
 function whyNotOnto(childId, target) {
   if (target.classList.contains('adder'))
-    return (DATA.rows[childId] || {}).parent ? '' : `${childId} is not inside anything`;
+    return (DATA.rows[childId] || {}).parent ? '' : `${titleOf(childId)} is not inside anything`;
   return refuses(childId, target.dataset.id);
 }
 
@@ -2657,6 +2781,28 @@ function sayInto(text, x, y) {
 // refuses, but a plan hand-written in git can hold one.
 const titleOf = id => (DATA.rows[id] || {}).title || id;
 
+// The same row, said the other way: `Rewrite the dycore (task-c00001)`.
+//
+// One caller — `strandMarks`, the sentence about a save parked on a branch,
+// which is the one thing this page says that only somebody with a checkout can
+// act on, and a checkout finds a record by its id. Everything else here says the
+// title alone, because the row is on the screen behind the sentence and the id
+// under it answers a question nobody asked. (`createDraft` says both as well and
+// does NOT come through here: the row it names was minted a moment ago and is
+// not in `DATA.rows` on every branch, so it builds its name from the title the
+// person typed. The reason is written there.)
+//
+// Not `${titleOf(id)} (${id})`: that draws `task-3 (task-3)` for a titleless row,
+// where `titleOf`'s own fallback is meant to be the whole answer.
+//
+// `DATA.rows` and nothing wider, like `titleOf` above it: the plan pages are
+// swept for inbox ids AND inbox titles, and a map with more in it than the rows
+// is how a hand-written `parent: issue-…` rode onto the move bar once already.
+const namedOf = id => {
+  const title = (DATA.rows[id] || {}).title;
+  return title ? `${title} (${id})` : id;
+};
+
 // What the label says over each of the two kinds of target. The `+` row is not a
 // parent — it is the way out of the tree — so it says so in the other direction
 // rather than naming itself.
@@ -2694,9 +2840,13 @@ function sayMoveOut() {
   const row = MOVING ? DATA.rows[MOVING] : null;
   const parent = row ? row.parent : null;
   out.hidden = !parent;
-  out.textContent = parent ? `Take ${MOVING} out of ${parent}` : '';
+  // The bar names both rows by title, like the label under the cursor already
+  // does: this is a control somebody is about to press, and "Take task-0f1001
+  // out of pitch-0f0001" makes them check two ids against a screen that draws
+  // neither of them.
+  out.textContent = parent ? `Take ${titleOf(MOVING)} out of ${titleOf(parent)}` : '';
   rootless.hidden = !row || !!parent;
-  rootless.textContent = row && !parent ? `${MOVING} is not inside anything` : '';
+  rootless.textContent = row && !parent ? `${titleOf(MOVING)} is not inside anything` : '';
 }
 
 function startMoving(id) {
@@ -2711,8 +2861,10 @@ function startMoving(id) {
   table.classList.add('moving');
   markTargets();
   sayMoveOut();
-  announce(`Moving ${id}. Drop it on ${holders(row.kind)}, or press Enter on one. ` +
-           (row.parent ? 'The row at the bottom takes it out of ' + row.parent + '. ' : '') +
+  announce(`Moving ${titleOf(id)}. Drop it on ${holders(row.kind)}, or press Enter on one. ` +
+           (row.parent
+             ? 'The row at the bottom takes it out of ' + titleOf(row.parent) + '. '
+             : '') +
            'Escape leaves it where it is.');
 }
 
@@ -2731,6 +2883,18 @@ async function reparent(childId, parentId) {
   const box = document.getElementById('row-conflict');
   box.hidden = true;
   box.textContent = '';
+  // Both rows named HERE, before the write, and held for the sentences after it.
+  //
+  // Not a tidiness: the landed path calls `refreshRows()`, which REPLACES
+  // `DATA.rows` wholesale with what the server just sent — so a `titleOf` after
+  // that is a lookup in a map this gesture has already thrown away and rebuilt,
+  // and it falls back to the bare id for any row the new payload does not
+  // happen to carry. Driven through the shim, that is exactly what came out:
+  // `task-c00001 is no longer inside anything` on the one path that is supposed
+  // to say the row's name. Naming it at the moment somebody picked it up is also
+  // what the sentence means — "this row was moved" is about the row they had.
+  const childName = titleOf(childId);
+  const parentName = parentId ? titleOf(parentId) : '';
   dispatchEvent(new Event('openproj:writing'));
   // Said before the request rather than after it. Every write here goes through
   // a fetch from the remote, a commit and a push, and against a repository on
@@ -2738,8 +2902,8 @@ async function reparent(childId, parentId) {
   // row where it was, which is indistinguishable from a drop that did not take.
   WRITING = childId;
   draw();
-  announce(parentId ? `moving ${childId} into ${parentId}…`
-                    : `taking ${childId} out…`);
+  announce(parentId ? `moving ${childName} into ${parentName}…`
+                    : `taking ${childName} out…`);
   let committed = null;
   try {
     const response = await fetch(`/api/record/${encodeURIComponent(childId)}`, {
@@ -2767,9 +2931,9 @@ async function reparent(childId, parentId) {
     // table that does not move after one looks like a drop that did nothing.
     const fresh = await refreshRows();
     draw();
-    announce(!fresh ? `${childId} was moved — reload to see where it landed`
-             : parentId ? `${childId} is now in ${parentId}`
-                        : `${childId} is no longer inside anything`);
+    announce(!fresh ? `${childName} was moved — reload to see where it landed`
+             : parentId ? `${childName} is now in ${parentName}`
+                        : `${childName} is no longer inside anything`);
   } catch (error) {
     // The connection went while the request was in the air, and the sentence
     // fifteen lines up says the move is still happening. `e82ce55` fixed exactly
@@ -2784,10 +2948,13 @@ async function reparent(childId, parentId) {
     // And it does not guess. A fetch rejects when the ANSWER is lost as readily
     // as when the request never left, so this says what to do rather than what
     // happened: the drag is worth repeating either way, because the second one
-    // goes out against the same `base_commit` and the compare-and-swap refuses it
-    // with the conflict report if the first one landed.
-    announce(`${childId} was not moved — ${error.message}. Drag it again: if the `
-             + 'first one landed, the second is refused rather than repeated.');
+    // goes out against the same `base_commit` carrying the same parent, and
+    // `_merge_frontmatter` skips every key whose stored value already equals the
+    // one being sent — so a drag that did land merges with itself and answers
+    // 200 rather than being refused. Repeating it cannot move the row twice.
+    announce(`${childName} was not moved — ${error.message}. Drag it again: it `
+             + 'sends the same parent against the same base, so a drop that did '
+             + 'land is not made twice.');
   } finally {
     // Whatever happened — committed, refused, or the network gone — the row
     // stops waiting. A row left dimmed after a refusal is a row that looks like
@@ -2873,7 +3040,11 @@ function strandMarks(parked) {
     STRANDED.set(id, branch);
     // Into the live region as well as onto the row: the person was answered
     // 200 long ago, and a problem said only visually has not announced itself.
-    announce(`${id} could not land on GitHub's main — its save is parked on ${branch}`);
+    // Title AND id, through `namedOf`. The only way out of a parked save is
+    // somebody with a checkout of the branch this names, where a record is a
+    // file called by its id — and the title is how they know which of their own
+    // saves this was.
+    announce(`${namedOf(id)} could not land on GitHub's main — its save is parked on ${branch}`);
     moved = true;
   }
   return moved;
@@ -3128,7 +3299,7 @@ if (EDITABLE) {
     if (MOVING) {
       if (event.key === 'Escape') {
         event.preventDefault();
-        stopMoving(`${MOVING} was left where it was`);
+        stopMoving(`${titleOf(MOVING)} was left where it was`);
         return;
       }
       if (event.key === 'Enter') {

@@ -2564,20 +2564,51 @@ async function answerOf(response) {
 
 // What to say about a write the server would not do.
 //
-// There is no `detail` on a 409: the answer carries `conflict`, the report
-// naming the file and every field that disagreed. Three of the five write paths
-// read `answer.detail` there, so the one answer that means *somebody else moved
-// the plan* printed as "refused".
+// **A 409 from this server has two shapes, and each key belongs to one of them.**
+// Read them in this order:
 //
-// 409 is the only status this reads by number, and adding a second one is a
-// bigger decision than it looks. A plan whose history has forked answers 503
+//   `conflict` — the STORE's compare-and-swap report. `_result` in `web.py`
+//     answers `{outcome, commit, conflict, head, pushed}` and never a `detail`,
+//     and that is the only 409 that really means somebody else moved the plan.
+//     Three of the five write paths used to read `answer.detail` there, so the
+//     one answer with a report in it printed as "refused".
+//   `detail` — a RULE's own sentence, raised as `HTTPException(409, …)` before
+//     anything is written, or written into a `JSONResponse` beside the list the
+//     rekind panel has to send back. Thirteen of them in `web.py`: two files
+//     claiming one id, a dependency loop, a cascade whose shape moved, and the
+//     whole of the rekind ladder. None is a concurrent write.
+//   the fallback — an empty body, which is what a proxy or a torn answer leaves.
+//
+// Reading `conflict` alone is the defect this line was written for: changing a
+// pitch that is filed under a project into a project is refused BEFORE any write
+// with "a project cannot be filed under a project and pitch-… is under proj-…",
+// and the page printed "somebody else changed this first" over it — sending
+// somebody to reload against a plan nobody had touched, about a sentence that
+// told them exactly what to do.
+//
+// **The rule refusals stayed 409 rather than moving to 422**, which is the
+// cleaner shape and the riskier change. Six browser sites branch on
+// `status === 409` BEFORE `!response.ok` — the record page's save and its
+// rekind panel, the table's cell, bulk and reparent writes, and the drawing
+// popup — and each draws that arm somewhere of its own: a conflict box beside
+// the thing that was refused, or the panel's own reason line. At 422 those
+// refusals would fall to the `!ok` arm and be *announced* instead of drawn: on
+// the table the row banner would simply stop appearing for a refused cell.
+// `test_a_forked_plan_is_not_spelled_as_the_code_the_pages_read_as_a_conflict`
+// in `tests/test_web.py` also reads every `status === NNN` out of the shipped
+// render source and constrains what a forked plan may answer, so the set of
+// numbers these pages special-case is load-bearing in both directions.
+//
+// 409 is still the only status this reads by number, and adding a second one is
+// a bigger decision than it looks. A plan whose history has forked answers 503
 // with a `detail` — `_refusal` in `web.py` argues the code — and it falls
 // through to the line below on purpose: the sentence it carries names the two
 // commits and says what has to happen to the repository, which is more than any
 // wording this file could invent for it. Special-casing it here would replace
 // that with a guess.
 function refusal(answer, status) {
-  if (status === 409) return answer.conflict || 'somebody else changed this first';
+  if (status === 409)
+    return answer.conflict || answer.detail || 'somebody else changed this first';
   return answer.detail
     || (answer.problems || []).map(problem => problem.drawn).join('; ')
     || 'refused';

@@ -97,6 +97,7 @@ from .model import (
     in_model_order,
     loop_made,
     mint_id,
+    named,
     opening_fields,
     parse_cycle_text,
     parse_person_text,
@@ -3000,6 +3001,27 @@ def create_app(
         of the change, exactly as `also` is for a cascading delete. A reader who
         was shown "this drops its appetite and its assignees" and then had
         something else dropped was not asked.
+
+        **This is not a second copy of the containment ladder, and the sentence
+        below is deliberately not the validator's.** `RUNG[k].under` and
+        `PARENT_KINDS[k]` are the same tuple — both are `Rung.under` off the one
+        `KINDS` sequence — so there is nothing here that can drift from what
+        `_containment_problems` (`model.py`) would say about the record
+        afterwards; the ladder is single-sourced already and merging the two
+        readers would move a name, not a fact.
+
+        What can drift, and did, is the WORDING. `_containment_problems` answers
+        "this record standing here is wrong" — *a pitch belongs to a project, not
+        to an issue* — with no ids in it and nothing to do about it, because it
+        is a line in a report beside the record it is about. This answers "the
+        change you just asked for cannot be made", names both records, and says
+        what to do instead. Folding them into one sentence would make one of
+        those two refusals say something it does not mean, which is why the
+        duplication stays. `_an` is imported from the model for exactly that
+        reason: the wording is the part that has to be kept in step by hand, and
+        the article was the first piece of it to come apart — this line read
+        `f"a {kind}"` and said "a issue" on the day issues joined the ladder,
+        which is the failure `_an`'s own docstring names.
         """
         rung = RUNG[kind]
         refusals: list[str] = []
@@ -3010,14 +3032,20 @@ def create_app(
         if record.parent:
             above = index.records.get(record.parent)
             if above is None:
+                # The parent stays a bare id here and only here: no record in the
+                # plan claims that name, so there is no title to give it and the
+                # complaint is about the spelling. The record itself is named the
+                # way every other refusal on this route names one.
                 refusals.append(
-                    f"{record.id} names {record.parent} as its parent and that record "
-                    "is not in the plan"
+                    f"{named(record.id, index.records)} names {record.parent} as its parent "
+                    "and that record is not in the plan"
                 )
             elif above.kind not in rung.under:
                 refusals.append(
-                    f"a {kind} cannot be filed under {_an(above.kind)} and {record.id} "
-                    f"is under {record.parent}. Move it first, or take its parent off"
+                    f"{_an(kind)} cannot be filed under {_an(above.kind)} and "
+                    f"{named(record.id, index.records)} is under "
+                    f"{named(record.parent, index.records)}. Move it first, or take its "
+                    "parent off"
                 )
 
         # What sits under it. `under` is per rung, so a pitch with tasks under it
@@ -3026,10 +3054,14 @@ def create_app(
         below = sorted(other.id for other in index.records.values() if other.parent == record.id)
         stranded = [other for other in below if kind not in RUNG[index.records[other].kind].under]
         if stranded:
+            # Title then id for every one of them: "Move them first" is an
+            # instruction to open each of these files and change its `parent`,
+            # and a list of six bare ids is six lookups before anybody can start.
             refusals.append(
-                f"{_and_then(stranded)} {'is' if len(stranded) == 1 else 'are'} filed "
-                f"under {record.id}, and nothing may be filed under {_an(kind)}. "
-                "Move them first"
+                f"{_and_then([named(one, index.records) for one in stranded])} "
+                f"{'is' if len(stranded) == 1 else 'are'} filed "
+                f"under {named(record.id, index.records)}, and nothing may be filed "
+                f"under {_an(kind)}. Move them first"
             )
 
         # What it would stop being able to say. `unread_fields` is the ladder's
@@ -3115,9 +3147,13 @@ def create_app(
             # how a confirmation comes to mean something other than what it said.
             return JSONResponse(
                 {
+                    # The record by title and then by id. `_and_then(drops)` beside
+                    # it is a list of FIELD names and stays exactly as it is —
+                    # `appetite`, `owner` — because those are the keys the reader
+                    # will look for in the file, not records with titles.
                     "detail": (
-                        f"making {record_id} {_an(kind)} drops {_and_then(drops)}, because "
-                        f"{_an(kind)} does not read "
+                        f"making {named(record_id, index.records)} {_an(kind)} drops "
+                        f"{_and_then(drops)}, because {_an(kind)} does not read "
                         f"{'that field' if len(drops) == 1 else 'those fields'}. "
                         "Nothing was changed."
                     ),
@@ -3129,7 +3165,7 @@ def create_app(
             raise HTTPException(
                 409,
                 "the plan changed while that was open: making "
-                f"{record_id} {_an(kind)} now drops "
+                f"{named(record_id, index.records)} {_an(kind)} now drops "
                 f"{_and_then(drops) or 'nothing'}. Nothing was changed — read it "
                 "again and decide.",
             )
@@ -3175,8 +3211,13 @@ def create_app(
                 continue
             where = _path_for(store, base, other.id)
             if where is None:
+                # Both records by title and id. The id is not decoration here: the
+                # only way out of this refusal is to go and look at the plan in
+                # git, where a file is found by the id and never by the title.
                 raise HTTPException(
-                    409, f"{other.id} names {record_id} and its file could not be found"
+                    409,
+                    f"{named(other.id, index.records)} names "
+                    f"{named(record_id, index.records)} and its file could not be found",
                 )
             files[where] = _patched(store.read(base, where), fields, None, where)
 
@@ -3420,10 +3461,17 @@ def create_app(
 
         shown = payload.get("also")
         if shown is not None and sorted(shown) != sorted(doomed + edited):
+            # Titles and ids in the sentence, while `also` on the wire stays a
+            # list of bare ids: they are two different things that happen to hold
+            # the same records. `shown` is a compare-and-swap on the SHAPE of the
+            # deletion and nobody reads it; this is read, and then acted on —
+            # somebody has to go and look at each of these before pressing again.
+            affects = _and_then([named(one, index.records) for one in doomed + edited])
             raise HTTPException(
                 409,
                 "the plan changed while that was open: deleting "
-                f"{record_id} now affects {_and_then(doomed + edited) or 'nothing else'}. "
+                f"{named(record_id, index.records)} now affects "
+                f"{affects or 'nothing else'}. "
                 "Nothing was deleted — read it again and decide.",
             )
 
@@ -3431,12 +3479,23 @@ def create_app(
         for other in doomed:
             gone = _path_for(store, base, other)
             if gone is None:
-                raise HTTPException(409, f"{other} is filed under this and could not be found")
+                # Named the same way as the sentence above, and the id is the
+                # load-bearing half: the file this cannot find is found in git by
+                # the id, and this is a state only a person with a checkout can
+                # get anybody out of.
+                raise HTTPException(
+                    409,
+                    f"{named(other, index.records)} is filed under this and "
+                    "could not be found",
+                )
             files[gone] = None
         for other in edited:
             where = _path_for(store, base, other)
             if where is None:
-                raise HTTPException(409, f"{other} depends on this and could not be found")
+                raise HTTPException(
+                    409,
+                    f"{named(other, index.records)} depends on this and could not be found",
+                )
             # `records`, not `plan`: `cascade_of` iterates the total map,
             # so `edited` can name an unplanned record carrying a hand-written
             # `depends_on` — the plan-only lookup KeyErrored and the DELETE

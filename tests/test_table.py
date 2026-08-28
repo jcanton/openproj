@@ -65,12 +65,16 @@ from test_store import commit_directly
 from test_web import (
     ANN,
     OTHER,
+    OTHER_TITLE,
     PATH,
     PITCH,
+    PITCH_TITLE,
     PROJECT,
+    PROJECT_TITLE,
     SECRET,
     SEED,
     TASK,
+    TASK_TITLE,
     commit_at,
     create,
     file_at,
@@ -4829,7 +4833,12 @@ def test_a_row_created_inline_goes_through_the_one_create_route(page: str):
     assert "id" not in sent["fields"], "the server mints it"
     assert sent["base_commit"], "a create is compared against the commit the page was drawn at"
     assert "## Progress" in sent["body"], "the kind's own template, as `/new` would have given it"
-    assert "task-a1b2c3" in answer["value"], "and the reader is told what was made"
+    # Both halves, and the whole sentence. `"task-a1b2c3" in value` was the
+    # assertion here, which the id alone satisfies — and this is one of the two
+    # announcements on the page that is documented as needing both: the id was
+    # minted a moment ago and nobody has seen it before, while the title is the
+    # only half the person who just typed it recognises.
+    assert answer["value"] == "Created Write the migration note (task-a1b2c3)", answer["value"]
 
 
 def test_the_created_row_is_re_read_rather_than_invented(page: str):
@@ -5205,7 +5214,14 @@ def test_a_drop_is_one_patch_of_one_field_through_the_save_path(page: str):
     assert sent["body"] is None, "an empty body is a replacement, not an omission"
     assert sent["base_commit"], "compared against the commit the page was drawn at"
     assert answer["value"]["moving"] is None, "and the table is not still holding it"
-    assert PROJECT in answer["value"]["said"], "the move is announced, not only drawn"
+    # The whole sentence, and both rows by the name they are drawn under. This
+    # asserted `PROJECT in said`, which a page that announced `task-c00001 is now
+    # in proj-a10000` satisfied — the id in a sentence a person reads is the
+    # thing this branch went through the app to remove, so the assertion may not
+    # be one an id passes.
+    assert answer["value"]["said"] == f"{TASK_TITLE} is now in {PROJECT_TITLE}", (
+        "the move is announced, and by the two rows' names, not only drawn"
+    )
 
 
 def test_a_row_can_be_taken_out_of_what_holds_it(page: str):
@@ -5241,7 +5257,7 @@ def test_a_row_can_be_taken_out_of_what_holds_it(page: str):
     got = answer["value"]
 
     assert got["offered"]["hidden"] is False
-    assert got["offered"]["said"] == f"Take {TASK} out of {PITCH}"
+    assert got["offered"]["said"] == f"Take {TASK_TITLE} out of {PITCH_TITLE}"
     assert got["allowed"] is True
     sent = json.loads(answer["calls"][0]["body"])
     assert sent["fields"] == {"parent": None}, "null, which is what no parent is stored as"
@@ -5428,7 +5444,11 @@ def test_escape_leaves_the_row_where_it_was(page: str):
     assert answer["calls"] == [], "nothing was written"
     assert got["moving"] is None and got["marked"] is False
     assert got["rows"] == 0, "and every row is a row again"
-    assert TASK in got["said"]
+    # By the name on the row that was picked up and put back down, and the whole
+    # sentence rather than a substring: `TASK in said` was also true of
+    # `task-c00001 was left where it was`, which is the wording this branch
+    # replaced everywhere a person reads one.
+    assert got["said"] == f"{TASK_TITLE} was left where it was", got["said"]
 
 
 def test_the_route_the_table_re_reads_is_the_payload_it_was_drawn_from(
@@ -5543,12 +5563,50 @@ def test_a_redraw_in_the_middle_of_a_move_leaves_the_last_row_saying_what_it_say
     )
     got = answer["value"]
 
-    assert got["held"]["said"] == f"Take {TASK} out of {PITCH}"
+    assert got["held"]["said"] == f"Take {TASK_TITLE} out of {PITCH_TITLE}"
     assert got["redrawn"] == got["held"], "a redraw mid-move does not change what it offers"
-    assert got["loose"]["rootless"] == f"{TASK} is not inside anything"
+    assert got["loose"]["rootless"] == f"{TASK_TITLE} is not inside anything"
     assert got["looseRedrawn"] == got["loose"]
     for state in got.values():
         assert state["said"] or state["rootless"], "and it is never an empty strip"
+
+
+def test_a_row_is_named_by_its_title_and_falls_back_to_its_id(page: str):
+    """The two naming helpers every sentence on this page goes through, driven.
+
+    They had no test of their own while fourteen strings around them said the id
+    instead — which is the shape of this whole defect: a helper that is right and
+    is not called.
+
+    `titleOf` is the ordinary answer, because every row it names is on the screen
+    behind the sentence. `namedOf` is the answer for the two announcements a
+    person has to act on somewhere this page cannot take them — a record just
+    minted, and a save parked on a branch only git will get anybody out of.
+
+    **The fallback is the half worth driving.** `validate_all` reports a blank
+    title rather than refusing it, because a file in git is a fact, so a
+    titleless row really does reach this page — and the two helpers have to fall
+    back differently: `titleOf` to the id, `namedOf` to the id ALONE and not to
+    `task-c00001 (task-c00001)`, which is what `${titleOf(id)} (${id})` would
+    have drawn. That is the line this test exists for.
+    """
+    answer = drive_table(
+        page,
+        "(() => {"
+        f"  const known = {{title: titleOf('{TASK}'), named: namedOf('{TASK}')}};"
+        f"  DATA.rows['{TASK}'].title = '';"
+        f"  const blank = {{title: titleOf('{TASK}'), named: namedOf('{TASK}')}};"
+        "  const absent = {title: titleOf('task-ffffff'), named: namedOf('task-ffffff')};"
+        "  return {known, blank, absent};"
+        "})()",
+    )
+    got = answer["value"]
+
+    assert got["known"] == {"title": TASK_TITLE, "named": f"{TASK_TITLE} ({TASK})"}
+    assert got["blank"] == {"title": TASK, "named": TASK}
+    # A row this page has never heard of — the shape a stale `depends_on` or a
+    # hand-written `parent` arrives in. It is the id and nothing built around it.
+    assert got["absent"] == {"title": "task-ffffff", "named": "task-ffffff"}
 
 
 def test_the_row_a_drop_would_land_in_is_named_beside_the_cursor(page: str):
@@ -6163,7 +6221,13 @@ def test_a_drop_on_a_dead_connection_takes_its_own_sentence_back_down(page: str,
     assert "…" not in got["said"], (
         f"the page is still saying the move is happening: {got['said']!r}"
     )
-    assert TASK in got["said"] and "was not moved" in got["said"], got["said"]
+    # The row named as it is drawn, and the error's own words after the dash.
+    # `TASK in said` passed just as well over `task-c00001 was not moved`, which
+    # is the sentence this branch stopped writing.
+    assert got["said"].startswith(f"{TASK_TITLE} was not moved — "), got["said"]
+    assert TASK not in got["said"], (
+        f"the row's filename is not what the sentence is about: {got['said']!r}"
+    )
     assert "Drag it again" in got["said"], (
         f"and it does not say what to do about it: {got['said']!r}"
     )
@@ -6889,6 +6953,15 @@ def test_a_parked_commit_turns_its_mark_into_a_problem_naming_the_branch(page: s
     assert got["otherQuiet"] is False, "the second save was named as landed and must clear"
     assert branch in got["announced"], (
         "a parked commit announced only visually has not announced itself"
+    )
+    # And `namedOf`'s caller, which is the reason that helper says both halves.
+    # It is driven in isolation one screen up and was called nowhere any test
+    # looked, so this sentence could have gone back to the title alone — or to
+    # the bare id — under a green suite. A parked save is the one thing this page
+    # says that only somebody with a checkout can act on, and a checkout finds a
+    # record by its id; the title is how they know which piece of work it was.
+    assert f"{TASK_TITLE} ({TASK})" in got["announced"], (
+        f"the one sentence on this page that needs both halves: {got['announced']!r}"
     )
     assert got["kept"] is True, "a later landing tidied away a problem it did not resolve"
 
@@ -7763,9 +7836,20 @@ def test_the_bulk_answer_is_never_written_over_a_row_that_already_holds_one(revi
     assert answer["value"]["kept"] == "2026-03-02", "the date the record really started"
 
     said = answer["value"]["said"]
-    assert OTHER in said, f"the refusal has to name the row to act on: {said!r}"
-    assert "start date" in said, f"and the field, in the reader's word for it: {said!r}"
-    assert TASK not in said, f"the row that was missing it is not the problem: {said!r}"
+    # The row to act on, named as the table draws it. The remedy in this sentence
+    # is "take that row out of the selection", which is done by finding it on the
+    # screen behind the banner — so the name has to be the one on the screen.
+    assert said.startswith(f"{OTHER_TITLE} already has a start date"), (
+        f"the refusal has to name the row to act on, and the field: {said!r}"
+    )
+    # Neither row is spelled as a filename. `OTHER not in said` was the previous
+    # assertion's negative twin and it passed over a banner made of ids alone;
+    # both halves are pinned here so that a page that went back to ids fails on
+    # the row it names AND on the row it must not.
+    assert TASK_TITLE not in said, f"the row that was missing it is not the problem: {said!r}"
+    assert TASK not in said and OTHER not in said, (
+        f"a selected row is named, not filed: {said!r}"
+    )
 
 
 def test_the_single_cell_panel_prefills_today_for_the_end_date(finishing_page: str):
@@ -7802,3 +7886,112 @@ def test_the_end_date_is_a_field_the_row_is_re_read_after(page: str):
     answer = drive_table(page, "[...DERIVES_DATES].sort()")
 
     assert answer["value"] == ["cycle", "end_date", "person_weeks", "start_date"]
+
+
+# --------------------------------------------------------------------------- #
+# The catches nobody drove
+#
+# Twelve `catch` blocks were added to this page's write paths and three of them
+# had a test. A `catch` that is never entered is a `catch` whose sentence is
+# whatever it was typed as — which is how the two worst ones here got written:
+# one promised a refusal the store does not give, and one told somebody to reload
+# the tab holding the only copy of what they had typed.
+#
+# `{reject: …}` and never a scripted 500. A dropped connection is `fetch`
+# REJECTING — a `TypeError`, never a status — so a 500 exercises the
+# `!response.ok` arm and says nothing at all about the `catch`.
+# --------------------------------------------------------------------------- #
+
+
+DROPPED = {"reject": "Failed to fetch"}
+
+
+def test_a_bulk_save_on_a_dead_connection_says_so_and_keeps_the_selection(page: str):
+    """The one gesture on this page where "nothing happened" and "fifty records
+    changed" look identical on screen.
+
+    With no `catch` the rejection escaped unhandled and the selection sat there
+    exactly as it had before the press: every row still picked, every cell still
+    showing the old value, nothing said. The repeat is what the selection is for,
+    so it stays up — the opposite of the landed path, which drops it.
+    """
+    answer = drive_table(
+        page,
+        # Priority and not status: a bulk status change asks for the fields the
+        # new status needs before it writes anything, and this test is about the
+        # write. Two rows, one field, one PATCH.
+        "(async () => {"
+        f"  PICKED_FIELD = 'priority'; PICKED.add('{TASK}'); PICKED.add('{OTHER}');"
+        f'  const cell = tbody.querySelector(\'td[data-record="{TASK}"]'
+        '[data-field="priority"]\');'
+        "  await saveCells(cell, 'low');"
+        f"  {SETTLE}"
+        "  return {said: document.getElementById('state').textContent,"
+        "          conflict: document.getElementById('row-conflict').hidden,"
+        "          picked: [...PICKED].sort()};"
+        "})()",
+        replies=[DROPPED],
+    )
+    got = answer["value"]
+
+    assert got["said"] == (
+        "2 cells not saved — Failed to fetch. Press it again: it sends the same "
+        "values against the same base, so a write that did land is not repeated."
+    ), got["said"]
+    assert got["picked"] == sorted([OTHER, TASK]), (
+        "the selection is what the repeat needs, so it is left up on this branch"
+    )
+    # Not into the conflict box: that box means the store refused a swap and
+    # names what moved, and a dropped connection knows neither.
+    assert got["conflict"] is True
+    # And it does not promise what the store does not do. `_merge_frontmatter`
+    # skips every key whose stored value already equals the one being sent, so a
+    # repeat of the SAME write merges and answers 200 — it is not refused, and a
+    # sentence saying it would be is a sentence telling somebody to expect an
+    # error that never comes.
+    assert "refused" not in got["said"], got["said"]
+    assert "nothing was sent" not in got["said"].lower(), got["said"]
+
+
+def test_a_create_on_a_dead_connection_keeps_the_row_and_does_not_say_reload(page: str):
+    """The sentence that destroyed the thing it had just preserved.
+
+    `refused()` puts the typed row back with the reason on it — and this said
+    "Reload before pressing Create again", one line under that call. `DRAFT` is a
+    plain `let` that deliberately does not survive a reload, so following the
+    instruction threw away everything the sentence had kept.
+
+    A second tab is the place that outlives the draft, and looking rather than
+    pressing is the advice because this press MINTS a record: two presses that
+    both landed are two records, and no compare-and-swap catches that.
+    """
+    answer = drive_table(
+        page,
+        "(async () => {"
+        "  openDraft(); chooseKind('task');"
+        "  stage('title', 'Write the migration note');"
+        f" await createDraft(); {SETTLE}"
+        "  const row = tbody.querySelector('tr.draft');"
+        "  return {said: DRAFT ? DRAFT.said : null,"
+        "          typed: DRAFT ? DRAFT.fields.title : null,"
+        "          creating: CREATING,"
+        "          drawn: !!row};"
+        "})()",
+        replies=[DROPPED],
+    )
+    got = answer["value"]
+
+    assert got["typed"] == "Write the migration note", (
+        "the draft is gone, so what was typed went with it"
+    )
+    assert got["drawn"] is True, "and the row is not on the screen to be pressed again"
+    assert got["creating"] is False, "a flag that survives its own request is a row nobody can make"
+    assert got["said"] == [
+        "Not created — Failed to fetch. The row is still here and nothing typed is "
+        "lost. Look for it in a second tab before pressing Create again, because a "
+        "second press that both landed would make two records — reloading this tab "
+        "would take the row with it."
+    ], got["said"]
+    assert "Reload before" not in "".join(got["said"]), (
+        "the instruction that throws away the draft this same call just put back"
+    )

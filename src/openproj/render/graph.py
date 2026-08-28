@@ -1259,6 +1259,13 @@ if (CONNECT) {
     let written = 0;
     for (const [id, sources] of wanted) {
       const node = cy.getElementById(id);
+      // What this card is called on the canvas it was just dragged on. `label` is
+      // the record's title — the same ink `labelOf` draws inside the box — so the
+      // sentence in the live region names the thing the reader is looking at
+      // instead of the id under it, which is drawn nowhere on this page. The id
+      // is the fallback for the same reason the table's `titleOf` has one: a
+      // record hand-written in git can carry no title at all.
+      const name = node.data('label') || id;
       const gone = new Set(unwanted.get(id) || []);
       // Added first and removed second, so a dependency drawn and then marked in
       // one session comes out as removed rather than as whichever the loops ran
@@ -1287,13 +1294,36 @@ if (CONNECT) {
           // `refusal` because an edge saved against a moved HEAD comes back 409,
           // and this said "refused" where the answer held the whole report.
           const why = refusal(answer, response.status);
-          say(`${id}: ${why}${written ? ` — ${written} already saved` : ''}`);
+          say(`${name}: ${why}${written ? ` — ${written} already saved` : ''}`);
           SAVE.disabled = false;
           return;
         }
         committed = answer.commit;
         base.value = answer.commit;
         written += 1;
+      } catch (error) {
+        // The connection went mid-batch. With no `catch` the rejection escaped
+        // and took `location.reload()` with it, so the canvas was left holding
+        // drawn-but-unsaved edges with Save disabled and nothing said — while
+        // the records before this one really had been committed, one per commit.
+        //
+        // Save comes back and the reload does not happen, so what is on the
+        // canvas is still what has not been written. No claim about what reached
+        // the server: a fetch rejects when the answer is lost as readily as when
+        // the request never left.
+        //
+        // The repeat is safe because it is the SAME write — the canvas still
+        // holds the same edges, so the same `depends_on` goes out — and not
+        // because the store would refuse it. `_merge_frontmatter` skips every key
+        // whose stored value already equals the one being sent, so a record that
+        // did land merges with itself and answers 200. This sentence used to
+        // promise a refusal the store does not give.
+        say(`${name}: not saved — ${error.message}`
+            + (written ? ` — ${written} already saved` : '')
+            + '. Press Save again: it sends the same links, so a record that did '
+            + 'land is not written twice.');
+        SAVE.disabled = false;
+        return;
       } finally {
         dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
       }

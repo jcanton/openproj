@@ -252,12 +252,21 @@ def _devtools(browser: str, url: str, profile: Path, flags: tuple[str, ...] = ()
         # Chrome writes the port it actually took into the profile, which is the
         # only way to ask for an ephemeral one and still find it.
         where = profile / "DevToolsActivePort"
+        # Waited on the CONTENT and not on the file: Chrome creates it and writes
+        # the port into it as two steps, so a run that looked between them read
+        # an empty file and answered `IndexError: list index out of range` from
+        # inside the harness — which reads as a broken test rather than as a
+        # browser that had not finished starting. Seen once on CI, on a test that
+        # had nothing to do with the branch it failed.
+        wrote = ""
         for _ in range(400):
             if where.exists():
-                break
+                wrote = where.read_text().splitlines()[0] if where.read_text() else ""
+                if wrote:
+                    break
             time.sleep(0.05)
-        assert where.exists(), "Chrome never wrote DevToolsActivePort"
-        port = int(where.read_text().splitlines()[0])
+        assert wrote, "Chrome never wrote a port into DevToolsActivePort"
+        port = int(wrote)
 
         target = httpx.put(f"http://127.0.0.1:{port}/json/new?{quote(url, safe='')}").json()
         page_path = target["webSocketDebuggerUrl"].split(f"127.0.0.1:{port}", 1)[1]

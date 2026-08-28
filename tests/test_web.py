@@ -95,6 +95,18 @@ PROJECT = "proj-a10000"
 
 PATH = f"tasks/{TASK}.md"
 
+# What those five records are CALLED. Every refusal and every announcement a
+# person reads names a record by its title, so a test that reads one needs the
+# title beside the id. Written out here rather than read off `SEED` below, for
+# the reason the session cookie above is written out: a test that derives the
+# string it is checking from the thing it is checking agrees with it by
+# construction and would go on passing if both moved together.
+TASK_TITLE = "Reproduce the 2-GPU seam artefact"
+OTHER_TITLE = "Downgrade numpy for global sums"
+DONE_TITLE = "Read the 2014 stable-summation paper"
+PITCH_TITLE = "Verify the aroma transport port"
+PROJECT_TITLE = "Distributed driver"
+
 
 # --------------------------------------------------------------------------- #
 # The corpus
@@ -4762,8 +4774,12 @@ def test_a_save_cannot_file_a_record_under_its_own_child(client: TestClient, rep
 
     assert answer.status_code == 409, answer.text
     # And it says which chain, because "that would make a loop" and "the project
-    # would be filed under its own pitch" are different amounts of help.
-    assert PROJECT in answer.text and PITCH in answer.text
+    # would be filed under its own pitch" are different amounts of help. Each
+    # link named by title AND id: the sentence is read, and then acted on by
+    # opening one of these files.
+    said = answer.json()["detail"]
+    assert f"{PROJECT_TITLE} ({PROJECT})" in said, said
+    assert f"{PITCH_TITLE} ({PITCH})" in said, said
     assert git_head(repo_path) == before
 
 
@@ -4783,15 +4799,25 @@ def test_a_save_cannot_make_a_record_wait_for_itself(client: TestClient, repo_pa
 def test_the_refusal_names_the_chain_and_not_merely_the_record(client: TestClient):
     """The one that says what to undo. A record's strongly connected component can
     hold loops it is not itself on, and naming one of those would send somebody to
-    edit a record that is not the problem."""
+    edit a record that is not the problem.
+
+    Every hop is named twice over — title then id — and both halves are asserted,
+    because each does a job the other cannot. Breaking the ring means opening one
+    of these records and taking one name out of it: the title is how a reader
+    picks which one, and the id is what that file is called in git. A chain of
+    three bare ids, which is what this said before, is three lookups before
+    anybody can start.
+    """
     assert save(client, TASK, {"depends_on": [OTHER]}).status_code == 200
     assert save(client, OTHER, {"depends_on": [DONE]}).status_code == 200
 
     said = save(client, DONE, {"depends_on": [TASK]}).json()["detail"]
     # Every record on the ring, in the order somebody would walk it.
-    for record_id in (DONE, TASK, OTHER):
-        assert record_id in said, f"{record_id} is on the loop and is not named: {said}"
-    assert said.startswith(f"that would leave {DONE} waiting for itself")
+    for record_id, title in ((DONE, DONE_TITLE), (TASK, TASK_TITLE), (OTHER, OTHER_TITLE)):
+        assert f"{title} ({record_id})" in said, (
+            f"{record_id} is on the loop and is not named by both: {said}"
+        )
+    assert said.startswith(f"that would leave {DONE_TITLE} ({DONE}) waiting for itself")
 
 
 def test_an_honest_dependency_still_lands(client: TestClient):

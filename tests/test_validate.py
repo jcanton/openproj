@@ -13,6 +13,8 @@ import time
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from openproj.cli import main
 from openproj.model import (
     ID_PATTERN,
@@ -36,6 +38,13 @@ OTHER_TASK_ID = "task-ddd444"
 PITCH_ID = "pitch-bbb222"
 OTHER_PITCH_ID = "pitch-eee555"
 PROJECT_ID = "proj-ccc333"
+
+# The fixtures' own titles, shared with the assertions that read them back out of
+# a sentence rather than written out twice: a dependency refusal now names the
+# record it blames, and a copy of the title in the assertion would go on passing
+# after somebody renamed the fixture.
+TASK_TITLE = "A task"
+PITCH_TITLE = "A pitch"
 
 NEEDS_TITLE = "title must not be empty"
 BAD_ID_PATTERN = "id must match " + ID_PATTERN.pattern
@@ -66,19 +75,31 @@ def bad_id_prefix(kind: str) -> str:
 
 
 def missing_target(target: str) -> str:
+    """The one dependency sentence that stays a bare id, and deliberately.
+
+    Nothing in the plan claims that name, so there is no title to put in front of
+    it and the complaint is about the spelling itself.
+    """
     return f"blocked by {target}, which does not exist"
 
 
-def shelved_target(target: str) -> str:
-    return f"blocked by {target}, which is shelved"
+# The other three name the record twice — title, then id in brackets. Both
+# halves, because the sentence is drawn beside the record on its own page AND is
+# the instruction to go and take one line out of one file: the title is how a
+# reader knows which piece of work is meant, the id is what the file is called.
+# `Problem` carries only `record_id`, which is the record the problem is ABOUT,
+# so the id here has nowhere else to travel — dropping it for the title alone
+# would take it off `/api/index.json` and out of `openproj check`.
+def shelved_target(title: str, target: str) -> str:
+    return f"blocked by {title} ({target}), which is shelved"
 
 
-def ancestor_dep(target: str) -> str:
-    return f"cannot depend on {target}: it is an ancestor"
+def ancestor_dep(title: str, target: str) -> str:
+    return f"cannot depend on {title} ({target}): it is an ancestor"
 
 
-def descendant_dep(target: str) -> str:
-    return f"cannot depend on {target}: it is a descendant"
+def descendant_dep(title: str, target: str) -> str:
+    return f"cannot depend on {title} ({target}): it is a descendant"
 
 
 def task(**overrides: object) -> Task:
@@ -94,7 +115,7 @@ def task(**overrides: object) -> Task:
     fields: dict[str, object] = {
         "id": TASK_ID,
         "kind": "task",
-        "title": "A task",
+        "title": TASK_TITLE,
         "parent": PITCH_ID,
         "status": "ready",
         "owner": "jackdawrie",
@@ -110,7 +131,7 @@ def pitch(**overrides: object) -> Pitch:
     fields: dict[str, object] = {
         "id": PITCH_ID,
         "kind": "pitch",
-        "title": "A pitch",
+        "title": PITCH_TITLE,
         "parent": None,
         "status": "ready",
         "owner": "jackdawrie",
@@ -226,9 +247,9 @@ def test_regression_a_record_may_not_depend_on_its_own_ancestor_or_descendant():
     """Regression: containment already implies an ordering, so a dependency along
     the parent chain is a contradiction the scheduler cannot resolve."""
     upwards = only(check(task(depends_on=[PITCH_ID]), pitch()), TASK_ID)
-    assert summary(upwards) == ("blocker", "depends_on", ancestor_dep(PITCH_ID), 1)
+    assert summary(upwards) == ("blocker", "depends_on", ancestor_dep(PITCH_TITLE, PITCH_ID), 1)
     downwards = only(check(task(), pitch(depends_on=[TASK_ID])), PITCH_ID)
-    assert summary(downwards) == ("blocker", "depends_on", descendant_dep(TASK_ID), 1)
+    assert summary(downwards) == ("blocker", "depends_on", descendant_dep(TASK_TITLE, TASK_ID), 1)
 
 
 def test_a_depends_on_cycle_is_reported_on_every_record_in_it():
@@ -254,7 +275,81 @@ def test_a_task_without_a_parent_is_only_a_warning():
 def test_depending_on_a_shelved_record_is_only_a_warning():
     shelved = task(id=OTHER_TASK_ID, status="shelved")
     problem = only(check(task(depends_on=[OTHER_TASK_ID]), shelved), TASK_ID)
-    assert summary(problem) == ("warning", "depends_on", shelved_target(OTHER_TASK_ID), 1)
+    assert summary(problem) == (
+        "warning",
+        "depends_on",
+        shelved_target(TASK_TITLE, OTHER_TASK_ID),
+        1,
+    )
+
+
+def test_a_dependency_refusal_falls_back_to_the_id_when_there_is_no_title():
+    """A record hand-written in git can carry a blank title, and then the id is
+    the whole of what this can say.
+
+    Not a hypothetical branch: the only rule any title is held to is that it is
+    not empty, and that rule REPORTS rather than refuses — a file in git is a
+    fact. So the plan that trips this one is the plan that also carries "title
+    must not be empty" a line above, and a sentence reading `blocked by
+    (task-ddd444)` would be the second broken thing on that screen.
+
+    The fixture is asserted to be titleless as well, or a rename of `task()`
+    would turn this into the same test as the one above it and nothing would say.
+    """
+    nameless = task(id=OTHER_TASK_ID, title="", status="shelved")
+    assert nameless.title == "", "this test is about the record with no name"
+
+    problem = only(check(task(depends_on=[OTHER_TASK_ID]), nameless), TASK_ID)
+    assert summary(problem) == (
+        "warning",
+        "depends_on",
+        f"blocked by {OTHER_TASK_ID}, which is shelved",
+        1,
+    )
+
+
+# A title that is also a `str.format` template. Legal in every sense that matters
+# here — the only rule a title is held to is that it is not blank — and typed by
+# nobody on purpose: `{0.__class__}` is the shape a shell one-liner or a pasted
+# traceback leaves behind, and `Fix {name} handling` is a sentence somebody could
+# reasonably write about a bug in a formatter.
+FORMAT_TITLE = "Fix {0.__class__} handling"
+BRACED_TITLE = "Fix {name} handling"
+
+
+@pytest.mark.parametrize("title", [FORMAT_TITLE, BRACED_TITLE])
+def test_a_title_holding_format_braces_is_drawn_and_does_not_fill_a_slot(title):
+    """The crash the `Sentence` conversion was made to avoid, driven.
+
+    These three dependency sentences were f-strings and are now `Sentence`s with
+    the record's name in `parts`, and the comment at `_dependency_problems` gives
+    exactly this reason: `Sentence.sentence` is handed to `str.format`, so a
+    title built INTO the template would let a plan file name a slot of its own.
+    `{0.__class__}` raises `IndexError` — no positional argument — and
+    `{name}` raises `KeyError`, and both raise on every page that draws a
+    problem, in `str(problem.message)` a long way from the file that caused it.
+
+    Nothing pinned it. `parts` is invisible from outside — `text` and `drawn`
+    both come out as finished strings — so moving the name back into the template
+    would read as a tidy-up and every other assertion in this file would go on
+    passing.
+
+    Both forms are asserted, because they fail differently: a positional slot and
+    a named one raise two different exceptions, and a fix that caught one of them
+    would leave the other.
+    """
+    shelved = task(id=OTHER_TASK_ID, title=title, status="shelved")
+
+    problem = only(check(task(depends_on=[OTHER_TASK_ID]), shelved), TASK_ID)
+
+    # Drawn at all: the reads that raise are these two, and `message` is `text`
+    # under the name every reader of a Problem calls it.
+    assert problem.message == shelved_target(title, OTHER_TASK_ID)
+    assert problem.drawn == shelved_target(title, OTHER_TASK_ID)
+    # And the braces survive as the characters somebody typed rather than being
+    # eaten as a slot, which is the difference between a title drawn and a title
+    # silently substituted away.
+    assert title in problem.message, problem.message
 
 
 # --- rules that apply at one status -----------------------------------------

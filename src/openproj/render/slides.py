@@ -624,14 +624,35 @@ async function save() {
     });
     const result = await answer.json().catch(() => ({}));
     if (!answer.ok) {
-      // The message the server wrote, because it names the field and why. A
-      // generic "could not save" here would throw away the one sentence that
-      // says what to do about it.
-      said(result.detail || 'That could not be saved.');
+      // The shell's `refusal`, which is the only reading that knows a 409 has
+      // two shapes. `result.detail` alone was backwards: this route is
+      // `PATCH /api/record`, whose real concurrent write answers through
+      // `_result` with a `conflict` report and NO `detail` at all — so the one
+      // case this line exists for was the one case it could not say, and
+      // "That could not be saved." stood over the report naming the file and
+      // every field that disagreed.
+      said(refusal(result, answer.status));
       return;
     }
     if (result.commit) BASE.value = result.commit;
     said('Saved.');
+  } catch (error) {
+    // The connection went while the request was in the air. This was `try` and
+    // `finally` with no `catch`: the rejection escaped as an unhandled one and
+    // the bar was left reading "Saving…" for ever — a sentence that says the
+    // thing is still happening, about a thing that stopped.
+    //
+    // It does not claim what reached the server. A fetch rejects when the
+    // answer is lost as readily as when the request never left, so this says
+    // what to do instead — and pressing Save again is safe either way.
+    //
+    // Safe because it is the SAME write, and not because the store would refuse
+    // it. `_merge_frontmatter` skips every key whose stored value already equals
+    // the one being sent, so a save that did land, re-sent unchanged against the
+    // same `BASE.value`, merges with itself and answers 200. Predicting a
+    // refusal here would be predicting something the store does not do.
+    said(`Not saved — ${error.message}. Press Save again: it sends the same edit `
+         + 'against the same base, so a first save that did land is not written twice.');
   } finally {
     SAVE.disabled = false;
   }
