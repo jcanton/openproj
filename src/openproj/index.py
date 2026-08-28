@@ -502,6 +502,75 @@ class Index(BaseModel):
             if cycle_of(record, self.plan) != cycle and self.counts_in(record, cycle)
         )
 
+    def delivered_in(self, cycle: int) -> list[str]:
+        """Ids of the finished work this cycle's window can claim, earliest first.
+
+        **The counterpart to `counts_in`, and deliberately not a widening of it.**
+        `counts_in` returns False for `done` on its first line and is the only
+        gate in `load` and `carried_into`, so after a review every person on
+        cycle 37's page read `0.0 wk of 4.0`: a cycle's whole output stopped
+        counting the moment somebody marked it done, and the over-capacity flag
+        could only ever be true about the future. The fix is not to let finished
+        work back into that gate — it answers "what are this person's next weeks
+        spent on", which the load bars and the capacity percentages are readings
+        of, and admitting last quarter's work would change what every one of
+        those numbers means. §5 of `design/time-model.md` says so in as many
+        words. So this is a second question with a second answer, and the planned
+        figures keep the meaning they have.
+
+        **The window decides, not the stamp.** `cycle:` records where a bet was
+        made and is never re-stamped (D-C1) — that is what keeps an overrun
+        accusing — so a pitch bet in 36 and finished in October delivered in 37,
+        and reading the stamp would file it under the cycle it slipped out of.
+        The date somebody wrote down is the only thing that says when work
+        landed, which is why §4 made it a stored field rather than a derived one.
+
+        **A done record with no end date is listed under the cycle it was bet
+        in.** Nothing about it can be tested against a window, and there are
+        such records by design: `end_date` is a blocker at rule version 5 and
+        every record written before that warns instead, so the corpus carries
+        five of them annotated `# was fabricated during migration; unknown`.
+        Dropping them would make this block quietly under-report exactly the
+        cycles whose work predates the field — a shorter list with nothing on the
+        page to say why, which is the defect the `· N not sized` badge exists to
+        prevent one method along. They are named here and the page says the end
+        date is missing rather than inventing one; a record carrying neither an
+        end date nor a bet cycle is claimed by no cycle, because there is nothing
+        left to claim it by.
+
+        **`done` and not `shelved`.** `counts_in` refuses both on one line
+        because neither is anybody's next week, and it is right to. They part
+        company here: work that was dropped delivered nothing, and putting it in
+        a list headed by what a cycle produced would be the one place in the tool
+        where abandoning a bet reads as landing it.
+
+        **No rollup or ownerless exclusion, unlike `load`.** Those two are there
+        because `load` SUMS, and a pitch charging its own appetite beside its
+        children's counts one bet twice. This is a list and adds nothing up, so
+        both belong on it: the pitch is the bet the room made, and its tasks are
+        the work somebody actually did all cycle — which is the complaint at the
+        top of §5, and dropping either half of it answers half the complaint.
+        """
+        window = self.cycles.get(cycle)
+        dated: list[Record] = []
+        undated: list[Record] = []
+        for record in self.plan.values():
+            if record.status != "done":
+                continue
+            if record.end_date is not None:
+                if window is not None and window[0] <= record.end_date <= window[1]:
+                    dated.append(record)
+            elif cycle_of(record, self.plan) == cycle:
+                undated.append(record)
+        # Chronological, because a review reads a cycle as the story of one, and
+        # the records nothing can date after them rather than interleaved at a
+        # position no date put them in. Two sorted lists rather than one key with
+        # a placeholder date in it: a placeholder that never decides anything is
+        # still a date somebody has to read past to see that it does not.
+        dated.sort(key=lambda record: (record.end_date, record.id))
+        undated.sort(key=lambda record: record.id)
+        return [record.id for record in dated + undated]
+
 
 def _project_of(record: Record, by_id: dict[str, Record]) -> str | None:
     """The project a record belongs to, walking up the parent chain."""

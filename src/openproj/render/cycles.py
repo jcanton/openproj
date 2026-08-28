@@ -165,6 +165,71 @@ _CYCLE = """
   }}</a> (bet in {{ row.cycle }}){% if not loop.last %}, {% endif %}{% endfor %}.</p>
 {% endif %}
 
+{#- What the cycle produced, directly under what was planned for it and above the
+    line where the next betting table begins. §5 of `design/time-model.md` draws
+    them in that order and against a rule, and the reason is that they are two
+    readings of the same weeks that must be read together: the roster says every
+    person is at 0.0 of their capacity, and this says what they spent it on. A
+    section further down the page — after the goal, or under the notes — is a
+    correction to a number nobody scrolls back up to re-read. -#}
+<section id="delivered">
+<h2>Delivered</h2>
+<p class="hint">What ended inside this cycle's window, by the date on the record.
+  It is not in the weeks above: those are what people's <em>next</em> weeks hold,
+  and finished work is nobody's next week.
+  {#- Said only where there is such a row. A line explaining a state the reader
+      cannot see is paid for by everybody who has none of it. `rejectattr` with no
+      test reads the attribute as a boolean, which is the same question the cell
+      below asks.
+
+      This comment strips on its left and not on its right, which every other
+      comment on this page does at both ends. What the right-hand strip eats here
+      is the newline separating two sentences of prose, and it printed
+      "nobody's next week.A record written before" on the corpus's cycle 28. #}
+  {% if c.delivered|rejectattr('ended')|list %}A record written before the end
+  date existed has none to show; it is listed under the cycle its bet was made
+  in, and there is nothing this can say about when it landed.{% endif %}</p>
+{% if c.delivered %}
+<div class="sideways">
+<table class="delivered unfitted"><thead><tr>
+  <th>title</th><th>bet</th><th>ended</th></tr></thead>
+<tbody>
+  {% for row in c.delivered %}
+  <tr data-id="{{ row.id }}">
+    <td><a href="{{ links.record }}{{ row.id }}">{{ row.title }}</a></td>
+    {#- An empty appetite is named rather than filled in with a number, exactly as
+        the betting table's placeholder is: the size gate reaches `ready` and
+        `in_progress` and nothing older, so finished work with no bet on it is an
+        ordinary thing to find and not a fault. -#}
+    <td class="num">{% if row.bet %}{{ row.bet }} wk{% else %}<span class="quiet"
+      >not sized</span>{% endif %}</td>
+    {#- The detail page's own overrun sentence, shortened to what a column can
+        hold and wearing the same class and the same mark, so the one sentence
+        that says a bet did not fit its box reads alike wherever it is drawn. The
+        cycle it names is the span's and never this page's number: a task under a
+        pitch bet in 36 can be delivered in 37, and the box it missed is still
+        36's.
+
+        The separator is written inside the `if` and the tag before it strips
+        rather than the other way round, because the space in front of the dot is
+        load-bearing: laid out over two lines with the comment between them it was
+        eaten, and the cell read `07.10.2026· ▲`. -#}
+    <td class="num">{% if row.ended %}{{ on(row.ended) }}
+      {%- if row.over %} · <span class="overrun"><span class="sev-mark sev-mark-warn"
+        aria-hidden="true">▲</span> {{ row.over }} wk past cycle {{ row.over_cycle
+        }}</span>{% endif %}{% else %}<span class="quiet">no end date</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</tbody></table>
+</div>
+{% else %}
+{#- Empty is an invitation to act, and this one has an action: the end date is
+    collected at the transition, so what puts work here is marking it done. -#}
+<p class="hint">Nothing has landed in this window yet. Marking work done records
+  the day it ended, and that date is what puts it here.</p>
+{% endif %}
+</section>
+
 {#- The goal above the table, the notes below it, and they are two fields now.
     One box served as both for as long as the goal was the body, which put the
     cycle's whole point wherever the growing half of the document happened to
@@ -981,12 +1046,38 @@ p.goal.read { font-size: 15px; max-width: 52rem; margin: 0 0 1rem; }
 #setup .field, table.load .field { display: inline-block; }
 #setup .field { width: 12rem; }
 #setup .read, table.load .read { display: none; }
-table.load { border-collapse: collapse; font-size: 13px; margin: .5rem 0 1rem; }
-table.load th, table.load td {
+/* The roster and the delivered list wear one dress, said once. They are the two
+   plain tables on this page — the betting table below is a grid of controls and
+   has its own block — and writing the second one out again is how two tables
+   that are meant to read alike stop doing so a rule at a time. `.delivered` is a
+   class nothing else on any page carries, so adding it here beats nothing that
+   was not already beaten: it inherits these three rules and no others, which is
+   why `table.load .field` and `table.load .read` below stay as they are — a
+   delivered row has no control in it to hide a printed value behind. */
+table.load, table.delivered { border-collapse: collapse; font-size: 13px;
+                              margin: .5rem 0 1rem; }
+table.load th, table.load td, table.delivered th, table.delivered td {
   border-bottom: 1px solid var(--line); padding: .3rem .6rem; text-align: left;
 }
-table.load th { color: var(--muted); font-weight: 400; font-size: 11px;
-                text-transform: uppercase; letter-spacing: .04em; }
+table.load th, table.delivered th { color: var(--muted); font-weight: 400;
+                                    font-size: 11px; text-transform: uppercase;
+                                    letter-spacing: .04em; }
+/* A bet and a date are figures read down a column, and a column of figures that
+   are not the same width per digit reads as a ragged edge rather than as a
+   comparison. Not `.derived`, which carries these numerals already and would
+   have been the cheap way to get them: that class means "computed, and typing
+   over it would change nothing", and both of these are fields somebody stored.
+   The overrun beside the date is the one derived thing in the table and it
+   keeps `.overrun`, the detail page's own class. */
+table.delivered td.num { font-variant-numeric: tabular-nums; }
+/* The rule §5 sketches between what was planned and what arrived. Above the
+   section and not below it, because what it separates is the two readings of one
+   cycle's weeks: everything from here down happened, and everything above it is
+   still a forecast. `#create`'s rule on the cycles index is the same device for
+   the same reason, and the heading loses its own top margin so the distance from
+   the rule is this rule's to set. */
+#delivered { border-top: 1px solid var(--line); margin-top: 2.5rem; padding-top: 1rem; }
+#delivered h2 { margin-top: 0; }
 tr.over td { color: var(--danger); }
 /* What the bet beside it does not count. Muted rather than warning-coloured: an
    unshaped bet with no appetite is the ordinary state of a cycle's early weeks
@@ -1912,6 +2003,58 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         if not index.children.get(i) and (index.plan[i].owner or index.plan[i].assignees)
     ]
 
+    # What this cycle produced, which nothing above it can say. Every figure in
+    # the roster is `counts_in`, and `counts_in` refuses a done record on its
+    # first line — so the page for a cycle that has been reviewed showed every
+    # person at 0.0 of their capacity and had no way to mention the work they had
+    # just spent it on. `delivered_in` is the second question, asked of the end
+    # dates §4 made a stored field; the bars above keep meaning what they meant.
+    delivered = []
+    for record_id in index.delivered_in(number):
+        record = index.plan[record_id]
+        span = index.spans.get(record_id)
+        size = size_weeks(record)
+        # The one number on the row that is a measurement and not a forecast, and
+        # it is shown only where the span it came from was measured from THIS
+        # date. `schedule` reads a done record's end back as no end at all when
+        # it falls before the start — a hand-written file can contradict itself,
+        # and `ends_before_it_starts` is a blocker at the door rather than
+        # something this module may assume away — and it then hands `_overrun`
+        # the START date instead. Printed beside `end_date` that would be an
+        # overrun measured against one day beside a claim about another, which is
+        # the exact defect §4b's `overruns_cycle` was pinned to the span to end.
+        # The equality is the whole gate: the number and the date agree, or the
+        # row says only what it can.
+        measured = span is not None and record.end_date is not None and span.end == record.end_date
+        delivered.append(
+            {
+                "id": record_id,
+                "title": record.title,
+                # A bet is what somebody stated, and plenty of finished work
+                # states none — the size gate reaches `ready` and `in_progress`
+                # and nothing older than it. Empty here and named in the
+                # template, for the reason an empty appetite box on the betting
+                # table says "not sized" rather than showing a default: a number
+                # in this column is a number the room said out loud.
+                #
+                # `%.1f` and not the `%g` the betting table uses on the same
+                # number. That one fills an INPUT, where `3.0` in a box whose file
+                # says `3` is a page proposing an edit nobody made; this is a
+                # figure in a column of figures, beside the roster's own `bet`
+                # column, which is `%.1f` — and 3 above 4.5 is a ragged column
+                # where 3.0 above 4.5 is a comparison.
+                "bet": "" if size is None else f"{size:.1f}",
+                "ended": record.end_date.isoformat() if record.end_date else "",
+                # `%.1f` and the cycle beside it, the same two values the detail
+                # page's overrun sentence prints, so a bet that overran says the
+                # same thing in both places.
+                "over": f"{span.overruns_cycle_weeks:.1f}"
+                if measured and span.overruns_cycle_weeks
+                else "",
+                "over_cycle": span.overruns_cycle if measured else None,
+            }
+        )
+
     candidates = []
     # Ready first, then in progress, and by id inside each: the question at a
     # betting table is what to pick up, and what is already running is context.
@@ -1977,6 +2120,7 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         "held": held,
         "strangers": strangers,
         "carried": carried,
+        "delivered": delivered,
         "over": [p["login"] for p in people if p["over"]],
         "candidates": candidates,
         # `_markdown` and not a bare `_MD.render`: a cycle's goal is a shaping

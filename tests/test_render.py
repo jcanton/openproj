@@ -1491,6 +1491,166 @@ def test_the_pages_that_add_weeks_up_say_how_many_they_could_not_count():
     assert "nothing bet in cycle" not in people
 
 
+# The Delivered block, parsed rather than matched. The regex takes the slice and
+# the parser reads it, which is the split the neighbours above use for the same
+# reason: a substring cannot tell an id inside a `data-id` from an id inside a
+# title, and the betting table further down the page carries `data-id` on every
+# row of its own.
+def _delivered(page: str) -> dict[str, list[str]]:
+    """Each row of the cycle page's Delivered table: id, and what its cells say.
+
+    Cell by cell rather than the row's own text, because adjacent `<td>` elements
+    carry no whitespace between them and a row read whole comes back as
+    `Lower the scan operator8.0 wk11.09.2026` — three values that a browser and a
+    screen reader both keep apart and only a concatenation runs together.
+    """
+    table = re.search(r'<table class="delivered[^"]*".*?</table>', page, re.S)
+    rows: dict[str, list[str]] = {}
+    cells: list[str] | None = None
+    for element in elements(table.group(0)) if table else []:
+        if element.tag == "tr" and element.attrs.get("data-id"):
+            cells = rows.setdefault(element.attrs["data-id"], [])
+        elif element.tag == "td" and cells is not None:
+            cells.append(element.text)
+    return rows
+
+
+def _one_done_cycle(**fields: object) -> Index:
+    """Cycle 37 with ann in it at full rate, and one finished pitch of hers.
+
+    Built through `with_plans` rather than by handing `Config` a `plans` dict,
+    because two of the three tests below turn on `builds_until` — and a `Cycle`
+    that has not been resolved carries None there, which `build_end` reads as the
+    first day of the window. Every bet would then have overrun by its whole
+    length, which is a fixture agreeing with itself about a date nobody set.
+    """
+    from openproj.model import Config, Cycle, Pitch
+
+    plan = Cycle(
+        cycle=37,
+        starts_on=date(2026, 8, 17),
+        reviews_on=date(2026, 9, 28),
+        availability={"ann": 1.0},
+    )
+    config = Config(known_people=["ann"]).with_plans([plan])
+    record = Pitch(
+        id="pitch-370004",
+        kind="pitch",
+        title="Lower the scan operator",
+        owner="ann",
+        cycle=37,
+        person_weeks=8.0,
+        start_date=date(2026, 8, 17),
+        **fields,
+    )
+    return build_index([record], config, date(2026, 10, 9))
+
+
+def test_a_cycle_says_what_it_delivered_once_its_bars_have_gone_to_zero():
+    """§5 of `design/time-model.md`, which opens on this page after a review.
+
+    `counts_in` refuses `done` on its first line and is the only gate in
+    `Index.load`, so the moment the room marked cycle 37's work finished every
+    person on cycle 37's page read `0.0 wk` of their capacity: the weeks they had
+    just spent stopped counting, and the over-capacity flag could only ever be
+    true about the future.
+
+    Both halves are asserted together, and that is the shape of the fix rather
+    than half a test. The gate is deliberately NOT widened — it answers what a
+    person's NEXT weeks are spent on, which is what the load bars and the
+    capacity percentages are readings of — so the bar still has to read zero
+    while the page stops saying nothing.
+    """
+    from openproj.render import ROUTES, render_cycle
+
+    index = _one_done_cycle(status="done", end_date=date(2026, 9, 11))
+    page = render_cycle(index, 37, ROUTES)
+
+    assert index.load(37) == {}, "a done bet is still nobody's next week"
+    assert "0.0 wk" in page, "the planned figures keep the meaning they had"
+    assert (frozenset(), "Delivered") in [
+        (frozenset(e.attrs.get("class", "").split()), e.text)
+        for e in elements(page)
+        if e.tag == "h2"
+    ]
+    assert _delivered(page) == {"pitch-370004": ["Lower the scan operator", "8.0 wk", "11.09.2026"]}
+
+
+def test_a_bet_that_ran_past_its_cycle_says_so_where_the_cycle_lists_it():
+    """The one number that says whether a bet landed inside its box, on the page
+    the room reads at the review.
+
+    It could not be asked of a finished record at all until §4b: `_overrun` was
+    reached on the two forecast branches only, so `overruns_cycle_weeks` was None
+    for exactly the population that could answer it. The cycle travels beside the
+    number on the span, so the sentence here names the box the arithmetic used
+    and not this page's own number — a task under a pitch bet in 36 can be
+    delivered in 37, and the box it missed is still 36's.
+    """
+    from openproj.render import ROUTES, render_cycle
+
+    # Build ends 25.09; a week and five days past it, inside a window that runs
+    # to 11.10 — so this is delivered in 37 AND late, which are two questions.
+    index = _one_done_cycle(status="done", end_date=date(2026, 10, 7))
+    page = render_cycle(index, 37, ROUTES)
+
+    assert index.delivered_in(37) == ["pitch-370004"]
+    assert _delivered(page) == {
+        "pitch-370004": [
+            "Lower the scan operator",
+            "8.0 wk",
+            "07.10.2026 · ▲ 1.7 wk past cycle 37",
+        ]
+    }
+
+
+def test_work_shelved_in_a_cycle_is_not_work_that_cycle_delivered():
+    """`counts_in` refuses `done` and `shelved` on one line because neither is
+    anybody's next week, and it is right to. They part company here: a list
+    headed by what a cycle produced is the one place in the tool where dropping a
+    bet must not read like landing one."""
+    from openproj.render import ROUTES, render_cycle
+
+    index = _one_done_cycle(status="shelved", end_date=date(2026, 9, 11))
+
+    assert index.delivered_in(37) == []
+    assert _delivered(render_cycle(index, 37, ROUTES)) == {}
+
+
+def test_finished_work_with_no_end_date_is_named_under_the_cycle_it_was_bet_in(
+    seed_index: Index,
+):
+    """The grandfathered case, and it is most of the corpus rather than an edge.
+
+    `end_date` is a blocker at rule version 5 and every record written before
+    that warns instead, which is the only way a required field can be added at
+    all — so the frozen corpus's five done records carry none, three of them
+    annotated `# was fabricated during migration; unknown`. Nothing about them
+    can be tested against a window.
+
+    Dropping them would make the block under-report exactly the cycles whose work
+    predates the field, with nothing on the page to say why. They are listed
+    under the cycle their bet was stamped with, which is the only thing anything
+    knows about when they happened, and the row says the end date is missing
+    rather than showing the start date in its place — which is what the End
+    column did until §4b, on the same records.
+    """
+    from openproj.render import ROUTES, render_cycle
+
+    page = render_cycle(seed_index, 28, ROUTES)
+    rows = _delivered(page)
+
+    assert set(rows) == {"pitch-3c9a41", "task-31f6c4", "task-3a52d8", "task-3e07b2"}
+    assert rows["pitch-3c9a41"] == ["Throughflow 1D CPU single node", "4.0 wk", "no end date"]
+    assert rows["task-3a52d8"][1:] == ["not sized", "no end date"]
+    # Neither an invented date nor an overrun measured against one. `_overrun` is
+    # handed the START date on this branch for want of anything else, so a page
+    # printing its answer beside a missing end would be claiming a bet landed
+    # inside a box using a day it did not land on.
+    assert "▲" not in page.split("Delivered", 1)[1].split("<h2>Goal", 1)[0]
+    assert "A record written before the end date existed has none to show" in " ".join(page.split())
+
+
 def test_a_cycle_with_no_record_is_weeks_bet_against_no_roster(unrecorded_cycle: Index):
     """A cycle dated in config with no record behind it has availability for
     nobody. "0.0 of 0.0 weeks" would be a meter reading zero; what is true is that
@@ -6446,7 +6606,13 @@ def test_a_carried_row_may_be_repriced_but_not_re_bet(server_pages: dict[str, st
     now matters less than it did has to be able to say so.
     """
     page = server_pages["cycle"]
-    carried = re.findall(r'<tr data-id="[^"]*" class="carried">.*?</tr>', page, re.S)
+    # `[^>]*` between the id and the class, because the row carries the tree's
+    # `data-rung` between them now. A regex that names every attribute in the
+    # order they happen to be written is a regex that stops matching when one is
+    # added — silently, and this one skipped rather than failed.
+    carried = re.findall(
+        r'<tr data-id="[^"]*"[^>]*class="[^"]*\bcarried\b[^"]*">.*?</tr>', page, re.S
+    )
     if not carried:
         pytest.skip("the frozen corpus has no carried bet in this cycle")
     for row in carried:
