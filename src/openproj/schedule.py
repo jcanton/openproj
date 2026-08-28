@@ -1172,6 +1172,7 @@ def _place(
         busy_worker,
         busy_until,
         spans,
+        by_id,
         # The date the floor is about to throw away, asked of the validator's own
         # predicate rather than of `record.start_date < floor` written out here.
         # The two are not the same question on a Saturday — the floor is the first
@@ -1192,6 +1193,7 @@ def _explain(
     busy_worker: str | None,
     busy_until: date | None,
     spans: dict[str, Span],
+    by_id: dict[str, Record],
     passed: date | None,
 ) -> Explanation | None:
     """Name the constraint that actually decided the start date.
@@ -1215,6 +1217,12 @@ def _explain(
     beside its own two ISO columns, and `--json` carry one inside a document whose
     every other date is ISO. Which format a sentence wants is a fact about the
     reader, and this function cannot see one.
+
+    `by_id` is here for one word: the blocker is named to a reader by its TITLE,
+    and only the map can turn the id `_place` found into one. Resolving it up in
+    `_place` and handing down a string was the other shape, and it puts a
+    question about wording — which of a record's names a sentence uses, and what
+    to say when it has none — in the function that does the arithmetic.
     """
     if start <= floor:
         if passed is not None:
@@ -1243,10 +1251,66 @@ def _explain(
             worker_busy_until=busy_until,
         )
     if blocker_id is not None:
+        # The blocker is named by its title, and its id is deliberately gone from
+        # the sentence — which is the only form any reader gets. `detail.py` draws
+        # `why.drawn` as text, `timeline.py` puts it in a tooltip and in the
+        # sr-only line, and `openproj schedule --json` and `/api/index.json` both
+        # ship `{id: e.text}`. That was the ask: `task-7d9f52 finishes on
+        # 21.08.2026` sends the reader off to resolve an id from a hover card that
+        # exists so they do not have to.
+        #
+        # `blocker_id` below is unchanged, and nothing reads it — a grep for it
+        # reaches this module and no other. It stays as the structured half of the
+        # fact, beside the prose rather than inside it, so that a reader wanting
+        # the edge rather than the wording has a field to take it from if one is
+        # ever written. Do not read this comment as a claim that one exists.
+        #
+        # So the cost is real and belongs written down: titles are not unique.
+        # `_problems_for` (`model.py`) asks only that a title is not blank, so two
+        # records may carry the same one, and a blocker named by title can be
+        # ambiguous where an id never was.
+        #
+        # Threading a link through here is not the fix. The sentence reaches every
+        # page as one finished string, and `tests/test_injection.py`'s
+        # `test_no_page_is_assembled_by_substitution` exists to stop `render/`
+        # taking finished output apart again to inject an anchor into it. The
+        # reader's route to the record is the detail page's own rows instead —
+        # "Blocked by" and "Blocks", which link by title through `_links`
+        # (`render/detail.py`).
+        #
+        # That route is weakest exactly where this sentence is most useful. An
+        # inherited blocker is written on an ancestor (`blockers_of`), while
+        # `index.blocked_by` holds a record's OWN `depends_on` — so the record
+        # whose bar somebody is pointing at has an empty "Blocked by" row, and the
+        # only link to the title just named to them is one page up, on the parent.
+        #
+        # `by_id[...]` and not `.get`: `_place` assigns `blocker_id` only from a
+        # target it has already found in `spans`, and every key of `spans` is a
+        # record out of this same map. A fallback here would be an unreachable
+        # branch, and an unreachable branch is one nothing would notice going
+        # wrong.
+        #
+        # A blank title is the reachable one, and it falls back to the id.
+        # `validate_all` reports an empty title as a blocker and does not refuse
+        # the record — a plan in git is a fact this module draws — so it arrives
+        # here and would print "Cannot start before 24.08.2026:  finishes on
+        # 21.08.2026." Asked with `.strip()`, the validator's own test for blank,
+        # so the sentence and the check cannot disagree about which titles are
+        # blank — a record `openproj check` says nothing about must not be one
+        # this sentence has quietly renamed.
+        #
+        # In `parts`, never built into the wording: `sentence` is handed to
+        # `str.format`, so a title of `{0.__class__}` typed into a plan file
+        # would raise on every page that draws a schedule. See `Sentence`
+        # (`model.py`) — this is the case that comment names.
         return Explanation(
             record_id=record_id,
             sentence="Cannot start before {start}: {blocker} finishes on {ends}.",
-            parts={"start": start, "blocker": blocker_id, "ends": spans[blocker_id].end},
+            parts={
+                "start": start,
+                "blocker": by_id[blocker_id].title.strip() or blocker_id,
+                "ends": spans[blocker_id].end,
+            },
             blocker_id=blocker_id,
         )
     return None
