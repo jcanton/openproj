@@ -486,12 +486,14 @@ def _render(repo: Path, out_dir: Path, today: date | None) -> int:
 
 
 def _seed_dir() -> Path:
-    """Where the bundled demo corpus lives.
+    """Where the bundled demo corpus lives: in a checkout, or beside the package
+    in a wheel.
 
-    The same shape as `render._static_dir` and for the same reason: `seed/` is
-    not in the wheel, so an installed layout resolves `parents[2]` past
-    site-packages to a directory that is not there. Said rather than crashed, and
-    said with what to do about it.
+    The same shape as `vendor._static_dir` and for the same reason: `parents[2]`
+    resolves past site-packages in an installed layout, so the wheel carries
+    `seed/` beside the package (`force-include` in `pyproject.toml`) and that is
+    the second candidate. Said rather than crashed, and said with what to do
+    about it.
     """
     for candidate in (
         Path(__file__).resolve().parents[2] / "seed",
@@ -500,9 +502,10 @@ def _seed_dir() -> Path:
         if candidate.is_dir():
             return candidate
     raise RuntimeError(
-        "the bundled seed/ corpus is missing. It is part of the source tree and not of "
-        "the wheel, so `openproj demo` runs from a checkout; against a real plan the "
-        "command is `openproj serve --repo <bare clone>`."
+        "the bundled seed/ corpus is missing: not in a source tree and not beside the "
+        "package. A wheel built before seed/ was packaged runs `openproj demo` from a "
+        "checkout only; against a real plan the command is "
+        "`openproj serve --repo <bare clone>`."
     )
 
 

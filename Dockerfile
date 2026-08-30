@@ -27,8 +27,10 @@ RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin openproj
 
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
-# The source tree, not the wheel: static/ is not packaged, and render.py resolves
-# it relative to the source layout. OPENPROJ_STATIC says so explicitly anyway.
+# The source tree, not the wheel: the image runs src/ off PYTHONPATH, so static/
+# is copied beside it and OPENPROJ_STATIC says where it is explicitly. (The wheel
+# carries static/ beside the package too, since force-include in pyproject.toml;
+# this layout predates that and stays.)
 COPY --chown=openproj:openproj src/     /app/src/
 COPY --chown=openproj:openproj static/  /app/static/
 # The Help page reads these off the disk at render time, so that the page and

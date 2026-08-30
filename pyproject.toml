@@ -54,6 +54,20 @@ Source = "https://github.com/jcanton/openproj"
 [tool.hatch.build.targets.wheel]
 packages = ["src/openproj"]
 
+# The wheel carries what the package reads off the disk at run time: `static/`,
+# the vendored JS and fonts every page inlines, and `seed/`, the demo corpus.
+# `packages` alone ships `src/openproj`, and an installed `openproj serve`,
+# `render` or `demo` then answers its first page with "the vendored static/
+# directory is missing" — while the README says every command runs straight out
+# of the published package. `vendor._static_dir` and `cli._seed_dir` each look
+# beside the package (`openproj/static`, `openproj/seed`) after the source-tree
+# path, so these two lines are the other half of that lookup, and
+# `test_the_wheel_carries_what_the_lookups_look_for` holds the halves together.
+# Eleven megabytes, nearly all of it excalidraw and ELK; the sdist had them all along.
+[tool.hatch.build.targets.wheel.force-include]
+static = "openproj/static"
+seed = "openproj/seed"
+
 [tool.pytest.ini_options]
 # `-ra`, and deliberately not `-q`. The documented command is `pytest -q`, and a
 # `-q` here made that `-qq`, which suppresses the final "N passed" line

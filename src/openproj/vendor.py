@@ -11,14 +11,17 @@ from markupsafe import Markup
 
 
 def _static_dir() -> Path:
-    """Where the vendored JS lives, in a checkout or in a container.
+    """Where the vendored JS lives: wherever OPENPROJ_STATIC says, in a checkout,
+    or beside the package in a wheel.
 
     `parents[2]/static` is right for a source tree and wrong for an installed
     wheel, where it resolves past site-packages to a directory that does not
     exist — and `_inline` is a bare read_text, so the first GET /graph became an
     uncaught FileNotFoundError. Found by building a wheel rather than by reading
-    the path. OPENPROJ_STATIC exists so a deployment can say where they are
-    instead of hoping.
+    the path. The wheel now carries `static/` beside the package (`force-include`
+    in `pyproject.toml`), which is the last candidate below; OPENPROJ_STATIC
+    stays so a deployment that runs the source tree, or a wheel built before the
+    directory was packaged, can say where the files are instead of hoping.
     """
     candidates = [
         Path(os.environ["OPENPROJ_STATIC"]) if "OPENPROJ_STATIC" in os.environ else None,
@@ -29,8 +32,9 @@ def _static_dir() -> Path:
         if candidate is not None and candidate.is_dir():
             return candidate
     raise RuntimeError(
-        "the vendored static/ directory is missing. It is not part of the wheel, so an "
-        "installed layout must be told where it is with OPENPROJ_STATIC."
+        "the vendored static/ directory is missing: not in a source tree, not beside "
+        "the package, and OPENPROJ_STATIC is not set. A wheel built before static/ was "
+        "packaged needs OPENPROJ_STATIC pointing at a checkout's static/."
     )
 
 
