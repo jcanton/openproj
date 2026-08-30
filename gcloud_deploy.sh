@@ -2,9 +2,10 @@
 #
 # Deploy openproj to Cloud Run. Step 4 of deploy/RUNBOOK.md, as one script.
 #
-# Fill in the block marked FILL IN, then run it from the repository root:
+# Point it at the deployment's env file (see deploy/example.env) and run it from
+# the repository root:
 #
-#     ./gcloud_deploy.sh
+#     ./gcloud_deploy.sh <path to openproj.env>
 #
 # Safe to run more than once. Everything it creates is checked for first, so a
 # second run redeploys the current commit and leaves the secrets, the service
@@ -18,82 +19,42 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# FILL IN
+# The deployment, from one file
 # ---------------------------------------------------------------------------
-
-# Your Google Cloud project ID — the short string, not the display name and not
-# the number. `gcloud projects list` prints it under PROJECT_ID. If you have no
-# project yet, make one: it is the billing and permission boundary for
-# everything below, and a throwaway is fine to start.
 #
-#     gcloud projects create icon4py-plan-<something-unique> --name openproj
+# Which plan, which org, which Google Cloud project: those are facts about a
+# deployment and not about this tool, so they are read from a file that lives in
+# the PLAN repository — `openproj init` writes it when asked, and deploy/example.env
+# is the same file with every value blank and every explanation kept.
 #
-# Project IDs are globally unique across all of Google Cloud, so the plain names
-# are long gone; add a suffix. It cannot be changed later, but the service can
-# be redeployed into a different project in minutes, so this is not a decision
-# to agonise over.
+#     ./gcloud_deploy.sh ~/projects/my-plan/deploy/openproj.env
 #
-# The project also needs billing enabled — Cloud Run, Cloud Build and Artifact
-# Registry all refuse without it, free tier included. A *billing account* cannot
-# be created from the CLI at all; it takes a card, at
-# https://console.cloud.google.com/billing. Once one exists:
-#
-#     gcloud billing accounts list                     # ID, not your email
-#     gcloud billing projects link <project-id> --billing-account 01ABCD-EF2345-6789GH
-#
-# The flag wants that dashed ID. Given an email it answers `INVALID_ARGUMENT:
-# Request contains an invalid argument` and names neither the field nor the
-# format it wanted.
-PROJECT="icon4py-plan-gcloud"
+# or with OPENPROJ_DEPLOY_ENV pointing at it.
 
-# Belgium, and Tier 1 — which is the reason it is not Zurich. Cloud Run's
-# always-free monthly allowance is documented as applying to Tier 1 pricing
-# regions, and europe-west6 is Tier 2, so the first deployment may have been
-# billing from its first request rather than after an allowance. Nothing else
-# distinguishes them for a service that scales to zero and holds no data: the
-# plan lives on GitHub, not here.
-#
-# Changing this changes the service URL, so the OAuth App's redirect URIs change
-# with it — and it leaves the old region's service running, because deleting one
-# is not something a deploy script should do behind you. The runbook says how.
-REGION="europe-west1"
+ENV_FILE="${1:-${OPENPROJ_DEPLOY_ENV:-}}"
+if [[ -z "$ENV_FILE" ]]; then
+  echo "usage: $0 <deployment env file> — deploy/example.env is the form" >&2
+  exit 2
+fi
+if [[ ! -r "$ENV_FILE" ]]; then
+  echo "Cannot read $ENV_FILE" >&2
+  exit 2
+fi
+# shellcheck disable=SC1090
+set -a; source "$ENV_FILE"; set +a
+SERVICE="${SERVICE:-openproj}"
+REGION="${REGION:-europe-west1}"
 
-# The GitHub App's private key, downloaded when you generated it in step 2. Read
-# once, put in Secret Manager, and never referenced again — the file on your
-# laptop can be deleted afterwards.
-APP_KEY_FILE="/Users/jcanton/projects/openproj-icon4py.2026-08-17.private-key.pem"
-
-# From the GitHub App's settings page (step 2). Neither is secret: the App ID is
-# on the App's page, the installation ID is the number at the end of the URL
-# when you click Configure on the installation.
-APP_ID="4627892"
-INSTALLATION_ID="154481476"
-
-# From the OAuth App (step 3). The client ID is not secret and lives here; the
-# client secret is asked for at the prompt.
-OAUTH_CLIENT_ID="Ov23lisLaSCAwwru7ih3"
-
-# The plan repository the service serves and pushes to, and the GitHub org whose
-# membership decides who may write. These are already right.
-REMOTE="https://github.com/jcanton/icon4py-plan.git"
-ORG="C2SM"
-
-# The Cloud Run service name, which becomes part of the URL.
-SERVICE="openproj"
-
-# ---------------------------------------------------------------------------
-# From here down, nothing needs editing.
-# ---------------------------------------------------------------------------
 
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
 
 missing=()
-for name in PROJECT APP_ID INSTALLATION_ID OAUTH_CLIENT_ID; do
-  [[ -n "${!name}" ]] || missing+=("$name")
+for name in PROJECT REMOTE ORG APP_ID INSTALLATION_ID OAUTH_CLIENT_ID APP_KEY_FILE; do
+  [[ -n "${!name:-}" ]] || missing+=("$name")
 done
 if (( ${#missing[@]} )); then
-  echo "Fill these in at the top of this script first: ${missing[*]}" >&2
+  echo "$ENV_FILE leaves these blank: ${missing[*]}" >&2
   exit 2
 fi
 if [[ ! -r "$APP_KEY_FILE" ]]; then

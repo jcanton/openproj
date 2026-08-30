@@ -1,4 +1,4 @@
-"""`openproj` — check, new, render, serve, schedule and demo, against a plan repository.
+"""`openproj` — init, check, new, render, serve, schedule and demo, against a plan repository.
 
 The CLI can do everything the web view can. That is deliberate: if the service is
 down, being upgraded, or never comes back, the plan is still readable, still
@@ -73,6 +73,36 @@ def _parser() -> argparse.ArgumentParser:
     # future — the tool disagreeing with itself about one corpus.
     check.add_argument("--today", type=date.fromisoformat, default=None)
 
+    init = commands.add_parser(
+        "init",
+        help="start a plan repository: its configuration, committed, and nothing invented",
+        description=(
+            "Write the four config files a plan needs, at the newest schema version, "
+            "with an empty calendar and a roster of at most one — and commit them under "
+            "your git identity, so the next command is `openproj new`. At a terminal it "
+            "asks for what the flags did not say; anywhere else it asks nothing."
+        ),
+    )
+    init.add_argument("dir", type=Path, help="a directory that does not exist yet, or is empty")
+    init.add_argument(
+        "--org", help="the GitHub org whose members may write, for `serve --auth github`"
+    )
+    init.add_argument("--remote", help="the plan repository's URL; becomes `origin`")
+    init.add_argument("--as", dest="author", metavar="LOGIN", help="a first name for the roster")
+    init.add_argument(
+        "--deploy",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="repeatable; a Cloud Run deployment described in deploy/openproj.env "
+        "(the keys are those of deploy/example.env)",
+    )
+    init.add_argument("--no-prompt", action="store_true", help="ask nothing, even at a terminal")
+    init.add_argument(
+        "--no-commit", action="store_true", help="write the files and leave git alone"
+    )
+    init.add_argument("--json", action="store_true", help="print the path and commit as JSON")
+
     new = commands.add_parser(
         "new",
         help="write a new record into a plan repository",
@@ -138,7 +168,15 @@ def _parser() -> argparse.ArgumentParser:
     serve = commands.add_parser("serve", help="run the editable server")
     serve.add_argument("--repo", type=Path, required=True, help="a bare clone of the plan repo")
     serve.add_argument("--auth", choices=("dev", "github"), default="dev")
-    serve.add_argument("--org", default="C2SM")
+    # No default. Membership of the org is the write permission, and a default
+    # of one team's org made every other deployment that team's — silently, with
+    # `--auth github` refusing everybody outside it.
+    serve.add_argument(
+        "--org",
+        default=os.environ.get("OPENPROJ_ORG"),
+        help="the GitHub org whose members may write; required with --auth github "
+        "(default: OPENPROJ_ORG)",
+    )
     # Cloud Run sets PORT and requires 0.0.0.0 — "notably not 127.0.0.1". Local
     # runs keep the loopback default, so a development server is not quietly
     # listening to the network.
@@ -426,6 +464,113 @@ def _cannot_commit_in(repo: Path) -> str | None:
     return None
 
 
+def _init(args) -> int:
+    """A plan repository from nothing: the config files, committed, checked.
+
+    Refusals come first and write nothing — a directory with something in it,
+    and a machine git cannot name an author on. The second is asked of the
+    repository itself, the way `_commit_one` asks it, because libgit2's
+    `default_signature` is the one reader that merges every config level; the
+    freshly made `.git` is removed again on that refusal, so a person who reads
+    "nothing written" finds nothing.
+
+    The questions are asked only at a terminal and only for what the command
+    line left out (`bootstrap.ask_for_the_rest`), so a script, a CI job or an
+    agent gets a plan from the flags alone and is never left waiting on stdin.
+    """
+    import shutil
+
+    import pygit2
+
+    from .bootstrap import Options, ask_for_the_rest, plan_files
+
+    target: Path = args.dir
+    if target.exists() and any(target.iterdir()):
+        print(f"blocker: {target} is not empty\nnothing written")
+        return 1
+    try:
+        deploy = dict(pair.split("=", 1) for pair in args.deploy)
+    except ValueError:
+        print("blocker: --deploy takes KEY=VALUE\nnothing written")
+        return 1
+    if unknown := sorted(set(deploy) - {key for key, _, _ in _deploy_keys()}):
+        print(f"blocker: --deploy has no {', '.join(unknown)}\nnothing written")
+        return 1
+
+    given = Options(
+        org=args.org or "", remote=args.remote or "", login=args.author or "", deploy=deploy
+    )
+    options = given if args.no_prompt or not sys.stdin.isatty() else ask_for_the_rest(given, input)
+    if options.deploy:
+        options.deploy.setdefault("ORG", options.org)
+        options.deploy.setdefault("REMOTE", options.remote)
+
+    made_the_directory = not target.exists()
+    target.mkdir(parents=True, exist_ok=True)
+    handle = pygit2.init_repository(str(target), initial_head="main")
+    if not args.no_commit:
+        try:
+            _ = handle.default_signature
+        except KeyError:
+            shutil.rmtree(target if made_the_directory else target / ".git")
+            print(
+                "blocker: git has no identity here, so the first commit would have no author "
+                "— set `git config --global user.name` and `git config --global user.email`, "
+                "or pass --no-commit\nnothing written"
+            )
+            return 1
+
+    files = plan_files(target.resolve().name, options)
+    for relative, text in files.items():
+        path = target / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    if options.remote:
+        handle.remotes.create("origin", options.remote)
+
+    committed = (
+        None if args.no_commit else _commit_everything(target, "A plan, with nothing in it yet")
+    )
+    # Held to the same rules as any plan, out loud: a template that `check`
+    # would refuse is a bug here, not a fact about the plan.
+    if _check(target, None) != 0:
+        return 1
+
+    if args.json:
+        print(json.dumps({"path": str(target), "commit": committed, "files": sorted(files)}))
+        return 0
+    print(f"{target}: a plan repository" + (f", committed as {committed[:7]}" if committed else ""))
+    print("next:")
+    print(f'  openproj new pitch {target} --title "…"')
+    if options.remote:
+        print(f"  git -C {target} push -u origin main")
+    print(f"  git clone --bare {target} plan.git && openproj serve --repo plan.git --auth dev")
+    return 0
+
+
+def _deploy_keys():
+    from .bootstrap import DEPLOY_KEYS
+
+    return DEPLOY_KEYS
+
+
+def _commit_everything(repo: Path, message: str) -> str:
+    """Every file in the working tree, in one commit — the shape `init` needs.
+
+    Through the index, like `_commit_one` and for its reason: a commit that
+    moves the branch without the index leaves a checkout whose `git status`
+    reports everything as both deleted and untracked.
+    """
+    import pygit2
+
+    handle = pygit2.Repository(str(repo))
+    handle.index.add_all()
+    handle.index.write()
+    tree = handle.index.write_tree()
+    author = handle.default_signature
+    return str(handle.create_commit("HEAD", author, author, message, tree, []))
+
+
 def _commit_one(repo: Path, relative: str, message: str) -> str:
     """One file, one commit, authored by whoever ran the command.
 
@@ -651,7 +796,6 @@ def _demo(args) -> int:
         app = create_app(
             repo,
             auth="dev",
-            org="C2SM",
             # A signing secret of its own, thrown away with the directory. The
             # default is `dev-secret`, and a cookie is scoped to a HOST and not to
             # a port — so a session left in the browser by any other openproj on
@@ -697,11 +841,18 @@ def _serve(args) -> int:
     from .github import GitHubApp
     from .web import create_app
 
+    if args.auth == "github" and not args.org:
+        print(
+            "refusing to start: --auth github needs the org whose members may write. "
+            "Pass --org, or set OPENPROJ_ORG.",
+            file=sys.stderr,
+        )
+        return 2
     credentials = GitHubApp.from_environment(dict(os.environ))
     app = create_app(
         args.repo,
         auth=args.auth,
-        org=args.org,
+        org=args.org or "",
         secret=os.environ.get("OPENPROJ_SECRET", "dev-secret"),
         client_id=os.environ.get("OPENPROJ_CLIENT_ID", ""),
         client_secret=os.environ.get("OPENPROJ_CLIENT_SECRET", ""),
@@ -863,6 +1014,8 @@ def main(argv: list[str] | None = None) -> int:
         args = _parser().parse_args(argv)
     except SystemExit as exit_code:  # argparse exits 2 on a bad command line
         return int(exit_code.code or 2)
+    if args.command == "init":
+        return _init(args)
     if args.command == "check":
         return _check(args.repo, args.today)
     if args.command == "new":

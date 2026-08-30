@@ -41,6 +41,12 @@ if TYPE_CHECKING:  # pragma: no cover - imported for the annotation and nothing 
     from .schedule import Span
 
 CONFIG_FILES = ("defaults.yaml", "cycles.yaml", "holidays.yaml", "people.yaml")
+# The newest version any validation rule carries — what a plan with nothing to
+# grandfather is created at, and what `openproj init` writes. Named here because
+# the rules carry their versions as literals in `_problems_for`, so there is no
+# structure to take a max over; `test_the_seed_is_written_at_the_newest_schema_version`
+# keeps this and `seed/config/defaults.yaml` saying the same number.
+LATEST_SCHEMA_VERSION = 5
 _CYCLE_DIR = "cycles"
 PEOPLE_DIR = "people"
 _WORKING_DAYS_PER_WEEK = 5
@@ -691,7 +697,7 @@ class Config(BaseModel):
                 raise ValueError(
                     f"repositories: {name!r} is not an owner/repo — two segments of "
                     "letters, digits, dots, dashes and underscores, like "
-                    "'C2SM/icon4py'"
+                    "'kilnlab/kiln4py'"
                 )
         return given
 

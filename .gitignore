@@ -2,6 +2,10 @@ __pycache__/
 *.pyc
 .venv/
 .env
+# A deployment description belongs in the plan repository it deploys
+# (`openproj init` writes it there); only the blank form is kept here.
+deploy/*.env
+!deploy/example.env
 .DS_Store
 
 out/

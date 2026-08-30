@@ -1125,3 +1125,211 @@ def test_every_command_is_named_in_the_help_summary():
         if not re.search(rf"\b{re.escape(name)}\b", parser.description)
     ]
     assert not missing, f"not in `openproj --help`: {', '.join(missing)}"
+
+
+@pytest.fixture
+def a_machine_whose_git_knows_you(tmp_path: Path):
+    """A global git config naming an author, and nothing else, the same way
+    `a_machine_with_no_git_identity` takes one away: through libgit2's search
+    path, because HOME is read once at initialisation and then never again."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".gitconfig").write_text("[user]\n\tname = Ann Ashworth\n\temail = ann@example.org\n")
+    level = pygit2.enums.ConfigLevel.GLOBAL
+    was = pygit2.settings.search_path[level]
+    pygit2.settings.search_path[level] = str(home)
+    yield
+    pygit2.settings.search_path[level] = was
+
+
+@pytest.mark.usefixtures("a_machine_whose_git_knows_you")
+def test_init_writes_a_plan_that_check_accepts_and_commits_it_under_your_name(
+    tmp_path: Path, monkeypatch, capsys
+):
+    """Before this, a plan was started by copying `seed/config` — a demo roster,
+    a 2026 calendar and whatever schema version the demo was at. The four files
+    here name nobody but the person asked for, hold no dates, and sit at the
+    newest schema version; the commit is theirs, and the working tree is clean
+    afterwards, so the next command is `openproj new`."""
+    from openproj.model import LATEST_SCHEMA_VERSION, load_config
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    plan = tmp_path / "garden"
+
+    assert (
+        main(
+            [
+                "init",
+                str(plan),
+                "--as",
+                "ann",
+                "--org",
+                "kilnlab",
+                "--remote",
+                "https://example.org/kilnlab/garden.git",
+            ]
+        )
+        == 0
+    )
+
+    config = load_config(plan)
+    assert config.schema_version == LATEST_SCHEMA_VERSION
+    assert config.known_people == ["ann"]
+    assert config.cycles == {} and config.holidays == []
+    repo = pygit2.Repository(str(plan))
+    head = repo[repo.head.target]
+    assert head.author.name == "Ann Ashworth" and head.parents == []
+    assert repo.status() == {}, "a commit that skipped the index leaves everything untracked"
+    assert repo.remotes["origin"].url == "https://example.org/kilnlab/garden.git"
+    assert main(["check", str(plan)]) == 0
+    assert "openproj new pitch" in capsys.readouterr().out
+
+
+def test_init_refuses_a_directory_with_something_in_it(tmp_path: Path, capsys):
+    """`init .` in the wrong terminal must not put a plan inside a codebase."""
+    (tmp_path / "main.py").write_text("print()\n")
+
+    assert main(["init", str(tmp_path), "--no-prompt"]) == 1
+
+    assert "not empty" in capsys.readouterr().out
+    assert not (tmp_path / "config").exists() and not (tmp_path / ".git").exists()
+
+
+@pytest.mark.usefixtures("a_machine_with_no_git_identity")
+def test_init_on_a_machine_git_cannot_name_writes_nothing_unless_told_not_to_commit(
+    tmp_path: Path, capsys
+):
+    """The refusal `new --commit` makes, made before the first file rather than
+    after the last: a plan on the disk with no commit and an exit code saying
+    the whole thing failed is the outcome with no good next step."""
+    plan = tmp_path / "garden"
+
+    assert main(["init", str(plan), "--no-prompt"]) == 1
+    assert "identity" in capsys.readouterr().out
+    assert not plan.exists()
+
+    assert main(["init", str(plan), "--no-prompt", "--no-commit"]) == 0
+    assert (plan / "config" / "defaults.yaml").is_file()
+    assert pygit2.Repository(str(plan)).head_is_unborn
+
+
+@pytest.mark.usefixtures("a_machine_whose_git_knows_you")
+def test_init_writes_the_deployment_it_is_told_and_carries_the_org_and_remote_into_it(
+    tmp_path: Path,
+):
+    """The deploy script reads one file, so the org and the remote the plan was
+    given are written into it as well — twice on the command line would be the
+    two copies that disagree."""
+    plan = tmp_path / "garden"
+    assert (
+        main(
+            [
+                "init",
+                str(plan),
+                "--no-prompt",
+                "--org",
+                "kilnlab",
+                "--remote",
+                "https://example.org/kilnlab/garden.git",
+                "--deploy",
+                "PROJECT=roast-1",
+                "--deploy",
+                "APP_ID=1",
+            ]
+        )
+        == 0
+    )
+
+    written = (plan / "deploy" / "openproj.env").read_text()
+    assert 'PROJECT="roast-1"' in written and 'APP_ID="1"' in written
+    assert 'ORG="kilnlab"' in written
+    assert 'REMOTE="https://example.org/kilnlab/garden.git"' in written
+    assert 'REGION="europe-west1"' in written, "a blank REGION is a deploy that fails late"
+
+
+def test_init_refuses_a_deployment_key_it_does_not_know(tmp_path: Path, capsys):
+    """`--deploy PROJET=x` would be a file with a blank PROJECT and a key nothing
+    reads, and the deploy would say so an hour later."""
+    assert main(["init", str(tmp_path / "garden"), "--no-prompt", "--deploy", "PROJET=x"]) == 1
+    assert "PROJET" in capsys.readouterr().out
+    assert not (tmp_path / "garden").exists()
+
+
+def test_init_asks_only_for_what_the_command_line_left_out():
+    """A question per missing option, none for a given one, and the deployment
+    behind a single yes-or-no — so a command line that says everything asks
+    nothing, which is what lets a script call this at all."""
+    from openproj.bootstrap import Options, ask_for_the_rest
+
+    answers = iter(
+        ["https://example.org/p.git", "ann", "y", "roast-1", "", "", "1", "2", "c", "/k"]
+    )
+    asked: list[str] = []
+
+    def ask(question: str) -> str:
+        asked.append(question)
+        return next(answers)
+
+    got = ask_for_the_rest(Options(org="kilnlab"), ask)
+
+    assert not any("org" in question.lower() for question in asked), asked
+    assert got.org == "kilnlab" and got.remote == "https://example.org/p.git" and got.login == "ann"
+    assert got.deploy["ORG"] == "kilnlab", "carried from the answer above, not asked twice"
+    assert got.deploy["REMOTE"] == "https://example.org/p.git"
+    assert got.deploy["REGION"] == "europe-west1" and got.deploy["SERVICE"] == "openproj"
+    assert got.deploy["PROJECT"] == "roast-1" and got.deploy["APP_KEY_FILE"] == "/k"
+
+    nothing = ask_for_the_rest(Options(org="a", remote="b", login="c"), ask)
+    assert nothing.deploy == {} and asked[-1].startswith("Describe a Cloud Run deployment")
+
+
+@pytest.mark.usefixtures("a_machine_whose_git_knows_you")
+def test_init_asks_at_a_terminal_and_not_elsewhere(tmp_path: Path, monkeypatch):
+    """The wiring: `input` is reached only when stdin is a terminal."""
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    answers = iter(["", "", "ann", "n"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+
+    assert main(["init", str(tmp_path / "asked")]) == 0
+    assert "ann" in (tmp_path / "asked" / "config" / "people.yaml").read_text()
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("asked without a terminal"))
+    assert main(["init", str(tmp_path / "silent")]) == 0
+
+
+def test_the_example_env_is_the_blank_form():
+    """`deploy/example.env` is documentation of a file the code writes, so it is
+    generated from the same template and this keeps the two the same."""
+    from openproj.bootstrap import deploy_env_text
+
+    example = Path(__file__).resolve().parents[1] / "deploy" / "example.env"
+    assert example.read_text() == deploy_env_text({})
+
+
+def test_the_seed_is_written_at_the_newest_schema_version(seed_root: Path):
+    """`LATEST_SCHEMA_VERSION` is a literal because the rules carry theirs as
+    literals; the seed's `defaults.yaml` says in its own comments that it tracks
+    the newest rule. A bump that forgets one of them fails here."""
+    from openproj.model import LATEST_SCHEMA_VERSION, load_config
+
+    assert load_config(seed_root).schema_version == LATEST_SCHEMA_VERSION
+
+
+def test_serve_refuses_github_auth_without_an_org(seed_root: Path, monkeypatch, capsys):
+    """`--org` defaulted to one team's org, so every other deployment that forgot
+    the flag refused everybody outside that team, silently. Now it is a refusal
+    to start, before anything is opened."""
+    monkeypatch.delenv("OPENPROJ_ORG", raising=False)
+
+    assert main(["serve", "--repo", str(seed_root), "--auth", "github"]) == 2
+
+    assert "org" in capsys.readouterr().err
+
+
+def test_the_app_refuses_github_auth_without_an_org(tmp_path: Path):
+    """The same refusal one layer down, for a caller that builds the app itself."""
+    from openproj.web import create_app
+
+    with pytest.raises(ValueError, match="org"):
+        create_app(tmp_path, auth="github", secret="s" * 40, client_id="a", client_secret="b")

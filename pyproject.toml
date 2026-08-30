@@ -31,7 +31,7 @@ dependencies = [
   "pycrdt>=0.14",
   "wsproto>=1.2"
 ]
-description = "Git-backed appetite planning for the icon4py team"
+description = "Shape Up planning kept as markdown records in a git repository"
 license = "BSD-3-Clause"
 license-files = ["LICENSE"]
 name = "openproj"

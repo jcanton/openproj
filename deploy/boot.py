@@ -73,8 +73,8 @@ def main() -> int:
             str(repo),
             "--auth",
             os.environ.get("OPENPROJ_AUTH", "github"),
-            "--org",
-            os.environ.get("OPENPROJ_ORG", "C2SM"),
+            # `serve` reads OPENPROJ_ORG itself and refuses github auth without
+            # one; nothing here supplies a team's org on a deployment's behalf.
             "--host",
             "0.0.0.0",
             "--port",
