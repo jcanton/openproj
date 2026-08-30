@@ -289,9 +289,9 @@ def test_serve_says_when_the_repository_is_a_checkout(tmp_path: Path):
     from openproj.cli import _not_a_bare_clone
 
     checkout = tmp_path / "plan"
-    pygit2.init_repository(str(checkout))
+    pygit2.init_repository(str(checkout), initial_head="main")
     bare = tmp_path / "plan.git"
-    pygit2.init_repository(str(bare), bare=True)
+    pygit2.init_repository(str(bare), bare=True, initial_head="main")
 
     said = _not_a_bare_clone(checkout)
     assert said is not None
