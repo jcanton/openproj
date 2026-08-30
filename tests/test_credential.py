@@ -214,7 +214,7 @@ def test_the_open_pull_requests_are_read_down_to_what_a_completion_needs():
         asked.append(request)
         return httpx.Response(200, json=[_pulls(1403, "Halo exchange"), _pulls(9, "Two")])
 
-    got = open_pull_requests("C2SM/icon4py", transport=httpx.MockTransport(answer))
+    got = open_pull_requests("kilnlab/kiln4py", transport=httpx.MockTransport(answer))
 
     assert got == [
         {"number": 1403, "title": "Halo exchange"},
@@ -225,7 +225,7 @@ def test_the_open_pull_requests_are_read_down_to_what_a_completion_needs():
     assert query == {"state": "open", "per_page": "100", "sort": "updated", "direction": "desc"}, (
         query
     )
-    assert asked[0].url.path == "/repos/C2SM/icon4py/pulls"
+    assert asked[0].url.path == "/repos/kilnlab/kiln4py/pulls"
     assert "authorization" not in asked[0].headers, "asked as somebody with no App"
 
 
@@ -235,7 +235,7 @@ def test_a_token_the_code_repository_refuses_falls_back_to_asking_anonymously(
     """The App's installation is scoped to the PLAN repository, and that
     narrowness is the whole argument for using an App at all.
 
-    So a token minted for it is refused by `C2SM/icon4py` unless somebody has
+    So a token minted for it is refused by `kilnlab/kiln4py` unless somebody has
     installed the App there too — and both deployments have to work: the one
     where they have (5,000 requests an hour, private repositories) and the one
     where they have not (the anonymous limit, public ones).
@@ -254,7 +254,9 @@ def test_a_token_the_code_repository_refuses_falls_back_to_asking_anonymously(
         return httpx.Response(200, json=[_pulls(1403, "Halo exchange")])
 
     app = GitHubApp("1", "2", pem, transport=httpx.MockTransport(refuse_then_answer))
-    assert open_pull_requests("C2SM/icon4py", app) == [{"number": 1403, "title": "Halo exchange"}]
+    assert open_pull_requests("kilnlab/kiln4py", app) == [
+        {"number": 1403, "title": "Halo exchange"}
+    ]
     assert seen == ["Bearer installation-token", None], seen
 
     # The App's own transport is honoured without being handed over a second
@@ -268,7 +270,7 @@ def test_a_token_the_code_repository_refuses_falls_back_to_asking_anonymously(
 
     app.transport = httpx.MockTransport(broken)
     with pytest.raises(httpx.HTTPStatusError):
-        open_pull_requests("C2SM/icon4py", app)
+        open_pull_requests("kilnlab/kiln4py", app)
     assert server_error == ["Bearer installation-token"], (
         f"a 500 was retried anonymously: {server_error}"
     )

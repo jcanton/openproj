@@ -804,7 +804,7 @@ function shortDate(iso) {
 // Capped, because a native tooltip has no scrollbar and cannot be scrolled: sixty
 // tags in one is a wall of text with the instruction lost at the bottom of it. The
 // cap is on characters rather than on a count, because the values differ by an
-// order of magnitude in width — `ci` and `C2SM/icon4py#1223` are both one item —
+// order of magnitude in width — `ci` and `kilnlab/kiln4py#1223` are both one item —
 // and what has to fit is a line, not a number of things. At least one always
 // prints, however long it is, or a single very long value would come back as
 // nothing but a count of itself.
@@ -1024,7 +1024,7 @@ function cell(row, key, place) {
     ` class="${classes}"${tip ? ` title="${esc(tip)}"` : ''}>${body}</td>`;
 }
 
-// `#1223`, not `C2SM/icon4py#1223`. Every reference in a plan is to the repository
+// `#1223`, not `kilnlab/kiln4py#1223`. Every reference in a plan is to the repository
 // the plan is about, so the owner and the name were seventeen rows of the same
 // eleven characters — the widest column on the page spent on the part that never
 // varies. It cost the sentence beside it: `title` was squeezed to its floor while

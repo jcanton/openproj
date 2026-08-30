@@ -7716,12 +7716,12 @@ _WHERE_A_LINK_OPENS = """
     // be this cheap — and a word that has one and completes nothing closes the
     // popup on the next keystroke rather than being guarded against here.
     refs: [
-      ['See gt4py', 9],
-      ['See GridTools/', 14],
-      ['See C2SM/icon4py#14', 19],
+      ['See griddle', 11],
+      ['See griddle/', 12],
+      ['See kilnlab/kiln4py#14', 22],
       ['a sentence ending in a full stop.', 33],
       // Two words back is not the word being typed.
-      ['C2SM/icon4py#1403 and then', 26],
+      ['kilnlab/kiln4py#1403 and then', 29],
     ].map(([text, at]) => {
       const found = openRef(text, at);
       return found === null ? null : found.typed;
@@ -7762,8 +7762,8 @@ def test_the_body_knows_which_reference_is_being_typed(client: TestClient):
     ], got["value"]["texts"]
     assert got["value"]["refs"] == [
         None,
-        "GridTools/",
-        "C2SM/icon4py#14",
+        "griddle/",
+        "kilnlab/kiln4py#14",
         None,
         None,
     ], got["value"]["refs"]
@@ -8009,14 +8009,14 @@ _COMPLETING_A_PULL_REQUEST = r"""
   editor.focus();
   editor.navigateFileEnd();
   // A word with no slash and no hash in it: prose, and nothing to complete.
-  editor.insert('\nSee gt4py');
+  editor.insert('\nSee griddle');
   await new Promise(r => setTimeout(r, 250));
   const overProse = shown();
 
   // The repository, half typed. Both what is in it: the bare `org/repo#`, which
   // is the half nobody remembers, and the reference already cited in the plan.
-  for (let i = 0; i < 5; i++) editor.remove('left');
-  editor.insert('GridTools/');
+  for (let i = 0; i < 7; i++) editor.remove('left');
+  editor.insert('griddle/');
   await new Promise(r => setTimeout(r, 250));
   const onRepo = shown();
 
@@ -8034,7 +8034,7 @@ _COMPLETING_A_PULL_REQUEST = r"""
 
   // And the other repository, reached from the half of the name that is not the
   // organisation — the list matches on the whole reference.
-  editor.insert(' and icon4py#');
+  editor.insert(' and kiln4py#');
   await new Promise(r => setTimeout(r, 250));
   const other = shown();
   return {overProse, onRepo, tookRepo, afterRepo, narrowed, tookRef, afterRef, other};
@@ -8051,7 +8051,7 @@ def test_the_second_editor_completes_a_pull_request_in_the_body(client: TestClie
     as a link for just as long: the notation was readable and unwritable.
 
     **What it offers is what the plan already cites**, and that is the whole
-    answer to "does it work for icon4py and gt4py". There is no live lookup —
+    answer to "does it work for kiln4py and griddle". There is no live lookup —
     every page here is inlined and reaches no network, which is the rule
     `static/VENDOR.md` exists for — so a repository is offered once some record
     names a pull request in it, and the bare `org/repo#` for each of those comes
@@ -8063,8 +8063,8 @@ def test_the_second_editor_completes_a_pull_request_in_the_body(client: TestClie
     everybody's writing, and nothing but somebody complaining would say so.
     """
     for record, refs in (
-        (OTHER, ["C2SM/icon4py#1403"]),
-        (DONE, ["GridTools/gt4py#1877", "C2SM/icon4py#1521"]),
+        (OTHER, ["kilnlab/kiln4py#1403"]),
+        (DONE, ["griddle/griddle#1877", "kilnlab/kiln4py#1521"]),
     ):
         written = client.patch(
             f"/api/record/{record}",
@@ -8089,26 +8089,26 @@ def test_the_second_editor_completes_a_pull_request_in_the_body(client: TestClie
     assert got["overProse"] is None, (
         f"a word with no slash and no hash in it opened a popup: {got['overProse']}"
     )
-    assert got["onRepo"] == ["GridTools/gt4py#", "GridTools/gt4py#1877"], got["onRepo"]
-    assert got["tookRepo"] and got["afterRepo"]["line"] == "See GridTools/gt4py#", (
+    assert got["onRepo"] == ["griddle/griddle#", "griddle/griddle#1877"], got["onRepo"]
+    assert got["tookRepo"] and got["afterRepo"]["line"] == "See griddle/griddle#", (
         f"taking the bare repository wrote something else: {got['afterRepo']}"
     )
     assert got["afterRepo"]["list"], (
         "the popup closed on half a reference, so the number it left to be typed "
         "has to be remembered rather than chosen"
     )
-    assert got["narrowed"] == ["GridTools/gt4py#1877"], got["narrowed"]
+    assert got["narrowed"] == ["griddle/griddle#1877"], got["narrowed"]
     assert got["tookRef"] and got["afterRef"] == {
-        "line": "See GridTools/gt4py#1877",
+        "line": "See griddle/griddle#1877",
         "list": None,
     }, got["afterRef"]
-    # The bare `org/repo#` leads, because `icon4py#` is a substring of it too —
+    # The bare `org/repo#` leads, because `kiln4py#` is a substring of it too —
     # and it is the entry that is worth the most when the number is the part
     # nobody has memorised.
     assert got["other"] == [
-        "C2SM/icon4py#",
-        "C2SM/icon4py#1521",
-        "C2SM/icon4py#1403",
+        "kilnlab/kiln4py#",
+        "kilnlab/kiln4py#1521",
+        "kilnlab/kiln4py#1403",
     ], f"the other repository's references are not offered: {got['other']}"
 
 
@@ -8156,7 +8156,7 @@ def test_the_page_widens_its_pull_requests_with_what_is_open_now(client: TestCli
         f"/api/record/{TASK}",
         json={
             "base_commit": head(client),
-            "fields": {"prs": ["C2SM/icon4py#1403"]},
+            "fields": {"prs": ["kilnlab/kiln4py#1403"]},
             "body": None,
         },
     )
@@ -8171,9 +8171,9 @@ def test_the_page_widens_its_pull_requests_with_what_is_open_now(client: TestCli
                 "status": 200,
                 "json": {
                     "prs": [
-                        {"value": "C2SM/icon4py#1403", "label": "The one already cited"},
-                        {"value": "C2SM/icon4py#1521", "label": "Open and never mentioned"},
-                        {"value": "GridTools/gt4py#1877", "label": "In a repository nobody cited"},
+                        {"value": "kilnlab/kiln4py#1403", "label": "The one already cited"},
+                        {"value": "kilnlab/kiln4py#1521", "label": "Open and never mentioned"},
+                        {"value": "griddle/griddle#1877", "label": "In a repository nobody cited"},
                     ],
                     "stale": False,
                 },
@@ -8184,20 +8184,20 @@ def test_the_page_widens_its_pull_requests_with_what_is_open_now(client: TestCli
     answer = got["value"]
 
     assert answer["live"] is True, "the served page does not know it has a server"
-    assert "C2SM/icon4py#1403" in answer["before"], "the corpus's own list is missing"
-    assert "C2SM/icon4py#1521" not in answer["before"], (
+    assert "kilnlab/kiln4py#1403" in answer["before"], "the corpus's own list is missing"
+    assert "kilnlab/kiln4py#1521" not in answer["before"], (
         "this test cannot show a widening: the corpus already had the open one"
     )
-    for value in ("C2SM/icon4py#1403", "C2SM/icon4py#1521", "GridTools/gt4py#1877"):
+    for value in ("kilnlab/kiln4py#1403", "kilnlab/kiln4py#1521", "griddle/griddle#1877"):
         assert value in answer["after"], f"{value} is not offered: {answer['after']}"
     # The cited one keeps its place at the front and gains the title it never had.
-    assert answer["after"].index("C2SM/icon4py#1403") < answer["after"].index(
-        "C2SM/icon4py#1521"
+    assert answer["after"].index("kilnlab/kiln4py#1403") < answer["after"].index(
+        "kilnlab/kiln4py#1521"
     ), answer["after"]
-    assert answer["labels"]["C2SM/icon4py#1403"] == "The one already cited"
+    assert answer["labels"]["kilnlab/kiln4py#1403"] == "The one already cited"
     # And the repository nobody cited is offered bare, so the number can be typed.
-    assert "GridTools/gt4py#" in answer["after"], answer["after"]
-    assert answer["labels"]["GridTools/gt4py#"] == "any pull request"
+    assert "griddle/griddle#" in answer["after"], answer["after"]
+    assert answer["labels"]["griddle/griddle#"] == "any pull request"
     assert answer["again"] == answer["after"], (
         "asking twice asked GitHub twice, or folded the same list in again"
     )

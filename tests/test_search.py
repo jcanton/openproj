@@ -750,9 +750,9 @@ ADVERSARIAL = [
     ("ci", "ci hearth"),
     # An all-digit needle, which takes the substring tier and never the loose
     # one: `1364` IS a subsequence of this reference and must not answer for it.
-    ("1364", "c2smicon4py1234564"),
-    ("#1364", "c2smicon4py1364"),
-    ("1364", "c2smicon4py1364"),
+    ("1364", "kilnlabkiln4py1234564"),
+    ("#1364", "kilnlabkiln4py1364"),
+    ("1364", "kilnlabkiln4py1364"),
     ("abcd", "ab cd"),
     ("abcd", "axxb cxxd"),
     ("abc", "axxbxxc"),

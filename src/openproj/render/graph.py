@@ -777,8 +777,8 @@ const cy = cytoscape({
     // Three channels rather than one, because a box holding other boxes is mostly
     // empty and a single cue in the middle of it is a cue nobody sees: a dashed
     // boundary, a heavier corner radius, and no fill at all. A product groups
-    // codebases — gt4py under icon4py, dace, pmap — and it holds no work of its
-    // own, so an empty outline is what it actually is.
+    // codebases — griddle under kiln4py, hearth, roastref — and it holds no work of
+    // its own, so an empty outline is what it actually is.
     { selector: 'node[kind = "product"]', style: {
         'shape': 'round-rectangle', 'border-style': 'dashed', 'border-width': 2,
         'background-opacity': 0, 'border-color': token('--line-strong'),

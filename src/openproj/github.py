@@ -240,7 +240,7 @@ def open_pull_requests(
     not a nicety.** The App's installation is `repository_selection: selected` on
     the PLAN repository — that narrowness is the whole argument for using an App
     at all (see this module's docstring) — so a token minted for it is refused by
-    `C2SM/icon4py` unless somebody has installed the App there too. Asking with
+    `kilnlab/kiln4py` unless somebody has installed the App there too. Asking with
     the token first and falling back on a refusal means both deployments work:
     the one where the App has been installed on the code repositories gets 5,000
     requests an hour and private repositories, and the one where it has not gets

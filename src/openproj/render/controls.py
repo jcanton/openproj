@@ -3276,7 +3276,7 @@ function attachSuggest(input) {
   const typed = () => (multi ? tokens()[tokens().length - 1] : input.value).trim().toLowerCase();
 
   function choose(value) {
-    // `C2SM/icon4py#` is half a reference. Appending the separator after one would
+    // `kilnlab/kiln4py#` is half a reference. Appending the separator after one would
     // end the entry at the point where the number still has to be typed.
     const partial = value.endsWith('#');
     if (multi) {
@@ -3412,7 +3412,7 @@ function attachSuggest(input) {
 //                    `[Title](pitch-0c0001)` — the id is the half nobody
 //                    remembers. `_link` in `markdown.py` is what makes that a
 //                    link to the record rather than to a file that is not there.
-//   `C2SM/icon`    → the pull requests already cited anywhere in this plan, and
+//   `kilnlab/kiln` → the pull requests already cited anywhere in this plan, and
 //                    the bare `org/repo#` of each repository they are in.
 //                    `_pr_refs` in `markdown.py` already turns the finished
 //                    reference into a link.
@@ -3474,7 +3474,7 @@ function linkText(item) {
 // What the caret is in the middle of writing, as {source, from, typed, wrap}.
 // `wrap` is what accepting writes; `null` when there is nothing to complete.
 //
-// The bracket wins where both could match, and it has to: `[C2SM/icon4py#1403]`
+// The bracket wins where both could match, and it has to: `[kilnlab/kiln4py#1403]`
 // is a handle containing a slash, and the reader who typed the bracket asked for
 // the records.
 function bodyToken(text, at) {
@@ -3571,7 +3571,7 @@ function attachBodyCompletion(surface) {
   function open() {
     const token = bodyToken(surface.text(), surface.caret().from);
     if (!token) return close();
-    // `C2SM/icon` is somebody reaching for a pull request, which is the moment
+    // `kilnlab/kiln` is somebody reaching for a pull request, which is the moment
     // to find out which ones are open. The list it merges into is the one this
     // call is about to read, so a redraw is asked for.
     if (token.live) widenPullRequests(open);
@@ -3665,7 +3665,7 @@ function attachBodyCompletion(surface) {
     // box somebody is not looking at character by character.
     announce((item.label && item.label !== 'any pull request'
               ? item.label : item.value) + ' inserted.');
-    // `C2SM/icon4py#` is half a reference and the number still has to be typed,
+    // `kilnlab/kiln4py#` is half a reference and the number still has to be typed,
     // so the popup stays up to filter it — the same branch the field completion
     // takes, for the same reason. A whole one is finished, and the splice that
     // wrote it is about to fire the input that would offer it back.
@@ -3943,7 +3943,7 @@ def _suggestions(index: Index, linkable: bool = False, live: bool = False) -> di
     # validator rejects after the save; offered, it cannot be mistyped at all.
     # Two kinds of entry for one field. A whole reference completes a PR already
     # cited somewhere in the plan; a bare `org/repo#` completes the half nobody
-    # remembers — which org, and whether it is icon4py or icon4pygen — and leaves
+    # remembers — which org, and whether it is kiln4py or kiln4pygen — and leaves
     # the number to be typed. Everything here comes from the corpus, so it costs
     # no network and cannot be stale in a way the plan is not already stale.
     refs = {ref for record in index.records.values() for ref in record.prs}

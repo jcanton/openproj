@@ -627,8 +627,8 @@ async function run(html, expression, options) {
       return Promise.resolve({
         ok: true,
         status: 200,
-        json: () => Promise.resolve({org: 'C2SM'}),
-        text: () => Promise.resolve('{"org":"C2SM"}'),
+        json: () => Promise.resolve({org: 'kilnlab'}),
+        text: () => Promise.resolve('{"org":"kilnlab"}'),
       });
     }
     // And the shell's pile banner asks `/api/health` once at load, for the

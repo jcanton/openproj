@@ -815,7 +815,7 @@ def test_new_says_a_field_this_kind_does_not_read_is_not_read(plan: Path, capsys
             "--title",
             "Two extrapolations",
             "--set",
-            "prs=C2SM/icon4py#1359",
+            "prs=kilnlab/kiln4py#1359",
         ]
     )
 

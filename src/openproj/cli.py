@@ -218,7 +218,7 @@ def _assigned(assignments: list[str]) -> dict:
     function has to anticipate.
 
     `#` does not start a comment mid-token in YAML, which is what lets
-    `--set prs=C2SM/icon4py#1359` — the exact thing somebody will type — arrive
+    `--set prs=kilnlab/kiln4py#1359` — the exact thing somebody will type — arrive
     whole.
     """
     yaml = YAML()
@@ -248,7 +248,7 @@ def _takes_a_list(annotation) -> bool:
 def _widened_to_lists(kind: str, fields: dict) -> dict:
     """A scalar becomes a list of one wherever the model asks for a list.
 
-    Because that is what somebody typing it means. `--set prs=C2SM/icon4py#1359`
+    Because that is what somebody typing it means. `--set prs=kilnlab/kiln4py#1359`
     is the exact string a person writes, and a `prs` that holds a list would
     otherwise answer with a pydantic type error naming `list_type` — correct, and
     no help at all when the fix is a pair of brackets that the shell also wants
