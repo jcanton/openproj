@@ -41,6 +41,12 @@ if TYPE_CHECKING:  # pragma: no cover - imported for the annotation and nothing 
     from .schedule import Span
 
 CONFIG_FILES = ("defaults.yaml", "cycles.yaml", "holidays.yaml", "people.yaml")
+# The newest version any validation rule carries — what a plan with nothing to
+# grandfather is created at, and what `openproj init` writes. Named here because
+# the rules carry their versions as literals in `_problems_for`, so there is no
+# structure to take a max over; `test_the_seed_is_written_at_the_newest_schema_version`
+# keeps this and `seed/config/defaults.yaml` saying the same number.
+LATEST_SCHEMA_VERSION = 5
 _CYCLE_DIR = "cycles"
 PEOPLE_DIR = "people"
 _WORKING_DAYS_PER_WEEK = 5
@@ -658,8 +664,8 @@ class Config(BaseModel):
     # the pull-request completion offers what the corpus already cites and asks
     # nothing of the network. Named here rather than in this tool's source
     # because they are a fact about the PLAN — jcanton, 2026-08-25, asking
-    # whether icon4py's and gt4py's open pull requests could be offered — and
-    # openproj is not the icon4py team's tool alone.
+    # whether kiln4py's and griddle's open pull requests could be offered — and
+    # openproj is not one team's tool alone.
     repositories: list[str] = []
     # Keyed by cycle number. Loaded from `cycles/*.md`, not from a config file.
     plans: dict[int, Cycle] = {}
@@ -691,7 +697,7 @@ class Config(BaseModel):
                 raise ValueError(
                     f"repositories: {name!r} is not an owner/repo — two segments of "
                     "letters, digits, dots, dashes and underscores, like "
-                    "'C2SM/icon4py'"
+                    "'kilnlab/kiln4py'"
                 )
         return given
 
@@ -1195,7 +1201,7 @@ class Task(Record):
 class Product(Record):
     """A codebase, and a container for projects — nothing else.
 
-    gt4py is the DSL under icon4py, dace is a backend, pmap is another code, and
+    griddle is the DSL under kiln4py, hearth is a backend, roastref is another code, and
     work in one of them waits on work in another. Kept in ONE plan for exactly
     that reason — jcanton, 2026-08-20: separate corpora "would prevent
     cross-dependencies", and a dependency this tool cannot express is a
@@ -2945,8 +2951,9 @@ def weeks_outside_every_cycle(value: date | None, config: Config) -> float | Non
     envelope. So the rule reported nothing, the door answered 200, and the record
     dropped silently out of `counts_in`, out of `Index.load` and out of
     `carried_into` for every cycle there is — which is the exact failure §6 opens
-    with, surviving the change written to stop it. icon4py-plan is a multi-year
-    plan; this is the shape it will be in, and the envelope only ever gets weaker.
+    with, surviving the change written to stop it. The first real plan is a
+    multi-year one; this is the shape it will be in, and the envelope only ever
+    gets weaker.
 
     The gap the envelope was written to protect is protected by the allowance
     instead. The months between two cycles are real days that real work runs
@@ -3045,8 +3052,8 @@ def _status_problems(
         # The gate used to stop at `ready`, so a record could be sized-checked on
         # the way in, have its appetite deleted, and go on running with none —
         # and reaching `in_progress` without ever passing `ready` is the ordinary
-        # path rather than a rung somebody skipped, which is why icon4py-plan has
-        # three of these. With no default standing behind them, an unsized record
+        # path rather than a rung somebody skipped, which is why the first real
+        # plan has three of these. With no default standing behind them, an unsized record
         # in flight now has no span, no bar, no weight in its pitch's rollup and
         # no claim on anybody's capacity: it is work that is happening and that
         # the plan cannot account for at all.

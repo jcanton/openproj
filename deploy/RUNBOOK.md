@@ -5,15 +5,20 @@ push credential is implemented and proven against a private repository, the
 container clones with it, and a half-configured deployment is refused at startup
 rather than silently failing to push.
 
-What is left needs your GitHub org and your Google account, and is below.
+What is left needs a plan repository, your GitHub org and your Google account,
+and is below. None of it is written into this repository: which plan a service
+serves, which org may write to it and which cloud project pays for it are facts
+about a deployment and not about the tool, so they live in one env file in the
+plan repository (step 4), and a grep of this repository for a cloud project id
+or a service URL finds nothing.
 
-**Does it work with private repositories?** Yes, and it is now the tested path.
-An installation token authenticates a clone, a fetch and a push regardless of
-visibility. Verified end to end against `jcanton/icon4py-plan` while it was
-private: cloned, wrote a record, pushed, `pushed: True`, the commit appeared on
-GitHub authored by a person. Private also costs nothing here — the only thing the
-old note claimed for public was unlimited Actions minutes, and a private repo on
-the Free plan gets 2,000 a month, which a nightly check will not come close to.
+**Does it work with private repositories?** Yes, and it is the tested path. An
+installation token authenticates a clone, a fetch and a push regardless of
+visibility. Verified end to end against a private plan repository: cloned, wrote
+a record, pushed, `pushed: True`, the commit appeared on GitHub authored by a
+person. Private also costs nothing here — the only thing the old note claimed for
+public was unlimited Actions minutes, and a private repo on the Free plan gets
+2,000 a month, which a nightly check will not come close to.
 
 ______________________________________________________________________
 
@@ -30,23 +35,53 @@ ______________________________________________________________________
   working while every commit stays on one container's disk until it is replaced.
 - `GitHubApp.from_environment` returns `None` unless all three variables are set:
   two of three is a deployment somebody stopped half way through.
+- `serve --auth github` **refuses to start** without an org, from `--org` or
+  `OPENPROJ_ORG`. There is no default: the org is the whole write gate, and a
+  built-in one would make every deployment answer to the team the tool was
+  tailored for. `deploy/boot.py` supplies none of its own; the deploy passes the
+  env file's `ORG`.
+- `gcloud_deploy.sh` refuses to touch anything if the env file leaves a value
+  blank, and names which.
 
 ______________________________________________________________________
 
 ## 1. The plan repository
 
-Already created: **`jcanton/icon4py-plan`**, private, skeleton only.
+A repository of its own, not a directory of this one, on purpose: a plan commit
+must not run the tool's CI, and the credential the server writes with (step 2)
+must be structurally incapable of touching source. Private is fine, see above.
 
-**Branch protection is already on**, applied and checked: an ordinary fast-forward
-is accepted — which is all the server ever does — and a force-push is refused with
-`GH006: Protected branch update failed`. It blocks force-push and deletion, and it
-applies to admins too, so it converts "history destroyed" into "revert three
-commits" for everybody including you.
-
-To re-apply it, or to apply it to another plan repository, pass the body as JSON:
+`openproj init` starts it: `config/{defaults,cycles,holidays,people}.yaml` at
+the newest schema version with nothing invented, a README, a `.gitignore`, and
+one commit under your git identity — refused before anything is written if there
+is no identity, or if the directory is not empty. At a terminal it asks for what
+the flags left out: the org whose members may write, the plan's remote URL, your
+login for the roster, and whether to describe a Cloud Run deployment now. Run
+anywhere that is not a terminal, it asks nothing.
 
 ```bash
-gh api -X PUT repos/jcanton/icon4py-plan/branches/main/protection --input - <<'JSON'
+openproj init ~/projects/kilnlab-plan --org kilnlab \
+  --remote https://github.com/kilnlab/plan --as <your login>
+git -C ~/projects/kilnlab-plan push -u origin main
+```
+
+Create the repository on GitHub first, empty; `--remote` makes it `origin`. Say
+yes to the deployment question, or pass `--deploy KEY=VALUE` for the keys you
+already know — they are the keys of `deploy/example.env`, and the rest are
+written blank — and the plan also gets `deploy/openproj.env`, the file step 4
+reads. Nothing in it is a secret, so it is committed with the plan.
+
+**Turn branch protection on before the first deploy.** What it does, checked on a
+real plan repository: an
+ordinary fast-forward is accepted — which is all the server ever does — and a
+force-push is refused with `GH006: Protected branch update failed`. It blocks
+force-push and deletion, and it applies to admins too, so it converts "history
+destroyed" into "revert three commits" for everybody including you.
+
+Pass the body as JSON, with `<owner>/<plan>` the plan repository:
+
+```bash
+gh api -X PUT repos/<owner>/<plan>/branches/main/protection --input - <<'JSON'
 {
   "required_status_checks": null,
   "enforce_admins": true,
@@ -66,7 +101,7 @@ flag gives the same wall of text — a JSON body has one obvious reading.
 Check it:
 
 ```bash
-gh api repos/jcanton/icon4py-plan/branches/main/protection \
+gh api repos/<owner>/<plan>/branches/main/protection \
   -q '"force pushes: \(.allow_force_pushes.enabled)  deletions: \(.allow_deletions.enabled)"'
 ```
 
@@ -85,10 +120,11 @@ A **GitHub App**, not a PAT and not a deploy key:
 A PAT also breaks the audit story: every commit's *committer* would trace to a
 human's token, which is what the author/committer split exists to avoid.
 
-**Once, at https://github.com/settings/apps/new** (a personal App, since the repo
-is under your account; move it to the C2SM org if the tool is adopted):
+**Once, at https://github.com/settings/apps/new** — a personal App if the plan
+repository is under your account, or one under the org's own settings if it is
+the org's; either kind can be installed on the one repository:
 
-1. **GitHub App name:** anything not already taken, e.g. `openproj-icon4py`. This
+1. **GitHub App name:** anything not already taken, e.g. `openproj-kilnlab`. This
    is a name, not a repository — there is no repo behind it.
    **Homepage URL:** `https://github.com/jcanton/openproj`. The field is required
    and entirely cosmetic: GitHub shows it on the App's page and nothing reads it.
@@ -98,10 +134,10 @@ is under your account; move it to the C2SM org if the tool is adopted):
    **Uncheck Webhook → Active.**
 2. **Repository permissions → Contents: Read and write.** Nothing else. No
    account permissions, no org permissions.
-3. Create it, then **Install App** → *Only select repositories* →
-   **`icon4py-plan`** alone. This installation scope *is* the guarantee: the
-   credential cannot name `icon4py` or `gt4py`, because the installation does not
-   include them.
+3. Create it, then **Install App** → *Only select repositories* → **the plan
+   repository** alone. This installation scope *is* the guarantee: the credential
+   cannot name the repositories the plan is about — `kilnlab/kiln4py`, say —
+   because the installation does not include them.
 4. On the App's page, note the **App ID**. Generate a **private key** and keep the
    downloaded `.pem`.
 5. Get the **installation id**:
@@ -176,7 +212,8 @@ Register at **https://github.com/settings/applications/new**.
 
   ```
   http://127.0.0.1:8000/auth/callback                  a local test, today
-  https://<service>.<region>.run.app/auth/callback     added after step 4
+  https://<service>-<project number>.<region>.run.app/auth/callback    added after step 4,
+                                                                        with its a.run.app twin
   ```
 
   The path is exactly `/auth/callback` — the server derives it from its own route
@@ -198,31 +235,34 @@ one without touching the client id or secret.
 callback above, then:
 
 ```bash
+git clone --bare ~/projects/kilnlab-plan /tmp/plan.git
 cd ~/projects/openproj
 OPENPROJ_SECRET=$(python -c "import secrets;print(secrets.token_urlsafe(48))") \
 OPENPROJ_CLIENT_ID=<client id> \
 OPENPROJ_CLIENT_SECRET=<client secret> \
-uv run openproj serve --repo /tmp/plan.git --auth github --org C2SM --port 8000
+uv run openproj serve --repo /tmp/plan.git --auth github --org <your org> --port 8000
 ```
 
 Open http://127.0.0.1:8000/ and sign in. This exercises the whole path — the
 redirect, the code exchange, the `read:org` membership check — against real
-GitHub, with nothing deployed. Worth doing before the meeting: it is the one part
-of the stack that cannot be checked any other way.
+GitHub, with nothing deployed. Worth doing before anybody else is shown it: it is
+the one part of the stack that cannot be checked any other way.
 
-After step 4, add the `*.run.app` URI to the same app. If you would rather not
-have sign-in in the way of the first deploy at all, deploy once with
-`OPENPROJ_AUTH=dev`, read the URL off the output, add the URI, and redeploy with
-`OPENPROJ_AUTH=github`. The hostname is stable across revisions either way.
+After step 4, add the two `*.run.app` URIs the deploy prints to the same app.
+Sign-in does not have to be in the way of the first deploy: the deploy, every
+read and `/api/health` go through without a registered URI, and only the sign-in
+link 404s until the URIs are added. The hostnames are stable across revisions,
+so this is done once.
 
 **The scope is `read:org` and nothing else.** Never `repo`: that would put a
 write-capable GitHub token in every session. The token here establishes identity
 once and is discarded.
 
 **`OPENPROJ_ORG` decides who may write** — it is checked against org membership,
-and it is not where the repo lives. Keep `C2SM` even though the repository is
-under your account: the question is "is this person on the team", and the answer
-still comes from C2SM.
+and it is not where the repo lives. A plan under a personal account gated by the
+team's org is a normal shape: the question is "is this person on the team", and
+the org is what answers it. The deploy passes the env file's `ORG`, and
+`serve --auth github` refuses to start without one.
 
 ______________________________________________________________________
 
@@ -234,30 +274,37 @@ billing account cannot be created from the CLI, because it takes a card. Make on
 at <https://console.cloud.google.com/billing>, then:
 
 ```bash
-gcloud projects create icon4py-plan-<something-unique> --name openproj
+gcloud projects create <project id> --name openproj   # globally unique, so suffix it
 gcloud billing accounts list      # the dashed ID, 01ABCD-EF2345-6789GH
-gcloud billing projects link icon4py-plan-<...> --billing-account <that ID>
-gcloud billing projects describe icon4py-plan-<...>   # billingEnabled: true
+gcloud billing projects link <project id> --billing-account <that ID>
+gcloud billing projects describe <project id>   # billingEnabled: true
 ```
 
 `--billing-account` wants that ID and not your email address; given an email it
 answers `INVALID_ARGUMENT: Request contains an invalid argument`, naming neither
 the field nor the format.
 
-Everything below is in **`gcloud_deploy.sh`** at the repository root. Fill in the
-block marked FILL IN — the project, the two GitHub App ids, the OAuth client id —
-and run it from the root:
+Everything below is in **`gcloud_deploy.sh`** at the repository root, and every
+value it needs — `PROJECT`, `REGION`, `SERVICE`, `REMOTE`, `ORG`, `APP_ID`,
+`INSTALLATION_ID`, `OAUTH_CLIENT_ID`, `APP_KEY_FILE` — comes from one env file
+that lives in the **plan** repository: `deploy/openproj.env`, written by
+`openproj init` when asked (step 1), or `deploy/example.env` from here copied
+across and filled in by hand — it is the same file with every value blank and
+every explanation kept. That file is the only place a deployment is written
+down. Run the script from this repository's root, pointed at it:
 
 ```bash
-./gcloud_deploy.sh
+./gcloud_deploy.sh ~/projects/kilnlab-plan/deploy/openproj.env
 ```
 
-It is safe to run again: everything it creates is checked for first, so a second
-run redeploys the current commit and leaves the secrets, the service account and
-the registry alone. It asks for the OAuth client secret at the prompt rather than
-reading it from the file, so that one value is never on disk or in your history.
-It builds `./Dockerfile`, deploys, runs the four checks below, and prints
-the callback URI to add to the OAuth App.
+It refuses before touching anything if a value is blank, naming which. It is
+safe to run again: everything it creates is checked for first, so a second run
+redeploys the current commit and leaves the secrets, the service account and the
+registry alone. It asks for the OAuth client secret at the prompt rather than
+reading it from the file, so that one value is never on disk or in your history;
+once that secret exists, it asks nothing. It builds `./Dockerfile`, deploys,
+runs the four checks below, and prints the two callback URIs to add to the OAuth
+App.
 
 What it is doing, and why the flags are what they are:
 
@@ -292,13 +339,14 @@ forever. The App ID and installation id are *not* secret and are fine as env var
 
 **Verify, in this order.** The script runs these four itself; they are here so
 they can be re-run by hand later, when something that worked stops working.
+`SERVICE` and `REGION` are the env file's.
 
 ```bash
-URL=$(gcloud run services describe openproj --region $REGION --format='value(status.url)')
+URL=$(gcloud run services describe $SERVICE --region $REGION --format='value(status.url)')
 curl -fsS $URL/api/health; echo                       # 200 {"ok":true,…,"unpushed":0}
 curl -s -o /dev/null -w '%{http_code}\n' $URL/graph   # 200, not 500 — static/ resolved
 curl -s -X PATCH $URL/api/record/x -d '{}'            # 401 — writes are gated
-gcloud run services logs read openproj --region $REGION --limit 20 | grep cloning
+gcloud run services logs read $SERVICE --region $REGION --limit 20 | grep cloning
 ```
 
 `/api/health` and not `/healthz`: Google's frontend answers that path itself,
@@ -306,8 +354,9 @@ with its own 404 page, and the request never reaches the container — so the ch
 meant to prove the service is alive is the one URL that cannot reach it. The route
 still answers on `/healthz` for a run behind anything else.
 
-`/graph` is the one worth checking explicitly: `static/` is not in the wheel, and
-a container that resolved it wrongly serves every other page fine and 500s only
+`/graph` is the one worth checking explicitly: the image runs the source tree
+rather than the wheel and finds `static/` through `OPENPROJ_STATIC`, and a
+container that resolved it wrongly serves every other page fine and 500s only
 there. The `cloning` line proves the credential worked on a cold start — if it is
 missing and the service is up, it is serving an empty plan it made itself.
 
@@ -350,15 +399,27 @@ ______________________________________________________________________
 
 ## The service, as deployed
 
-**<https://openproj-392761827400.europe-west1.run.app>** — project
-`icon4py-plan-gcloud`, region `europe-west1`, serving
-`github.com/jcanton/icon4py-plan`.
+Not written here. Each deployment is documented in its own plan repository — the
+env file step 4 reads, and a `deploy/README.md` beside it with the URL and
+whatever that deployment has learned since. This file is the same for every
+deployment, so a URL in it would be one team's, and stale the day the service
+moved.
 
-Cloud Run answers on a second, generated hostname as well, which the deploy
-prints. Both are permanent and both reach the same service; the project-number
-one above is the one to hand round, because the other is a token nobody can
-retype. GitHub matches a redirect URI exactly, so **both** belong on the OAuth
-App — otherwise sign-in works or 404s depending on which link somebody followed.
+After a deploy, ask the service what it is running and check it against the tag:
+
+```bash
+gcloud run services describe $SERVICE --region $REGION \
+  --format='value(status.url,status.latestReadyRevisionName)'
+curl -fsS $URL/api/health; echo    # "version" is this code's; "head" is the plan's commit
+```
+
+Cloud Run answers on two hostnames, and the deploy prints both:
+`https://<service>-<hash>-<region code>.a.run.app`, which `gcloud run services describe`
+reports, and `https://<service>-<project number>.<region>.run.app`, which the script
+computes. Both are permanent and reach the same service; the project-number one is the
+one to hand round, because the other is a token nobody can retype.
+GitHub matches a redirect URI exactly, so **both** belong on the OAuth App —
+otherwise sign-in works or 404s depending on which link somebody followed.
 
 ## The service cannot write
 
@@ -419,7 +480,7 @@ a few quiet minutes, so this is a clock rather than a decision.
    change any env var, which is what makes Cloud Run cut a new revision:
 
    ```bash
-   gcloud run services update openproj --region $REGION \
+   gcloud run services update $SERVICE --region $REGION \
      --update-env-vars "OPENPROJ_RECLONED_AT=$(date -u +%FT%TZ)"
    curl -fsS $URL/api/health; echo    # 200 {"ok":true,…,"unpushed":0}
    ```
@@ -439,38 +500,41 @@ before looking at anything else.
 
 ## Day one, before anybody else uses it
 
-- Branch protection on `icon4py-plan`'s `main` (step 1).
+- Branch protection on the plan's `main` (step 1).
 
 - A nightly `git clone --mirror` of the plan somewhere off GitHub.
 
 - The runtime service account holding `secretAccessor` on three secrets and
   nothing else.
 
-- **Activate the full account before 16 November 2026.** The CHF 246 of trial
-  credit expires then, and Google deletes a lapsed trial's resources rather than
-  charging the card. Activating means pay-as-you-go with a card on file — and
-  then the always-free tier applies, which is a separate and permanent thing from
-  the trial credit. The plan survives either way, since it is in git and the
-  container is a cache, but the service does not.
+- **If the project is on a trial, activate the full account before the credit
+  expires.** The date is on the billing page, and Google deletes a lapsed trial's
+  resources rather than charging the card. Activating means pay-as-you-go with a
+  card on file — and then the always-free tier applies, which is a separate and
+  permanent thing from the trial credit. The plan survives either way, since it
+  is in git and the container is a cache, but the service does not.
 
-- **Tear down what is left in `europe-west6`.** The first deployment went to
-  Zurich, which is a Tier 2 pricing region and therefore possibly outside Cloud
-  Run's always-free allowance; the service now runs in `europe-west1`. A deploy
-  script does not delete a service behind you, so the old one is still there,
-  still serving, and still on the OAuth App:
+- **Pick a Tier 1 region before the first deploy, and keep it.** The first
+  deployment of this tool went to Zurich, `europe-west6`, which is a Tier 2
+  pricing region and therefore possibly outside Cloud Run's always-free
+  allowance, and moving it to `europe-west1` did not clean up after itself: a
+  deploy script does not delete a service behind you, so the old one was still
+  there, still serving, and still on the OAuth App. If a region has to change,
+  tear the old one down by hand:
 
   ```bash
-  gcloud run services delete openproj --region europe-west6
-  gcloud artifacts repositories delete openproj --location europe-west6
-  gcloud storage rm -r gs://icon4py-plan-gcloud_europe-west6_cloudbuild
+  gcloud run services delete $SERVICE --region <old region>
+  gcloud artifacts repositories delete $SERVICE --location <old region>
+  gcloud storage rm -r gs://<project>_<old region>_cloudbuild
   ```
 
   Then remove its two redirect URIs from the OAuth App, so a stale bookmark fails
   visibly rather than signing somebody into a service nobody is watching.
 
-- `config/people.yaml` in the plan is `known_people: []`. An unlisted login is a
-  warning rather than a refusal, so nothing breaks, but nothing autocompletes
-  either.
+- `config/people.yaml` in the plan holds the login `init` was given, or nobody.
+  An unlisted login is a warning rather than a refusal, so nothing breaks, but
+  nothing autocompletes either.
 
-- If the tool is adopted: move both repositories to `C2SM`, reinstall the App
-  there, and change `OPENPROJ_REMOTE`. Nothing else changes.
+- If the plan repository moves — from your account to the org's, say: reinstall
+  the App on it there, change `REMOTE` and `INSTALLATION_ID` in the env file, and
+  redeploy. Nothing else changes.

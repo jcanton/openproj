@@ -47,7 +47,7 @@ from .tokens import PRIORITY_GLYPH, STATUS_GLYPH, TEMPLATES, _priority_class, _s
 #   - A title slide with the cycle and the word Review, and nothing else on it.
 #   - One slide per piece of work, headed `[Area] Topic` — the bracket is the
 #     thing the work belongs to, and it is what makes a deck skimmable when four
-#     consecutive slides are all GT4Py. Here the bracket is the pitch, which is
+#     consecutive slides are all Griddle. Here the bracket is the pitch, which is
 #     what a task belongs to, so nobody types it.
 #   - Bulleted points under it, the pull requests among them as links, and a
 #     screenshot or a table where somebody had one.
@@ -74,7 +74,7 @@ _ARTICLE = """
 <article class="slide{{ ' skipped' if s.skip }}" data-id="{{ s.id }}" data-at="{{ s.at }}"
   data-key="{{ s.id }}:{{ s.at }}"
   {% if s.skip %}data-skip="1"{% endif %}>
-  {#- The bracket first and smaller, exactly as `[GT4Py] Features` reads: what
+  {#- The bracket first and smaller, exactly as `[Griddle] Features` reads: what
       this belongs to, then what it is. Omitted where the work IS the bet, since
       a bracket repeating the line under it says nothing. -#}
   {% if s.under %}<p class="under">{{ s.under }}</p>{% endif %}
@@ -1509,7 +1509,7 @@ def slides_of(index: Index, record: Record, links: Links, assets: dict[str, str]
     chunks = slide_chunks(slide.body)
     facts = {
         "id": record.id,
-        # The `[GT4Py]` of the real deck. Blank where this record IS the bet —
+        # The `[Griddle]` of the real deck. Blank where this record IS the bet —
         # an orphan chore, or a pitch nobody has broken into tasks — because a
         # bracket repeating the heading under it is furniture.
         "under": bet.title if bet is not None and bet.id != record.id else "",

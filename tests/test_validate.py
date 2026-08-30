@@ -452,7 +452,7 @@ def test_a_start_date_in_the_past_is_expected_once_the_work_has_begun():
     began = date(2026, 8, 17)
     for record in (
         task(status="in_progress", start_date=began),
-        task(status="done", start_date=began, prs=["https://github.com/c2sm/x/pull/1"]),
+        task(status="done", start_date=began, prs=["https://github.com/kilnlab/x/pull/1"]),
     ):
         assert [
             p for p in check(record, today=date(2026, 8, 28)) if p.field == "start_date"
@@ -478,8 +478,8 @@ def test_a_start_date_on_a_rung_that_is_never_scheduled_is_not_judged_twice():
 def test_a_wip_record_needs_a_size():
     """The gate stopped at `ready`, and `in_progress` is reachable without ever
     passing through it — so an unsized record could be running, and three in
-    icon4py-plan were. With no default appetite behind it, such a record is not
-    scheduled, weighs nothing in its pitch's progress and charges nobody's
+    the first real plan were. With no default appetite behind it, such a record is
+    not scheduled, weighs nothing in its pitch's progress and charges nobody's
     capacity: it is work that is happening and that the plan cannot account for.
 
     A container is asked for nothing, because it has nothing to be asked for:
@@ -1812,7 +1812,7 @@ def test_a_year_typed_wrong_is_caught_between_two_cycles_and_not_only_beyond_the
     the envelope of these two, so the rule said nothing at all, the door answered
     200, and the record dropped silently out of `counts_in`, out of `Index.load`
     and out of `carried_into` for every cycle there is — which is the failure §6
-    opens with, surviving the change written to end it. icon4py-plan is a
+    opens with, surviving the change written to end it. The first real plan is a
     multi-year plan; this is the shape it will be in.
 
     Twenty-one weeks and not thirty-two: the number is the distance to the

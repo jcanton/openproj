@@ -68,13 +68,15 @@ repos:
       # people learn to skip. This is for the stray screenshot or database dump.
       - id: check-added-large-files
         args: [--maxkb=1000]
-      # The parse checks icon4py runs, minus the ones for file kinds this
-      # repository does not have. A malformed `ci.yml` or `pyproject.toml` is a
-      # failure that otherwise waits for a push to be noticed.
+      # The parse checks a sibling scientific-Python repository runs, minus the
+      # ones for file kinds this repository does not have. A malformed `ci.yml`
+      # or `pyproject.toml` is a failure that otherwise waits for a push to be
+      # noticed.
       - id: check-toml
       - id: check-yaml
-        # `--unsafe` for icon4py's reason: a check that refuses a custom tag
-        # refuses a valid workflow. This parses the structure and not the tags.
+        # `--unsafe` for that sibling repository's reason: a check that refuses
+        # a custom tag refuses a valid workflow. This parses the structure and
+        # not the tags.
         args: [--unsafe]
       - id: check-json
       - id: check-case-conflict
@@ -82,18 +84,19 @@ repos:
       # hangs on the request that hits it, with nothing in the log to say why.
       - id: debug-statements
 
-  # Everything below came from icon4py's own `.pre-commit-config.yaml`, at the
-  # revisions it pins, so a person moving between the two repositories meets one
-  # formatter and not two opinions. What was deliberately left there: `mypy` and
-  # `tach` (AGENTS.md, "Type checking: measured, not adopted"), and the
-  # licence-header hook, which is that project's `HEADER.txt`.
+  # Everything below came from a sibling scientific-Python repository's own
+  # `.pre-commit-config.yaml`, at the revisions it pins, so a person moving
+  # between the two repositories meets one formatter and not two opinions. What
+  # was deliberately left there: `mypy` and `tach` (AGENTS.md, "Type checking:
+  # measured, not adopted"), and the licence-header hook, which is that
+  # project's `HEADER.txt`.
 
   # The markdown formatter, and this repository is mostly markdown: four
   # documents on the Help page, a directory of design records, and AGENTS.md.
-  # `--wrap` is left at its default of `keep`, which is icon4py's setting too —
-  # these documents are hand-wrapped at about a hundred columns and a formatter
-  # that re-flowed every paragraph would make the first prose commit after it
-  # unreviewable.
+  # `--wrap` is left at its default of `keep`, which is that repository's
+  # setting too — these documents are hand-wrapped at about a hundred columns
+  # and a formatter that re-flowed every paragraph would make the first prose
+  # commit after it unreviewable.
   - repo: https://github.com/hukkin/mdformat
     rev: 0.7.22
     hooks:
@@ -129,7 +132,8 @@ repos:
       # `uv lock` on a dependency change, so the lockfile CI installs from and
       # the `pyproject.toml` a reviewer reads cannot describe two different
       # environments. Run through the repository's own uv rather than a copy
-      # pinned here, which is icon4py's reasoning for its uv-managed hooks.
+      # pinned here, which is that repository's reasoning for its uv-managed
+      # hooks.
       - id: uv-lock
         name: uv-lock
         entry: uv lock

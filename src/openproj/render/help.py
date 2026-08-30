@@ -83,7 +83,7 @@ class Doc(NamedTuple):
 # Prose about the rule tripping the rule is not a reason to weaken the rule.
 DOCS: tuple[Doc, ...] = (
     Doc("quickstart", "Quickstart", "docs/quickstart.md"),
-    Doc("shape-up", "Shape Up, as this team practises it", "docs/shape-up.md"),
+    Doc("shape-up", "Shape Up, as this tool practises it", "docs/shape-up.md"),
     Doc("data-model", "The data model", "docs/data-model.md"),
     Doc("architecture", "Architecture", "docs/architecture.md"),
 )
@@ -185,8 +185,8 @@ _HELP = """
 <script>
 // A contents entry per heading in every document, stacked above the first word of
 // documentation, is what the one-column layout below 60rem produced: measured at
-// 390px, a reader scrolled past the whole of it to reach "Planning for the
-// icon4py team". A count is not written down here on purpose — it moves with the
+// 390px, a reader scrolled past the whole of it to reach the README's first
+// sentence. A count is not written down here on purpose — it moves with the
 // documents. So the contents folds, and
 // it folds the way everything else in this app folds on a small screen — a
 // `<details>` shipped `open` and closed from here, with the handle drawn only at

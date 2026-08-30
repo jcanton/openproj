@@ -212,7 +212,7 @@ class SameRecordWriter(users.FormWriter):
                 # dropped from the index and would make the marker unfindable.
                 return was + [self.dependency(n)]
             if field == "prs":
-                return was + [f"C2SM/icon4py#{marker}"]
+                return was + [f"kilnlab/kiln4py#{marker}"]
             return was + [marker]
         if field == "title":
             return f"Task under twelve hands {marker}"

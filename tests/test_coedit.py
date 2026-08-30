@@ -1351,7 +1351,9 @@ def test_a_stranger_is_refused_the_socket_and_told_why(plan: Path):
     `read_session` allows, with nothing on screen ever saying so. So the refusal
     still refuses, and now says which refusal it is.
     """
-    app = create_app(plan, auth="github", secret=SECRET, client_id="x", client_secret="y")
+    app = create_app(
+        plan, auth="github", org="kilnlab", secret=SECRET, client_id="x", client_secret="y"
+    )
     with TestClient(app) as signed_out:
         said, closed = refusal_of(signed_out)
 
@@ -1399,7 +1401,9 @@ def test_a_socket_re_reads_the_session_it_was_opened_with(
     monkeypatch.setattr(
         web_module, "read_session", functools.partial(auth_module.read_session, max_age=2)
     )
-    app = create_app(plan, auth="github", secret=SECRET, client_id="x", client_secret="y")
+    app = create_app(
+        plan, auth="github", org="kilnlab", secret=SECRET, client_id="x", client_secret="y"
+    )
     token = sign_session(User(login="ann", member=True), SECRET)
     before = len(log_of(plan))
     with TestClient(app) as signed_in:

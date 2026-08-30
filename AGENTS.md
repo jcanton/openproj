@@ -1,11 +1,11 @@
 # Working on openproj
 
-Git-backed appetite planning for the icon4py team. `README.md` has the shape of the thing: one
-markdown file per record, the shaping document *is* the record, every date derived from one typed
-`start_date` and one size the tool never invents, the tool and the plan kept in two repositories on
-purpose. Read it first. This file is the part it does not say — the invariants that fail loudly when
-you step on them, the rules that nine rounds of audit paid for, and how to find the bug that is
-already here.
+Git-backed appetite planning, pointed at a plan repository. `README.md` has the shape of the thing:
+one markdown file per record, the shaping document *is* the record, every date derived from one
+typed `start_date` and one size the tool never invents, the tool and the plan kept in two
+repositories on purpose. Read it first. This file is the part it does not say — the invariants
+that fail loudly when you step on them, the rules that nine rounds of audit paid for, and how to
+find the bug that is already here.
 
 **Keep this file specific.** A rule earns its place here by naming the failure it prevents, and
 there is a real one for nearly every rule below. Every generic sentence added makes the specific
@@ -589,23 +589,29 @@ gh pr create --base main --title "vX.Y.Z"
 # wait for `check`, merge it, and only then:
 git checkout main && git pull
 git tag vX.Y.Z && git push --tags
-./gcloud_deploy.sh               # from the repository root
+./gcloud_deploy.sh <env file>    # from the repository root; the file is in the PLAN repo
 ```
 
-**Where it runs.** Project `icon4py-plan-gcloud`, region `europe-west1`, service `openproj`. Those
-three are filled in at the top of `gcloud_deploy.sh` and are the only place they are written down.
+**Where it runs is not written here.** Which Google Cloud project, which region, which plan and
+which org are facts about a deployment and not about the tool, so `gcloud_deploy.sh` reads every one
+of them from an env file that lives in the plan repository: `./gcloud_deploy.sh <env file>`, where
+`deploy/example.env` in this repository is the form with every value blank and every explanation
+kept, and `openproj init` writes the filled-in one as `deploy/openproj.env` when asked. The tool's
+source names no deployment, so a grep of this repository for a cloud project id or a service URL finds nothing —
+the one known deployment is documented in its own plan repository's `deploy/README.md`, not here.
 The script is idempotent — everything it creates it checks for first — so a second run redeploys
 the current commit and leaves the service account, the registry and the three secrets alone. It
 prompts for exactly one thing, the OAuth client secret, and only when
 `openproj-oauth-client-secret` does not already exist; once it does, the deploy is unattended.
 
 Afterwards, ask the service what it is running and check it against the tag. That is the whole
-point of tagging, and it is two commands:
+point of tagging, and it is two commands, with `SERVICE` and `REGION` from the env file and the URL
+the deploy printed last:
 
 ```bash
-gcloud run services describe openproj --region=europe-west1 \
+gcloud run services describe "$SERVICE" --region="$REGION" \
   --format="value(status.url,status.latestReadyRevisionName)"
-curl -s https://openproj-perontl7xq-ew.a.run.app/api/health
+curl -s "$URL/api/health"
 # {"ok": true, "head": "<the PLAN's commit>", "version": "0.12.0"}
 ```
 

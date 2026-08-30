@@ -66,7 +66,7 @@ from test_store import commit_directly
 from openproj.auth import User, sign_session
 from openproj.web import create_app
 
-ORG = "C2SM"
+ORG = "kilnlab"
 SECRET = "a-real-signing-secret-for-tests"
 CLIENT_ID = "Iv1.0123456789abcdef"
 CLIENT_SECRET = "s3cr3t-client-secret"
@@ -6064,7 +6064,7 @@ def test_the_open_pull_requests_come_from_the_plan_and_are_cached(tmp_path: Path
     """
     asked: list[str] = []
     repo = _plan_that_names_repositories(
-        tmp_path, "repositories: [C2SM/icon4py, GridTools/gt4py]\n"
+        tmp_path, "repositories: [kilnlab/kiln4py, griddle/griddle]\n"
     )
     app = create_app(
         repo,
@@ -6072,8 +6072,8 @@ def test_the_open_pull_requests_come_from_the_plan_and_are_cached(tmp_path: Path
         secret=SECRET,
         github_transport=_github_answering(
             {
-                "C2SM/icon4py": [{"number": 1403, "title": "Halo exchange drops a rank"}],
-                "GridTools/gt4py": [{"number": 1877, "title": "Scan carry"}],
+                "kilnlab/kiln4py": [{"number": 1403, "title": "Halo exchange drops a rank"}],
+                "griddle/griddle": [{"number": 1877, "title": "Scan carry"}],
             },
             asked,
         ),
@@ -6084,8 +6084,8 @@ def test_the_open_pull_requests_come_from_the_plan_and_are_cached(tmp_path: Path
         assert first.status_code == 200, first.text
         assert first.json() == {
             "prs": [
-                {"value": "C2SM/icon4py#1403", "label": "Halo exchange drops a rank"},
-                {"value": "GridTools/gt4py#1877", "label": "Scan carry"},
+                {"value": "kilnlab/kiln4py#1403", "label": "Halo exchange drops a rank"},
+                {"value": "griddle/griddle#1877", "label": "Scan carry"},
             ],
             "stale": False,
         }
@@ -6097,7 +6097,7 @@ def test_the_open_pull_requests_come_from_the_plan_and_are_cached(tmp_path: Path
         assert elsewhere.json() == first.json(), (
             "a query string reached the repositories this server will fetch"
         )
-    assert asked == ["/repos/C2SM/icon4py/pulls", "/repos/GridTools/gt4py/pulls"], (
+    assert asked == ["/repos/kilnlab/kiln4py/pulls", "/repos/griddle/griddle/pulls"], (
         f"three requests cost {len(asked)} calls to GitHub: {asked}"
     )
 
@@ -6122,7 +6122,7 @@ def test_a_github_that_will_not_answer_costs_the_completion_and_nothing_else(
         asked.append(request.url.path)
         return httpx.Response(503, text="unavailable")
 
-    repo = _plan_that_names_repositories(tmp_path, "repositories: [C2SM/icon4py]\n")
+    repo = _plan_that_names_repositories(tmp_path, "repositories: [kilnlab/kiln4py]\n")
     app = create_app(repo, auth="dev", secret=SECRET, github_transport=httpx.MockTransport(broken))
     with TestClient(app) as client:
         client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
@@ -6139,7 +6139,7 @@ def test_the_open_pull_requests_are_not_offered_to_a_signed_out_visitor(tmp_path
     that spends them for anybody who asks is a route that can be made to spend
     them all."""
     asked: list[str] = []
-    repo = _plan_that_names_repositories(tmp_path, "repositories: [C2SM/icon4py]\n")
+    repo = _plan_that_names_repositories(tmp_path, "repositories: [kilnlab/kiln4py]\n")
     app = create_app(
         repo,
         auth="github",
@@ -6147,7 +6147,7 @@ def test_the_open_pull_requests_are_not_offered_to_a_signed_out_visitor(tmp_path
         secret=SECRET,
         client_id=CLIENT_ID,
         client_secret=CLIENT_SECRET,
-        github_transport=_github_answering({"C2SM/icon4py": []}, asked),
+        github_transport=_github_answering({"kilnlab/kiln4py": []}, asked),
     )
     with TestClient(app) as client:
         assert client.get("/api/prs").status_code == 403
@@ -6165,7 +6165,7 @@ def test_a_plan_that_names_no_repository_asks_nothing(tmp_path: Path):
         repo,
         auth="dev",
         secret=SECRET,
-        github_transport=_github_answering({"C2SM/icon4py": []}, asked),
+        github_transport=_github_answering({"kilnlab/kiln4py": []}, asked),
     )
     with TestClient(app) as client:
         client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))

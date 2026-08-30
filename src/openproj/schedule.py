@@ -685,9 +685,9 @@ def schedule(
     records: list[Record], config: Config, today: date
 ) -> tuple[dict[str, Span], dict[str, Explanation]]:
     # Shelved work is parked, and a kind the ladder says is never scheduled has
-    # nothing to schedule. A product groups the codebases a plan spans — gt4py
-    # under icon4py, dace, pmap — and holds no work of its own; given a span it
-    # drew a bar on the timeline spanning everything beneath it, which is a
+    # nothing to schedule. A product groups the codebases a plan spans — griddle
+    # under kiln4py, hearth, roastref — and holds no work of its own; given a span
+    # it drew a bar on the timeline spanning everything beneath it, which is a
     # rectangle behind every real bar saying nothing the bars do not.
     #
     # Read off `RUNG` rather than by naming the kind here, because "which kinds

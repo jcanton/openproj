@@ -35,8 +35,8 @@ own page.
 The tool and the plan are separate repositories, and stay separate in production.
 
 ```
-jcanton/openproj      this repo — code, tests, and fixtures. No real plan data.
-jcanton/icon4py-plan  the data — markdown records and config. No code.
+jcanton/openproj        this repo — code, tests, and fixtures. No real plan data.
+<your plan repository>  the data — markdown records and config. No code.
 ```
 
 Three reasons the split is load-bearing:
@@ -44,8 +44,8 @@ Three reasons the split is load-bearing:
 - **A plan commit must not run the tool's CI.** Someone changing a status should not queue a test
   suite, and a red suite should not block someone changing a status.
 - **The write credential must be structurally incapable of touching source.** Scoped to one
-  repository with `contents: write`, a leaked token costs you a revertable plan; scoped wider it is a
-  supply-chain foothold in a scientific codebase.
+  repository with `contents: write`, a leaked token costs you a revertable plan; scoped wider it
+  is a supply-chain foothold in the codebase the plan is about.
 - **Their histories have nothing to say to each other.** `git log` on the plan is a record of
   decisions; on the tool it is a record of code.
 
@@ -53,17 +53,33 @@ The seam is the `--repo` argument. The server holds a bare clone of the plan rep
 else about it, so pointing a deployment at a different plan is a flag, not a fork.
 
 ```bash
-git clone --bare https://github.com/jcanton/icon4py-plan.git plan.git
+git clone --bare https://github.com/<your plan repository>.git plan.git
 uv run openproj serve --repo plan.git --auth dev
 ```
 
-For a look at the tool with nothing to point it at, `openproj demo` does the same against the bundled
-`seed/` corpus in a temporary directory. `--auth dev` is for a local run only; the
-deployment runs `--auth github`, which refuses to start without a signing secret and an OAuth
-client. `deploy/RUNBOOK.md` has the rest.
+A plan repository starts with `openproj init DIR`: the four config files at the newest schema
+version with nothing invented in them, a `README.md`, a `.gitignore`, and one commit under your
+git identity — refused before anything is written if there is no identity or the directory is not
+empty. At a terminal it asks for what the flags left out (`--org`, `--remote`, `--as`); anywhere
+else it asks nothing. Asked, or given `--deploy KEY=VALUE`, it also writes `deploy/openproj.env`
+into the plan, and that file is where a deployment is described: `gcloud_deploy.sh <that file>`
+reads the cloud project, the region, the plan's remote, the org and the App's identifiers from it,
+so the tool's own source names no plan, no org and no cloud project. `deploy/example.env` here is
+the same file with every value blank. The two secrets are asked for at the prompt and go to Secret
+Manager, never to disk.
+
+For a look at the tool with nothing to point it at, `openproj demo` does the same against the
+bundled `seed/` corpus in a temporary directory — an invented roastery, so nobody's real plan
+ships in the wheel. Since 0.43.0 the wheel carries `static/` and `seed/`, so `uvx openproj serve`,
+`render` and `demo` work without a checkout. `--auth dev` is for a local run only; a deployment
+runs `--auth github`, which refuses to start without a signing secret, an OAuth client, and the org
+whose membership decides who may write — `--org`, or `OPENPROJ_ORG`, with no default, because a
+default would be one team's. `deploy/RUNBOOK.md` has the rest.
 
 On Cloud Run the container clones the plan repo on boot and pushes on write, which is also why the
-running service is close to stateless — the durable data is the git remote, not the disk.
+running service is close to stateless — the durable data is the git remote, not the disk. It is
+also why one image serves any plan: which plan is `OPENPROJ_REMOTE` at boot, and a plan change
+never builds an image.
 
 ## Layout
 
@@ -80,12 +96,15 @@ src/openproj/web.py        the server: routes, auth, the write endpoints
 src/openproj/auth.py       sign-in: the OAuth dance, the session, who may write
 src/openproj/github.py     what the server asks GitHub — the App token, open PRs
 src/openproj/vendor.py     static/ and docs/ on disk, read once and inlined
-src/openproj/cli.py        check / render / schedule / serve / demo
+src/openproj/bootstrap.py  openproj init — the config files with nothing invented, one commit
+src/openproj/cli.py        init / check / new / render / serve / schedule / demo
 src/openproj/themes.py     the colour schemes — sixteen numbers a row, nothing else
 seed/                      the demo corpus
 tests/fixtures/corpus/     the frozen golden corpus the scheduler goldens pin
 static/                    vendored, pinned JS — see static/VENDOR.md
 docs/                      this documentation, and what the app's Help page reads
+deploy/                    the container entrypoint, the runbook, the blank deployment form
+gcloud_deploy.sh           one deployment, from the env file a plan repository holds
 ```
 
 `store.py` is a bare repository with no index to contend for, one writer behind an `flock`, and
@@ -94,7 +113,8 @@ and only a genuine overlap is refused.
 
 **No npm, no build step, no CDN**, and `tests/test_render.py` asserts no rendered page reaches the
 network. Two vendored libraries are fetched rather than carried, both megabytes: the drawing editor
-on the first press of the drawing button, and mermaid on a page that has a fence for it. `GET /static/<name>` answers for an allowlist of exactly those two; `static/VENDOR.md` has the
+on the first press of the drawing button, and mermaid on a page that has a fence for it.
+`GET /static/<name>` answers for an allowlist of exactly those two; `static/VENDOR.md` has the
 arithmetic. A diagram in a document is a diagram where there is a server and its source where there
 is not — `openproj render` writes files opened over `file://`, which have nothing to fetch from.
 

@@ -2122,9 +2122,9 @@ function found(needle, hay) {
   if (needle.length < 4) return 0;
   // An all-digit needle never takes the subsequence tier. A number is copied off
   // a screen rather than remembered, so it is typed right or not at all, and read
-  // loosely it is catastrophic: `1364` is a subsequence of `c2smicon4py1234564`,
+  // loosely it is catastrophic: `1364` is a subsequence of `kilnlabkiln4py1234564`,
   // so `?q=1364` kept a record whose only pull request is #1234564. The widening
-  // was asked for so `1364`, `#1364` and `C2SM/icon4py#1364` would all find the
+  // was asked for so `1364`, `#1364` and `kilnlab/kiln4py#1364` would all find the
   // same record; the substring tier above already does that.
   if (/^[0-9]+$/.test(needle)) return 0;
   for (let start = 0; start < hay.length; start++) {

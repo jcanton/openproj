@@ -13,7 +13,7 @@ whole team gets locked out or a way the write credential gets away from us:
   `GET /orgs/{org}/members/{user}` answers from the *requester's* perspective, and
   a live probe of that endpoint today returned `302 → /public_members/ann`, which
   then 404s: concealed membership is GitHub's default, so that endpoint answers
-  "no" for most of C2SM. `test_a_concealed_member_is_still_a_member` stubs the
+  "no" for most of kilnlab. `test_a_concealed_member_is_still_a_member` stubs the
   rejected endpoints with exactly those answers, so an implementation that reaches
   for them fails here instead of in week one, silently, as a lockout.
 * **GitHub reports OAuth failures as HTTP 200 with an `error` key.** Branching on
@@ -55,7 +55,7 @@ STATE = "MnwrhZ3nJgYQ8bTLXkGNmA_9tYtE0rMqQzVGmv1sJcs"
 CODE = "e72e16c7e42f292c6912"
 TOKEN = "gho_16C7e42F292c6912E7710c838347Ae178B4a"
 SECRET = "signing-secret-for-tests"
-ORG = "C2SM"
+ORG = "kilnlab"
 LOGIN = "ann"
 
 AUTHORIZE = "https://github.com/login/oauth/authorize"
@@ -206,7 +206,7 @@ def assert_deliberate(error: Exception, mentions: str) -> None:
 def test_the_authorize_url_asks_for_read_org_and_nothing_else():
     """The one string in the codebase that decides how much damage a leaked session
     can do. `repo` here — copied in for "we might need it later" — turns every
-    login into a write-capable credential for every C2SM repository.
+    login into a write-capable credential for every kilnlab repository.
     """
     url = login_url(CLIENT_ID, REDIRECT_URI, STATE)
     parsed = urlparse(url)
@@ -388,8 +388,8 @@ def test_a_concealed_member_is_still_a_member():
     perspective, and since the requester here is the person logging in, the
     question is circular. Probed live today:
 
-        GET /orgs/C2SM/members/<login>            -> 302 …/public_members/<login>
-        GET /orgs/C2SM/public_members/<login>     -> 404
+        GET /orgs/kilnlab/members/<login>            -> 302 …/public_members/<login>
+        GET /orgs/kilnlab/public_members/<login>     -> 404
 
     Both of those are stubbed below with those exact answers, so an implementation
     that reaches for them answers "not a member" for a member and fails here —
@@ -424,7 +424,7 @@ def test_a_person_who_is_not_in_the_org_is_identified_but_cannot_write():
 
 def test_an_invitation_that_was_never_accepted_is_not_membership():
     """200 with `state: "pending"` is an invited user, and treating 200 as the whole
-    answer hands write access to anyone who has merely been invited to C2SM —
+    answer hands write access to anyone who has merely been invited to kilnlab —
     including an invitation sent by mistake and never accepted.
     """
     client = github(membership_response=Response(200, payload=membership(state="pending")))
@@ -533,7 +533,7 @@ def test_the_member_flag_travels_inside_the_signature():
 def test_editing_member_true_into_a_cookie_does_not_survive_the_signature():
     """The obvious attack, because the payload is readable: log in as anybody, flip
     the boolean, get write access to the plan. The signature is the only thing
-    standing between a GitHub account and a commit in a C2SM repository.
+    standing between a GitHub account and a commit in a kilnlab repository.
     """
     cookie = sign_session(User(login="mallory", member=False), SECRET)
     assert payload_of(cookie)["member"] is False  # readable, as designed
@@ -586,7 +586,7 @@ def test_no_cookie_at_all_is_an_anonymous_reader():
 
 def test_a_session_older_than_its_max_age_is_refused(monkeypatch: pytest.MonkeyPatch):
     """The cookie is an unrevocable bearer assertion of `member: true`, so its
-    lifetime is exactly how long a departed C2SM member keeps write access. 24
+    lifetime is exactly how long a departed kilnlab member keeps write access. 24
     hours is that number, and the signature's `max_age` — not the browser's
     Max-Age, which the holder controls — is what enforces it.
 

@@ -1651,7 +1651,7 @@ def create_app(
     repo: Path,
     *,
     auth: Literal["dev", "github"] = "dev",
-    org: str = "C2SM",
+    org: str = "",
     secret: str = "dev-secret",
     client_id: str = "",
     client_secret: str = "",
@@ -1671,6 +1671,15 @@ def create_app(
             raise ValueError(
                 "refusing to start: auth='github' without a client id and secret cannot "
                 "complete a sign-in, so nobody could ever write."
+            )
+        if not org:
+            # Membership of the org is the whole of the write permission, so a
+            # blank one is not "anybody may write" — it is a question nobody
+            # answered. It used to default to one team's org in this file,
+            # which made every other deployment silently that team's.
+            raise ValueError(
+                "refusing to start: auth='github' without an org — membership of the org "
+                "is what decides who may write. Pass --org, or set OPENPROJ_ORG."
             )
 
     if remote and credentials is None and not remote.startswith("file:"):

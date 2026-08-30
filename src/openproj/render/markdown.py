@@ -584,7 +584,7 @@ def _markdown_line(text: str, links: Links, assets: dict[str, str] | None = None
 
     A checklist point is a line of markdown that a slide lifts out of its list,
     and it is written like one: the corpus has `` `jsbach_setup` `` and
-    `C2SM/icon4py#1403` inside points, and the real deck links exactly those
+    `kilnlab/kiln4py#1403` inside points, and the real deck links exactly those
     references from exactly those bullets. Taken as plain text they came out as
     literal backticks and a dead reference — the field looking decorative, which
     is the whole reason `_pr_link` exists.

@@ -65,7 +65,7 @@ ALIASES = {
 # and `tag:bed-heat` are one question. See `evaluate`'s last branch.
 #
 # A title is a sentence and nobody types a whole one. A PR reference is written
-# three ways in the same review — `1364`, `#1364`, `C2SM/icon4py#1364` — and the
+# three ways in the same review — `1364`, `#1364`, `kilnlab/kiln4py#1364` — and the
 # person searching has whichever of them is in front of them. Which is also why
 # the separators inside one stop counting: `#`, `/`, `_` and `-` are how a
 # reference and an id are *punctuated*, and a person retyping one from memory
@@ -212,9 +212,9 @@ def found(needle: str, hay: str) -> int:
     # An all-digit needle never takes the subsequence tier. A number is copied
     # off a screen rather than remembered, so it is typed right or not at all,
     # and read loosely it is catastrophic: `1364` is a subsequence of
-    # `c2smicon4py1234564`, so `?q=1364` kept a record whose only pull request is
+    # `kilnlabkiln4py1234564`, so `?q=1364` kept a record whose only pull request is
     # #1234564. The widening was asked for so that `1364`, `#1364` and
-    # `C2SM/icon4py#1364` would all find the same record; separator-blindness and
+    # `kilnlab/kiln4py#1364` would all find the same record; separator-blindness and
     # the substring tier above already do that, and this tier adds nothing to a
     # reference but wrong answers.
     if re.fullmatch(r"[0-9]+", needle):

@@ -75,7 +75,7 @@ BRANCH = "refs/heads/main"
 
 @pytest.fixture
 def remote_path(tmp_path: Path) -> Path:
-    """The durable copy. In production this is the repository in C2SM; here it is
+    """The durable copy. In production this is the repository in kilnlab; here it is
     a second bare repository, because `file://` is a real git transport and a
     fake one would only prove that the fake works."""
     path = tmp_path / "origin.git"

@@ -1093,7 +1093,7 @@ def test_work_that_has_started_is_counted_where_it_is_running_even_with_no_size(
 
     Unsized-and-`in_progress` is reachable through the normal path rather than by
     skipping a rung — the size gate is `ready` only, and §2 of
-    `design/time-model.md` records three such records in icon4py-plan. Such a task
+    `design/time-model.md` records three such records in the first real plan. Such a task
     has no span, so it fell out of every cycle after the one it was bet in,
     including the one it is being worked on in right now: no weeks, which is
     right, and no `· N not sized` beside them either, which is the silent shrink

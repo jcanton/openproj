@@ -6,6 +6,11 @@ was measured, and what was refused. It is written for somebody with a checkout w
 that subsystem, and it is kept because a decision whose reason is lost is a decision that gets
 re-opened.
 
+The records name what they measured. Several of them measured the first real plan this tool
+served — `icon4py-plan`, a team's wiki export, one repository's branch protection — and say so by
+name, because a measurement of an unnamed corpus is not a record. The tool names no team: `docs/`
+and the source do not, and this directory is the one place that history is kept.
+
 None of it reaches the running service. `docs/` is copied into the container because the Help page
 reads those files off the disk; this directory is excluded in `.gcloudignore` and is not copied by
 the `Dockerfile`.

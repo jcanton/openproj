@@ -44,7 +44,7 @@ def page_for(repo: Path, *, signed_in: bool, auth: str = "github") -> str:
         repo,
         auth=auth,
         secret=SECRET,
-        org="C2SM",
+        org="kilnlab",
         # A real sign-in is what `auth="github"` means, and the app refuses to
         # start without the pair — for the reason it says: nobody could ever
         # write. Nothing here completes one; the session cookie is signed

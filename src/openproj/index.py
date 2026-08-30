@@ -337,7 +337,7 @@ class Index(BaseModel):
         Dropping that disjunct outright overshot in the other direction. The size
         gate is `ready` only, so unsized-and-`in_progress` is reachable by the
         normal path rather than by skipping a rung — §2 of `design/time-model.md`
-        counts three such records in icon4py-plan — and each of them vanished
+        counts three such records in the first real plan — and each of them vanished
         from the very cycle somebody is working on it in: no weeks, which is
         right, and no `· N not sized` beside them, which is the silent shrink the
         badge was added to prevent. `in_progress` plus a start date is what is
