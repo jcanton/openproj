@@ -229,15 +229,76 @@ def test_serve_listens_where_cloud_run_requires(monkeypatch):
 
 
 def test_the_vendored_static_directory_is_found_by_an_env_var(monkeypatch, tmp_path: Path):
-    """static/ is not in the wheel, so an installed layout resolves the source-tree
-    path past site-packages and GET /graph becomes an uncaught FileNotFoundError.
-    Found by building a wheel rather than by reading the path."""
+    """An installed layout resolves the source-tree path past site-packages, and
+    GET /graph became an uncaught FileNotFoundError. Found by building a wheel
+    rather than by reading the path. OPENPROJ_STATIC is the override a deployment
+    running the source tree, or a wheel built before static/ was packaged, uses."""
     from openproj.render import _static_dir
 
     (tmp_path / "cytoscape.min.js").write_text("//")
     monkeypatch.setenv("OPENPROJ_STATIC", str(tmp_path))
 
     assert _static_dir() == tmp_path
+
+
+def test_the_wheel_carries_what_the_lookups_look_for(monkeypatch, tmp_path: Path):
+    """A wheel built from `packages = ["src/openproj"]` alone shipped no static/
+    and no seed/, so an installed `openproj serve`, `render` or `demo` answered
+    its first page with "the vendored static/ directory is missing" — while the
+    README said every command runs straight out of the published package. The
+    fix is two halves that can drift apart in silence: pyproject's force-include
+    puts each directory beside the package, and each lookup reads beside the
+    package. This test reads the map off pyproject.toml and drives both lookups
+    through a fake installed layout shaped by it, so a rename on either side
+    fails here rather than on somebody's first `uvx openproj serve`."""
+    import tomllib
+
+    import openproj.cli as cli
+    import openproj.vendor as vendor
+
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    carried = tomllib.loads(pyproject.read_text())["tool"]["hatch"]["build"]["targets"]["wheel"][
+        "force-include"
+    ]
+    assert {"static", "seed"} <= carried.keys()
+    for source in ("static", "seed"):
+        assert (pyproject.parent / source).is_dir(), f"{source}/ is not in the source tree"
+        assert Path(carried[source]).parts[0] == "openproj", carried[source]
+
+    # An installed layout: the package directory holds what the wheel put there,
+    # and the source-tree candidate two levels up resolves to nothing.
+    package = tmp_path / "site-packages" / "openproj"
+    for source in ("static", "seed"):
+        (tmp_path / "site-packages" / carried[source]).mkdir(parents=True)
+    monkeypatch.delenv("OPENPROJ_STATIC", raising=False)
+    monkeypatch.setattr(vendor, "__file__", str(package / "vendor.py"))
+    monkeypatch.setattr(cli, "__file__", str(package / "cli.py"))
+
+    assert vendor._static_dir() == tmp_path / "site-packages" / carried["static"]
+    assert cli._seed_dir() == tmp_path / "site-packages" / carried["seed"]
+
+
+def test_serve_says_when_the_repository_is_a_checkout(tmp_path: Path):
+    """`--repo .` inside a plan checkout starts, serves, and then leaves `git
+    status` reporting every browser-saved record as deleted and untracked,
+    because the store moves the branch and never the working tree. The help says
+    "a bare clone" and nothing checked. Warned, not refused: reading a checkout
+    is harmless."""
+    import pygit2
+
+    from openproj.cli import _not_a_bare_clone
+
+    checkout = tmp_path / "plan"
+    pygit2.init_repository(str(checkout), initial_head="main")
+    bare = tmp_path / "plan.git"
+    pygit2.init_repository(str(bare), bare=True, initial_head="main")
+
+    said = _not_a_bare_clone(checkout)
+    assert said is not None
+    assert "not a bare clone" in said and str(checkout) in said
+    assert _not_a_bare_clone(bare) is None
+    # Not a repository at all is the store's refusal to make, in its own words.
+    assert _not_a_bare_clone(tmp_path / "nowhere") is None
 
 
 def test_a_plan_that_reaches_the_end_of_the_calendar_still_renders(tmp_path: Path, capsys):

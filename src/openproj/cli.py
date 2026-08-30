@@ -352,6 +352,41 @@ def _new(args) -> int:
     return 0
 
 
+def _not_a_bare_clone(repo: Path) -> str | None:
+    """Why `serve --repo` here will surprise somebody, said once at startup.
+
+    `Store` commits by building a tree and moving the branch — right for a bare
+    clone, where there is nothing else to move, and wrong for a checkout: the
+    branch advances, the index and the working tree stay put, and `git status`
+    there then reports every record saved from the browser as deleted and
+    untracked at once. `--repo .` inside a plan checkout is the natural thing to
+    type, the help says "a bare clone", and nothing checked. Reading a checkout
+    is harmless, so this warns rather than refuses: a person looking at the
+    timeline should not be turned away for how they cloned.
+
+    NO_SEARCH for the reason `Store` gives: a directory that is not a repository
+    must not resolve to whatever repository encloses it. A path that is not a
+    repository at all is `Store`'s to refuse, in its own words, so it is None
+    here. `_cannot_commit_in` is the same question asked of `new --commit`, with
+    the opposite answer.
+    """
+    import pygit2
+    from pygit2.enums import RepositoryOpenFlag
+
+    try:
+        handle = pygit2.Repository(str(repo), RepositoryOpenFlag.NO_SEARCH)
+    except pygit2.GitError:
+        return None
+    if handle.is_bare:
+        return None
+    return (
+        f"{repo} is a checkout, not a bare clone: a save from the browser moves its "
+        "branch without touching its working tree, and `git status` there will show "
+        "every saved record as deleted and untracked. Reading is fine; to write, serve "
+        f"a bare clone: `git clone --bare {repo} plan.git`, then `--repo plan.git`."
+    )
+
+
 def _cannot_commit_in(repo: Path) -> str | None:
     """Why `--commit` would fail here, asked BEFORE anything is written.
 
@@ -486,12 +521,14 @@ def _render(repo: Path, out_dir: Path, today: date | None) -> int:
 
 
 def _seed_dir() -> Path:
-    """Where the bundled demo corpus lives.
+    """Where the bundled demo corpus lives: in a checkout, or beside the package
+    in a wheel.
 
-    The same shape as `render._static_dir` and for the same reason: `seed/` is
-    not in the wheel, so an installed layout resolves `parents[2]` past
-    site-packages to a directory that is not there. Said rather than crashed, and
-    said with what to do about it.
+    The same shape as `vendor._static_dir` and for the same reason: `parents[2]`
+    resolves past site-packages in an installed layout, so the wheel carries
+    `seed/` beside the package (`force-include` in `pyproject.toml`) and that is
+    the second candidate. Said rather than crashed, and said with what to do
+    about it.
     """
     for candidate in (
         Path(__file__).resolve().parents[2] / "seed",
@@ -500,9 +537,10 @@ def _seed_dir() -> Path:
         if candidate.is_dir():
             return candidate
     raise RuntimeError(
-        "the bundled seed/ corpus is missing. It is part of the source tree and not of "
-        "the wheel, so `openproj demo` runs from a checkout; against a real plan the "
-        "command is `openproj serve --repo <bare clone>`."
+        "the bundled seed/ corpus is missing: not in a source tree and not beside the "
+        "package. A wheel built before seed/ was packaged runs `openproj demo` from a "
+        "checkout only; against a real plan the command is "
+        "`openproj serve --repo <bare clone>`."
     )
 
 
@@ -672,6 +710,11 @@ def _serve(args) -> int:
         remote=os.environ.get("OPENPROJ_REMOTE", ""),
         credentials=credentials,
     )
+    # After `create_app`, so a path that is no repository at all is refused by
+    # the store in its own words rather than warned about here and then refused.
+    checkout = _not_a_bare_clone(args.repo)
+    if checkout is not None:
+        print(f"warning: {checkout}", file=sys.stderr, flush=True)
     # The push credential, minted before uvicorn binds, for the same reason as
     # the two warms below: work that every cold instance has to do once should
     # not be done inside somebody's save.
