@@ -50,15 +50,11 @@ say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
 
 missing=()
-for name in PROJECT REMOTE ORG APP_ID INSTALLATION_ID OAUTH_CLIENT_ID APP_KEY_FILE; do
+for name in PROJECT REMOTE ORG APP_ID INSTALLATION_ID OAUTH_CLIENT_ID; do
   [[ -n "${!name:-}" ]] || missing+=("$name")
 done
 if (( ${#missing[@]} )); then
   echo "$ENV_FILE leaves these blank: ${missing[*]}" >&2
-  exit 2
-fi
-if [[ ! -r "$APP_KEY_FILE" ]]; then
-  echo "Cannot read APP_KEY_FILE: $APP_KEY_FILE" >&2
   exit 2
 fi
 if [[ ! -f Dockerfile ]]; then
@@ -98,9 +94,15 @@ secret_exists() { gcloud secrets describe "$1" >/dev/null 2>&1; }
 
 say "Secrets"
 
+# The key file is read exactly once, to create the secret. A redeploy must not
+# rotate the App's key behind you, and the runbook tells you to delete the file
+# once the secret exists — so an existing secret is left alone even when the
+# file is gone, and a missing file is only an error while the secret is missing.
 if secret_exists openproj-app-key; then
-  note "openproj-app-key exists — adding the key as a new version"
-  gcloud secrets versions add openproj-app-key --data-file="$APP_KEY_FILE" >/dev/null
+  note "openproj-app-key exists — left alone (rotate by hand: gcloud secrets versions add openproj-app-key --data-file=<key>)"
+elif [[ ! -r "${APP_KEY_FILE:-}" ]]; then
+  echo "openproj-app-key does not exist yet, and APP_KEY_FILE is not readable: ${APP_KEY_FILE:-<blank>}" >&2
+  exit 2
 else
   gcloud secrets create openproj-app-key --data-file="$APP_KEY_FILE" >/dev/null
   note "openproj-app-key created"

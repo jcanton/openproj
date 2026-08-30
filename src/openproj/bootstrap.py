@@ -70,8 +70,9 @@ DEPLOY_KEYS: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "APP_KEY_FILE",
-        "Path on this machine to the GitHub App's private key. Read once into Secret\n"
-        "Manager by the deploy; the file can be deleted afterwards.",
+        "Path on this machine to the GitHub App's private key. Read exactly once, to\n"
+        "create the secret; a redeploy leaves an existing secret alone, so once it exists\n"
+        "the file can be deleted and this left blank.",
         "",
     ),
 )
