@@ -1261,8 +1261,9 @@ def test_init_asks_only_for_what_the_command_line_left_out():
     nothing, which is what lets a script call this at all."""
     from openproj.bootstrap import Options, ask_for_the_rest
 
+    # Ten answers for the first call, and one "n" for the second call's yes-or-no.
     answers = iter(
-        ["https://example.org/p.git", "ann", "y", "roast-1", "", "", "1", "2", "c", "/k"]
+        ["https://example.org/p.git", "ann", "y", "roast-1", "", "", "1", "2", "c", "/k", "n"]
     )
     asked: list[str] = []
 
@@ -1307,13 +1308,14 @@ def test_the_example_env_is_the_blank_form():
     assert example.read_text() == deploy_env_text({})
 
 
-def test_the_seed_is_written_at_the_newest_schema_version(seed_root: Path):
+def test_the_seed_is_written_at_the_newest_schema_version(demo_root: Path):
     """`LATEST_SCHEMA_VERSION` is a literal because the rules carry theirs as
-    literals; the seed's `defaults.yaml` says in its own comments that it tracks
-    the newest rule. A bump that forgets one of them fails here."""
+    literals; `seed/config/defaults.yaml` says in its own comments that it tracks
+    the newest rule. A bump that forgets one of them fails here. (`seed_root` is
+    the frozen test corpus at version 2, which is why it is not the fixture.)"""
     from openproj.model import LATEST_SCHEMA_VERSION, load_config
 
-    assert load_config(seed_root).schema_version == LATEST_SCHEMA_VERSION
+    assert load_config(demo_root).schema_version == LATEST_SCHEMA_VERSION
 
 
 def test_serve_refuses_github_auth_without_an_org(seed_root: Path, monkeypatch, capsys):
