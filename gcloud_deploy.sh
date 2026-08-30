@@ -328,8 +328,9 @@ printf '   /api/health        '
 curl -fsS --max-time 30 "$URL/api/health" || note "FAILED — see the logs below"
 printf '\n'
 
-# The one worth checking explicitly. static/ is not in the wheel, so a container
-# that resolved it wrongly serves every other page perfectly and 500s only here.
+# The one worth checking explicitly. The image runs src/ off PYTHONPATH and finds
+# static/ through OPENPROJ_STATIC, so a container that resolved it wrongly serves
+# every other page perfectly and 500s only here.
 printf '   /graph             %s (want 200)\n' \
   "$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$URL/graph")"
 

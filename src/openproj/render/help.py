@@ -83,7 +83,7 @@ class Doc(NamedTuple):
 # Prose about the rule tripping the rule is not a reason to weaken the rule.
 DOCS: tuple[Doc, ...] = (
     Doc("quickstart", "Quickstart", "docs/quickstart.md"),
-    Doc("shape-up", "Shape Up, as this team practises it", "docs/shape-up.md"),
+    Doc("shape-up", "Shape Up, as this tool practises it", "docs/shape-up.md"),
     Doc("data-model", "The data model", "docs/data-model.md"),
     Doc("architecture", "Architecture", "docs/architecture.md"),
 )

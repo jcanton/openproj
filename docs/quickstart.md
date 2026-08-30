@@ -1,8 +1,15 @@
 # Quickstart
 
-The plan is at <https://openproj-392761827400.europe-west1.run.app>. Sign in with GitHub; if you are
-in C2SM you can write. There is no database behind it — every page is drawn from markdown files in
-`github.com/jcanton/icon4py-plan`, and every save is a commit there with your name on it.
+A plan is a git repository of markdown files, one per record, and openproj is the tool that serves
+and edits it. There is no database behind the pages — every one of them is drawn from those files,
+and every save is a commit on the plan repository with your name on it. Sign in with GitHub: a
+server started with `--auth github` was started with an org, and being a member of that org is
+what lets you write. Anybody can read.
+
+If there is no plan yet, `openproj init <dir>` starts one — the four config files with nothing
+invented in them, a README, a `.gitignore`, and one commit under your git identity, so the next
+command is `openproj new`. The README's *A plan of your own* has the flags and what it asks at a
+terminal.
 
 **Records** is the landing page: every record in the plan, one line each, newest edit first, with the
 search box above it. The tabs are the plan seen several ways — **Table** is where most people live,
@@ -11,7 +18,9 @@ was bet in it and who has room, **People** who is on what. Clicking any record o
 which is where you edit it. Filters live in the URL, so the view in front of you is a link, and there
 are no saved views to manage.
 
-The plan is empty today, on purpose. Start a cycle from **Cycles**, then write the first pitch.
+A new plan is empty, on purpose: `init` writes an empty cycle table and a roster of at most one,
+because a calendar copied from somewhere else is somebody else's calendar forever. Start a cycle
+from **Cycles**, then write the first pitch.
 
 ## The three things
 
@@ -109,9 +118,10 @@ why, under the box, while you type the rest of it.
 
 ## Writing one
 
-**New record**, then choose the kind. The body starts as the team's own template, with its guidance
-in comments that never render: Problem, Appetite, Solution, Rabbit holes, No-gos, For later. It is
-the HackMD template you already write, so a pitch drafted in either place is the same document.
+**New record**, then choose the kind. The body starts as that kind's template, with its guidance in
+comments that never render: Problem, Appetite, Solution, Rabbit holes, No-gos, For later. Those are
+the headings of a pitch note in a wiki, kept as the team it was tailored for already wrote them, so
+a pitch drafted in either place is the same document.
 
 Write prose; nothing validates it. Two headings are read rather than judged:
 
@@ -182,11 +192,15 @@ service left to serve it. To run the editable server against a plan of your own,
 clone:
 
 ```bash
-git clone --bare https://github.com/jcanton/icon4py-plan.git plan.git
+git clone --bare <your plan repository> plan.git
 openproj serve --repo plan.git --auth dev
 ```
 
-`--auth dev` skips sign-in and is for a local run only. To see the tool with no plan to point it at,
+`--auth dev` skips sign-in and is for a local run only. `--auth github` is the other, and it refuses
+to start without an org — `--org`, or `OPENPROJ_ORG` — because membership of that org is the whole
+of the write gate and there is no default that could stand in for it. A deployment is described in
+the plan repository, not here: `deploy/RUNBOOK.md` in the tool's repository is the walk-through.
+To see the tool with no plan to point it at,
 `openproj demo` serves a bundled corpus offline, in a temporary directory it builds for itself.
 
 ## Writing a record from a terminal
@@ -195,8 +209,8 @@ openproj serve --repo plan.git --auth dev
 script, a CI job, an agent working in the codebase the plan is about.
 
 ```bash
-openproj new issue . --title "Quadratic extrapolation lives in two places" \
-    --tag dycore --as jcanton --commit
+openproj new issue . --title "Burner emissivity is hard-coded in two places" \
+    --tag burner --as jackdawrie --commit
 ```
 
 It mints the id, files the record in its kind's directory, starts the body from that kind's shaping
@@ -219,7 +233,9 @@ takes one `--set` per entry. `--body-file` replaces the template and `-` reads t
 `--json` prints the id and the path, for a caller that is not a person. Without `--commit` it writes
 the file and prints the git commands; with it, the next command is `git push` and nothing else.
 
-Nothing has to be installed first:
+Nothing has to be installed first, and since 0.43.0 that is as true of `serve`, `render` and `demo`
+as of `new`: the wheel carries the pages' static files and the demo corpus, so none of them needs a
+checkout of the tool.
 
 ```bash
 uvx openproj new issue . --title "…"                              # from PyPI
