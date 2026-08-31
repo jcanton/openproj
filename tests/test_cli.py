@@ -279,11 +279,10 @@ def test_the_wheel_carries_what_the_lookups_look_for(monkeypatch, tmp_path: Path
 
 
 def test_serve_says_when_the_repository_is_a_checkout(tmp_path: Path):
-    """`--repo .` inside a plan checkout starts, serves, and then leaves `git
-    status` reporting every browser-saved record as deleted and untracked,
-    because the store moves the branch and never the working tree. The help says
-    "a bare clone" and nothing checked. Warned, not refused: reading a checkout
-    is harmless."""
+    """`--repo .` inside a plan checkout works — `_freshen` mirrors every landed
+    commit into the working tree — but a file holding uncommitted local edits is
+    left alone, so the startup line says what a checkout cannot promise. Warned,
+    not refused: somebody serving their checkout chose it on purpose."""
     import pygit2
 
     from openproj.cli import _not_a_bare_clone

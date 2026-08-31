@@ -8,7 +8,9 @@ expensive to reach:
   contention. Trees are built with `TreeBuilder` and commits are created
   directly, so there is no index to contend for — hence
   `test_the_repository_stays_bare_and_no_index_file_is_ever_created`, which fails
-  the moment somebody reaches for `repo.index` for convenience.
+  the moment somebody reaches for `repo.index` for convenience. The one exception
+  is a checkout being served locally: `_freshen` mirrors each landed commit into
+  its working tree after the commit exists, and never runs on a bare repository.
 * **One writer, enforced by an flock on the repository directory.** Single-writer
   is a correctness invariant disguised as a deployment detail, so a second
   `Store` on the same path must fail loudly rather than interleave writes.
@@ -185,6 +187,91 @@ def test_the_repository_stays_bare_and_no_index_file_is_ever_created(store: Stor
     assert repo.workdir is None
     assert not (repo_path / "index").exists()
     assert not (repo_path / ".git").exists()
+
+
+# --------------------------------------------------------------------------- #
+# 1b. The one exception: a checkout being served locally follows its own branch
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def checkout_path(tmp_path: Path) -> Path:
+    """A working clone of a seeded plan — `serve --repo .` typed inside a checkout.
+
+    Cloned from a bare origin rather than committed into directly, so the working
+    tree and index start exactly level with the branch: the state a real checkout
+    is in when somebody starts serving it. `.gitignore` carries the flock the way
+    `openproj init` writes it, or the Store's own lock file would dirty every
+    `status()` this section asserts on.
+    """
+    origin = tmp_path / "origin.git"
+    pygit2.init_repository(str(origin), bare=True, initial_head="main")
+    commit_directly(origin, SEED | {".gitignore": "openproj.lock\n"}, "seed the corpus")
+    path = tmp_path / "plan"
+    pygit2.clone_repository(f"file://{origin}", str(path))
+    return path
+
+
+def test_a_browser_save_lands_on_the_working_tree_of_a_checkout(checkout_path: Path):
+    """The branch is not the only thing a checkout can see move.
+
+    Before `_freshen`, this save advanced the branch and left the working tree and
+    index at the seed: `git status` then offered the save's REVERSAL as a staged
+    edit, one `git commit` away from undoing it. Found on the first plan anybody
+    served from a checkout, 2026-08-31.
+    """
+    store = Store(checkout_path)
+    try:
+        store.write(
+            path=PATH,
+            content=record(status="in_progress"),
+            base_commit=store.head(),
+            author="ann",
+            message="task-c00001: status ready -> wip",
+        )
+    finally:
+        store.close()
+    assert (checkout_path / PATH).read_text() == record(status="in_progress")
+    assert pygit2.Repository(str(checkout_path)).status() == {}
+
+
+def test_uncommitted_local_edits_survive_a_browser_save_to_the_same_file(
+    checkout_path: Path,
+):
+    """Somebody's half-typed thought outranks the mirror.
+
+    The save still lands on the branch — the browser's copy is not lost — but the
+    checkout copy stays theirs, and `git status` says the two diverged rather than
+    either side silently winning.
+    """
+    (checkout_path / PATH).write_text("a half-typed thought\n")
+    store = Store(checkout_path)
+    try:
+        result = store.write(
+            path=PATH,
+            content=record(status="in_progress"),
+            base_commit=store.head(),
+            author="ann",
+            message="task-c00001: status ready -> wip",
+        )
+        saved = store.read(result.commit, PATH)
+    finally:
+        store.close()
+    assert saved == record(status="in_progress")
+    assert (checkout_path / PATH).read_text() == "a half-typed thought\n"
+    assert pygit2.Repository(str(checkout_path)).status() != {}
+
+
+def test_a_remove_takes_the_file_off_the_checkout_disk_too(checkout_path: Path):
+    """A delete mirrors like a save: the file leaves the working tree and the index
+    in the same breath it leaves the branch."""
+    store = Store(checkout_path)
+    try:
+        store.remove(PATH, store.head(), "ann", "task-c00001: retired")
+    finally:
+        store.close()
+    assert not (checkout_path / PATH).exists()
+    assert pygit2.Repository(str(checkout_path)).status() == {}
 
 
 def test_a_write_to_a_directory_that_does_not_exist_yet_builds_the_subtree(
