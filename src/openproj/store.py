@@ -1,9 +1,12 @@
 """The git layer: a bare repository written through one serialised writer.
 
-There is no working copy and no index. Eight concurrent writers sharing one
-worktree lost 87.5% of their commits to `index.lock` contention; trees are built
-with `TreeBuilder` and commits created directly, so there is nothing to contend
-for. A single `repo.index` anywhere in this file gives that back.
+There is no working copy and no index on the write path. Eight concurrent
+writers sharing one worktree lost 87.5% of their commits to `index.lock`
+contention; trees are built with `TreeBuilder` and commits created directly, so
+there is nothing to contend for. A `repo.index` anywhere in the COMMIT path
+gives that back. The one index touch in this file is `_freshen`, which runs
+after the commit already exists, and only on a checkout — which no deployment
+is.
 
 Compare-and-swap is scoped to the path being written. A stale base whose file
 nobody touched is retried silently — roughly 95% of collisions, and the reason
@@ -1724,6 +1727,7 @@ class Store:
             tree = self._insert(self._repo, self._tree(parent), name.split("/"), blob)
             who = pygit2.Signature(author, f"{author}@users.noreply.github.com")
             self._repo.create_commit(_BRANCH, who, _BOT, f"upload {name}", tree, [parent])
+            self._freshen(parent, self.head())
             # Through `_finish`, so an upload pokes the pusher and joins the
             # same backlog as every other commit. The name and "it is new" are
             # what the caller wants; the result `_finish` builds is discarded —
@@ -1845,6 +1849,7 @@ class Store:
             tree = self._insert(self._repo, self._tree(parent), path.split("/"), blob)
             who = pygit2.Signature(author, f"{author}@users.noreply.github.com")
             self._repo.create_commit(_BRANCH, who, _BOT, message, tree, [parent])
+            self._freshen(parent, self.head())
             written = self._finish(self.head(), "committed")
         return written, str(blob)
 
@@ -2001,7 +2006,55 @@ class Store:
         # stays a bot that no human's departure invalidates.
         who = pygit2.Signature(author, f"{author}@users.noreply.github.com")
         oid = self._repo.create_commit(_BRANCH, who, _BOT, message, tree, [parent])
+        self._freshen(parent, str(oid))
         return str(oid)
+
+    def _freshen(self, parent: str, landed: str) -> None:
+        """A checkout follows the branch it is serving; a bare clone has nothing to follow.
+
+        `create_commit(_BRANCH, ...)` moves the branch and nothing else — right for a
+        bare clone, a trap for a checkout: the working tree and index keep the old
+        content, and `git status` then shows every browser save as a staged edit that
+        would REVERT it if committed. Found on the first plan anybody served from a
+        checkout, 2026-08-31.
+
+        Only paths this commit touched move, and only where the checkout still holds
+        exactly what `parent` held. A file with uncommitted local edits is left alone
+        and logged, and stays visibly divergent in `git status` — which is the truth.
+
+        This is the one use of `repo.index` in the file, and it is not the contention
+        the module docstring forbids: it runs under `_writing`, after the commit
+        already exists, and never on a bare repository — which is every deployment,
+        so the 87.5%-loss measurement stays answered. Local commits only: the
+        pusher's recovery re-mints on its own handle against a deployment's bare
+        clone, so nothing there is missed.
+        """
+        if self._repo.is_bare:
+            return
+        workdir = Path(self._repo.workdir)
+        index = self._repo.index
+        index.read()
+        moved = False
+        for delta in self._tree(parent).diff_to_tree(self._tree(landed)).deltas:
+            path = delta.new_file.path or delta.old_file.path
+            file = workdir / path
+            held = None
+            if delta.status != DeltaStatus.ADDED:
+                held = self._repo[delta.old_file.id].data
+            on_disk = file.read_bytes() if file.is_file() else None
+            if on_disk != held:
+                _LOG.warning("%s: uncommitted local edits, leaving the checkout copy alone", path)
+                continue
+            if delta.status == DeltaStatus.DELETED:
+                file.unlink(missing_ok=True)
+                index.remove(path)
+            else:
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_bytes(self._repo[delta.new_file.id].data)
+                index.add(pygit2.IndexEntry(path, delta.new_file.id, pygit2.enums.FileMode.BLOB))
+            moved = True
+        if moved:
+            index.write()
 
     def _insert(self, repo: pygit2.Repository, tree, parts: list[str], blob) -> pygit2.Oid:
         """Rebuild the path's spine. TreeBuilder writes one tree, so nested paths
