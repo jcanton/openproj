@@ -586,3 +586,207 @@ def test_the_card_arrives_in_one_piece(index: Index, tmp_path: Path):
     assert got["paints"] <= 1, (
         f"the card's markup changed {got['paints']} times: the body still lands in a second pass"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The box the document is read in
+# --------------------------------------------------------------------------- #
+
+
+# A document long enough to fill the cap several times over, answered for every
+# id: what is being asked here is what the BOX does between two records, not
+# which document either of them has.
+def _stubbed(page: str, html: str) -> str:
+    return page.replace(
+        "</body>",
+        "<script>window.fetch = async () => ({ok: true, json: async () => "
+        f"({{html: {json.dumps(html)}}})}});</script></body>",
+    )
+
+
+LONG = "<p>" + "a long paragraph of shaping. " * 400 + "</p>"
+
+
+def _two_with_documents(index: Index) -> list[str]:
+    ids = [record_id for record_id, record in sorted(index.plan.items()) if record.body][:2]
+    assert len(ids) == 2, "the corpus has fewer than two records with a document"
+    return ids
+
+
+_ANOTHER_RECORD = """
+const ids = %s;
+await showCard(DATA.rows[ids[0]], 100, 100);
+for (let i = 0; i < 20; i++) await Promise.resolve();
+const first = CARD.querySelector('.card-body');
+first.scrollTop = first.scrollHeight;
+const left = first.scrollTop;
+
+await showCard(DATA.rows[ids[1]], 100, 100);
+for (let i = 0; i < 20; i++) await Promise.resolve();
+const second = CARD.querySelector('.card-body');
+const arrived = second.scrollTop;
+
+// And the same document drawn again into the box it is already in, which is the
+// one path that reuses the element rather than replacing it: a cached answer and
+// a fetched one landing for one card.
+second.scrollTop = second.scrollHeight;
+const before = second.scrollTop;
+await fillCardBody(ids[1]);
+for (let i = 0; i < 20; i++) await Promise.resolve();
+const again = CARD.querySelector('.card-body');
+return {left, arrived, before, reused: again === second, redrawn: again.scrollTop};
+"""
+
+
+def test_a_card_for_another_record_starts_at_the_top_of_its_document(
+    index: Index, tmp_path: Path
+):
+    """jcanton, 2026-09-03: "if I scroll the body in one record's card, then hover
+    over another record, the second record's card is scrolled at the bottom".
+
+    One box is drawn for every record hovered, and a scroll offset is a property
+    of the box rather than of the document in it. Where the last pitch was left
+    off reading is not where the next one starts — a card that opens at the end
+    of a document nobody has read yet reads as a card with nothing in it.
+
+    Asked of both paths, because they are two different mechanisms and only one
+    of them is the obvious one: the element is normally REPLACED, which resets
+    the offset as a side effect, and it is REUSED when two answers land for one
+    card — where nothing resets it unless this says so.
+    """
+    ids = _two_with_documents(index)
+    page = _stubbed(render_table(index, ROUTES, base_commit=HEAD, may_write=True), LONG)
+    got = measured_in(chrome(), page, tmp_path / "scrolled.html", 1200,
+                      _ANOTHER_RECORD % json.dumps(ids))
+
+    assert got["left"] > 0, "the first card's document did not scroll at all"
+    assert got["arrived"] == 0, (
+        f"the next record's card opened {got['arrived']}px down its own document"
+    )
+    assert got["reused"], "the redraw replaced the box, so it asked nothing"
+    assert got["before"] > 0 and got["redrawn"] == 0, "a redrawn document kept the old offset"
+
+
+# The drag, and what it is worth after it: the height a reader sets is a
+# statement about how much of a document they want at once, so it has to survive
+# the card that was open when they said it.
+_DRAGGED = """
+const ids = %s;
+let cancelled = false;
+const drag = by => {
+  const grip = CARD.querySelector('.card-grip');
+  if (!grip) return false;
+  const at = grip.getBoundingClientRect();
+  const down = new PointerEvent('pointerdown',
+    {bubbles: true, cancelable: true, pointerId: 1, clientX: at.left + 4, clientY: at.top + 4});
+  grip.dispatchEvent(down);
+  cancelled = cancelled || down.defaultPrevented;
+  dispatchEvent(new PointerEvent('pointermove',
+    {bubbles: true, pointerId: 1, clientX: at.left + 4, clientY: at.top + 4 + by}));
+  dispatchEvent(new PointerEvent('pointerup', {bubbles: true, pointerId: 1}));
+  return true;
+};
+const tall = () => Math.round(CARD.querySelector('.card-body').getBoundingClientRect().height);
+
+await showCard(DATA.rows[ids[0]], 60, 60);
+for (let i = 0; i < 20; i++) await Promise.resolve();
+const was = tall();
+const gripped = !!CARD.querySelector('.card-grip');
+// The cap itself, and the font it is written in ems of: the box around it also
+// carries a border and the padding that separates it from the facts.
+const styled = getComputedStyle(CARD.querySelector('.card-body'));
+const cap = Math.round(parseFloat(styled.maxHeight));
+const em = parseFloat(styled.fontSize);
+drag(140);
+const grown = tall();
+const shown = !CARD.hidden;
+
+// The next record, which was never dragged.
+await showCard(DATA.rows[ids[1]], 60, 60);
+for (let i = 0; i < 20; i++) await Promise.resolve();
+const next = tall();
+
+// Dragged back up, well past the default it started at.
+drag(-400);
+const floored = tall();
+// Grown again, so that the other way back — the one the deck's rail has too —
+// has something to undo.
+drag(300);
+const again = tall();
+CARD.querySelector('.card-grip').dispatchEvent(new MouseEvent('dblclick', {bubbles: true}));
+const reset = tall();
+
+// And dragged at the window rather than at a number: where the edge stops is
+// the claim, because the handle is ON that edge.
+drag(2000);
+const card = CARD.getBoundingClientRect();
+const grip = CARD.querySelector('.card-grip').getBoundingClientRect();
+return {was, cap, em, gripped, grown, shown, next, floored, again, reset, cancelled,
+        spilled: {card: card.bottom, grip: grip.bottom}, room: innerHeight};
+"""
+
+
+def test_the_bottom_edge_is_dragged_to_show_more_of_the_document(index: Index, tmp_path: Path):
+    """8em is one reader's answer and not everybody's. The cap keeps a card from
+    covering the table it was opened from, which is the right default and the
+    wrong ceiling for somebody reading a pitch on a large screen — so the bottom
+    edge is a handle, the default is the floor, and the height outlives the card
+    that was open when it was set.
+
+    A double-click puts it back, the way the deck's rail is put back: a drag with
+    no way to undo it is a preference somebody is stuck with.
+    """
+    ids = _two_with_documents(index)
+    page = _stubbed(render_table(index, ROUTES, base_commit=HEAD, may_write=True), LONG)
+    got = measured_in(chrome(), page, tmp_path / "dragged.html", 1200,
+                      _DRAGGED % json.dumps(ids), height=900)
+
+    assert got["gripped"], "a document longer than the box had nothing to drag"
+    assert got["cap"] == 8 * got["em"], f"the default is not the stylesheet's 8em: {got['cap']}px"
+    assert got["grown"] >= got["was"] + 130, (
+        f"the drag moved the edge {got['grown'] - got['was']}px"
+    )
+    assert got["shown"], "the card was dismissed by the gesture that was resizing it"
+    assert got["next"] == got["grown"], "the next card went back to the default"
+    assert got["floored"] == got["was"], "the card can be dragged shorter than its default"
+    assert got["again"] > got["was"], "the second drag did nothing"
+    assert got["reset"] == got["was"], "a double-click did not put the height back"
+    # The one a synthetic `dblclick` cannot notice: cancelling a `pointerdown`
+    # suppresses the compatibility mouse events the browser builds on it, and
+    # the double-click above is one of them. Driving a real mouse at this over
+    # CDP on 2026-09-03 is how the handler lost its reset the first time; a test
+    # that dispatches `dblclick` itself would have gone on passing.
+    assert not got["cancelled"], (
+        "the pointerdown is cancelled, which takes the double-click with it"
+    )
+    assert got["spilled"]["card"] <= got["room"], (
+        f"dragged at the window, the card ends {got['spilled']['card'] - got['room']}px below it"
+    )
+    assert got["spilled"]["grip"] <= got["room"], (
+        "the handle itself is dragged off the bottom of the window, where nothing can reach it"
+    )
+
+
+_SHORT = """
+await showCard(DATA.rows[%s], 60, 60);
+for (let i = 0; i < 20; i++) await Promise.resolve();
+const body = CARD.querySelector('.card-body');
+return {drawn: !!body, scrolls: body.scrollHeight > body.clientHeight + 1,
+        gripped: !!CARD.querySelector('.card-grip')};
+"""
+
+
+def test_a_document_that_fits_has_no_handle_to_drag(index: Index, tmp_path: Path):
+    """The handle is drawn where there is something to reveal. A card already
+    showing everything it has would answer a drag with nothing moving, which
+    teaches a reader that the edge does not work rather than that this card has
+    nothing more."""
+    ids = _two_with_documents(index)
+    page = _stubbed(render_table(index, ROUTES, base_commit=HEAD, may_write=True),
+                    "<p>one line, and the whole of it.</p>")
+    got = measured_in(chrome(), page, tmp_path / "short.html", 1200,
+                      _SHORT % json.dumps(ids[0]))
+
+    assert got["drawn"], "no document was drawn at all"
+    assert not got["scrolls"], "the fixture's document did not fit the box"
+    assert not got["gripped"], "a card with nothing to reveal drew a handle anyway"
