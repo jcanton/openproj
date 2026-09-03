@@ -943,7 +943,12 @@ body:has([data-fills]) { padding-bottom: 1rem; }
    beside the status chip rather than under it so that it costs two rather than
    the five a row of its own would have. 9em cleared the cap by six pixels, which
    is not a margin — it is the same number twice with a rounding between them. */
-#card .card-body { margin: .4rem 0 0; padding-top: .35rem; max-height: 8em;
+/* `--card-height` is the reader's own answer to that cap, set on `#card` by the
+   drag below and unset the moment it is dragged back to the default — so the
+   8em here stays the one place the default is written, in the unit that follows
+   the font rather than a pixel count copied into a script. */
+#card .card-body { margin: .4rem 0 0; padding-top: .35rem;
+                   max-height: var(--card-height, 8em);
                    overflow-y: auto; border-top: 1px solid var(--line); }
 #card .card-body > :first-child { margin-top: 0; }
 #card .card-body > :last-child { margin-bottom: 0; }
@@ -951,6 +956,39 @@ body:has([data-fills]) { padding-bottom: 1rem; }
 #card .card-body p, #card .card-body ul, #card .card-body ol { margin: .2rem 0; }
 #card .card-body pre { overflow-x: auto; }
 #card .card-body img { max-width: 100%; }
+/* The bottom border, made draggable, because 8em is one reader's answer and not
+   everybody's: a shaping document read on a big screen is worth more lines than
+   the cap the table has to stay usable under. Absolutely positioned rather than
+   drawn as the card's last child, because the document is APPENDED to the card
+   when its fetch lands — a grip in the flow would end up above the box it
+   resizes half of the time.
+   Hanging four pixels below the edge so the cursor turns on the border itself
+   and not only inside it, and `touch-action: none` so a drag on a touchscreen
+   resizes the card instead of scrolling the page under it. */
+#card .card-grip { position: absolute; left: 0; right: 0; bottom: -4px; height: 9px;
+                   cursor: ns-resize; touch-action: none; }
+/* The line that says the edge can be dragged, and only while the pointer is in
+   the card: a bar under every card that is merely being glanced at is furniture
+   on a box that is already mostly furniture.
+   It appears rather than fades in. A `transition` here would be a third moving
+   thing in an app that moves in two, and `test_the_app_moves_in_two_places`
+   exists to make that a decision rather than an accident — a handle that arrives
+   when the pointer does is not the kind of motion the inventory is for. */
+#card .card-grip::before {
+  content: ''; position: absolute; left: 50%; bottom: 3px; margin-left: -1rem;
+  width: 2rem; height: 2px; border-radius: 1px; background: var(--line-strong);
+  opacity: 0;
+}
+#card:hover .card-grip::before, #card .card-grip.dragging::before { opacity: .85; }
+/* Nothing is selected by a drag that is resizing a box. The obvious way to say
+   that — `preventDefault()` on the `pointerdown` — is the wrong one: cancelling
+   a pointerdown suppresses the COMPATIBILITY MOUSE EVENTS the browser builds on
+   top of it, and the double-click that puts the height back is one of them. It
+   was gone until a real mouse was driven at this on 2026-09-03; a synthetic
+   `dblclick` in a test cannot notice, because it is dispatched rather than
+   generated. So the selection is refused in the stylesheet and the pointer
+   events are left alone. */
+html.resizing, html.resizing * { user-select: none; }
 /* A checklist, and the one markdown-body rule in this stylesheet that is not
    scoped to a view. Every other copy of "how a rendered document looks" is
    written three times on purpose — the card here, `.doc` in `_SUGGEST_STYLE`,
@@ -2473,6 +2511,25 @@ async function fillCardBody(id) {
   // that is markup on purpose.
   body.innerHTML = html;
   if (!already) CARD.appendChild(body);
+  // At the top, said rather than left to the DOM to imply, and said HERE rather
+  // than a line earlier — which is where it was, and where Firefox undid it.
+  //
+  // jcanton, 2026-09-03: a card scrolled to the end of one pitch opened the next
+  // record at its end too. It reproduces in Firefox and not in Chrome, and the
+  // difference is what each does when the card is hidden between two records —
+  // which is what `hidden` does on the way out, and `display: none` destroys the
+  // scroll frame. Chrome drops the offset. FIREFOX SAVES IT, keyed by where the
+  // box sits in the card rather than by the element, and puts it back on the
+  // frame it builds for the next record's document: a brand new element, an
+  // offset belonging to a document nobody has opened. A unique `id` on the box
+  // does not change that key — measured, not assumed.
+  //
+  // So the reset has to come after the layout that restores it. Reading
+  // `scrollHeight` is that layout — the frame is built and Firefox's offset is
+  // applied inside this line — and the assignment behind it is the last word.
+  void body.scrollHeight;
+  body.scrollTop = 0;
+  fitCardGrip();
   placeCard(cardAt.x, cardAt.y);
 }
 
@@ -2489,10 +2546,138 @@ function placeCard(x, y) {
   CARD.style.top = Math.max(8, top) + 'px';
 }
 
+// How tall the reader has dragged the document to be, in pixels — or 0, which is
+// the stylesheet's own 8em. Remembered across cards and across reloads: the drag
+// is a statement about how much of a document this reader wants at once, and a
+// height that had to be dragged again on every hover would not be worth dragging
+// the first time. Through `remembered`, so a browser that refuses to store opens
+// every card at the default and nothing else about the card changes.
+const CARD_HEIGHT_KEY = 'openproj:card-height';
+let cardHeight = Math.round(parseFloat(remembered.get(CARD_HEIGHT_KEY))) || 0;
+// Stored on one window and read on another. A height dragged on a tall screen
+// opens a card off the foot of a short one — where its own handle is below the
+// window, so there is no way to drag it back and no way to double-click it back
+// either. A remembered height is a preference and not a promise: half the window
+// is as much as one may mean, which is also the share of the window the default
+// card is measured against.
+if (cardHeight > innerHeight / 2) cardHeight = Math.round(innerHeight / 2);
+
+// The height, written onto the card and not onto the document inside it:
+// `showCard` replaces the card's contents on every hover, so a height set on the
+// body it drew would last exactly one card. `#card`'s own inline style survives that, the same way
+// the left and top `placeCard` writes do.
+function sizeCard() {
+  if (CARD) CARD.style.setProperty('--card-height', cardHeight ? cardHeight + 'px' : '');
+}
+sizeCard();
+
+// The handle, made once and moved from card to card. A pointer affordance and
+// only that: the card opens on hover and there is no way to tab into it, so
+// there is no keyboard reader being stranded here — the `title` is what says
+// what it does to the one reader who can reach it.
+const CARD_GRIP = CARD ? document.createElement('div') : null;
+if (CARD_GRIP) {
+  CARD_GRIP.className = 'card-grip';
+  CARD_GRIP.title = 'Drag to show more of the document, double-click to put it back';
+}
+
+// Drawn where there is something to drag: a document longer than the box, or a
+// box this reader has already made taller and may want back. A handle on a card
+// that is already showing everything it has is a handle that moves nothing.
+function fitCardGrip() {
+  if (!CARD_GRIP) return;
+  const body = CARD.querySelector('.card-body');
+  if (body && (body.scrollHeight > body.clientHeight + 1 || cardHeight)) {
+    CARD.appendChild(CARD_GRIP);
+  } else {
+    CARD_GRIP.remove();
+  }
+}
+
+// Whether a drag of the bottom edge is in progress. The card hides when the
+// pointer leaves it, and a drag downwards is exactly a pointer leaving it — so
+// both hide paths ask this first, and a card cannot be dismissed by the gesture
+// that is resizing it.
+let cardResizing = false;
+
+if (CARD_GRIP) CARD_GRIP.onpointerdown = event => {
+  const body = CARD.querySelector('.card-body');
+  if (!body) return;
+  // Or the drag selects the card's text on the way down, and the reader lets go
+  // of a box with half its document highlighted. A class and not a
+  // `preventDefault()` on this event — see `html.resizing` in the stylesheet.
+  document.documentElement.classList.add('resizing');
+  // Captured for the cursor, listened for on the window: the same pair the
+  // deck's rail and the editor's column are dragged by. The pointer leaves the
+  // nine pixels it started in immediately, in the one direction this handle
+  // exists to be dragged.
+  CARD_GRIP.setPointerCapture(event.pointerId);
+  CARD_GRIP.classList.add('dragging');
+  const top = body.getBoundingClientRect().top;
+  // The stylesheet's cap, read back rather than written down a second time: 8em
+  // of the card's own font is both the default and the floor, and two copies of
+  // one number are two numbers the moment either is edited.
+  const floor = 8 * parseFloat(getComputedStyle(body).fontSize);
+  // Everything between the top of the document and the bottom of the card that
+  // is not the document itself: the body's own padding and border, and the
+  // card's padding below it. Measured once against `height`, which is the
+  // CONTENT height and so the thing `max-height` actually caps — a clamp written
+  // against the body's border box overshot by exactly that padding, and the card
+  // ended below the window with this handle off the bottom of it, which is a
+  // height nobody can drag back or double-click away.
+  const chrome = CARD.getBoundingClientRect().bottom - top
+                 - parseFloat(getComputedStyle(body).height);
+  const move = moved => {
+    // Down to the foot of the window and no further, with the eight pixels that
+    // keep the handle — which hangs four past the card's edge — inside it. A
+    // card taller than the window has its bottom edge somewhere nobody can reach
+    // to drag it back.
+    const room = innerHeight - 8 - top - chrome;
+    const wanted = Math.max(floor, Math.min(room, moved.clientY - top));
+    // Dragged back to the default IS the default rather than a stored copy of
+    // it: a remembered 96px would pin every later card to the font size this one
+    // happened to be measured at.
+    cardHeight = wanted > floor + 1 ? Math.round(wanted) : 0;
+    sizeCard();
+  };
+  const stop = () => {
+    removeEventListener('pointermove', move);
+    removeEventListener('pointerup', stop);
+    // And the cancel, which the rail's grip has no need of and this one does: a
+    // drag the browser takes away — a touch turned into a scroll, a window that
+    // loses the pointer — would otherwise leave `cardResizing` true, and a card
+    // that thinks it is being resized is a card that never hides again.
+    removeEventListener('pointercancel', stop);
+    CARD_GRIP.classList.remove('dragging');
+    document.documentElement.classList.remove('resizing');
+    cardResizing = false;
+    if (cardHeight) remembered.set(CARD_HEIGHT_KEY, String(cardHeight));
+    else remembered.forget(CARD_HEIGHT_KEY);
+    // A card dragged back down to the default has nothing left to drag unless
+    // its document is longer than the box again. The card is NOT placed again:
+    // it grew downwards into room the drag was clamped to, and re-placing it
+    // would flip a tall card above the pointer at the moment the reader let go.
+    fitCardGrip();
+  };
+  cardResizing = true;
+  addEventListener('pointermove', move);
+  addEventListener('pointerup', stop);
+  addEventListener('pointercancel', stop);
+};
+// Back to the stylesheet's own 8em, the way the deck's rail goes back to its
+// 13rem: the default is removed rather than written, so it stays in the one
+// place that states it.
+if (CARD_GRIP) CARD_GRIP.ondblclick = () => {
+  cardHeight = 0;
+  sizeCard();
+  remembered.forget(CARD_HEIGHT_KEY);
+  fitCardGrip();
+};
+
 // Asked for by a pointer leaving, and answered a moment later: the gap between
 // the row and the card is a place the pointer has to be allowed to cross.
 function hideCard() {
-  if (!CARD) return;
+  if (!CARD || cardResizing) return;
   clearTimeout(cardTimer);
   clearTimeout(cardLeaving);
   cardLeaving = setTimeout(hideCardNow, CARD_GRACE);
@@ -2501,7 +2686,7 @@ function hideCard() {
 // No grace. For the things that are not a pointer leaving a row: a node dragged
 // out from under the card, a canvas panned, a filter redrawing the rows.
 function hideCardNow() {
-  if (!CARD) return;
+  if (!CARD || cardResizing) return;
   clearTimeout(cardTimer);
   clearTimeout(cardLeaving);
   cardShowing = null;
