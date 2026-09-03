@@ -2510,15 +2510,25 @@ async function fillCardBody(id) {
   // the same function the detail page uses. It is the one string on this page
   // that is markup on purpose.
   body.innerHTML = html;
-  // At the top, said rather than left to the DOM to imply. One box is reused for
-  // every record hovered, and where the LAST document was left off reading is
-  // not where this one starts — jcanton, 2026-09-03: a card scrolled to the end
-  // of one pitch opened the next record at its end too. Assigning `innerHTML`
-  // resets a scroll offset only while the element is being replaced, which is a
-  // property of the mechanism rather than of the claim, and the claim is the
-  // thing that has to keep being true.
-  body.scrollTop = 0;
   if (!already) CARD.appendChild(body);
+  // At the top, said rather than left to the DOM to imply, and said HERE rather
+  // than a line earlier — which is where it was, and where Firefox undid it.
+  //
+  // jcanton, 2026-09-03: a card scrolled to the end of one pitch opened the next
+  // record at its end too. It reproduces in Firefox and not in Chrome, and the
+  // difference is what each does when the card is hidden between two records —
+  // which is what `hidden` does on the way out, and `display: none` destroys the
+  // scroll frame. Chrome drops the offset. FIREFOX SAVES IT, keyed by where the
+  // box sits in the card rather than by the element, and puts it back on the
+  // frame it builds for the next record's document: a brand new element, an
+  // offset belonging to a document nobody has opened. A unique `id` on the box
+  // does not change that key — measured, not assumed.
+  //
+  // So the reset has to come after the layout that restores it. Reading
+  // `scrollHeight` is that layout — the frame is built and Firefox's offset is
+  // applied inside this line — and the assignment behind it is the last word.
+  void body.scrollHeight;
+  body.scrollTop = 0;
   fitCardGrip();
   placeCard(cardAt.x, cardAt.y);
 }

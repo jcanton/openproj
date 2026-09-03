@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 from browser import chrome, measured_in
 from test_injection import run_js
+from test_table import script
 
 from openproj.index import Index, build_index
 from openproj.model import RUNG, load_repo
@@ -790,3 +791,46 @@ def test_a_document_that_fits_has_no_handle_to_drag(index: Index, tmp_path: Path
     assert got["drawn"], "no document was drawn at all"
     assert not got["scrolls"], "the fixture's document did not fit the box"
     assert not got["gripped"], "a card with nothing to reveal drew a handle anyway"
+
+
+# The one claim in this file a browser here cannot make. It is about Firefox, the
+# suite drives Chrome, and the difference between them is the whole defect.
+_PUT_BACK = re.compile(
+    r"if \(!already\) CARD\.appendChild\(body\);"
+    r"(?P<between>.*?)"
+    r"void body\.scrollHeight;\s*\n\s*body\.scrollTop = 0;",
+    re.S,
+)
+
+
+def test_the_document_is_put_back_to_the_top_after_the_layout_that_restores_it(index: Index):
+    """`hidden` on the way out is `display: none`, which destroys the scroll frame
+    the shaping document is read in. Chrome drops that frame's offset. Firefox
+    SAVES it — keyed by where the box sits in the card rather than by the element,
+    so a unique `id` does not change the key — and puts it back on the frame it
+    builds for the next record's document. The element is new; the offset belongs
+    to a document nobody has opened.
+
+    So the order is the fix, and the order is what this asserts: appended, then
+    the layout that applies Firefox's saved offset, then the reset behind it. The
+    reset used to sit one line earlier, on an element that was not in the document
+    yet, where it did nothing at all and Firefox had the last word — which is why
+    jcanton saw this on 2026-09-03 in Firefox while every card in Chrome, driven
+    over CDP against a running server, arrived at the top.
+
+    Asserted of the shipped script because the browser that would notice is not
+    the browser the suite drives. The behaviour itself — a card for another record
+    starting at the top — is
+    `test_a_card_for_another_record_starts_at_the_top_of_its_document`.
+    """
+    js = script(render_table(index, ROUTES, base_commit=HEAD, may_write=True))
+    ordered = _PUT_BACK.search(js)
+
+    assert ordered, "the document is not put back to the top after a layout it can be restored by"
+    assert "scrollTop" not in ordered.group("between"), (
+        "something scrolls the box between the append and the reset"
+    )
+    assert js.count("body.scrollTop = 0") == 1, (
+        "a second reset: whichever runs last is the one that decides, and two of "
+        "them is a decision nobody is making on purpose"
+    )
