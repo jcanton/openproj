@@ -251,6 +251,12 @@ jobs:
           echo "nproc:      $(nproc)"
           echo "memory:     $(awk '/MemTotal/{printf "%.1f GB", $2/1048576}' /proc/meminfo)"
           echo "chrome:     $(google-chrome --version 2>/dev/null || echo absent)"
+          # And Firefox, because one test drives it and the two engines disagree
+          # about the thing it drives it for: `display: none` drops a scroll
+          # offset in Chrome and restores it in Gecko. It skips with a stated
+          # reason when this line says absent, which is a suite that has quietly
+          # stopped asking the question rather than a suite that is green.
+          echo "firefox:    $(firefox --version 2>/dev/null || echo absent)"
           echo "node:       $(node --version)"
           echo "runner:     ${RUNNER_OS} ${RUNNER_ARCH}"
 

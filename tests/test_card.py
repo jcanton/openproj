@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from datetime import date
 from pathlib import Path
 
 import pytest
 from browser import chrome, measured_in
+from marionette import driving
 from test_injection import run_js
 from test_table import script
 
@@ -833,4 +835,86 @@ def test_the_document_is_put_back_to_the_top_after_the_layout_that_restores_it(i
     assert js.count("body.scrollTop = 0") == 1, (
         "a second reset: whichever runs last is the one that decides, and two of "
         "them is a decision nobody is making on purpose"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The other engine
+# --------------------------------------------------------------------------- #
+
+
+# Hovering, leaving and looking, as three sandbox scripts: Marionette cannot wait
+# and the page's own clocks are what is being waited for — 600ms of hover intent
+# and 220ms of grace on the way out — so the waiting is done from Python between
+# calls rather than inside the page.
+_HOVER = """(() => {
+  const cell = [...document.querySelectorAll('tbody tr[data-id] td[data-col="title"]')][%d];
+  const box = cell.getBoundingClientRect();
+  cell.dispatchEvent(new PointerEvent('pointerover',
+    {bubbles: true, clientX: box.x + 20, clientY: box.y + 6}));
+  return cell.closest('tr').dataset.id;
+})()"""
+
+_LEAVE = """(() => {
+  const cell = [...document.querySelectorAll('tbody tr[data-id] td[data-col="title"]')][%d];
+  cell.dispatchEvent(new PointerEvent('pointerout', {bubbles: true}));
+  return true;
+})()"""
+
+_READ = """(() => {
+  const card = document.getElementById('card');
+  const body = card.querySelector('.card-body');
+  const title = card.querySelector('.card-title');
+  return {hidden: card.hidden, title: title ? title.textContent : '',
+          top: body ? body.scrollTop : -1,
+          room: body ? body.scrollHeight - body.clientHeight : -1};
+})()"""
+
+_TO_THE_END = """(() => {
+  const body = document.querySelector('#card .card-body');
+  body.scrollTop = 99999;
+  return body.scrollTop;
+})()"""
+
+
+def test_another_record_starts_at_the_top_in_firefox_too(index: Index, tmp_path: Path):
+    """The one claim in this file that Chrome cannot make, driven in the engine
+    that could not keep it.
+
+    `hidden` on the way out is `display: none`, which destroys the scroll frame
+    the document is read in. Chrome drops that frame's offset; Firefox saves it,
+    keyed by where the box sits in the card rather than by the element, and puts
+    it back on the frame built there for the NEXT record's document. So this is
+    the reported sequence exactly — read one pitch to its end, leave the row long
+    enough for the card to go, hover another record — and the middle step is not
+    decoration: without the hide there is nothing for Firefox to restore, and
+    this passes against the defect.
+
+    jcanton, Firefox, 2026-09-03, against a commit whose Chrome test was green.
+    """
+    page = _stubbed(render_table(index, ROUTES, base_commit=HEAD, may_write=True), LONG)
+    with driving(page, tmp_path / "firefox.html") as browser:
+        first = browser.js(_HOVER % 2)
+        time.sleep(1.4)
+        opened = browser.js(_READ)
+        left = browser.js(_TO_THE_END)
+
+        browser.js(_LEAVE % 2)
+        time.sleep(0.8)
+        between = browser.js(_READ)
+
+        second = browser.js(_HOVER % 4)
+        time.sleep(1.4)
+        arrived = browser.js(_READ)
+
+    assert opened["room"] > 0, "the first card's document was not long enough to scroll"
+    assert left > 0, "the first card's document did not scroll at all"
+    assert between["hidden"], (
+        "the card never went away between the two rows, so nothing was ever saved "
+        "and this test cannot see the defect it is written for"
+    )
+    assert first != second and arrived["title"] != opened["title"], "the same card twice"
+    assert not arrived["hidden"] and arrived["room"] > 0, "no second card was drawn"
+    assert arrived["top"] == 0, (
+        f"the card for {second} opened {arrived['top']}px down a document nobody has read"
     )
