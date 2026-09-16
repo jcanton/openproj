@@ -84,7 +84,28 @@ class Links(BaseModel):
 # a policy is keywords, schemes and punctuation, and the day one needs escaping
 # is the day this stops being true rather than the day it silently breaks.
 CSP = (
-    "default-src 'none'; img-src 'self' data:; font-src data:; "
+    # `blob:` on `img-src`, and on that directive only. It is what lets a raster
+    # image be dropped into a drawing: Excalidraw resizes an inserted image
+    # through `image-blob-reduce`, whose first step is
+    # `URL.createObjectURL(blob)` assigned to an `Image()` — refused without
+    # this, after which Excalidraw falls back to the original bytes and rejects
+    # anything over its own 4 MB ceiling, which is every photograph. See
+    # `render/controls.py`'s `UIOptions` comment for what was measured.
+    #
+    # It is the cheapest grant on this list rather than a hole. A `blob:` URL
+    # names no origin and cannot be minted by anyone but this document's own
+    # script — which `script-src 'unsafe-inline'` already runs — so unlike
+    # adding a host here it opens no channel to anywhere. `worker-src` is
+    # deliberately still absent: zero Workers are constructed on this path, and
+    # the refusal that used to be written down here named that directive by
+    # mistake.
+    #
+    # `'wasm-unsafe-eval'` is deliberately absent too, and costs two
+    # `script-src <- wasm-eval` lines in the console on every image insert:
+    # pica probes for a wasm resizer, is refused, and finishes the job in JS.
+    # A standing grant to compile WebAssembly on every page of this app is not
+    # worth buying two console lines off a path that already works.
+    "default-src 'none'; img-src 'self' data: blob:; font-src data:; "
     "style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
     # Every save is a `fetch` and the live update is an `EventSource`, and both
     # are `connect-src` — which was never listed, so both fell back to

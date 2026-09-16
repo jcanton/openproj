@@ -568,12 +568,63 @@ were closed once the rest was built:
   (`tests/test_editor.py:7988`): zero `securitypolicyviolation` events, with a real
   `<script src>` as the forced-failure control beside it, so the zero is evidence the probe
   could have failed and did not, rather than an assertion that could only ever pass.
-- **Inserting a raster image into a drawing is blocked, and stays blocked.** pica and
-  image-blob-reduce construct a `data:text/javascript;base64` Worker for a
-  `createImageBitmap` probe and a `blob:` Worker for resizing, and the policy is
-  `default-src 'none'` with no `worker-src` and no `blob:`. jcanton accepted this on
-  2026-08-26. The mounted editor hides the image tool (`UIOptions.tools.image = false`,
-  `render/controls.py:2536`) — a control that is not offered, rather than one that lies.
+- **Inserting a raster image into a drawing was blocked, on a reason that was wrong, and
+  it is open now.** Written here on 2026-08-26 as: pica and image-blob-reduce construct a
+  `data:text/javascript;base64` Worker for a `createImageBitmap` probe and a `blob:` Worker
+  for resizing, and the policy has no `worker-src` and no `blob:`, so the image tool was
+  hidden. Reopened on 2026-09-16 after jcanton dropped a file in and got Excalidraw's
+  `Images are disabled.`, and the reason did not survive being measured: **zero Workers are
+  constructed on this path**, in either direction, hooked and counted in a real popup under
+  the real policy. What actually failed was one directive earlier — image-blob-reduce mints
+  a `URL.createObjectURL(blob)` and assigns it to an `Image()`, which `img-src 'self' data:`
+  refused. See "The image tool, and the directive that was named wrong" below.
+
+## The image tool, and the directive that was named wrong
+
+`UIOptions.tools.image` is `true` and `img-src` carries `blob:`. They are one change:
+either alone is worse than neither, and the measurements are why.
+
+**What the resize failure actually costs.** Excalidraw does not treat the downscale as
+optional. `VD(file, {maxWidthOrHeight: 1440})` is wrapped in a `try` that logs `Error
+trying to resizing image file on insertion` and carries on with the **original** bytes,
+which are then measured against Excalidraw's own 4 MB insert ceiling. So a broken resize
+is not "images come in at full size" — it is "small images work and photographs are
+refused", which is the shape a person is most likely to meet. Turning the tool on without
+the `img-src` grant would have been precisely the control that lies that turning it off
+was meant to avoid.
+
+**Measured, dropping a real `File` through a real `drop` into a real popup** (both cases
+are `tests/test_editor.py`'s `test_a_dropped_image_is_resized_and_saved_into_the_drawing`,
+parametrised over the two):
+
+| source, 4000x3000 JPEG | `img-src` without `blob:` | with `blob:` |
+| --- | --- | --- |
+| noise, 9.9 MB | refused: over Excalidraw's 4 MB ceiling | saved at 1.86 MB |
+| gradients and discs, 473 KB | inserted unresized | saved at 555 KB |
+| violations raised | `img-src <- blob` x2 | `script-src <- wasm-eval` x2 |
+| Workers constructed | 0 | 0 |
+
+The noise row is the point of carrying two: it is the largest thing this path can be
+handed, and it lands inside `MAX_DRAWING_BYTES` with room to spare. A test that only ever
+dropped the cheap image would pass with the resize broken, which is what the parametrised
+`assert dropped["source"] > 4 * 1024 * 1024` guards.
+
+**`blob:` on `img-src` is the cheapest grant on that list.** A `blob:` URL names no
+origin and can only be minted by this document's own script — which `script-src
+'unsafe-inline'` already runs — so unlike adding a host it opens no channel anywhere. It
+is on `img-src` and on nothing else.
+
+**`'wasm-unsafe-eval'` is deliberately absent**, and the two `script-src <- wasm-eval`
+lines in the table are the price: pica probes for a wasm resizer, is refused, and finishes
+in JS well inside the budget. A standing grant to compile WebAssembly on every page of this
+app is not worth buying two console lines off a path that already works. Recorded so the
+next person who sees those lines knows they are expected rather than new.
+
+**The 2 MB ceiling is not moving.** It was argued rather than assumed: the worst case
+above fits, and the numbers pushing the other way are in "Ceilings to respect" — PNG is
+already zlib-compressed so git cannot delta it and every save is a full new blob, and on
+Cloud Run the filesystem is memory. `MAX_DRAWING_BYTES`' sentence now names images first,
+because images are the only thing that gets a drawing near it.
 
 ## Five helpers, not one
 

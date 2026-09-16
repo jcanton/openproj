@@ -2897,15 +2897,38 @@ async function openDrawing(surface, status, entry) {
   root.render(lib.React.createElement(lib.Excalidraw, {
     initialData: initial,
     excalidrawAPI: a => { api = a; },
-    // Hidden, not merely left to fail. pica and image-blob-reduce build a
-    // `data:text/javascript;base64` Worker to probe `createImageBitmap` and a
-    // `blob:` Worker to resize, and the policy is `default-src 'none'` with no
-    // `worker-src` and no `blob:` anywhere in it — both constructions are
-    // refused, so inserting a raster image into a drawing WILL fail.
-    // jcanton accepted the gap on 2026-08-26: a control that is not offered,
-    // rather than one that silently does nothing. Do not restore this without
-    // a `worker-src`/`blob:` grant to go with it.
-    UIOptions: {tools: {image: false}},
+    // On, and the `blob:` in `shell.py`'s `img-src` is the half that makes it
+    // honest — the two are one change and neither works alone.
+    //
+    // This was `false` from 2026-08-26 to 2026-09-16, on a reading of the
+    // policy that turned out to name the wrong directive. The refusal on
+    // record was that pica and image-blob-reduce build Workers this policy
+    // blocks. Measured, dropping a real file into a real popup under the real
+    // CSP: **zero Workers are constructed on this path**, in either direction.
+    // What actually failed was `image-blob-reduce`'s first step — it mints a
+    // `URL.createObjectURL(blob)` and assigns it to an `Image()`, which
+    // `img-src 'self' data:` refuses, so the resize threw
+    // `ImageBlobReduce: failed to create Image() from blob` before any Worker
+    // was reached.
+    //
+    // And the resize is not optional the way "it only downscales" suggests.
+    // Excalidraw catches that throw, logs `Error trying to resizing image file
+    // on insertion`, and carries on with the ORIGINAL bytes — then measures
+    // them against its own 4 MB ceiling. So on the policy as it stood, a small
+    // image inserted and a photograph did not: a 4000x3000 JPEG came in at
+    // 9.9 MB and was rejected, which is the one case a person dropping an
+    // image into a drawing is most likely to be in. Turning the tool on
+    // WITHOUT the `img-src` grant would have been exactly the control that
+    // lies that turning it off was meant to avoid.
+    //
+    // With the grant, the same 9.9 MB source is downscaled to 1440px and the
+    // saved drawing lands at 1.86 MB — inside `MAX_DRAWING_BYTES`, and that is
+    // the worst case rather than a typical one, because the source was pure
+    // noise. A gradient-and-shapes image of the same dimensions saved at
+    // 555 KB. Both numbers come from `tests/test_editor.py`'s
+    // `test_a_dropped_image_is_resized_and_saved_into_the_drawing`, which is
+    // parametrised over exactly those two sources.
+    UIOptions: {tools: {image: true}},
     // The keyboard goes into the drawing, which is where somebody who just
     // opened a drawing editor is going to use it. Two things follow, and both
     // were bugs without it: Excalidraw's own single-key tool shortcuts (`r`,
@@ -2943,13 +2966,21 @@ async function openDrawing(surface, status, entry) {
     });
     // Checked here, client-side, before the POST: `MAX_ASSET_BYTES` is
     // checked again on the server, but by then the answer is a 413 and the
-    // strokes are gone. A vector scene is nowhere near this in practice — the
-    // spike measured 5.6% of the ceiling for a 30-element drawing with ten
-    // text labels — so this is a guard against the unusual case, not the
-    // ordinary one.
+    // strokes are gone. A vector scene is nowhere near this — the spike
+    // measured 5.6% of the ceiling for a 30-element drawing with ten text
+    // labels — so for a drawing that is only strokes this guards the unusual
+    // case. Images changed what it is for: one downscaled photograph is a
+    // quarter to most of the ceiling on its own, so a drawing with a few in it
+    // meets this the ordinary way rather than the pathological one, which is
+    // why the sentence below leads with them.
     if (blob.size > MAX_DRAWING_BYTES) {
+      // Images are what puts a drawing over this — strokes are nowhere near it
+      // — so the advice names them first. A dropped photograph is downscaled to
+      // 1440px on the way in and one of those fits with room to spare; three or
+      // four in one drawing do not.
       status.textContent = `that drawing is ${Math.ceil(blob.size / 1024)} KB; the limit `
-        + `is ${MAX_DRAWING_BYTES / 1024} KB — simplify it, or ask for the ceiling to be raised`;
+        + `is ${MAX_DRAWING_BYTES / 1024} KB — use fewer or smaller images, simplify it, `
+        + `or ask for the ceiling to be raised`;
       return;
     }
     status.textContent = 'saving…';
