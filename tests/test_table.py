@@ -2238,17 +2238,23 @@ const TITLE = document.querySelector('input[name=title]');
 TITLE.value = 'A pitch with a shaping document in it';
 TITLE.dispatchEvent(new Event('input', {bubbles: true}));
 await new Promise(r => setTimeout(r, 200));
-const ROOT = document.documentElement;
-const out = {screens: ROOT.scrollHeight / innerHeight, at: []};
-const end = ROOT.scrollHeight - innerHeight;
+// What scrolls, and it is not the document. The shell gives this form the box
+// that keeps the nav and the footer in view (`_page(fills=True)`), so the form
+// is several screens tall INSIDE that box and `scrollTo` moves nothing at all —
+// which is why `screens` read 1.0 on a form that still runs off three windows.
+// The claim is unchanged and so is what it is measured against: where the Save
+// lands in the WINDOW, from every part of the form.
+const SCROLLER = document.querySelector('[data-fills]');
+const out = {screens: SCROLLER.scrollHeight / SCROLLER.clientHeight, at: []};
+const end = SCROLLER.scrollHeight - SCROLLER.clientHeight;
 // A timer and not `requestAnimationFrame`: a headless Chrome under a virtual
 // clock manages two frames in three seconds, so a rAF here is a script that
 // never resumes and a harness that reports nothing at all.
 for (const y of [0, Math.round(end / 2), end]) {
-  scrollTo(0, y);
+  SCROLLER.scrollTop = y;
   await new Promise(r => setTimeout(r, 80));
   const box = SAVE.getBoundingClientRect();
-  out.at.push({y: Math.round(scrollY), text: SAVE.textContent.trim(),
+  out.at.push({y: Math.round(SCROLLER.scrollTop), text: SAVE.textContent.trim(),
                on: box.height > 0 && box.top >= 0 && box.bottom <= innerHeight});
 }
 return out;

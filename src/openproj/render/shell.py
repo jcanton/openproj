@@ -788,6 +788,31 @@ body:has([data-fills]) { padding-bottom: 1rem; }
    scrollbar it was sized to avoid — and the graph's canvas and the timeline's
    plot are both bordered. */
 [data-fills] { box-sizing: border-box; }
+/* The whole of a page's content as its filling box — `_page(fills=True)` above.
+   The same three declarations `.table-scroll` carries and for the same reasons:
+   the room is a maximum rather than a height, because a cycle with two bets in it
+   stretched to the window is a page that looks like it failed to load the rest;
+   the floor is `measureRoom`'s own, so a window too short to give the box
+   anything scrolls the document rather than drawing a sliver; and the containment
+   stops a flick at the end of the documents turning into the browser's
+   pull-to-refresh.
+   `overflow: auto` and not `overflow-y`, because a block too wide for the column
+   — a code fence on the help page, the betting table on a cycle — has to scroll
+   inside this box rather than take the whole page sideways with it.
+
+   `position: relative`, and it is not decoration. An absolutely positioned
+   element is clipped by an ancestor's overflow only when that ancestor is its
+   containing block, and a box that is not positioned is not one — so the
+   `.sr-only` label inside the cycle page's bet search, which is `position:
+   absolute` and names no ancestor that is positioned, resolved against the
+   initial containing block and hung 931px below the bottom of a box 144px tall.
+   The document scrolled by exactly that, `settleRoom` read the overflow as slack
+   and took it off the next answer, and four passes later the box had been driven
+   down to its 9rem floor with the page still scrolling. A screen-reader label one
+   pixel high defeating the whole measurement is the kind of thing only a browser
+   says; `measureRoom`'s own arithmetic was right every time it ran. */
+.pagefill { overflow: auto; max-height: var(--room); position: relative;
+            min-height: 9rem; overscroll-behavior: contain; }
 #controls { margin: .75rem 0; }
 /* The search box, and at the far end of the same line whatever the page has to
    say ABOUT the view rather than to it. The graph put its pan/zoom sentence on a
@@ -2981,7 +3006,31 @@ function fitRoom() { roomSlack = 0; settleRoom(4); }
     numbers only, through textContent. -#}
 {% if live %}<div id="pile" role="status" aria-live="polite" hidden></div>
 {% endif -%}
+{#- `fills`: this page has no one box of its own to give the window's remaining
+    height to, so the whole of its content becomes that box and scrolls inside
+    it. What it buys is what every other page already has — the nav above and the
+    footer below stay where they are instead of scrolling away with the content.
+
+    jcanton, 2026-09-16: "all pages except for the /detail page have fixed header
+    and footer" — and the help page, and on a look the cycles pages and the create
+    form as well. Nothing in this app is `position: fixed`: a page keeps its nav
+    and its footer in view by not scrolling the document at all, and the six pages
+    that had no `[data-fills]` box were the six that scrolled it.
+
+    Here and not in each page's own template, because the alternative is the same
+    wrapper written six times and forgotten on the seventh. A page with a box
+    worth pinning something above — the Records list and the Table keep their
+    search and filter bars out of the scroller — still marks its own and passes
+    nothing here.
+
+    Outside the wrapper on purpose: `#unreadable` and `#pile` above, which are
+    news about the plan rather than the plan, and belong where they cannot be
+    scrolled past. -#}
+{% if fills %}<div class="pagefill" data-fills>
 {{ content }}
+</div>
+{% else %}{{ content }}
+{% endif -%}
 </main>
 {#- What is running, and what it is running ON. jcanton, 2026-08-25: "can we have
     the app version show up in the web interface?"
@@ -3748,6 +3797,7 @@ def _page(
     current: str = "",
     unreadable: Sequence[Unreadable] = (),
     origin: str | None = None,
+    fills: bool = False,
 ) -> str:
     """Autoescaping protects record titles inside the inner templates; the already
     rendered body and stylesheet are marked safe here so the shell does not escape
@@ -3769,6 +3819,12 @@ def _page(
 
     A `current` that is not a nav key raises rather than quietly marking nothing,
     because marking nothing is the exact defect this round is here to fix.
+
+    `fills` wraps the content in the box `--room` is measured into, for a page
+    whose markup names none of its own. It is the shell's job because the reason
+    for it is the shell's: the nav at the top and the footer at the foot stay in
+    view because the document does not scroll, and a page that scrolls it loses
+    both. See the `{% if fills %}` block in `_SHELL`.
 
     `unreadable` is the plan files that are not records. It is drawn here rather
     than by each page for the same reason the nav mark is decided here: eight
@@ -3797,6 +3853,7 @@ def _page(
         # ladder, so a card says the rung the same way on all three views.
         cardmarks={"status": STATUS_GLYPH, "priority": PRIORITY_GLYPH},
         hillgeom=hill_geometry(),
+        fills=fills,
         unreadable=list(unreadable),
         # The sentence is built here rather than in the template, because English
         # is not something Jinja should be doing arithmetic about and "1 files

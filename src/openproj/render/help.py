@@ -249,8 +249,18 @@ _HELP_STYLE = """
    Sticking the `<details>` itself skips that box entirely: its containing block
    is `.helptoc`, an ordinary grid item stretched to the row. And it must NOT
    also carry `height: 100%` — a sticky element as tall as its containing block
-   has no travel either, which is the same defect wearing the other hat. */
-.tocfold { position: sticky; top: .5rem; max-height: calc(100dvh - 2rem);
+   has no travel either, which is the same defect wearing the other hat.
+
+   The height is the ROOM and not the window. It was `calc(100dvh - 2rem)`, a
+   hand-count of the nav above and the footer below written as a constant, and it
+   stopped being true the moment the documents began scrolling inside the shell's
+   `.pagefill` box: the travel this box has is that box's height, so a contents
+   list a whole window tall would hang a nav's worth of itself below the bottom of
+   the scroller with no way to reach the end of it. `--room` is that height,
+   measured rather than counted, and the `1rem` is this box's own `top` doubled so
+   the last entry clears the foot of the box by as much as the first clears its
+   top. */
+.tocfold { position: sticky; top: .5rem; max-height: calc(var(--room) - 1rem);
            overflow-y: auto; padding-right: .5rem; }
 /* Nothing to fold while the contents is a column of its own — the same rule and
    the same reasoning as `.keyfold > summary, .windowfold > summary` in the
@@ -384,4 +394,9 @@ def render_help(index: Index, links: Links = STATIC) -> str:
         links,
         "help",
         index.unreadable,
+        # Five documents in one page: the one page in this app that is certain to
+        # be longer than any window. The contents column is `position: sticky` and
+        # now holds against this box rather than against the window, which is the
+        # same behaviour with the nav and the footer left in place around it.
+        fills=True,
     )

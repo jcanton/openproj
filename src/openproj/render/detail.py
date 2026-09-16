@@ -1123,10 +1123,18 @@ _DETAIL = """
     else %}{#- The start tag stays on ONE line, and it matters: a rendered
         file's chip is asserted verbatim by
         `test_the_detail_page_wears_the_same_chips_every_other_view_wears`, and
-        a newline inside a start tag is a newline in the bytes. The `-#}` below
-        eats the gap between this comment and the span, so the two of them are
-        adjacent in the output without the tag having to share a line with
-        anything. -#}<span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span>{%
+        a newline inside a start tag is a newline in the bytes. The whitespace
+        control on this comment's own closing tag eats the gap between it and
+        the span below, so the two are adjacent in the output without the tag
+        having to share a line with anything.
+
+        And that closing tag is not written out in this prose, which is what the
+        sentence above used to do. Jinja ends a comment at the first `#` `}` it
+        meets and does not care that this one was inside a code span — so the
+        comment stopped four lines early and the remainder of it was TEXT,
+        printed into `<p class="eyebrow">` above the kind chip of every record
+        nobody can edit: the whole static export, and every reader without a
+        commit bit. -#}<span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span>{%
     endif %}</p>
   {%- if editable %}
   {#- Asked before it is done, and it says the expensive part out loud: the id
@@ -2715,7 +2723,27 @@ function show() {
     found = found || match;
   }
   document.querySelector('.toc').style.display = found ? 'none' : '';
-  if (found) scrollTo(0, 0);
+  // No scroll reset here any more, and the absence is the deliberate half.
+  //
+  // It was `if (found) scrollTo(0, 0)`, which was right while the DOCUMENT was
+  // what scrolled: a record opened from the foot of the index would otherwise
+  // have opened at whatever line of itself was that far down. Since the shell
+  // gives this page the box that keeps the nav and the footer in view
+  // (`_page(fills=True)`), the document no longer scrolls at all — that line
+  // reset an offset already zero and left the box's, which is the one a reader
+  // has actually moved.
+  //
+  // Replacing it with `fills.scrollTop = 0` was the obvious repair and it is
+  // dead code: the two lines above leave the wanted article as the only thing
+  // in the box with a layout, so the fragment navigation that brought us here
+  // lands on it at zero by itself. Measured both ways in Chrome and in Firefox,
+  // parked at 300px and opened cold from a `#id` URL — four runs, all zero with
+  // the line and all zero without it.
+  //
+  // `test_a_record_opened_from_the_foot_of_the_index_starts_at_its_own_first_line`
+  // holds the behaviour, which is the thing worth holding: what makes it true is
+  // that the router hides everything else, and a router that stopped doing that
+  // would need the reset back.
   // The width handle belongs to whichever document is on screen, and to no
   // document when the page is the index.
   place();
@@ -3748,6 +3776,7 @@ def render_detail(
             _DETAIL_STYLE + _SUGGEST_STYLE,
             links,
             unreadable=index.unreadable,
+            fills=True,
         )
     return _page(
         "openproj — detail",
@@ -3756,6 +3785,13 @@ def render_detail(
         links,
         "detail",
         index.unreadable,
+        # The index of every record, and every record, and the create form all
+        # come out of this one function — so all three scroll inside the shell's
+        # box and all three keep the nav and the footer. This page has nothing to
+        # pin above the box: the record's own header travels with it and the
+        # commit bar's `position: sticky` holds against the box instead of
+        # against the window, which is the same result by the same rule.
+        fills=True,
     )
 
 
