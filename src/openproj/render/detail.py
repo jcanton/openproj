@@ -2723,27 +2723,25 @@ function show() {
     found = found || match;
   }
   document.querySelector('.toc').style.display = found ? 'none' : '';
-  // No scroll reset here any more, and the absence is the deliberate half.
+  // The top of the BOX, which is what scrolls. It was `scrollTo(0, 0)` — right
+  // while the document scrolled, and since the shell began giving this page the
+  // box that keeps the nav and the footer in view (`_page(fills=True)`) it reset
+  // an offset already zero and left the one a reader has actually moved. Without
+  // a reset of some kind a record opened from the foot of the index opens at
+  // whatever line of itself was that far down.
   //
-  // It was `if (found) scrollTo(0, 0)`, which was right while the DOCUMENT was
-  // what scrolled: a record opened from the foot of the index would otherwise
-  // have opened at whatever line of itself was that far down. Since the shell
-  // gives this page the box that keeps the nav and the footer in view
-  // (`_page(fills=True)`), the document no longer scrolls at all — that line
-  // reset an offset already zero and left the box's, which is the one a reader
-  // has actually moved.
-  //
-  // Replacing it with `fills.scrollTop = 0` was the obvious repair and it is
-  // dead code: the two lines above leave the wanted article as the only thing
+  // **This line was deleted once, for a measurement that was true and did not
+  // generalise.** The two lines above leave the wanted article as the only thing
   // in the box with a layout, so the fragment navigation that brought us here
-  // lands on it at zero by itself. Measured both ways in Chrome and in Firefox,
-  // parked at 300px and opened cold from a `#id` URL — four runs, all zero with
-  // the line and all zero without it.
-  //
-  // `test_a_record_opened_from_the_foot_of_the_index_starts_at_its_own_first_line`
-  // holds the behaviour, which is the thing worth holding: what makes it true is
-  // that the router hides everything else, and a router that stopped doing that
-  // would need the reset back.
+  // scrolls it to the top unaided — measured four ways on one machine, parked at
+  // 300px and opened cold from a `#id` URL, in Chrome and in Firefox, all zero
+  // with the line and all zero without it. It is not zero everywhere: CI's
+  // headless Chrome opened the record 300px down, on the run after the one where
+  // the same test on the same code passed. So the behaviour is a build's, the
+  // test that rests on it was flaky rather than green, and the fix is to stop
+  // asking a browser for something this page can simply do.
+  const fills = document.querySelector('[data-fills]');
+  if (found && fills) fills.scrollTop = 0;
   // The width handle belongs to whichever document is on screen, and to no
   // document when the page is the index.
   place();
