@@ -9555,6 +9555,80 @@ def test_a_dropped_image_is_resized_and_saved_into_the_drawing(
         )
 
 
+def test_resaving_a_drawing_refreshes_the_picture_beside_the_writing(
+    live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
+    tmp_path: Path,
+):
+    """jcanton, 2026-09-16: "editing and saving an existing excalidraw drawing
+    doesn't update the preview in the side-by-side (possibly others) view."
+
+    It did not, and nothing was wrong with the bytes or the headers. The path a
+    drawing is embedded at is deliberately stable, so a re-save writes the same
+    file and does not touch the body (`design/drawings.md`, "Where the bytes
+    live") — and a preview that only re-renders when the text changes therefore
+    never re-rendered. The `<img>` on the page was the same element it had been
+    before the save, holding the bitmap it decoded the first time. `/drawings/`
+    answers `cache-control: no-cache` with an ETag and would have served the new
+    bytes to anyone who asked; nobody asked.
+
+    Driven as the round trip a person makes: draw, save, reopen through the
+    menu, add a shape, save again. The assertion is on `naturalWidth` — the
+    second shape is to the RIGHT of the first, so the export's bounding box
+    really does get wider, and a picture that did not refresh is still exactly
+    as wide as it was. No exact pixel count: Excalidraw's roughness seeds its
+    own wobble, so what is asserted is that the width GREW.
+    """
+    url = f"{live_server}/detail/{TASK}?both"
+    with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
+        time.sleep(2)
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelector('.drawmenu button').click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-rectangle\"]').click()")
+        _drag(call, *FIRST_SHAPE)
+        time.sleep(0.2)
+        _evaluated(call, "document.getElementById('draw-save').click()")
+        _until(call, "!document.querySelector('.drawpopup')")
+
+        # The preview has to have DRAWN the picture before anything can be said
+        # about it changing — `complete` alone is true for an image that failed,
+        # so the width is what is waited on.
+        shown = "document.querySelector('#body-preview img[src*=\"drawings/draw-\"]')"
+        _until(call, f"{shown} && {shown}.naturalWidth > 0", seconds=20)
+        before = _evaluated(call, f"{shown}.naturalWidth")
+
+        # Reopened through the menu — the seam a person presses — and given a
+        # second shape well to the right of the first.
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelectorAll('.drawmenu button')[1].click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-ellipse\"]').click()")
+        _drag(call, *SECOND_SHAPE)
+        time.sleep(0.2)
+        _evaluated(call, "document.getElementById('draw-save').click()")
+        _until(call, "!document.querySelector('.drawpopup')")
+
+        # The body is untouched, which is the whole reason this bug existed: if
+        # a re-save ever starts splicing, the preview refreshes for a different
+        # reason and this test stops covering what it was written for.
+        body = _evaluated(call, "SURFACE.text()")
+        assert len(re.findall(r"drawings/draw-[0-9a-f]{6}\.png", body)) == 1, (
+            f"the re-save wrote a second embed into the body: {body[:160]!r}"
+        )
+
+        grew = _until(
+            call,
+            f"(() => {{ const img = {shown}; "
+            f"return img && img.naturalWidth > {before} ? img.naturalWidth : 0; }})()",
+            seconds=20,
+        )
+        assert grew > before, (
+            f"the picture beside the writing is still {before}px wide after a re-save that "
+            f"widened the drawing — it is the element that was there before the save, "
+            f"holding the bitmap it decoded the first time"
+        )
+
+
 _VIM_WALKS = r"""
   flipEditing();
   await new Promise(r => setTimeout(r, 300));

@@ -248,11 +248,13 @@ redirect, the code exchange, the `read:org` membership check — against real
 GitHub, with nothing deployed. Worth doing before anybody else is shown it: it is
 the one part of the stack that cannot be checked any other way.
 
-After step 4, add the two `*.run.app` URIs the deploy prints to the same app.
-Sign-in does not have to be in the way of the first deploy: the deploy, every
+After step 4, add the two `*.run.app` URIs the **first** deploy prints to the same
+app. Sign-in does not have to be in the way of that deploy: the deploy, every
 read and `/api/health` go through without a registered URI, and only the sign-in
 link 404s until the URIs are added. The hostnames are stable across revisions,
-so this is done once.
+so this is done once — and because it is done once, a redeploy does not print
+them again. They are below, under "Two hostnames", for the day one is needed and
+nothing is printing it.
 
 **The scope is `read:org` and nothing else.** Never `repo`: that would put a
 write-capable GitHub token in every session. The token here establishes identity
@@ -413,7 +415,9 @@ gcloud run services describe $SERVICE --region $REGION \
 curl -fsS $URL/api/health; echo    # "version" is this code's; "head" is the plan's commit
 ```
 
-Cloud Run answers on two hostnames, and the deploy prints both:
+### Two hostnames
+
+Cloud Run answers on two, and the first deploy prints both:
 `https://<service>-<hash>-<region code>.a.run.app`, which `gcloud run services describe`
 reports, and `https://<service>-<project number>.<region>.run.app`, which the script
 computes. Both are permanent and reach the same service; the project-number one is the

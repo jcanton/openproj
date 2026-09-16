@@ -296,6 +296,17 @@ gcloud builds submit \
 # rejected by the other. The PEM is a file mount instead, so rotating the App key
 # needs no redeploy.
 
+# Asked BEFORE the deploy, because after it the service always exists. The one
+# thing this script prints that a person has to go and do by hand — registering
+# the redirect URIs — is a first-deploy step, and printing it on every deploy
+# after that trains somebody to skip the last thing the script says. Every other
+# already-done step in this file says "exists — left alone" and moves on; this
+# is that idiom, arriving late.
+SERVICE_EXISTED=""
+if gcloud run services describe "$SERVICE" --region "$REGION" >/dev/null 2>&1; then
+  SERVICE_EXISTED="yes"
+fi
+
 say "Deploying"
 gcloud run deploy "$SERVICE" \
   --image "$IMAGE" \
@@ -365,15 +376,23 @@ else
     "$SERVICE" "$REGION"
 fi
 
-# Cloud Run answers on two hostnames — the one `describe` reports and the
-# project-number one the deploy prints — and GitHub matches a redirect URI
-# exactly. Registering only one means sign-in works or 404s depending on which
-# link somebody followed, so both are printed and both should be registered.
-ALT_URL="https://${SERVICE}-$(gcloud projects describe "$PROJECT" \
-  --format='value(projectNumber)').${REGION}.run.app"
-
 say "Deployed: ${URL}"
-cat <<EOF
+
+# On a first deploy only. Cloud Run answers on two hostnames — the one
+# `describe` reports and the project-number one the deploy prints — and GitHub
+# matches a redirect URI exactly, so registering one of them means sign-in works
+# or 404s depending on which link somebody followed. Both are printed and both
+# should be registered.
+#
+# A redeploy says nothing: the URIs do not change with the image, they were
+# registered once, and `deploy/RUNBOOK.md` step 3 has them for anyone who needs
+# them again. The `/auth/callback` route is not probed to decide this — it
+# answers the same whether or not GitHub knows the URI, so the only honest
+# signal is whether this script had a service to redeploy.
+if [[ -z "$SERVICE_EXISTED" ]]; then
+  ALT_URL="https://${SERVICE}-$(gcloud projects describe "$PROJECT" \
+    --format='value(projectNumber)').${REGION}.run.app"
+  cat <<EOF
 
    One thing left, and sign-in fails until it is done. Add BOTH of these to the
    OAuth App's Redirect URIs at https://github.com/settings/developers —
@@ -387,3 +406,4 @@ cat <<EOF
 
    Then open ${URL} and sign in.
 EOF
+fi

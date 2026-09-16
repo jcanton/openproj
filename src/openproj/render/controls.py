@@ -3029,6 +3029,12 @@ async function openDrawing(surface, status, entry) {
         etag = `"${answer.etag}"`;
       }
       status.textContent = `${answer.path} saved`;
+      // Said before `teardown`, and for both arms rather than only the re-save
+      // that needs it: a brand-new drawing has no picture on the page yet, so
+      // this finds nothing and costs a walk of `document.images`. One call at
+      // the one place the bytes change beats a condition that has to stay
+      // true.
+      refreshDrawing(answer.path);
       // `teardown`, not `closeAttempt`: a save that just succeeded put every
       // stroke on the server, so there is nothing left for `isDirty` to
       // protect — asking here would be asking whether to discard work that
@@ -3042,6 +3048,53 @@ async function openDrawing(surface, status, entry) {
       dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
     }
   };
+}
+
+// Every picture on the page showing `path`, asked for again.
+//
+// A re-save writes the same file and deliberately does not touch the body —
+// the path is stable, which is the whole point of it (`design/drawings.md`,
+// "Where the bytes live"). So nothing on the page has any reason to re-render:
+// the preview beside the writing re-renders when the TEXT changes, the text did
+// not change, and the `<img>` it drew earlier is still the same element holding
+// the bitmap it decoded the first time. `/drawings/` answers `cache-control:
+// no-cache` with an ETag and would serve the new bytes to anybody who asked
+// (`web.py:3861`). The bug was never the bytes or the headers. Nobody asked.
+//
+// **The `?v=` is what makes this an ask rather than a hope.** Assigning an
+// identical `src` is a no-op, and even a freshly built element with the same
+// URL may be answered from the memory cache without a revalidation — which is
+// a thing browsers are allowed to differ on, and this had to work rather than
+// work here (`design/probes/` has the house rule; a measured zero beats a
+// reasoned one). A query string the server never reads cannot be answered from
+// anywhere but the network. It lives only until the pane next re-renders and
+// builds a clean `<img>`, by which time the fetch has already happened.
+function refreshDrawing(path) {
+  // Matched on the file NAME against the resolved URL, not on the `src`
+  // attribute against `path`. `_image` writes `links.repo + <path>`
+  // (`render/markdown.py:361`), so the attribute on the page is `/drawings/…`
+  // while `path` off the wire is `drawings/…`, and comparing the two strings
+  // matches nothing at all. A `data:` src — what the static export and the deck
+  // carry — has no pathname to match and nothing to refresh, and falls out
+  // here rather than being special-cased.
+  const name = path.slice(path.lastIndexOf('/') + 1);
+  if (!name) return;
+  const stamp = Date.now();
+  for (const img of document.images) {
+    let at;
+    try {
+      at = new URL(img.src, location.href);
+    } catch {
+      continue;
+    }
+    // `endsWith` on a slash-prefixed name, so `draw-a1b2c3.png` cannot match
+    // something that merely ends in those characters, and the comparison is
+    // made on the pathname so an existing `?v=` from a previous save in this
+    // same session does not stop the next one finding it.
+    if (at.protocol === 'data:' || !at.pathname.endsWith('/' + name)) continue;
+    at.search = 'v=' + stamp;
+    img.src = at.href;
+  }
 }
 
 // The drawings button and the menu it opens, and now the popup a press

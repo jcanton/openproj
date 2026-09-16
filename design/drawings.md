@@ -626,6 +626,36 @@ already zlib-compressed so git cannot delta it and every save is a full new blob
 Cloud Run the filesystem is memory. `MAX_DRAWING_BYTES`' sentence now names images first,
 because images are the only thing that gets a drawing near it.
 
+## A re-save has to say so
+
+The path is stable and a re-save does not touch the body — that is the design, and it
+is also why a saved change was invisible until 2026-09-16. Nothing on the page had a
+reason to re-render: the preview beside the writing re-renders when the *text* changes,
+the text did not change, and the `<img>` it drew earlier was still the same element
+holding the bitmap it decoded the first time. `/drawings/` answers `cache-control:
+no-cache` with an ETag and would have served the new bytes to anybody who asked
+(`web.py:3861`). Neither the bytes nor the headers were ever wrong. Nobody asked.
+
+`refreshDrawing(path)` in `render/controls.py` is the ask, called once at the one place
+the bytes change. Two things in it are load-bearing:
+
+- **The `?v=` stamp.** Assigning an identical `src` is a no-op, and even a freshly built
+  element with the same URL may be answered from the memory cache without a
+  revalidation — something browsers are allowed to differ on, which is the shape of
+  every bug in "Dead on one machine". A query the server never reads cannot come from
+  anywhere but the network. It survives only until the pane next re-renders and builds a
+  clean `<img>`.
+- **Matching on the file name against the RESOLVED url.** `_image` writes
+  `links.repo + <path>` (`render/markdown.py:361`), so the page carries `/drawings/…`
+  while the path off the wire is `drawings/…`; comparing those two strings matches
+  nothing. A `data:` src — the static export's and the deck's — has no pathname and
+  falls out of the same comparison rather than needing a case of its own.
+
+Covered by `test_resaving_a_drawing_refreshes_the_picture_beside_the_writing`, which
+asserts on `naturalWidth` growing rather than on any pixel count, and checks on the way
+past that the re-save still wrote no second embed — if a re-save ever starts splicing,
+the preview refreshes for a different reason and that test stops covering what it is for.
+
 ## Five helpers, not one
 
 `tests/browser.py` has five, not the single `file://` + `--dump-dom` channel this page
