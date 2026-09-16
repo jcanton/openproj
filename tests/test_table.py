@@ -7424,7 +7424,9 @@ def test_the_table_teaches_its_gestures_beside_the_search_box(seed_root: Path):
     assert (said.tag, said.attrs.get("class")) == ("p", "hint"), (
         f"the aside holds {said} rather than the view's own sentence"
     )
-    assert "double-click a cell" in said.text and "drag a row by the grip" in said.text, (
+    # Case-folded: the sentence is jcanton's to word, and it has been reworded
+    # twice. What this test is for is WHERE it is drawn.
+    assert "double-click a cell" in said.text.lower() and "drag a row by the grip" in said.text, (
         f"the sentence beside the search box is not the table's: {said.text!r}"
     )
 

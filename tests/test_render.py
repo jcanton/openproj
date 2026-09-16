@@ -3719,7 +3719,7 @@ const index = scroller(document.querySelector('.toc'));
 // Deep in the index, which is what a reader clicking the seventeenth title has
 // done. Awaited, because a scroll offset assigned and read in the same task is
 // the value that was assigned and not the one the box settled on.
-index.scrollTop = %d;
+index.scrollTop = index.scrollHeight;
 await new Promise(settled => setTimeout(settled, 100));
 const parked = Math.round(index.scrollTop);
 location.hash = '%s';
@@ -3766,16 +3766,22 @@ def test_a_record_opened_from_the_foot_of_the_index_starts_at_its_own_first_line
     # here: the record has to be one with somewhere to scroll TO, or the browser's
     # own clamp does the resetting and this proves nothing.
     wanted = max(seed_index.records, key=lambda one: len(seed_index.records[one].body))
-    parked = 300
     got = measured_in(
         chrome(),
         read(rendered, "detail.html"),
         tmp_path / "opened.html",
         1280,
-        _OPENED % (parked, wanted, wanted),
+        _OPENED % (wanted, wanted),
         900,
     )
-    assert got["parked"] == parked, "the index did not scroll, so nothing was ever left behind"
+    parked = got["parked"]
+    # To the index's own end rather than to a number. It was 300px, and 300px is
+    # a fact about how much travel the index happens to have — which is the box's
+    # height, which every change to the footer's padding moves. It fell to 290 and
+    # failed a test about the router.
+    assert parked >= 100, (
+        f"the index scrolled only {parked}px, so little was ever left behind"
+    )
     assert got["shown"], f"{wanted} was not the document the router drew"
     assert got["room"] >= parked, (
         f"{wanted} has only {got['room']}px to scroll, so a clamp would pass this on its own"
@@ -4665,6 +4671,16 @@ def test_every_page_keeps_its_nav_and_its_footer_where_the_reader_left_them(
         assert got["navTop"] >= 0, f"{where}: the nav sits {-got['navTop']}px above the window"
         assert got["footBottom"] <= got["window"], (
             f"{where}: the footer ends {got['footBottom'] - got['window']}px below the window"
+        )
+        # And AT the window's foot, not merely inside it. A footer that stays put
+        # is read as the app's bottom edge, so a band of page under it reads as
+        # the app stopping short of the window — jcanton, 2026-09-16: "it has one
+        # line of text and below it one empty line or some space, can you swap so
+        # the text is at the very bottom?" 4px, because the page gives a pixel
+        # away on purpose (see `measureRoom`) and the glyphs keep 2px of descender
+        # room; 16px of body padding is what this caught.
+        assert got["window"] - got["footBottom"] <= 4, (
+            f"{where}: {got['window'] - got['footBottom']}px of page under the footer"
         )
 
 

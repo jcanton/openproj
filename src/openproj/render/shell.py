@@ -767,7 +767,7 @@ pre.mermaid[data-processed] svg { height: auto; }
    from the content" — it was "be measurable". */
 #build {
   display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .5rem;
-  margin: 0; padding: .4rem 0 .15rem;
+  margin: 0; padding: .55rem 0 0;
   border-top: 1px solid var(--line);
   font-size: 11px; color: var(--muted); font-family: var(--font-mono);
 }
@@ -818,8 +818,17 @@ pre.mermaid[data-processed] svg { height: auto; }
 :root { --room: max(9rem, calc(100vh - 15rem)); }
 /* 3rem of quiet under the last line of a document. A page whose one box is
    measured to the window has no last line — the box ends where the window does —
-   so that 48px is not breathing room, it is drawing that never happens. */
-body:has([data-fills]) { padding-bottom: 1rem; }
+   so that 48px is not breathing room, it is drawing that never happens.
+
+   And then not 1rem either. The footer is the last row of the window, so quiet
+   below it is quiet at the bottom edge of the screen, which reads as the app
+   ending an inch before the window does — jcanton, 2026-09-16: "it has one line
+   of text and below it one empty line or some space, can you swap so the text is
+   at the very bottom?" Swapped: the gap that was under the line is now above it,
+   between the content and the footer's rule, where it separates two things
+   instead of trailing off one. The 2px left is the descender room the glyphs
+   need; at 0 a `p` or a `j` in the plan's sha sits on the window's edge. */
+body:has([data-fills]) { padding-bottom: 2px; }
 /* The measurement is of the room the box gets, so the box has to be that size
    including its own frame. On content-box a 1px border makes it 2px taller than
    the room it was handed, which is exactly enough to put the page into the
@@ -3153,9 +3162,16 @@ function theme() {
     || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 }
 
+// The glyph is the STATE, not the destination: a sun while the page is light, a
+// moon while it is dark. It was the other way round — a moon on a light page,
+// meaning "click for dark" — and jcanton read it as a label rather than as a
+// button and found it inverted (2026-09-16: "swap light/dark icons: currently the
+// moon is shown in light mode and vice-versa"). The title and the aria-label stay
+// the destination, because those are read as an action by anybody who reaches
+// them: "Dark mode" on the sun is what the click does.
 function labelTheme() {
   const dark = theme() === 'dark';
-  THEME.textContent = dark ? '\u2600' : '\u263e';
+  THEME.textContent = dark ? '\u263e' : '\u2600';
   THEME.title = dark ? 'Light mode' : 'Dark mode';
   THEME.setAttribute('aria-label', THEME.title);
 }

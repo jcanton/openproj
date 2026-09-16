@@ -1085,6 +1085,16 @@ article.record {
 .pagefill:has(> article.record) { display: flex; flex-direction: column; overflow: hidden; }
 .pagefill > .toc { flex: 1; min-height: 0; overflow: auto; }
 article.record { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* And no 3rem under it. That margin is `article.record`'s own — quiet between
+   the last line of a document and the footer, from when this page scrolled — and
+   inside a box measured to the window it is 48px the article is not allowed to
+   grow into: the column ended 48px above the frame it fills, in all three views,
+   with the footer's rule below the gap. jcanton, 2026-09-16, with a screenshot:
+   "the three views have a lot of white space before the footer, why is that, can
+   you remove it?" Scoped to the filling box, because the same article is drawn
+   inside the deck's pages, where the margin still separates something. */
+.pagefill > article.record,
+article.record:has(> [data-fills]) { margin-bottom: 0; }
 /* And the form, which is in the middle of that column whenever the reader may
    write: `#edit` opens above the heading so the title box is one of the form's
    own controls, and it closes after the panes — so the growing box is its child

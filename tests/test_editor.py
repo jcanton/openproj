@@ -8327,6 +8327,56 @@ def test_the_plain_slide_editor_draws_a_toolbar_and_a_status_strip(
     assert got["said"].strip(), "the plain slide editor drew no status strip at all"
 
 
+_SLIDE_WRITING_BOX = r"""
+const box = document.querySelector('[data-fills]');
+const pane = document.querySelector('.pane.pick');
+const surface = document.querySelector('.acebox') || document.querySelector('.bodywrap');
+return {
+  surface: Math.round(surface.getBoundingClientRect().height),
+  lines: document.querySelectorAll('.ace_line').length,
+  paneOver: Math.round(pane.getBoundingClientRect().bottom - box.getBoundingClientRect().bottom),
+  scrolls: document.documentElement.scrollHeight - document.documentElement.clientHeight,
+};
+"""
+
+
+@pytest.mark.parametrize("surface", ("", PLAIN))
+def test_the_slide_editor_has_a_writing_box_with_a_height_in_it(
+    client: TestClient, surface: str, tmp_path: Path
+):
+    """The box is sized by the pane it is in, and the pane is sized by the row the
+    shell measures — there is no number anywhere in the chain.
+
+    There used to be one: `--writing: 60vh`, carried by `textarea.body-field` and
+    by `.acebox`. It went with the record page's drag handle on 2026-09-16, and
+    this page kept nothing in its place. Ace draws an absolutely positioned
+    renderer inside whatever box it is handed, so a `.bodywrap` whose height is
+    its content is a 0px editor and a pane that looks like the writing box was
+    simply left out of the page. jcanton, the same day: "?view=slide lost the text
+    box for the body editing."
+
+    Both surfaces, because only one of them collapses silently: a bare textarea
+    with no height still draws its own default rows, so a fix measured on the
+    plain editor says nothing at all about the one a writer actually gets.
+    """
+    got = measured_in(
+        chrome(),
+        client.get(f"/detail/{TASK}?view=slide{surface and '&' + surface[1:]}").text,
+        tmp_path / f"slide-box{surface and '-plain'}.html",
+        1400,
+        _SLIDE_WRITING_BOX,
+        query=surface,
+        patience=3000,
+    )
+    assert got["surface"] >= 90, (
+        f"the slide's writing box is {got['surface']}px tall, which is no box to write in"
+    )
+    assert got["paneOver"] <= 2, (
+        f"the pane holding it hangs {got['paneOver']}px below the box the shell measured"
+    )
+    assert got["scrolls"] == 0, f"the slide page scrolls the document {got['scrolls']}px"
+
+
 _SLIDE_READER_SURFACE = r"""
 return {
   hasBodySurface: typeof bodySurface !== 'undefined',
