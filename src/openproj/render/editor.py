@@ -34,7 +34,7 @@ _ACE_SURFACE = Markup(r"""
    corner, and not the 4px this was written with — the writing surface and the
    fifteen fields beside it are read together, and one of them rounder than the
    rest is the drift the shell's rule exists to stop. */
-.acebox { position: relative; width: 100%; min-height: var(--writing, 60vh);
+.acebox { position: relative; width: 100%; height: 100%; min-height: 0;
           box-sizing: border-box;
           border: 1px solid var(--line-strong); border-radius: 3px; }
 .ace_editor { font-family: var(--font-mono); font-size: 13px; line-height: 1.55;
@@ -73,11 +73,10 @@ _ACE_SURFACE = Markup(r"""
    belongs on the thing a person can see, which is the editor. */
 .ace_text-input:focus, .ace_text-input:focus-visible { outline: none; }
 .acebox:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
-/* The split view, matched to the rule the textarea gets in `_EDITING_STYLE`:
-   both surfaces pin to the one writing height there, so the rendered pane
-   beside either of them is the same box of pixels. `min-height: 0` or the
-   minimum above would put the two out of step the day the token moves. */
-article.record.view-both .acebox { height: var(--writing, 60vh); min-height: 0; }
+/* The split view needs no rule of its own any more: `height: 100%` above is the
+   room the column has in every view, and the rendered pane beside it takes the
+   same 100% of the same box. The pair cannot drift because neither carries a
+   number. */
 </style>
 <script>
 // --- Ace, as the same surface ----------------------------------------------
@@ -90,6 +89,82 @@ article.record.view-both .acebox { height: var(--writing, 60vh); min-height: 0; 
 // textarea, which was the condition written down for revisiting; somebody asked
 // for vim, which is a different and legitimate reason.
 //
+// **j and k walk the screen, not the file.** jcanton, 2026-09-16: "can we also
+// change the default behaviour of vim keys in the editor and have j/k send
+// gj/gk?"
+//
+// Every document on this page is prose in a soft-wrapped box, so one line of the
+// file is routinely six lines on the screen, and vim's `j` steps over all six at
+// once. `gj` and `gk` are the display-line moves, and on wrapped prose they are
+// what everybody actually means — which is why the mapping is in so many vimrcs.
+// The file-line moves are not taken away: they are where they always are, on
+// `gj`/`gk`, because `map` swaps the pair rather than rewriting one side.
+//
+// Normal and visual, and not operator-pending: `d j` deleting to the next SCREEN
+// line would delete half a paragraph and leave a sentence cut mid-wrap, which is
+// not what anybody means by `dj` even having asked for this. Vim's own advice on
+// the mapping says the same, and it is the reason this is two lines and not one.
+//
+// `ace.require` and not a fetch: the vim module is the second vendored file and
+// is already defined in this page. Guarded because a page that never loads it —
+// and a re-vendoring that moves the export — must cost a keymap, not a script.
+function vimWalksTheScreen() {
+  const vim = ace.require('ace/keyboard/vim');
+  const Vim = vim && vim.CodeMirror && vim.CodeMirror.Vim;
+  if (!Vim || !Vim.map) return;
+  for (const mode of ['normal', 'visual']) {
+    Vim.map('j', 'gj', mode);
+    Vim.map('k', 'gk', mode);
+  }
+}
+
+// **`y` puts the text on the system clipboard as well as in vim's register.**
+// jcanton, 2026-09-16: "in the editor with vim keys yanking with `y` doesn't copy
+// to the system's clipboard, can this be done?"
+//
+// Vim's registers are vim's own: `y` fills the unnamed register, `p` reads it,
+// and neither has ever had anything to do with the clipboard the rest of the
+// machine shares. That is correct inside one editor and wrong the moment the
+// thing you wanted the text FOR is a commit message, a chat window or the
+// terminal next to this tab.
+//
+// Hooked at the register controller rather than by mapping `y` to `"*y`: every
+// yank goes through `pushText`, including the ones inside `c`, `s` and a visual
+// selection, so there is one place to hook and no list of key sequences to keep
+// complete. `operator === 'yank'` and not every push, because `d` and `x` come
+// through here too and a clipboard that changes every time somebody deletes a
+// character is a clipboard nobody can hold something in.
+//
+// `writeText` needs a secure context and the document focused. A keystroke is a
+// user gesture and this app is served over https (or localhost, which counts),
+// so it resolves in the app; over `file://` it rejects, which is why the failure
+// is swallowed. Vim's own register is filled either way — this is additive, and
+// a rejected clipboard write must not cost somebody their yank.
+function vimYanksToTheClipboard() {
+  const vim = ace.require('ace/keyboard/vim');
+  const Vim = vim && vim.CodeMirror && vim.CodeMirror.Vim;
+  const registers = Vim && Vim.getRegisterController && Vim.getRegisterController();
+  if (!registers) return;
+  // **The PROTOTYPE and not the instance this call happens to be handed.** Vim
+  // builds its global state lazily and rebuilds it, so the controller wrapped
+  // when the keymap went on is not always the one a keystroke later reaches:
+  // wrapped on the instance, `yy` filled the unnamed register with `alpha\n` and
+  // the wrapper never ran once. Measured — the register had the text and the
+  // recorder was empty, which is the shape of a hook on the wrong object.
+  // Every controller shares this prototype, so there is one place to wrap and no
+  // lifetime to track.
+  const shared = Object.getPrototypeOf(registers);
+  if (!shared || !shared.pushText || shared.openprojClipboard) return;
+  shared.openprojClipboard = true;
+  const pushed = shared.pushText;
+  shared.pushText = function (name, operator, text, linewise, blockwise) {
+    pushed.call(this, name, operator, text, linewise, blockwise);
+    if (operator === 'yank' && text && navigator.clipboard) {
+      navigator.clipboard.writeText(text).catch(() => {});
+    }
+  };
+}
+
 // Everything between this banner and the one that closes it is the only code on
 // these pages that knows the document may be being written in Ace. It builds the
 // same ten members `textareaSurface` does, so `applyMark`, `indentLines`,
@@ -232,7 +307,21 @@ function aceSurface(area, seeded) {
   const KEPT = typeof EDITOR === 'undefined' ? {keymap: 'default'} : EDITOR;
   if (KEPT.keymap !== 'default') {
     editor.setKeyboardHandler(KEPT.keymap === 'vim' ? 'ace/keyboard/vim' : null);
+    if (KEPT.keymap === 'vim') { vimWalksTheScreen(); vimYanksToTheClipboard(); }
   }
+
+  // **Ace measures its container when it is told to and never on its own.**
+  // It is the same fact about cytoscape that `openproj:room` was added for, and
+  // this is the second box to need it: the editor's height is the room the
+  // record page has since that page stopped scrolling, so every window resize
+  // changes it, and an Ace that was not told goes on drawing the number of lines
+  // it had when the session opened — text under the status strip, a caret that
+  // scrolls to a place the gutter disagrees about.
+  //
+  // `openproj:room` and not `resize`: the room is what actually sizes this box,
+  // it is already computed, and it settles a frame or two after the resize a
+  // listener here would hear. One event, one source of the number.
+  addEventListener('openproj:room', () => editor.resize());
   editor.textInput.getElement().setAttribute('aria-label', area.getAttribute('aria-label') || '');
 
   // **The five default commands that fetch a module over the network, removed.**
@@ -548,6 +637,7 @@ function aceSurface(area, seeded) {
     keymaps: typeof KEYMAPS === 'undefined' ? ['default'] : KEYMAPS,
     setKeymap(name) {
       editor.setKeyboardHandler(name === 'vim' ? 'ace/keyboard/vim' : null);
+      if (name === 'vim') { vimWalksTheScreen(); vimYanksToTheClipboard(); }
       // And the claimed keys go back on, which is not a courtesy: Ace's
       // `setKeyboardHandler` pops every handler above its default one before
       // adding the new keymap, so a keymap change takes the link popup's keys

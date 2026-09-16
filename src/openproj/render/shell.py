@@ -734,7 +734,45 @@ pre.mermaid[data-processed] svg { height: auto; }
 /* What a failed load leaves behind, so raw mermaid source is not mistaken for the
    page working. Drawn by the loader, which is the only thing that knows. */
 .mermaidwhy { color: var(--muted); font-size: 12px; margin: -.7rem 0 1rem; }
-#build { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .5rem; }
+/* What is running, at the foot of every page. Muted and small because it is
+   reference rather than news: nobody reads it until something behaves oddly, and
+   then it is the first thing they ask for.
+
+   Here and not in `_DETAIL_STYLE`, where everything below the first line used to
+   live. That sheet is loaded by the record, create, cycle, cycles, help and deck
+   pages and by no others — so the footer was 11px muted mono under a hairline on
+   half the app and 14px sans with accent-coloured links, hard against the
+   content, on the other half. It went unnoticed for as long as the long pages
+   scrolled their footer out of sight; giving every page a footer that stays put
+   put the two versions on screen side by side.
+
+   **One line tall, and the padding is what decides that.** It was
+   `1.4rem 1rem 1rem` — 56px, a third of it blank — which reads as a band rather
+   than as a line of reference at the foot. jcanton, 2026-09-16: "possibly all
+   pages you edited now have a 3-lines-high footer, while the other pages have it
+   1-line-high […] remove them and make it consistent across the entire app".
+
+   No horizontal padding at all, so the first glyph sits on the same x as the
+   first nav link. The `1rem` it carried was indenting the footer past every
+   other row on the page, which is only invisible while nothing is level with it.
+
+   **Padding and not margin, and that is the whole of a defect.** `--room` is
+   measured from what is below the filling box, and a border box does not include
+   margins — a bottom margin on the last element in the body collapses through it
+   and is measured by nothing at all. So the page was taller than anything knew,
+   which is a page scrollbar that exists purely to reach the footer, beside
+   whatever scrollbar the content already had. jcanton, 2026-08-25, seeing both
+   at once. As padding it is inside the border box, so every measurement of this
+   element and of the body includes it. The rule that mattered was never "how far
+   from the content" — it was "be measurable". */
+#build {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .5rem;
+  margin: 0; padding: .4rem 0 .15rem;
+  border-top: 1px solid var(--line);
+  font-size: 11px; color: var(--muted); font-family: var(--font-mono);
+}
+#build a, #build a:visited { color: inherit; text-decoration: none; }
+#build a:hover { color: var(--accent); text-decoration: underline; }
 /* The character itself, and never the CSS escape `\\00B7`. This stylesheet is a
    Python triple-quoted string, so a backslash in it is a PYTHON escape first:
    `\\0` is octal, and the rule shipped a NUL byte followed by the text `B7`.

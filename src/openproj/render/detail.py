@@ -945,6 +945,21 @@ _DETAIL = """
       modes". So it is a `FORMATS` entry in `controls.py` now, drawn into
       `#marks` beside the image button, and this bar is back to Slide, the
       three views and Delete. -#}
+  {#- One row, and the commit bar is the other half of it — jcanton, 2026-09-16:
+      "move that bar above, in-line with the slide/edit/side-by-side/etc buttons,
+      right of [delete], so we gain more vertical space".
+
+      What it replaces is a band of blank page. The bar's box was reserved below
+      this row with `visibility: hidden` so that starting a session did not move
+      the heading (`article.record .editbar + .commitbar[hidden]`, his own
+      2026-08-24 rule: "page elements should not move or appear/disappear when
+      switching views"). That rule is kept and the band is not: a row that
+      already exists costs nothing to reserve space in, and the reservation is
+      now horizontal — to the right of Delete, where there was nothing.
+
+      The wrapper is only drawn for somebody who may write, because the bar is
+      the only other thing in it and a reader's is `display: none` throughout. -#}
+  <div class="toolrow">
   <p class="editbar">{% if not creating %}{{ slidebar }}{% endif %}{{ viewbar }}{%
     if not creating %}
     <button type="button" class="delete">Delete</button>{% endif %}</p>
@@ -1005,6 +1020,7 @@ _DETAIL = """
     <span id="state" role="status"></span>
     {% endif %}
   </div>
+  {% if may_write %}</div>{% endif %}
   {% if may_write and not creating %}
   {#- The question, under the button that asks it. Hidden until then: a page that
       is always showing a way to delete the thing you are reading is a page that

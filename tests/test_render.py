@@ -3424,18 +3424,24 @@ def test_the_header_spans_the_page_and_the_facts_sit_beside_the_document(rendere
     now, and the header above the column is what says the page is this wide on
     purpose.)"""
     body = read(rendered, "detail.html")
+    # Comments stripped before matching. Every pattern below walks a rule block
+    # with `[^}]*`, and a prose comment inside one that happens to quote a
+    # declaration — `.panes { min-height: 0 }`, which one of them does, to explain
+    # why writing it there does nothing — carries a `}` that ends the walk early.
+    # The claim is about what the sheet DECLARES; a comment is not a declaration.
+    css = re.sub(r"/\*.*?\*/", " ", body, flags=re.S)
 
     assert re.search(
-        r"\.panes \{[^}]*width: var\(--measure[^}]*container-type: inline-size", body, re.S
+        r"\.panes \{[^}]*width: var\(--measure[^}]*container-type: inline-size", css, re.S
     )
-    assert not re.search(r"article\.record \{[^}]*(width|container-type):", body, re.S)
-    assert re.search(r"article\.record \{[^}]*margin: 0 0 3rem", body, re.S)
+    assert not re.search(r"article\.record \{[^}]*(width|container-type):", css, re.S)
+    assert re.search(r"article\.record \{[^}]*margin: 0 0 3rem", css, re.S)
     assert "@container (min-width: 56rem)" in body
-    assert re.search(r"\.panes > \.facts \{[^}]*grid-column: 2", body, re.S)
-    assert re.search(r"\.panes > \.main \{[^}]*grid-column: 1", body, re.S)
+    assert re.search(r"\.panes > \.facts \{[^}]*grid-column: 2", css, re.S)
+    assert re.search(r"\.panes > \.main \{[^}]*grid-column: 1", css, re.S)
     # The grip is a handle now, not a border: a full-height rule in --line is
     # exactly how a page draws the edge of a pane.
-    assert re.search(r"#grip::before \{[^}]*height: 48px", body, re.S)
+    assert re.search(r"#grip::before \{[^}]*height: 48px", css, re.S)
     # And it belongs to a document. On the index every article is hidden, so it
     # measured zero and parked itself down the left edge of the list.
     assert "grip.hidden = !article" in body
@@ -3699,26 +3705,37 @@ def test_the_detail_page_names_each_document_it_holds(rendered: Path, seed_index
 
 
 _OPENED = """
-const fills = document.querySelector('[data-fills]');
+// Whatever has travel in it, walked to rather than named: the index scrolls in
+// its own box and a record scrolls in the column its document is in, and which
+// element that is has moved twice this week.
+const scroller = start => {
+  for (let box = start; box; box = box.parentElement) {
+    const how = getComputedStyle(box).overflowY;
+    if ((how === 'auto' || how === 'scroll') && box.scrollHeight > box.clientHeight) return box;
+  }
+  return document.scrollingElement;
+};
+const index = scroller(document.querySelector('.toc'));
 // Deep in the index, which is what a reader clicking the seventeenth title has
 // done. Awaited, because a scroll offset assigned and read in the same task is
 // the value that was assigned and not the one the box settled on.
-fills.scrollTop = %d;
+index.scrollTop = %d;
 await new Promise(settled => setTimeout(settled, 100));
-const parked = Math.round(fills.scrollTop);
+const parked = Math.round(index.scrollTop);
 location.hash = '%s';
 await new Promise(settled => setTimeout(settled, 300));
 const article = document.getElementById('%s');
-return {parked, opened: Math.round(fills.scrollTop),
-        // How far the box CAN scroll now that it holds one record. Without it a
-        // clamp is indistinguishable from a reset: hiding the index shortens the
-        // content, the browser pulls the offset back to whatever is left, and on a
-        // short record that is zero — so the defect would pass this quietly.
-        room: fills.scrollHeight - fills.clientHeight,
+const reading = scroller(article.querySelector('.panes > .main') || article);
+return {parked, opened: Math.round(reading.scrollTop),
+        // How far the record CAN scroll. Without it a record with nothing below
+        // the fold would pass this whatever the offset started at.
+        room: reading.scrollHeight - reading.clientHeight,
         shown: getComputedStyle(article).display !== 'none',
-        // Where the record's own first line is, against the top of the box.
+        // Where the record's own first line is, against the top of the frame the
+        // record is drawn in — which is the article itself now that the page
+        // fills the window and the heading sits above the scrolling column.
         title: Math.round(article.querySelector('h1').getBoundingClientRect().top
-                          - fills.getBoundingClientRect().top)};
+                          - article.getBoundingClientRect().top)};
 """
 
 
@@ -4548,6 +4565,54 @@ def every_page(index: Index) -> dict[str, str]:
             arguments |= {"record_id": next(iter(index.records))}
         pages[name] = entry(**arguments)
     return pages
+
+
+def test_every_filtering_view_puts_its_own_sentence_on_the_search_box_s_line(
+    seed_index: Index,
+):
+    """Seven pages filter a list with the shared control bar, and they wore two
+    different headers: the table, the graph and the timeline put the sentence a
+    view writes about itself inside the bar, at the far end of the search box's
+    line; Records, People, Issues and Notes put it on a row of its own above,
+    which costs a row and moves the search box down the page relative to the other
+    three. jcanton, 2026-09-16: "can you make the latter(s) consistent with the
+    formers?"
+
+    Asked as "nothing stands between the heading and the bar", which is the shape
+    rather than the wording — a page that grows a banner above its controls fails
+    this whether or not it is prose. The clipped `<h1>` is allowed and is the only
+    thing that is: every one of these pages announces itself to a screen reader
+    and draws nothing, because the lit nav item already says which view this is.
+    """
+    from pages import elements
+
+    from openproj.render import render_records
+
+    bars = {
+        name: page
+        for name, page in every_page(seed_index).items()
+        if 'id="controls"' in page
+    }
+    # Issues and Notes are `render_records` under another `only`, so the sweep
+    # over the namespace draws neither — and they are two of the four pages this
+    # is about. Added by name, which is the one thing in this file allowed to be
+    # a hand-written list: they are not entry points, they are arguments.
+    for kind in ("issue", "note"):
+        bars[f"render_records({kind})"] = render_records(seed_index, only=kind)
+    assert len(bars) >= 7, f"only {sorted(bars)} draw the shared bar, so this proves little"
+    for name, page in bars.items():
+        inside = page.split('<main id="main">', 1)[1]
+        before = inside.split('id="controls"', 1)[0]
+        stray = [
+            one
+            for one in elements(before)
+            if one.tag in {"p", "div", "section", "ul", "table"}
+            and "sr-only" not in (one.attrs.get("class") or "").split()
+        ]
+        assert not stray, (
+            f"{name} draws {[one.tag for one in stray]} between the heading and "
+            "the control bar, so its header is a different shape from the table's"
+        )
 
 
 _FOOTER = """
