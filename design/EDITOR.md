@@ -1058,7 +1058,10 @@ viewport arithmetic for a surface that was the window.
 
 In the split, both panes pin to `--writing` and scroll inside the page — deliberately, because the
 scroll sync maps both sides in pane pixels and a pane that grows with its content has no
-`scrollTop` to drive. The page itself scrolls too, which under full page it was forbidden to; the
+`scrollTop` to drive. The page itself scrolls too, which under full page it was forbidden to —
+though since 2026-09-16 the thing that scrolls is the shell's `.pagefill` box rather than the
+document, so that the nav and the footer stay in view the way they do on every other page; the
+reader's gesture is unchanged and `_page(fills=True)` is where it is decided. The
 acceptance test for the whole change is jcanton's own sentence, measured in Chrome: the nav, the
 back row, the switcher, the commit bar's box, the heading, the meta line and the facts column's
 top keep their boxes across all three views — the split may move `left` (it widens by one body,

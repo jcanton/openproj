@@ -326,21 +326,30 @@ def test_the_contents_folds_on_a_narrow_screen_and_sticks_on_a_wide_one(page: st
     """
     from browser import chrome, measured_in
 
+    # The box that scrolls, and it is no longer the window. Since the shell gives
+    # a page with no filling box of its own one around the whole of its content
+    # (`_page(fills=True)`), the documents scroll inside that and the document does
+    # not scroll at all — so `scrollTo(0, 4000)` moved nothing and the two readings
+    # below were the same number. The claim is unchanged: the contents holds still
+    # while the documents beside it go past. What it holds against is what moved.
     script = """
     const fold = document.querySelector('.tocfold');
     const summary = fold.querySelector('summary');
-    scrollTo(0, 0);
-    const before = Math.round(fold.getBoundingClientRect().top);
-    scrollTo(0, 4000);
-    const after = Math.round(fold.getBoundingClientRect().top);
+    const box = document.querySelector('[data-fills]');
+    box.scrollTop = 0;
+    const before = Math.round(fold.getBoundingClientRect().top - box.getBoundingClientRect().top);
+    box.scrollTop = 4000;
+    await new Promise(settled => setTimeout(settled, 100));
+    const after = Math.round(fold.getBoundingClientRect().top - box.getBoundingClientRect().top);
     return {open: fold.open, summary: getComputedStyle(summary).display,
-            top: [before, after],
+            top: [before, after], scrolled: box.scrollTop,
             scrollable: fold.scrollHeight > fold.clientHeight};
     """
     browser = chrome()
     wide = measured_in(browser, page, tmp_path / "wide.html", 1280, script, 900)
     assert wide["open"] is True
     assert wide["summary"] == "none", "nothing to fold beside a column of its own"
+    assert wide["scrolled"] >= 4000, "the documents did not scroll, so nothing was asked"
     assert wide["top"][1] <= 16, f"the contents did not stick: {wide['top']}"
 
     # Measured on a short window rather than on the 900 above, because WHETHER the

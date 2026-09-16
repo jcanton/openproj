@@ -2450,6 +2450,7 @@ _VIEWING = (
     _STUB_PREVIEW
     + """
 const article = document.querySelector('article.record');
+const fills = document.querySelector('[data-fills]');
 const area = document.querySelector('textarea[name=body]');
 const pane = document.getElementById('body-preview');
 const marks = document.getElementById('marks');
@@ -2498,7 +2499,12 @@ const split = {
                        - pane.getBoundingClientRect().height) <= 2,
   boxScrolls: area.scrollHeight > area.clientHeight + 1,
   paneScrolls: pane.scrollHeight > pane.clientHeight + 1,
-  pageScrolls: document.documentElement.scrollHeight > innerHeight + 1,
+  // The page under the split still scrolls — but the page is no longer the
+  // document. Every record sits in the shell's filling box now (`_page(fills=
+  // True)`), which is what keeps the nav and the footer in view, so this asks
+  // the box the reader actually scrolls. Against `document.documentElement` it
+  // read False on a page where the facts below the split are one flick away.
+  pageScrolls: fills.scrollHeight > fills.clientHeight + 1,
 };
 
 seg('view').click();
@@ -2599,6 +2605,10 @@ def test_the_three_views_are_one_of_three_and_each_pane_scrolls_on_its_own(
     # and the page underneath goes on scrolling to the facts and the promote
     # bar. Under full page this was False because `body.fullpage` cut the
     # page's own scrollbar off — that surface is gone.
+    #
+    # The page that scrolls is the shell's filling box since 2026-09-16 and not
+    # the document, which is what keeps the nav and the footer in view. Same
+    # claim, one scroller down; `_VIEWING` measures it there.
     assert got["split"] == {
         "sideBySide": True,
         "sameHeight": True,
@@ -6176,6 +6186,7 @@ _NARROW_WRITING = (
     _STUB_PREVIEW
     + """
 const article = document.querySelector('article.record');
+const fills = document.querySelector('[data-fills]');
 const area = document.querySelector('textarea[name=body]');
 const facts = document.querySelector('.facts');
 const pane = document.getElementById('body-preview');
@@ -6186,8 +6197,14 @@ const rows = element => {
 const state = () => ({
   rows: rows(area),
   factsWhole: Math.round(facts.getBoundingClientRect().height) >= facts.scrollHeight - 1,
-  factsReachable: facts.getBoundingClientRect().bottom + scrollY
-                  <= document.documentElement.scrollHeight + 1,
+  // How far down the SCROLLER the facts end, against how far that scroller goes.
+  // It was the document's scroll height, and the document stopped scrolling when
+  // the shell began giving a record page the box that keeps the nav and the
+  // footer in view — so a question about reach was being asked of a scrollport
+  // with no travel in it, and answered False about facts one flick away.
+  factsReachable:
+    facts.getBoundingClientRect().bottom - fills.getBoundingClientRect().top
+    + fills.scrollTop <= fills.scrollHeight + 1,
 });
 
 // The create form is always editing; the record page opens a session here.

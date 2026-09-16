@@ -2535,6 +2535,11 @@ def render_cycle(
         # and not the word in the nav, so it stays on the screen.
         "cycles",
         index.unreadable,
+        # The betting table's `thead th` is already sticky; what it was sticking
+        # to was the window, which meant the setup form and the two headings
+        # above it scrolled away and took the nav and the footer with them.
+        # Sticky against the shell's box keeps the header row and keeps them.
+        fills=True,
     )
 
 
@@ -2662,6 +2667,9 @@ def render_cycles(index: Index, links: Links = STATIC, base_commit: str | None =
         links,
         "cycles",
         index.unreadable,
+        # A card per cycle, and a plan two years old has enough of them to run off
+        # the bottom of the window.
+        fills=True,
     )
 
 

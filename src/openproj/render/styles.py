@@ -894,13 +894,24 @@ _DETAIL_STYLE = (
    is as wide as the word inside it and "Project", "Pitch" and "Task" are three
    widths, which ragged the whole column. A fixed inline-block wide enough for
    the longest of the three, with the gap inside it rather than as a margin, so
-   a row that wraps wraps its title and not its marker. */
-{% for k in kinds %}
-.toc li .chip.kind-{{ k }} {
+   a row that wraps wraps its title and not its marker.
+
+   One rule and no loop over the ladder, which is what this was and which never
+   drew anything. `_DETAIL_STYLE` is a plain string handed to `_page` as `style`
+   and inlined by the shell through an ordinary expression — Jinja does not
+   re-render what a variable HOLDS, so a for-tag written in this sheet reached
+   the browser as literal text inside a `<style>` block, and the rule under it
+   named the loop variable in its selector: not a selector at all, never matched,
+   and the ragged column of titles this was written to fix has been ragged ever
+   since. The status and kind loops in the shell work because they are in the
+   shell's own TEMPLATE, which is rendered rather than inserted.
+   A loop was never needed. Every chip in one of these rows is a kind chip — the
+   template puts exactly one there — so the rung is not what the rule is about,
+   and naming it was what made the rule need a ladder to write itself from. */
+.toc li .chip {
   display: inline-block; min-width: 5.4rem; text-align: center;
   margin-right: .5rem; vertical-align: baseline;
 }
-{%- endfor %}
 /* The header's box, and it is the page's own width — jcanton, 2026-08-24: "all
    above the red lines should be full width, same as in the side-by-side view,
    and only the body and fields below it keep the current horizontal sizing".

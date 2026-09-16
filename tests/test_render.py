@@ -3692,6 +3692,74 @@ def test_the_detail_page_names_each_document_it_holds(rendered: Path, seed_index
     assert "document.querySelector('.toc').style.display = found ? 'none' : '';" in body
 
 
+_OPENED = """
+const fills = document.querySelector('[data-fills]');
+// Deep in the index, which is what a reader clicking the seventeenth title has
+// done. Awaited, because a scroll offset assigned and read in the same task is
+// the value that was assigned and not the one the box settled on.
+fills.scrollTop = %d;
+await new Promise(settled => setTimeout(settled, 100));
+const parked = Math.round(fills.scrollTop);
+location.hash = '%s';
+await new Promise(settled => setTimeout(settled, 300));
+const article = document.getElementById('%s');
+return {parked, opened: Math.round(fills.scrollTop),
+        // How far the box CAN scroll now that it holds one record. Without it a
+        // clamp is indistinguishable from a reset: hiding the index shortens the
+        // content, the browser pulls the offset back to whatever is left, and on a
+        // short record that is zero — so the defect would pass this quietly.
+        room: fills.scrollHeight - fills.clientHeight,
+        shown: getComputedStyle(article).display !== 'none',
+        // Where the record's own first line is, against the top of the box.
+        title: Math.round(article.querySelector('h1').getBoundingClientRect().top
+                          - fills.getBoundingClientRect().top)};
+"""
+
+
+def test_a_record_opened_from_the_foot_of_the_index_starts_at_its_own_first_line(
+    rendered: Path, seed_index: Index, tmp_path: Path
+):
+    """The behaviour the hash router's `scrollTo(0, 0)` used to buy, now that the
+    line is gone and nothing in the page replaces it.
+
+    Every record and the index above them sit in the shell's filling box since
+    2026-09-16, which is what keeps the nav and the footer in view — so the
+    document does not scroll and that call reset an offset already zero, leaving
+    the box's, which is the one a reader has moved. The obvious repair,
+    `fills.scrollTop = 0`, turned out to be dead: the router hides the index and
+    every other article, so the wanted one is the only thing in the box with a
+    layout and the fragment navigation lands on it at zero unaided. Measured with
+    the line and without it, in Chrome and in Firefox.
+
+    So this holds the outcome rather than the mechanism, and it is asked of the
+    browser because an offset is not something markup can be read for. A router
+    that stopped hiding the others — or a page that stopped scrolling in the box —
+    breaks it, and both are changes somebody could make believing they were safe.
+    """
+    from browser import chrome, measured_in
+
+    # The longest document in the corpus, taken from the corpus rather than named
+    # here: the record has to be one with somewhere to scroll TO, or the browser's
+    # own clamp does the resetting and this proves nothing.
+    wanted = max(seed_index.records, key=lambda one: len(seed_index.records[one].body))
+    parked = 300
+    got = measured_in(
+        chrome(),
+        read(rendered, "detail.html"),
+        tmp_path / "opened.html",
+        1280,
+        _OPENED % (parked, wanted, wanted),
+        900,
+    )
+    assert got["parked"] == parked, "the index did not scroll, so nothing was ever left behind"
+    assert got["shown"], f"{wanted} was not the document the router drew"
+    assert got["room"] >= parked, (
+        f"{wanted} has only {got['room']}px to scroll, so a clamp would pass this on its own"
+    )
+    assert got["opened"] == 0, f"{wanted} opened {got['opened']}px down a document nobody has read"
+    assert got["title"] >= 0, f"its title sits {-got['title']}px above the top of the box"
+
+
 def test_a_heading_that_repeats_the_nav_is_announced_and_not_drawn(
     rendered: Path, seed_index: Index
 ):
@@ -4442,6 +4510,150 @@ def test_the_box_each_view_fills_stops_where_the_window_does(
                 f"{where}: the plan sits {fitted[near]}px from the {near} edge and "
                 f"{fitted[far]}px from the {far} one, so it is not centred {axis} "
                 f"in the canvas it was given"
+            )
+
+
+def every_page(index: Index) -> dict[str, str]:
+    """Every page the renderer can draw, keyed by the entry point that drew it.
+
+    Read off `render.py`'s namespace rather than listed here, which is
+    `test_every_page_the_renderer_can_draw_carries_the_banner`'s move and is here
+    for the same reason: the claim below is about pages, all of them, and the one
+    page missing from a hand-written list is exactly the page that will forget.
+    Six of them already had — the nav mark went missing on two routes the same
+    way.
+    """
+    import inspect
+
+    from openproj import render
+
+    pages = {}
+    for name, entry in sorted(vars(render).items()):
+        if not name.startswith("render_") or name == "render_static":
+            continue
+        wanted = inspect.signature(entry).parameters
+        arguments = {"index": index} if "index" in wanted else {}
+        if "kind" in wanted:
+            arguments |= {"kind": "task", "base_commit": "deadbee"}
+        if "number" in wanted:
+            arguments |= {"number": 37}
+        if "record_id" in wanted:
+            arguments |= {"record_id": next(iter(index.records))}
+        pages[name] = entry(**arguments)
+    return pages
+
+
+_FOOTER = """
+const root = document.documentElement;
+const foot = document.getElementById('build').getBoundingClientRect();
+const nav = document.querySelector('nav').getBoundingClientRect();
+return {
+  scrolls: root.scrollHeight - root.clientHeight,
+  sideways: root.scrollWidth - root.clientWidth,
+  navTop: Math.round(nav.top),
+  footBottom: Math.round(foot.bottom),
+  window: innerHeight,
+  fills: !!document.querySelector('[data-fills]'),
+};
+"""
+
+
+@pytest.mark.parametrize("window", (900, 700))
+def test_every_page_keeps_its_nav_and_its_footer_where_the_reader_left_them(
+    seed_index: Index, window: int, tmp_path: Path
+):
+    """Nothing in this app is `position: fixed`. A page keeps the nav at the top
+    and the build footer at the foot by not scrolling the document at all: one box
+    is given the window's remaining height, the content scrolls inside it, and
+    everything around it stays put.
+
+    Six pages had no such box and scrolled the document instead — the record page,
+    the index of records, the create form, Help, Cycles and one cycle. jcanton,
+    2026-09-16: "all pages except for the /detail page have fixed header and
+    footer", and the sweep found five more.
+
+    Asked of the browser and of every entry point at once, because both halves
+    have already been got wrong by a narrower test. `[data-fills]` being in the
+    markup is not the claim — the cycle page had one and still scrolled 931px,
+    because a `position: absolute` label inside it named no positioned ancestor
+    and hung out of the bottom of a box that was clipping everything else. Where
+    the footer ENDS UP is the claim.
+    """
+    from browser import chrome, measured_in
+
+    browser = chrome()
+    drawn = every_page(seed_index)
+    assert len(drawn) >= 10, f"only {len(drawn)} entry points were drawn, so this proves little"
+    for name, page in drawn.items():
+        got = measured_in(browser, page, tmp_path / f"{name}-{window}.html", 1280, _FOOTER, window)
+        where = f"{name} at a {got['window']}px window"
+        assert got["fills"], f"{where}: no box takes the window's remaining height"
+        assert got["scrolls"] == 0, f"{where}: the document scrolls {got['scrolls']}px"
+        assert got["sideways"] == 0, f"{where}: the document scrolls {got['sideways']}px sideways"
+        assert got["navTop"] >= 0, f"{where}: the nav sits {-got['navTop']}px above the window"
+        assert got["footBottom"] <= got["window"], (
+            f"{where}: the footer ends {got['footBottom'] - got['window']}px below the window"
+        )
+
+
+def test_no_page_serves_a_stylesheet_with_a_comment_that_closes_nothing(seed_index: Index):
+    """A `*/` outside a comment is not a no-op and it is not a parse error either.
+
+    CSS error recovery swallows from the stray marker to the next `{` as though it
+    were a selector, and then discards the block behind it — so a paragraph of
+    prose left outside its `/*` does not break the page, it silently deletes the
+    NEXT RULE. That is how `.pagefill { max-height: var(--room) }` and
+    `.tocfold { position: sticky }` both stopped applying while every substring
+    assertion about them went on passing: the text was in the file, in the served
+    bytes, and in nothing the browser resolved.
+
+    Cheap, and it is the only check in this suite that would have caught it.
+    `tests/cascade.py` would not: it strips comments with a non-greedy regex, so it
+    reads the prose as a selector, attributes the declarations to it, and reports a
+    rule that Chrome never saw — a harness agreeing with itself.
+    """
+    for name, page in every_page(seed_index).items():
+        css = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
+        depth, at = 0, 0
+        while (mark := re.compile(r"/\*|\*/").search(css, at)) is not None:
+            at = mark.end()
+            if mark.group() == "/*":
+                assert depth == 0, (
+                    f"{name}: `/*` at {mark.start()} opens a comment inside one — "
+                    "the first is unterminated and has eaten the rules after it"
+                )
+                depth = 1
+            else:
+                assert depth == 1, (
+                    f"{name}: `*/` at {mark.start()} closes nothing, so CSS recovery "
+                    "reads what follows as a selector and drops the rule behind it: "
+                    f"…{css[max(0, mark.start() - 60) : mark.end()]}"
+                )
+                depth = 0
+        assert depth == 0, f"{name}: the stylesheet ends inside a comment"
+
+
+def test_no_page_serves_a_piece_of_the_template_that_drew_it(seed_index: Index):
+    """A Jinja comment ends at the first `#` `}` in it, wherever that is.
+
+    `{#- … The `-#}` below eats the gap … -#}` closed four lines early, because
+    the closing tag quoted inside a code span is still a closing tag — so the rest
+    of that explanation was TEXT, and rendered into `<p class="eyebrow">` above
+    the kind chip of every record nobody can edit: the whole static export, and
+    every reader without a commit bit. It shipped, and a screenshot is what found
+    it, months later, while something else was being looked at.
+
+    Nothing could have caught it by reading the page for what should be there —
+    the chip was correct and every assertion about it passed. This reads the page
+    for what should NOT be: a page that carries a piece of its own template has
+    lost control of where that template ends.
+    """
+    for name, page in every_page(seed_index).items():
+        for leaked in ("{%", "-#}", "{#"):
+            at = page.find(leaked)
+            assert at < 0, (
+                f"{name} serves `{leaked}`, so a tag or a comment is not closed where "
+                f"it looks closed: …{page[max(0, at - 120) : at + 40]}"
             )
 
 
