@@ -3690,6 +3690,12 @@ def test_the_detail_page_names_each_document_it_holds(rendered: Path, seed_index
     # And the router shows one or the other, never both.
     assert "article.style.display = match ? '' : 'none';" in body
     assert "document.querySelector('.toc').style.display = found ? 'none' : '';" in body
+    # And it puts the box back to the top itself rather than leaving it to the
+    # fragment navigation. A substring, deliberately, beside the browser test
+    # below that holds the outcome: whether the browser ALSO does it depends on
+    # the build — some do, CI's did not — so the one assertion that cannot flake
+    # is that the page does not depend on the answer.
+    assert "if (found && fills) fills.scrollTop = 0;" in body
 
 
 _OPENED = """
@@ -3719,22 +3725,23 @@ return {parked, opened: Math.round(fills.scrollTop),
 def test_a_record_opened_from_the_foot_of_the_index_starts_at_its_own_first_line(
     rendered: Path, seed_index: Index, tmp_path: Path
 ):
-    """The behaviour the hash router's `scrollTo(0, 0)` used to buy, now that the
-    line is gone and nothing in the page replaces it.
+    """The hash router's `scrollTo(0, 0)` became `fills.scrollTop = 0` when every
+    record moved into the shell's filling box, and the box is what a reader has
+    scrolled — the document does not scroll at all any more.
 
-    Every record and the index above them sit in the shell's filling box since
-    2026-09-16, which is what keeps the nav and the footer in view — so the
-    document does not scroll and that call reset an offset already zero, leaving
-    the box's, which is the one a reader has moved. The obvious repair,
-    `fills.scrollTop = 0`, turned out to be dead: the router hides the index and
-    every other article, so the wanted one is the only thing in the box with a
-    layout and the fragment navigation lands on it at zero unaided. Measured with
-    the line and without it, in Chrome and in Firefox.
+    **This test was written to hold a behaviour nothing in the page was doing.**
+    The router hides the index and every other article, so the wanted one is the
+    only thing in the box with a layout and the fragment navigation scrolls it to
+    the top unaided — which is what four measurements on one machine said, with
+    the reset and without it, in Chrome and in Firefox. On that evidence the line
+    was deleted. CI's headless Chrome then opened the record 300px down, on the
+    run after the one where this same test on this same code passed: the
+    behaviour belongs to a browser build, so what looked like a green test was a
+    flaky one, and the line is back.
 
-    So this holds the outcome rather than the mechanism, and it is asked of the
-    browser because an offset is not something markup can be read for. A router
-    that stopped hiding the others — or a page that stopped scrolling in the box —
-    breaks it, and both are changes somebody could make believing they were safe.
+    Which is the lesson worth keeping beside it: `git stash`-and-measure proves a
+    line is dead on the machine doing the measuring. A page that can do a thing
+    itself should not ask a browser to do it.
     """
     from browser import chrome, measured_in
 
