@@ -120,6 +120,20 @@ def test_the_policy_permits_exactly_what_the_pages_actually_do():
     """Every one of these is a thing a rendered page does, and a policy that
     forbade one would be found by a blank page rather than by a test."""
     assert "img-src 'self' data:" in CSP, "assets are same-origin, pasted images are data:"
+    # `blob:`, on this directive and on no other. Excalidraw resizes an image
+    # dropped into a drawing through image-blob-reduce, whose first step is a
+    # `URL.createObjectURL(blob)` assigned to an `Image()`. Asserted here as
+    # well as in the policy's own comment because it is the one grant on this
+    # list that looks like a loosening and is not: a `blob:` URL names no
+    # origin and can only be minted by this document's own script, which
+    # `script-src 'unsafe-inline'` above already runs.
+    assert "img-src 'self' data: blob:" in CSP, (
+        "a drawing cannot take a dropped image without this — see design/drawings.md, "
+        "'The image tool, and the directive that was named wrong'"
+    )
+    assert "worker-src" not in CSP, (
+        "the image path builds no Workers; a grant here would be one nothing asked for"
+    )
     assert "font-src data:" in CSP, "the typeface is inlined as a data: URI"
     assert "style-src 'unsafe-inline'" in CSP, "every stylesheet is an inline block"
     assert "script-src 'unsafe-inline'" in CSP, "every script is an inline block"

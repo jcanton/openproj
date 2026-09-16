@@ -9337,6 +9337,224 @@ def test_escape_backs_out_of_the_question_and_discard_throws_the_drawing_away(
         )
 
 
+# A photograph, built in the page rather than checked in as a fixture: 4000x3000
+# is a phone's, and the two fills below are the two ends of what a JPEG encoder
+# does with one. `noise` is every pixel independent, which compresses to nothing
+# and is the worst case this feature has; `photo` is broad gradients with a few
+# hundred translucent discs over them, which is what an ordinary picture costs.
+# The point of carrying both is that the ceiling assertion below means something:
+# a test that only ever dropped the cheap one would pass with the resize broken.
+def _an_image_of(kind: str) -> str:
+    fill = {
+        "noise": """
+      const bits = g.createImageData(4000, 3000);
+      for (let i = 0; i < bits.data.length; i += 4) {
+        bits.data[i] = Math.random() * 256;
+        bits.data[i + 1] = Math.random() * 256;
+        bits.data[i + 2] = Math.random() * 256;
+        bits.data[i + 3] = 255;
+      }
+      g.putImageData(bits, 0, 0);
+    """,
+        "photo": """
+      const grad = g.createLinearGradient(0, 0, 4000, 3000);
+      grad.addColorStop(0, '#2b5876');
+      grad.addColorStop(0.5, '#d1913c');
+      grad.addColorStop(1, '#4e4376');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 4000, 3000);
+      for (let i = 0; i < 300; i++) {
+        g.fillStyle = `hsla(${Math.random() * 360},60%,50%,0.35)`;
+        g.beginPath();
+        g.arc(Math.random() * 4000, Math.random() * 3000, Math.random() * 400, 0, 7);
+        g.fill();
+      }
+    """,
+    }[kind]
+    # A real `drop`, with a real `DataTransfer` carrying a real `File` — the
+    # seam jcanton reported against ("I tried drag-dropping an image into an
+    # excalidraw drawing"), and not `api.addFiles`, which would skip every step
+    # that was actually broken. `isTrusted: false` costs nothing here: a drop
+    # handler is called by React either way, and unlike a shape tool nothing on
+    # this path asks the browser to synthesise anything.
+    return """
+(async () => {
+  const c = document.createElement('canvas');
+  c.width = 4000; c.height = 3000;
+  const g = c.getContext('2d');
+  FILL
+  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.9));
+  const file = new File([blob], 'dropped.jpg', {type: 'image/jpeg'});
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  const target = document.querySelector('.excalidraw canvas.interactive')
+              || document.querySelector('.excalidraw canvas');
+  const box = target.getBoundingClientRect();
+  for (const kind of ['dragenter', 'dragover', 'drop']) {
+    target.dispatchEvent(new DragEvent(kind, {
+      bubbles: true, cancelable: true, dataTransfer: dt,
+      clientX: box.left + box.width / 2, clientY: box.top + box.height / 2,
+    }));
+  }
+  // Returns the moment the events are dispatched, and the waiting is done from
+  // Python. Not a style choice: `wsclient` puts a 10s timeout on the DevTools
+  // socket, so ONE `Runtime.evaluate` that waits out a slow insert in the page
+  // takes the whole connection down with it and reports a `TimeoutError` from
+  // inside the harness rather than a failure of the thing under test. Building
+  // and encoding 12 megapixels above already spends a few seconds of that
+  // budget; the insert waits outside it.
+  return {source: blob.size};
+})()
+""".replace("FILL", fill)
+
+
+_WATCH_THE_POLICY = """
+window.__violations = [];
+document.addEventListener('securitypolicyviolation', event => {
+  window.__violations.push(event.effectiveDirective + ' <- ' + String(event.blockedURI));
+});
+// Every Worker this page constructs, and whether the construction survived.
+// This is the directive the old refusal named, and the reason it is hooked is
+// that the refusal was wrong: nothing on the image path builds one, so the
+// empty list below is the correction, measured rather than argued.
+window.__workers = [];
+const RealWorker = window.Worker;
+window.Worker = function (url, options) {
+  try {
+    const made = new RealWorker(url, options);
+    window.__workers.push('built:' + String(url).slice(0, 30));
+    return made;
+  } catch (thrown) {
+    window.__workers.push('refused:' + thrown.name);
+    throw thrown;
+  }
+};
+true
+"""
+
+
+@pytest.mark.parametrize("kind", ["photo", "noise"])
+def test_a_dropped_image_is_resized_and_saved_into_the_drawing(
+    live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
+    tmp_path: Path,
+    kind: str,
+):
+    """jcanton, 2026-09-16: "I tried drag-dropping an image into an excalidraw
+    drawing and got 'Error: images are disabled'."
+
+    It was `UIOptions.tools.image = false`, set on 2026-08-26 on a reading of
+    the CSP that named the wrong directive — see `render/controls.py`'s own
+    comment, which this test is the evidence behind. Three claims, and the
+    parametrisation is what makes the third one mean anything:
+
+    1. a dropped file really is inserted, through the drop seam that was
+       reported, with **no `securitypolicyviolation` that stops it and no
+       Worker constructed at all** — the construction the old refusal was
+       written about;
+    2. it is downscaled on the way in. Not asserted as a pixel count, which
+       is Excalidraw's business, but as the only consequence that matters
+       here: a 4000x3000 source that Excalidraw's own 4 MB insert ceiling
+       would have REFUSED unresized is accepted and saved;
+    3. and the saved drawing is inside `MAX_DRAWING_BYTES`. `noise` is the
+       case that could fail — a JPEG of pure noise is the largest thing this
+       path can be handed — so the headroom below is a floor and not a
+       typical reading.
+
+    No exact byte count is asserted, here as everywhere else on this page:
+    `Math.random()` fills the source and Excalidraw's roughness seeds its own
+    wobble (`design/drawings.md`, "Five helpers, not one"). What is asserted is
+    the side of the ceiling the result lands on.
+    """
+    url = f"{live_server}/detail/{TASK}?both"
+    with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
+        time.sleep(2)
+        _evaluated(call, _WATCH_THE_POLICY)
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelector('.drawmenu button').click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+
+        dropped = _evaluated(call, _an_image_of(kind))
+        # The insert is asynchronous all the way down — a `FileReader`, a
+        # decode, a resize and a React commit — and it is waited out here, off
+        # the socket. Nothing is asserted on the clock: if the wait were short,
+        # the round trip at the bottom is what goes red.
+        time.sleep(6)
+
+        refused = _evaluated(
+            call,
+            """
+        (() => {
+          const box = document.querySelector('.excalidraw .ErrorDialog, .excalidraw .Dialog');
+          return box ? box.innerText.trim() : null;
+        })()
+        """,
+        )
+        assert refused is None, f"the {kind} drop was refused by Excalidraw itself: {refused}"
+        if kind == "noise":
+            assert dropped["source"] > 4 * 1024 * 1024, (
+                f"the noise source encoded to {dropped['source']} bytes, under Excalidraw's "
+                "own 4 MB insert ceiling — so this run would pass just as happily with the "
+                "resize broken, and proves nothing about it"
+            )
+        violations = _evaluated(call, "window.__violations")
+        assert not any("img-src" in line for line in violations), (
+            "the policy refused the blob: URL image-blob-reduce resizes through — the "
+            f"resize is broken and the original bytes are what got inserted: {violations}"
+        )
+        assert _evaluated(call, "window.__workers") == [], (
+            "something on the image path built a Worker after all, which is the claim "
+            "`render/controls.py` and the CSP comment both rest on being false"
+        )
+        assert "Error trying to resizing image file on insertion" not in " ".join(said), (
+            "Excalidraw swallowed a resize failure and inserted the original bytes — "
+            "the exact silent fallback this feature was turned off for"
+        )
+
+        # And the round trip, through the seam a person presses.
+        _evaluated(call, "document.getElementById('draw-save').click()")
+        try:
+            _until(call, "!document.querySelector('.drawpopup')", seconds=30)
+        except AssertionError:
+            # The popup staying open IS the refusal on this page, and the
+            # sentence it refused with is in the commit bar — read out here
+            # rather than left for somebody to go and find after a bare "the
+            # popup did not close". `MAX_DRAWING_BYTES` is the one this would
+            # most likely be.
+            said_so = _evaluated(call, "document.getElementById('upload').textContent")
+            raise AssertionError(
+                f"the save of the dropped {kind} was refused: {said_so!r}"
+            ) from None
+        body = _evaluated(call, "SURFACE.text()")
+        match = re.search(r"draw-[0-9a-f]{6}", body)
+        assert match, f"no drawing id landed in the body: {body[:120]!r}"
+
+        served = httpx.get(f"{live_server}/drawings/{match.group(0)}.png")
+        assert served.status_code == 200
+        assert len(served.content) <= MAX_ASSET_BYTES, (
+            f"a single dropped {kind} saved at {len(served.content)} bytes, over the "
+            f"{MAX_ASSET_BYTES} ceiling — the client guard let it through and the server "
+            "took it, or the resize stopped resizing"
+        )
+        # The image is IN the scene, not merely rendered into the export's
+        # pixels: reopening the drawing has to give back something editable,
+        # and a raster baked into the canvas would pass a size assertion
+        # perfectly happily.
+        round_trip = _evaluated(
+            call,
+            f"""
+        (async () => {{
+          const blob = await (await fetch('/drawings/{match.group(0)}.png')).blob();
+          const loaded = await EXCALIDRAW.loadSceneOrLibraryFromBlob(blob, null, null);
+          return {{types: loaded.data.elements.map(e => e.type),
+                   files: Object.keys(loaded.data.files || {{}}).length}};
+        }})()
+        """,
+        )
+        assert round_trip == {"types": ["image"], "files": 1}, (
+            f"the saved drawing does not read back as one image element: {round_trip}"
+        )
+
+
 _VIM_WALKS = r"""
   flipEditing();
   await new Promise(r => setTimeout(r, 300));
