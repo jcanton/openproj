@@ -183,7 +183,7 @@ _TABLE_SHOWS = {
 # being a control, so it is the one that needs no sentence.
 _TABLE_HINT = Markup(
     '<p class="hint">Double-click a cell, or press Enter on it, to edit it · '
-    "drag a row by the grip beside its id onto another to change parents</p>"
+    "drag a row by the grip beside its id onto another to change parents.</p>"
 )
 
 # Every column the table draws, in the order it draws them, and whether it sorts.

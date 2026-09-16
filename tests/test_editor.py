@@ -2982,16 +2982,17 @@ def test_the_width_handle_finds_the_pane_in_every_view(client: TestClient, tmp_p
     assert not edit["hidden"], "no width handle in the edit view, whose width is the measure"
     assert edit["onEdge"] and edit["spare"] > 20, edit
 
+    # **And not in the split, since 2026-09-16.** This asserted the opposite for
+    # three weeks, and the reason it changed is the page, not the arithmetic: the
+    # split's column is the window now that the record page fills it, so the
+    # handle has nothing on the far side of it and its whole range is inwards.
+    # Two vertical bars a hand's width apart, one of which only shrinks. jcanton,
+    # seeing it there: "in side-by-side there is still a horizontal dragging to
+    # the very right of the typed fields, can you remove it from there and only
+    # leave it for edit and preview views?" `#splitter` is this view's width
+    # control and it sits between the panes, with something on both sides of it.
     both = got["inView"]["both"]
-    assert not both["hidden"], "no width handle in the split view"
-    # `>= 20` here and `> 20` above, and the difference is the split's own shape
-    # rather than a slacker test: `.panes` carries `max-width: 100%`, and the
-    # split asks for one measure plus one body, which at this window is more than
-    # there is. So the column sits AT the article's edge and the spare is exactly
-    # the body's padding. What the number is guarding against is the handle
-    # parking against the edge of the SCREEN, which is what it did when it was
-    # measured against a hidden element — that reads 0, not 20.
-    assert both["onEdge"] and both["spare"] >= 20, both
+    assert both["hidden"], "the width handle is still on the page in the split view"
 
     assert not got["back"]["hidden"] and got["back"]["onEdge"], (
         "the handle did not come back with the column"
@@ -3266,17 +3267,14 @@ def test_the_facts_column_does_not_move_when_the_join_between_the_panes_does(
     assert got["stored"]["split"] > 1, got["stored"]
     assert got["stored"]["mode"] == "both"
 
-    # Both handles are on screen, and that is the arrangement now rather than the
-    # thing this line refused. `#splitter` moves the boundary BETWEEN the two
-    # panes and `#grip` moves the outside edge of both — the pair every editor
-    # with a split has, and what jcanton asked for on 2026-08-25: "I can only
-    # resize the edit pane wrt the preview pane but not all together".
-    #
-    # What kept them apart was arithmetic, not confusion: the split's column is
-    # one measure plus one body wide, so the grip used to move the measure twice
-    # the drag. It divides by that factor now. `got["grip"]` reports the grip
-    # HIDDEN, so this asserts it is not.
-    assert not got["grip"], "the width grip left the page when the split opened"
+    # One handle in this view, and it is this one. `#grip` was here too between
+    # 2026-08-25 and 2026-09-16 — the pair every editor with a split has — and it
+    # went when the page started filling the window: the column's outside edge is
+    # the window's edge now, so the outer handle stood against the screen with
+    # nothing to give it. The inner one still has a pane on each side, which is
+    # what makes it the control worth keeping. `got["grip"]` reports the grip
+    # HIDDEN, so this asserts it is.
+    assert got["grip"], "the width grip is still on the page beside the splitter"
 
 
 @pytest.mark.parametrize("where", ["/detail/{task}", "/new?kind=issue", "/new?kind=note", "/new"])
