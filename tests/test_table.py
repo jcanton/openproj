@@ -2238,13 +2238,24 @@ const TITLE = document.querySelector('input[name=title]');
 TITLE.value = 'A pitch with a shaping document in it';
 TITLE.dispatchEvent(new Event('input', {bubbles: true}));
 await new Promise(r => setTimeout(r, 200));
-// What scrolls, and it is not the document. The shell gives this form the box
-// that keeps the nav and the footer in view (`_page(fills=True)`), so the form
-// is several screens tall INSIDE that box and `scrollTo` moves nothing at all —
-// which is why `screens` read 1.0 on a form that still runs off three windows.
+// **What scrolls, found rather than named.** It is not the document — the shell
+// gives this form the box that keeps the nav and the footer in view — and since
+// 2026-09-16 it is not that box either: the record page and the create form fill
+// the window, and what moves is the fields column beside the writing, or
+// `.panes` around the pair on a narrow one. Two rewrites of this line have named
+// the wrong box already, each time reporting `screens: 1.0` about a form that
+// runs off three windows — a green-looking number that means the test scrolled
+// nothing. So it walks out from the fields until it finds travel.
 // The claim is unchanged and so is what it is measured against: where the Save
 // lands in the WINDOW, from every part of the form.
-const SCROLLER = document.querySelector('[data-fills]');
+const SCROLLER = (() => {
+  const start = document.querySelector('.facts') || document.querySelector('[data-fills]');
+  for (let box = start; box; box = box.parentElement) {
+    const how = getComputedStyle(box).overflowY;
+    if ((how === 'auto' || how === 'scroll') && box.scrollHeight > box.clientHeight) return box;
+  }
+  return document.scrollingElement;
+})();
 const out = {screens: SCROLLER.scrollHeight / SCROLLER.clientHeight, at: []};
 const end = SCROLLER.scrollHeight - SCROLLER.clientHeight;
 // A timer and not `requestAnimationFrame`: a headless Chrome under a virtual
@@ -7413,7 +7424,9 @@ def test_the_table_teaches_its_gestures_beside_the_search_box(seed_root: Path):
     assert (said.tag, said.attrs.get("class")) == ("p", "hint"), (
         f"the aside holds {said} rather than the view's own sentence"
     )
-    assert "double-click a cell" in said.text and "drag a row by the grip" in said.text, (
+    # Case-folded: the sentence is jcanton's to word, and it has been reworded
+    # twice. What this test is for is WHERE it is drawn.
+    assert "double-click a cell" in said.text.lower() and "drag a row by the grip" in said.text, (
         f"the sentence beside the search box is not the table's: {said.text!r}"
     )
 

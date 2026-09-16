@@ -734,7 +734,45 @@ pre.mermaid[data-processed] svg { height: auto; }
 /* What a failed load leaves behind, so raw mermaid source is not mistaken for the
    page working. Drawn by the loader, which is the only thing that knows. */
 .mermaidwhy { color: var(--muted); font-size: 12px; margin: -.7rem 0 1rem; }
-#build { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .5rem; }
+/* What is running, at the foot of every page. Muted and small because it is
+   reference rather than news: nobody reads it until something behaves oddly, and
+   then it is the first thing they ask for.
+
+   Here and not in `_DETAIL_STYLE`, where everything below the first line used to
+   live. That sheet is loaded by the record, create, cycle, cycles, help and deck
+   pages and by no others — so the footer was 11px muted mono under a hairline on
+   half the app and 14px sans with accent-coloured links, hard against the
+   content, on the other half. It went unnoticed for as long as the long pages
+   scrolled their footer out of sight; giving every page a footer that stays put
+   put the two versions on screen side by side.
+
+   **One line tall, and the padding is what decides that.** It was
+   `1.4rem 1rem 1rem` — 56px, a third of it blank — which reads as a band rather
+   than as a line of reference at the foot. jcanton, 2026-09-16: "possibly all
+   pages you edited now have a 3-lines-high footer, while the other pages have it
+   1-line-high […] remove them and make it consistent across the entire app".
+
+   No horizontal padding at all, so the first glyph sits on the same x as the
+   first nav link. The `1rem` it carried was indenting the footer past every
+   other row on the page, which is only invisible while nothing is level with it.
+
+   **Padding and not margin, and that is the whole of a defect.** `--room` is
+   measured from what is below the filling box, and a border box does not include
+   margins — a bottom margin on the last element in the body collapses through it
+   and is measured by nothing at all. So the page was taller than anything knew,
+   which is a page scrollbar that exists purely to reach the footer, beside
+   whatever scrollbar the content already had. jcanton, 2026-08-25, seeing both
+   at once. As padding it is inside the border box, so every measurement of this
+   element and of the body includes it. The rule that mattered was never "how far
+   from the content" — it was "be measurable". */
+#build {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .5rem;
+  margin: 0; padding: .55rem 0 0;
+  border-top: 1px solid var(--line);
+  font-size: 11px; color: var(--muted); font-family: var(--font-mono);
+}
+#build a, #build a:visited { color: inherit; text-decoration: none; }
+#build a:hover { color: var(--accent); text-decoration: underline; }
 /* The character itself, and never the CSS escape `\\00B7`. This stylesheet is a
    Python triple-quoted string, so a backslash in it is a PYTHON escape first:
    `\\0` is octal, and the rule shipped a NUL byte followed by the text `B7`.
@@ -780,8 +818,17 @@ pre.mermaid[data-processed] svg { height: auto; }
 :root { --room: max(9rem, calc(100vh - 15rem)); }
 /* 3rem of quiet under the last line of a document. A page whose one box is
    measured to the window has no last line — the box ends where the window does —
-   so that 48px is not breathing room, it is drawing that never happens. */
-body:has([data-fills]) { padding-bottom: 1rem; }
+   so that 48px is not breathing room, it is drawing that never happens.
+
+   And then not 1rem either. The footer is the last row of the window, so quiet
+   below it is quiet at the bottom edge of the screen, which reads as the app
+   ending an inch before the window does — jcanton, 2026-09-16: "it has one line
+   of text and below it one empty line or some space, can you swap so the text is
+   at the very bottom?" Swapped: the gap that was under the line is now above it,
+   between the content and the footer's rule, where it separates two things
+   instead of trailing off one. The 2px left is the descender room the glyphs
+   need; at 0 a `p` or a `j` in the plan's sha sits on the window's edge. */
+body:has([data-fills]) { padding-bottom: 2px; }
 /* The measurement is of the room the box gets, so the box has to be that size
    including its own frame. On content-box a 1px border makes it 2px taller than
    the room it was handed, which is exactly enough to put the page into the
@@ -3115,9 +3162,16 @@ function theme() {
     || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 }
 
+// The glyph is the STATE, not the destination: a sun while the page is light, a
+// moon while it is dark. It was the other way round — a moon on a light page,
+// meaning "click for dark" — and jcanton read it as a label rather than as a
+// button and found it inverted (2026-09-16: "swap light/dark icons: currently the
+// moon is shown in light mode and vice-versa"). The title and the aria-label stay
+// the destination, because those are read as an action by anybody who reaches
+// them: "Dark mode" on the sun is what the click does.
 function labelTheme() {
   const dark = theme() === 'dark';
-  THEME.textContent = dark ? '\u2600' : '\u263e';
+  THEME.textContent = dark ? '\u263e' : '\u2600';
   THEME.title = dark ? 'Light mode' : 'Dark mode';
   THEME.setAttribute('aria-label', THEME.title);
 }

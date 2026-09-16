@@ -298,8 +298,8 @@ _SLIDE = """
       <p class="field">
         <label for="prose">And on the slide, in your own words</label>
         <span class="hint">Markdown. A line reading <code>\\newslide</code> starts
-          another slide for this record — the second is titled
-          “{{ e.title }} (2)”. Paste or drop a picture to put it in the plan.</span>
+          another slide for this record. Paste or drop a picture to put it in the
+          plan.</span>
       </p>
       {#- The same three strips the record page puts around its box, in the same
           order and with the same ids, because they are filled by the same
@@ -419,11 +419,35 @@ _SLIDE_STYLE = """
    or the footer and its margins below. `data-fills` on the grid is how a page
    tells the shell which box that is. */
 .panes3 { height: var(--room); }
+/* `border-box`, because the height these panes are held to is a percentage of
+   the row and the padding is 29px of it: on content-box a pane asked for 100%
+   comes out 30.8px taller than the box the shell measured, hangs that much below
+   it, and is the difference between a footer that sits on the window's edge and
+   one that is pushed off it. */
 .panes3 > .pane {
-  min-width: 0; max-height: 100%; overflow: auto;
+  min-width: 0; max-height: 100%; overflow: auto; box-sizing: border-box;
   border: 1px solid var(--line); border-radius: 4px; padding: .9rem 1rem;
   background: var(--surface);
 }
+/* The writing box is the room the middle pane has left, the same way the record
+   page's box is the room its column has left. It used to be `60vh`, carried by
+   `--writing` on the textarea and on `.acebox`, and when that token went with
+   the record page's drag handle this pane kept no height of its own at all: Ace
+   draws an absolutely positioned renderer inside whatever box it is handed, and
+   the box it was handed was its content, which is nothing. A 0px surface, no
+   visible editor. jcanton, 2026-09-16: "?view=slide lost the text box for the
+   body editing."
+
+   `flex: none` on everything else in the column, because the pane scrolls: a
+   shrinkable checkbox list above a growing box compresses instead of scrolling,
+   and the floor under the box is what says the pane scrolls rather than the box
+   disappearing when the choices are long. */
+.panes3 > .pane.pick {
+  align-self: stretch; height: 100%;
+  display: flex; flex-direction: column;
+}
+.panes3 > .pane.pick > * { flex: none; }
+.panes3 > .pane.pick > .bodywrap { flex: 1; min-height: 6rem; }
 /* One column under a narrow window, in reading order: what the record says,
    then what you are choosing, then what it looks like. `1100px` is where the
    middle column stops holding a checkbox label and its two tags on one line. */

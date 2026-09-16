@@ -1125,10 +1125,18 @@ def test_the_box_on_a_record_page_is_monospace_and_fits_its_pane(record: Sheet):
 
     assert record.value(box, "box-sizing") == "border-box", says(record, box, "box-sizing")
 
-    # And in the split view the box is pinned to the one writing height, by the
-    # view rule and not by a coincidence of order: the base rule's
-    # `min-height: var(--writing…)` would otherwise stretch a pane the split
-    # means to keep level with the pane beside it.
+    # And in the split view the box is the height of the column it is in, which
+    # since 2026-09-16 is what it is in every editing view: the record page fills
+    # the window and the writing fills what is left of it.
+    #
+    # This asked for `article.record.view-both textarea.body-field` to be the
+    # winner, and that rule is gone rather than broken. It existed to beat the
+    # base rule's `min-height: var(--writing)` — a minimum would stretch a pane
+    # the split means to keep level with its neighbour — and with `--writing`
+    # dropped the base rule sets no height at all. What is asserted now is the
+    # thing that has to be true: one rule decides, it is the editing one, and it
+    # says the column's height. A second rule saying `100%` at the same weight
+    # would be the drift this file exists to catch, not a belt.
     inside = [
         el("body"),
         el("main", id="main"),
@@ -1139,10 +1147,18 @@ def test_the_box_on_a_record_page_is_monospace_and_fits_its_pane(record: Sheet):
         el("textarea", "field body-field"),
     ]
     won = record.winner(inside, "height")
-    assert won and won.selector == "article.record.view-both textarea.body-field", says(
+    assert won and won.selector == "article.record.editing textarea.body-field", says(
         record, inside, "height"
     )
+    assert won.value == "100%", says(record, inside, "height")
     assert record.value(inside, "min-height") == "0", says(record, inside, "min-height")
+    # One rule and not two. `.view-both` and `.editing` weigh the same (0,3,2), so
+    # a second `height` on this box would be decided by which sheet was
+    # concatenated last — which is exactly how the frozen columns were painted
+    # over by their own rows.
+    assert [r.selector for r in record.selectors_reaching(inside, "height")] == [
+        "article.record.editing textarea.body-field"
+    ], says(record, inside, "height")
 
 
 def test_a_hidden_control_stays_hidden_on_the_one_stylesheet(record: Sheet):

@@ -1574,19 +1574,32 @@ document.getElementById('yes').onclick = async () => {
 _PEOPLE = """
 {#- Announced, not drawn: the lit nav item says this already. See `.sr-only`. -#}
 <h1 class="sr-only">People</h1>
-<p class="hint">Everyone named anywhere in the plan, and what they are on the hook
-  for.
-  {%- if load.cycle is none %}
-  {%- elif load.recorded %} The weeks are cycle {{ load.cycle }}'s: what is bet on
+{#- The sentence and the count both ride inside the control bar — the `aside` and
+    `summary` slots `_facets_html` already gives the table, the graph and the
+    timeline. They were two rows above it here, which is what made this page's
+    header a different shape from theirs; jcanton, 2026-09-16, asked for the four
+    odd pages to match the three. -#}
+{{ facets }}
+{#- Which cycle's weeks the two number columns are, and what they are bet
+    against. BELOW the bar, because it is a caption for the table and not a
+    description of the view: the sentence in the bar says what this page is, and
+    this says how to read the numbers in it. It rode in the description until
+    2026-09-16, when that was shortened to one line — the line jcanton gave — and
+    a caption that only appears on a page that has a live cycle was never part of
+    what this view is anyway.
+    Below the bar and so outside the header, which is what keeps this page the
+    same shape as the table: what that rule is about is the run from the heading
+    to the search box. -#}
+{%- if load.cycle is not none %}
+<p class="hint">
+  {%- if load.recorded %} The weeks are cycle {{ load.cycle }}'s: what is bet on
   somebody there, against what they are available for. Weeks bet into another cycle
   are counted beside them, and work bet into no cycle at all is in the rows and in no
   number.
   {%- else %} The weeks are cycle {{ load.cycle }}'s: what is bet on somebody there.
   That cycle has no record, so there is no availability to bet it against.
   {%- endif %}</p>
-{{ facets }}
-<div id="summary"><span id="shown" class="num">{{ people|length }}</span>
-  of {{ people|length }} people</div>
+{%- endif %}
 {#- One table for the whole page. Fifteen tables meant fifteen headers, and a
     column of statuses that started at a different x for every person cannot be
     read down. The person is a group row inside it instead of a heading above a
@@ -2827,7 +2840,22 @@ def render_people(index: Index, links: Links = STATIC, editable: bool = False, m
         # The same bar the plan's three views draw, over this page's own three
         # fields. Which hat somebody is wearing is not a field of a record, so
         # `role` is only ever offered here.
-        facets=_facets_html(facets, ("role", "kind", "status"), "Search person, record, id"),
+        facets=_facets_html(
+            facets,
+            ("role", "kind", "status"),
+            "Search person, record, id",
+            aside=Markup(
+                '<p class="hint">Everyone named anywhere in the plan, and what '
+                "they are on the hook for.</p>"
+            ),
+            # This page counts people, not problems, so it fills the slot the
+            # three plan views give `_summary_html` with the count it already
+            # drew a row of its own for. `#shown` is the id the filter script
+            # writes, and it keeps it.
+            summary=Markup(
+                '<div id="summary"><span id="shown" class="num">{}</span> of {} people</div>'
+            ).format(len(people), len(people)),
+        ),
         load=load,
         filters=_FILTER_JS,
     )

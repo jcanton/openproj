@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from markupsafe import Markup
+
 from ..index import Index, _product_of, _project_of, predicates_of
 from ..model import RUNG, unread_fields
 from .controls import _FILTER_JS, _facets_html
@@ -13,11 +15,25 @@ from .tokens import _ago
 _RECORDS = """
 {#- Announced, not drawn: the lit nav item already says which view this is. -#}
 <h1 class="sr-only">{{ heading }}</h1>
-<p class="hint">{{ describe }}</p>
+{#- The sentence this view writes about itself rides INSIDE the control bar now,
+    at the far end of the search box's line — `_facets_html`'s `aside` slot, which
+    the table, the graph and the timeline have used since 2026-08-25. It was a row
+    of its own here, which is what made this page's header a different shape from
+    theirs. jcanton, 2026-09-16: "/table, /graph, /timeline are consistent with
+    their headers […] Records (main), /people, /issues and /notes aren't. can you
+    make the latter(s) consistent with the formers?"
+
+    And the create link moves BELOW the bar, into the row the three plan views
+    fill with their filter menus — "the [create] buttons for /records, /issues,
+    /notes should be just below the search box, in place of the filters that these
+    pages don't have". These three filter on the box alone (`fields=()`), so that
+    row was empty on them and the button was above the bar instead, which put one
+    more thing between the nav and the search box than the other four pages
+    have. -#}
+{{ facets }}
 {%- if creatable %}
 <p class="editbar"><a class="button" href="{{ create.href }}">{{ create.label }}</a></p>
 {%- endif %}
-{{ facets }}
 <div class="table-scroll" data-fills><table id="records" class="unfitted"><thead><tr>
   {%- for column in columns %}
   <th data-col="{{ column }}">{{ label(column) }}</th>
@@ -314,15 +330,16 @@ def render_records(
         "none_headline": f"No {word} matches this search.",
         "none_hint": f"Every {word} is hidden by what is in the box.",
     }
+    # Shortened on 2026-09-16, jcanton's own wording. They sit on the search
+    # box's line now rather than on a row of their own, and a line shared with a
+    # control is a line that has to be read at a glance.
     describe = {
-        "records": "Everything written down in this plan, newest edit first — "
-        "the plan's work, its issues and its notes.",
-        "issues": "Something somebody noticed. At the betting table somebody "
-        "reads what is open and writes a pitch for what matters.",
+        "records": "Everything written down in this plan.",
+        "issues": "Something somebody noticed. At the betting table write a "
+        "pitch for issues that matter.",
         "notes": "Something somebody is thinking about, before anybody knows "
-        "what it is. A note has no owner, no size and no cycle — when "
-        "it turns out to be work, promote it and it becomes a "
-        "project, a pitch or a task.",
+        "what it is. When it becomes concrete, promote it to a project, "
+        "a pitch or a task.",
     }[key]
     body = _compiled(_RECORDS).render(
         rows=rows,
@@ -331,7 +348,6 @@ def render_records(
         creatable=creatable,
         links=links,
         heading=dict(_NAV)[key],
-        describe=describe,
         create=create,
         said=said,
         columns=("kind", "title", "who", "tags") + (("edited",) if timed else ()),
@@ -339,7 +355,11 @@ def render_records(
         # No dropdowns: facets are plan vocabulary and this page is the whole
         # record population. The bar still renders #q, #query-error and
         # #unfilter, which is all `_FILTER_JS`'s unguarded listeners need.
-        facets=_facets_html(index.facets, fields=()),
+        facets=_facets_html(
+            index.facets,
+            fields=(),
+            aside=Markup('<p class="hint">{}</p>').format(describe),
+        ),
         filters=_FILTER_JS,
     )
     return _page(f"openproj — {key}", body, _RECORDS_STYLE, links, key, index.unreadable)

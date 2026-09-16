@@ -945,6 +945,21 @@ _DETAIL = """
       modes". So it is a `FORMATS` entry in `controls.py` now, drawn into
       `#marks` beside the image button, and this bar is back to Slide, the
       three views and Delete. -#}
+  {#- One row, and the commit bar is the other half of it — jcanton, 2026-09-16:
+      "move that bar above, in-line with the slide/edit/side-by-side/etc buttons,
+      right of [delete], so we gain more vertical space".
+
+      What it replaces is a band of blank page. The bar's box was reserved below
+      this row with `visibility: hidden` so that starting a session did not move
+      the heading (`article.record .editbar + .commitbar[hidden]`, his own
+      2026-08-24 rule: "page elements should not move or appear/disappear when
+      switching views"). That rule is kept and the band is not: a row that
+      already exists costs nothing to reserve space in, and the reservation is
+      now horizontal — to the right of Delete, where there was nothing.
+
+      The wrapper is only drawn for somebody who may write, because the bar is
+      the only other thing in it and a reader's is `display: none` throughout. -#}
+  <div class="toolrow">
   <p class="editbar">{% if not creating %}{{ slidebar }}{% endif %}{{ viewbar }}{%
     if not creating %}
     <button type="button" class="delete">Delete</button>{% endif %}</p>
@@ -1005,6 +1020,7 @@ _DETAIL = """
     <span id="state" role="status"></span>
     {% endif %}
   </div>
+  {% if may_write %}</div>{% endif %}
   {% if may_write and not creating %}
   {#- The question, under the button that asks it. Hidden until then: a page that
       is always showing a way to delete the thing you are reading is a page that
@@ -1484,7 +1500,19 @@ function place() {
   // feared: `#splitter` moves the boundary BETWEEN the two panes and this one
   // moves the outside edge of both. That is the pair every editor with a split
   // has.
-  grip.hidden = !article;
+  //
+  // **And off the page again in the split, which is the third answer this
+  // question has had.** The argument above is still the arithmetic — the drag
+  // converts and lands where it is aimed — but the arithmetic was never what was
+  // wrong with it. Since the page fills the window the split's column is the
+  // window, so this handle sits hard against the right edge with nothing on the
+  // far side of it: a second vertical bar, a hand's width from the first, whose
+  // whole range is inwards. jcanton, 2026-09-16, looking at it there: "in
+  // side-by-side there is still a horizontal dragging to the very right of the
+  // typed fields, can you remove it from there and only leave it for edit and
+  // preview views?" The width control in this view is `#splitter`, which is
+  // between the two panes where there is something on both sides of it.
+  grip.hidden = !article || article.classList.contains('view-both');
   if (!grip.hidden) grip.style.left = column(article).getBoundingClientRect().right + 'px';
 }
 place();

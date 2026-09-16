@@ -313,6 +313,46 @@ def test_the_picker_puts_the_scheme_on_the_page_and_takes_it_off_again(tmp_path:
     assert got["cleared"]["bg"] == "#ffffff", got["cleared"]
 
 
+_GLYPH = """
+const root = document.documentElement;
+const button = document.getElementById('theme');
+const read = () => ({glyph: button.textContent.trim(), named: button.getAttribute('aria-label')});
+root.dataset.theme = 'light';
+dispatchEvent(new Event('themechange'));
+button.click();   // relabels, and leaves the page dark
+const dark = read();
+button.click();
+return {light: read(), dark};
+"""
+
+
+def test_the_switch_wears_the_mode_it_is_in_and_names_the_one_it_offers(tmp_path: Path):
+    """A sun on a light page, a moon on a dark one.
+
+    It was the other way round — the glyph was the destination, "click here for
+    dark" — and that is a perfectly good button and an unreadable label. jcanton,
+    2026-09-16: "swap light/dark icons: currently the moon is shown in light mode
+    and vice-versa." Read as a state, a moon on a light page says the page is
+    dark, which it plainly is not.
+
+    The `aria-label` keeps the old meaning, and that is not an inconsistency: a
+    screen reader announces a button as something to press, so "Dark mode" on a
+    sun is what pressing it does. Both halves are asserted here so that a later
+    swap cannot quietly take the glyph and the name in the same direction.
+    """
+    page = render_table(
+        build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD, may_write=True
+    )
+    got = measured_in(
+        chrome(), page, tmp_path / "glyph.html", 1200, _GLYPH, height=900, patience=1500
+    )
+
+    assert got["light"]["glyph"] == "\u2600", f"a light page wears {got['light']['glyph']!r}"
+    assert got["dark"]["glyph"] == "\u263e", f"a dark page wears {got['dark']['glyph']!r}"
+    assert got["light"]["named"] == "Dark mode", got["light"]
+    assert got["dark"]["named"] == "Light mode", got["dark"]
+
+
 _BOXES = """
 const root = document.documentElement;
 root.dataset.scheme = 'gruvbox';

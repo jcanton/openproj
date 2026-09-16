@@ -182,8 +182,8 @@ _TABLE_SHOWS = {
 # 8px of dotted rule. The `+` row at the foot of the table says what it is by
 # being a control, so it is the one that needs no sentence.
 _TABLE_HINT = Markup(
-    '<p class="hint">double-click a cell, or press Enter on it, to edit it · '
-    "drag a row by the grip beside its id onto another to file it there</p>"
+    '<p class="hint">Double-click a cell, or press Enter on it, to edit it · '
+    "drag a row by the grip beside its id onto another to change parents.</p>"
 )
 
 # Every column the table draws, in the order it draws them, and whether it sorts.

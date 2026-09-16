@@ -614,28 +614,12 @@ textarea.body-field { box-sizing: border-box; }
              flex-wrap: wrap; }
 .stat { white-space: nowrap; }
 
-/* What is running, at the foot of every page. Muted and small because it is
-   reference rather than news: nobody reads it until something behaves oddly,
-   and then it is the first thing they ask for. Outside `#main`'s measure, so it
-   does not sit inside the reading column. */
-#build {
-  /* **Padding and not margin, and that is the whole of a defect.** `--room` is
-     measured as `document.body.getBoundingClientRect().bottom` less the box's
-     bottom, and a border box does not include margins — a bottom margin on the
-     last element in the body collapses through it and is measured by nothing at
-     all. So the page was `2.5rem + 1rem` taller than anything knew, which is a
-     page scrollbar that exists purely to reach the footer, beside whatever
-     scrollbar the content already had. jcanton, 2026-08-25, seeing both at once.
-
-     As padding it is inside the border box, so every measurement of this element
-     and of the body includes it. The rule that mattered was never "how far from
-     the content" — it was "be measurable". */
-  margin: 0; padding: 1.4rem 1rem 1rem;
-  border-top: 1px solid var(--line);
-  font-size: 11px; color: var(--muted); font-family: var(--font-mono);
-}
-#build a, #build a:visited { color: inherit; text-decoration: none; }
-#build a:hover { color: var(--accent); text-decoration: underline; }
+/* The footer's own rules are the SHELL's — see `#build` there. They were here,
+   in a sheet six of the app's pages load and the other five do not, so the
+   footer was 11px muted mono under a hairline on a record and 14px sans with
+   accent-coloured links on the table. Nobody saw it while the footer scrolled
+   off the bottom of the long pages; the moment every page kept its footer in
+   view, one app had two of them. */
 /* Not in a handout, and not on a projector. `@media print` in the deck's own
    sheet drops the app's chrome; this one is on every page, so it says so here. */
 @media print { #build { display: none; } }
@@ -741,19 +725,29 @@ button.stat.pick:hover { color: var(--accent); }
    .panes` is (0,3,0) against the base `.panes` at (0,1,0), so the split wins on
    weight and not on the order the two are written in. */
 article.record.view-both .panes { width: calc(2 * var(--measure) - 21rem); }
-/* Both panes at one height, and it is the height the box already has: the box
-   is `min-height: var(--writing)` on the ordinary page, the split pins it
-   there — `resize: none`, because a box dragged taller than the pane beside it
-   un-pairs the two — and the rendered pane takes the same number with a
-   scrollbar of its own. The pane scrolls INSIDE the page on purpose: the
-   scroll sync maps both sides in pane pixels, and a pane that grows with its
-   content has no `scrollTop` for the sync to drive. */
-article.record.view-both textarea.body-field { height: var(--writing, 60vh);
-                                               min-height: 0; resize: none; }
+/* Both panes at one height, and it is the height the box already has:
+   `resize: none`, because a box dragged taller than the pane beside it un-pairs
+   the two, and the rendered pane takes the same number with a scrollbar of its
+   own. The pane scrolls INSIDE the page on purpose: the scroll sync maps both
+   sides in pane pixels, and a pane that grows with its content has no
+   `scrollTop` for the sync to drive.
+
+   `--writing` is gone from both of them and the height is the room the column
+   has: the pair was pinned to a remembered number, and a number is exactly what
+   a window resize makes stale. `100%` of a `.bodysplit` that is itself the
+   growing row of `.main` says the same thing without one.
+
+   And the box needs no rule of its own in this view any more. It had one because
+   the base rule said `min-height: var(--writing)` and a minimum would stretch a
+   pane the split means to keep level with its neighbour; with the token gone the
+   base rule sets no height at all, `article.record.editing textarea.body-field`
+   gives every view the same `height: 100%`, and a second declaration saying the
+   same thing at the same weight is only a thing to keep in step. The preview
+   pane below still needs its own: it exists in this view and in no other. */
 /* The rendered pane also loses `.doc`'s top rule and the space above it: those
    separate a document from the facts stacked over it, and in this view the
    pane's neighbour is the box beside it, which carries neither. */
-article.record.view-both #body-preview { height: var(--writing, 60vh); overflow-y: auto;
+article.record.view-both #body-preview { height: 100%; overflow-y: auto;
                                          border-top: 0; padding-top: 0; }
 /* Two columns in the middle view, and the reader says where the join is —
    jcanton, 2026-08-20: "in the side-by-side edit-preview view, can you make it
@@ -874,6 +868,60 @@ article.record.view-both #splitter.dragging::after {
 article.record.view-view .bodywrap,
 article.record.view-view .statusbar,
 article.record.view-view .markbar { display: none; }
+/* **The document's column is a frame, and only the writing inside it moves.**
+   jcanton, 2026-09-16: "the text box itself should not scroll (currently it can
+   scroll and hides the buttons for text formatting right on top of it)".
+
+   The complaint is precise and it is about the wrong box scrolling. `.main` was
+   ordinary flow — the formatting bar, then the box, then the status strip — so
+   the column's scrollport carried all three and the bar went up and out of the
+   window the moment you were a page into a long document. The bar belongs to the
+   box; a box you cannot reach the controls for is worse than one you cannot see
+   the end of.
+
+   So `.main` stops being a scrollport and becomes a column: `#marks` and the
+   status strip keep their rows, `.bodysplit` takes what is left, and the writing
+   scrolls where writing should — inside the box, which is what a textarea and
+   what Ace both already do without being asked.
+
+   Editing only. In the read view `.main` is one document with nothing pinned
+   above it, and it keeps the scrollport the query above gives it. */
+article.record.editing .panes > .main {
+  display: flex; flex-direction: column; overflow: hidden;
+}
+/* The writing box takes what the column has, and never less than this. The floor
+   is for the stacked layout, where `.main` is a grid item in a content-sized row:
+   a box asking for 100% of a parent whose height is decided by its content is a
+   box asking for 100% of itself, and Chrome answers 0. Measured at a 900px
+   window — `test_the_writing_views_are_usable_at_a_window_that_is_not_wide`
+   reported a write view giving the document no lines at all.
+   16rem and not the 60vh the dropped `--writing` carried: a floor is not a
+   height, it is the point below which the box stops being a place to write, and
+   `>= 12` lines is what that test has always called usable. Where the column has
+   room the floor never binds; where it does not, `.panes` scrolls rather than the
+   box collapsing. */
+article.record.editing .bodysplit { flex: 1; min-height: 16rem; }
+/* The box is the room it is in. `--writing` used to size it — a remembered
+   height, with a drag handle on the corner to set it — and jcanton dropped both
+   on 2026-09-16 rather than keep a control whose whole range above the window
+   puts the page back to scrolling. `#grip` and `#splitter` stay; they are
+   widths, which is what he asked to keep when the full-page surface went.
+
+   `height: 100%` and not `flex: 1` on the textarea: it is inside `.bodywrap`,
+   which is the positioned ancestor the seat bands and the line-number gutter
+   both resolve against, so the box that has to be told the height is the wrap
+   and the field simply fills it. */
+/* `height: 100%` on the wrap and not `flex: 1`, which is what this was written
+   as and which works in exactly one of the two views. `.bodysplit` is a grid
+   only side by side; in the edit view it is an ordinary block, so a flex
+   declaration on its child sets nothing and the wrap collapsed to its content —
+   which for Ace is nothing at all, because Ace draws an absolutely positioned
+   renderer inside whatever box it is handed. A 0px box, no lines, and
+   `tests/test_seats.py` reporting that no seat band was drawn for any of four
+   samples. A height resolves against a definite parent in both layouts, and
+   `.bodysplit` is definite in both: it is the growing row of `.main`. */
+article.record.editing .bodywrap { height: 100%; min-height: 0; }
+article.record.editing textarea.body-field { height: 100%; min-height: 0; resize: none; }
 """
 
 
@@ -951,11 +999,13 @@ _DETAIL_STYLE = (
 
 article.record {
   margin: 0 0 3rem; position: relative;
-  /* One writing height. The box, Ace's box and the split view's rendered pane
-     all read this; before the token the first two each said `60vh` on their
-     own, which is two constants that are the same number — the drift
-     `MAX_UPDATE_BYTES` already paid for once. */
-  --writing: 60vh;
+  /* No `--writing`. It was `60vh` — one token so that the box, Ace's box and the
+     split's rendered pane could not drift to three spellings of the same number
+     — and jcanton dropped the height itself on 2026-09-16: the column the box
+     sits in is the window's now, so the box is what is left of it and there is no
+     number for anything to disagree about. A fraction of the viewport was never
+     going to be right anyway; it is the same mistake `#cy { height: 78vh }` made,
+     and `--room` is the same answer. */
 }
 /* The measure, and the container the columns below are decided by. Both moved
    here from `article.record` on 2026-08-24 with the header, and they had to
@@ -995,8 +1045,97 @@ article.record {
    metadata before the first sentence is the wrong way round. A container query
    and not a media query, because the width that decides this is the column's,
    which the reader sets with the grip — not the window's. */
+/* **The record page is the height of the window, and nothing in it scrolls the
+   page.** jcanton, 2026-09-16: "the text box should be as high as the page
+   (minus now-extended header and footer) and resize with it if the page is
+   resized. same goes for the preview and side-by-side views."
+
+   The shell already measures the room and gives it to `.pagefill` (see
+   `_page(fills=True)`); on every other page that box is the scrollport. Here it
+   is a column instead, and the scrolling moves one level in — to the document
+   and the facts, each on its own. So a resize changes `--room`, `--room` changes
+   the box, and the box changes the two columns, with no second measurement and
+   no JavaScript in the chain at all: the only thing that knows a pixel is
+   `measureRoom`, which already ran.
+
+   `:has(> article.record)` and not a class on the box, because the box is the
+   shell's and the shell does not know what a record is. It matches the served
+   record page, the create form, and the static export — where one `.pagefill`
+   holds the index and every article, exactly one of which is displayed.
+
+   The index is the other thing in that box and it needs the scrollport this
+   takes away, so it is given one of its own. Without the rule the export's list
+   of every record is a column clipped at the foot of the window with no way to
+   reach the rest of it.
+
+   `min-height: 0` twice down the chain, for the flex equivalent of the reason
+   the grid items below carry it: a flex item's automatic minimum is its content,
+   so a document taller than the window refuses to shrink and hands the overflow
+   back to the page.
+
+   `overflow: hidden` on the frame, and it is load-bearing rather than tidy.
+   Written as `auto` — the safer-looking word, and the one every other
+   `.pagefill` carries — the article measured 1492px inside a 709px box: a flex
+   container that is a scroll container lets its items overflow it instead of
+   compressing them, `flex: 1 1 0%` and `min-height: 0` notwithstanding. Measured
+   in Chrome both ways on the same page. `hidden` is what makes the article the
+   height of the box, which is the whole point of the frame; what scrolls is
+   named below, one level in, and the frame clips nothing that is not already
+   reachable there. */
+.pagefill:has(> article.record) { display: flex; flex-direction: column; overflow: hidden; }
+.pagefill > .toc { flex: 1; min-height: 0; overflow: auto; }
+article.record { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* And no 3rem under it. That margin is `article.record`'s own — quiet between
+   the last line of a document and the footer, from when this page scrolled — and
+   inside a box measured to the window it is 48px the article is not allowed to
+   grow into: the column ended 48px above the frame it fills, in all three views,
+   with the footer's rule below the gap. jcanton, 2026-09-16, with a screenshot:
+   "the three views have a lot of white space before the footer, why is that, can
+   you remove it?" Scoped to the filling box, because the same article is drawn
+   inside the deck's pages, where the margin still separates something. */
+.pagefill > article.record,
+article.record:has(> [data-fills]) { margin-bottom: 0; }
+/* And the form, which is in the middle of that column whenever the reader may
+   write: `#edit` opens above the heading so the title box is one of the form's
+   own controls, and it closes after the panes — so the growing box is its child
+   and not the article's, and a column that stops at the form hands `.panes` no
+   height at all. It measured 1321px inside a 661px article with every other rule
+   already right, which is what a chain with one link missing looks like from the
+   outside: nothing is wrong anywhere, and the answer is twice what it should be.
+   `> form` and not `#edit`, because the create page's form is the same shape and
+   the selector should not have to know which page it is on. */
+article.record > form { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .panes {
   width: var(--measure); max-width: 100%; margin-inline: 0;
+  /* The growing part of that column, and the only one: everything above it —
+     the back link, the switcher's row, the kind, the title, the meta line — is
+     header, and a header that scrolls away is the thing this whole change is
+     about.
+
+     `min-height: 0` HERE and not in the `@container` block below, for the reason
+     that block's own first comment gives about a different pair of properties: a
+     container cannot answer its own query, so `.panes { min-height: 0 }` written
+     in there matches nothing at all. Written in there it looked right and did
+     nothing — the flex item kept its automatic minimum, which is its content, so
+     this box came out 1321px tall inside a 661px article and `.pagefill` clipped
+     660px of the document with no way to reach it. Measured in Chrome; the
+     stylesheet said what was intended and the browser said what happened. */
+  flex: 1; min-height: 0;
+  /* **The stacked layout's scrollport.** Side by side the two columns below each
+     scroll and nothing reaches this. Stacked — a narrow window, or a measure
+     dragged in — they are two rows in one column with no scrollport of their own,
+     because two of them one above the other means reaching the second by
+     scrolling the first to its end; so the pair is taller than the frame and this
+     is what makes the rest of it reachable. At `visible` that was 2219px of
+     record clipped at the foot of a 500px window.
+     Here rather than in a query, because this is the one box a query cannot
+     reach: it is the container the query asks about, and a rule for it written
+     inside the block matches nothing at all — the same trap `min-height` fell
+     into two comments up. Which is also why the frame above cannot be made
+     conditional on the stacking: nothing outside `.panes` knows how wide
+     `.panes` is. It does not have to. This scrolls in both layouts and is idle
+     in one of them. */
+  overflow: auto;
   container-type: inline-size;
   display: grid; gap: 0 2.5rem;
   /* Both of these used to be inside the query below and neither may stay there,
@@ -1016,9 +1155,16 @@ article.record {
      a reviewers box too narrow to show three logins is a sidebar that looks
      tidier than the page it replaced and is worse to use. */
   grid-auto-columns: 20rem;
-  /* Inert while the panes are stacked — one item per row, so a row is its
-     item's height and `start` and `stretch` draw the same box. */
-  align-items: start;
+  /* `stretch`, and it was `start` until 2026-09-16. Still inert while the panes
+     are stacked, for the reason that line always gave — one item per row, so a
+     row is its item's height and the two keywords draw the same box. Side by
+     side it is what makes each column a box of the row's height rather than of
+     its own content, which is what the two scrollports below are: at `start` the
+     facts ended where the facts ended, the document ran on past the window, and
+     neither could scroll because neither had a height to overflow. It also gives
+     the facts' `border-left` the full height of the pair, which is the line a
+     reader already reads as the join between the two columns. */
+  align-items: stretch;
 }
 @container (min-width: 56rem) {
   .panes > .main { grid-column: 1; grid-row: 1; }
@@ -1029,6 +1175,24 @@ article.record {
   .panes > .facts dl { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .panes > .facts dt { padding-top: .7rem; }
   .panes > .facts dt:first-child { padding-top: 0; }
+  /* **Each column its own scrollport, and the page none at all** — jcanton,
+     2026-09-16: "content scrolling in this page should be limited to the
+     contents of the text box and to the typed fields form to its right".
+
+     Inside the two-column query and nowhere else, which is the whole reason
+     these four lines are here rather than beside the block below. Stacked, the
+     facts sit UNDER the document in one column, and two independent scrollports
+     one above the other is a page where reaching the second means scrolling the
+     first to its end first — on the narrow window where that is most expensive.
+     Stacked, `.panes` keeps no height of its own and `.pagefill` scrolls it as
+     one, which is what every other page does.
+
+     `min-height: 0` beside each overflow, because these are grid items and a
+     grid item's automatic minimum is its content: without it the track refuses
+     to shrink below the document's full height, the box never becomes a
+     scrollport, and the overflow is handed back to the page. */
+  article.record .panes > .main,
+  article.record .panes > .facts { overflow: auto; min-height: 0; }
 }
 /* A handle, not a border. It was a full-height 2px rule in --line, which is
    exactly how a page draws the edge of a pane; this is a short grip that says
@@ -1064,7 +1228,26 @@ article.record h1 { font-size: 1.5rem; margin: .2rem 0; }
    the shell's (0,1,0), and scoped to the article on purpose: the cycle page
    loads this sheet with a commit bar that is not inside an `article.record`,
    and it keeps the shell's spacing. */
-article.record .editbar { margin-bottom: .4rem; }
+article.record .editbar { margin-bottom: 0; }
+/* And since 2026-09-16 there is no band left to remove, because there is no
+   second row: `.toolrow` holds the switcher, Delete and the commit bar on one
+   line. jcanton, asked for the same vertical space a third time and from the
+   other end — "move that bar above, in-line with the slide/edit/side-by-side/etc
+   buttons, right of [delete], so we gain more vertical space".
+
+   `align-items: center` and not `baseline`: the row is buttons and a segmented
+   control, not prose, and the bar's own `baseline` — which is right inside it,
+   where a sentence sits beside two buttons — would hang it off the switcher's
+   text baseline and leave its box a few pixels low. */
+.toolrow { display: flex; flex-wrap: wrap; align-items: center;
+           gap: .4rem .75rem; margin-bottom: .4rem; }
+/* Flattened into the row. The box stays — `.dirty` turns its border amber and
+   that is the one signal saying "closing this tab loses something" — but the
+   margin the shell gives a bar standing alone, and the padding sized for one,
+   would make this row taller than the switcher in it. */
+article.record .toolrow .commitbar {
+  position: static; margin: 0; padding: .1rem .5rem;
+}
 /* The way to this record's slide, between the view switcher and Delete and
    spaced away from both — jcanton, 2026-08-25: "little space [slide] little
    space [delete]". The gap is what says these are three separate things rather
@@ -1279,7 +1462,12 @@ article.record .commitbar { margin-top: 0; }
    no blank band for a session it cannot open. Which way the cascade resolves:
    (0,3,1) over the shell's `.commitbar[hidden]` at (0,2,0), so the
    reservation wins on weight, and the cycle page's bar sits outside
-   `article.record` and never matches. */
+   `article.record` and never matches.
+
+   Still true and now cheap. The reservation used to hold a band of blank page
+   the width of the article; inside `.toolrow` it holds a gap at the right-hand
+   end of a row that was going to be there anyway, so the space it costs when
+   there is nothing to save is space nothing else wanted. */
 article.record .editbar + .commitbar[hidden] { display: flex; visibility: hidden; }
 /* Save and Cancel are what give the live bar its height and they arrive with
    the session (`showEditing` unhides them) — a reserved bar laid out without
@@ -1425,12 +1613,32 @@ input.title-field { font-size: 1.4rem; font-weight: 600; margin-bottom: .6rem; }
    words "New record" on a line of its own, with no read title to hold still.
    (0,2,3) over both (0,1,1) field rules, so the slot wins on weight. */
 .record.editing h1 { display: flow-root; }
+/* **The overhang is on the left only, and that is the horizontal scrollbar.**
+   jcanton, 2026-09-16: "switching from preview to edit or side-by-side modes
+   makes a horizontal scroll bar appear, possibly because the text box has line
+   numbers and is wider than computed". It is not the line numbers — it is this
+   box, and it was 7.4px past the right edge of the article in both editing
+   views. Measured by hiding one element at a time inside the filling box: with
+   the title input gone the overflow is 0, with anything else gone it is still 7.
+
+   The rule wanted one thing: the first glyph of the title on the x the read
+   title starts at. The padding and border sit outside the line box to buy that,
+   so the box has to grow and shift LEFT by `.4rem + 1px`. It grew by twice that
+   and shifted by once, which put the same overhang on the right — where it
+   bought nothing, because what a reader lines the right edge up against is
+   nothing at all. It never showed while the article sat inside the body's
+   1.25rem right padding; `.pagefill` clips at the content edge, so the day the
+   page stopped scrolling the page started scrolling sideways. */
 article.record h1 input.title-field {
   font-size: inherit; font-weight: inherit;
-  width: calc(100% + .8rem + 2px);
-  margin: calc(-.25rem - 1px) calc(-.4rem - 1px);
+  width: calc(100% + .4rem + 1px);
+  margin: calc(-.25rem - 1px) 0 calc(-.25rem - 1px) calc(-.4rem - 1px);
 }
-textarea.body-field { min-height: var(--writing, 60vh); resize: vertical; }
+/* No height and no grip. The box is sized by the column it is in — see
+   `article.record.editing .bodywrap` — and `resize: vertical` was a handle whose
+   whole range above the window put the page back to scrolling, which is what
+   this stopped doing. */
+textarea.body-field { resize: none; }
 .doc { border-top: 1px solid var(--line); padding-top: 1rem; }
 .doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
 .doc code { background: var(--surface-2); padding: 0 .25em; }

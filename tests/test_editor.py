@@ -2499,12 +2499,20 @@ const split = {
                        - pane.getBoundingClientRect().height) <= 2,
   boxScrolls: area.scrollHeight > area.clientHeight + 1,
   paneScrolls: pane.scrollHeight > pane.clientHeight + 1,
-  // The page under the split still scrolls — but the page is no longer the
-  // document. Every record sits in the shell's filling box now (`_page(fills=
-  // True)`), which is what keeps the nav and the footer in view, so this asks
-  // the box the reader actually scrolls. Against `document.documentElement` it
-  // read False on a page where the facts below the split are one flick away.
-  pageScrolls: fills.scrollHeight > fills.clientHeight + 1,
+  // **Is there still more of the record than the split, and can it be reached?**
+  // "The page scrolls too" was the claim, and the page has stopped being a thing
+  // that scrolls: the record fills the window, and what moves is the facts column
+  // beside the split — or, on a narrow window, `.panes` around the pair. So this
+  // asks the facts, which is what the sentence was ever about: the split is a
+  // region of a record, not the whole of it, and the rest is one flick away.
+  pageScrolls: (() => {
+    const facts = article.querySelector('.facts');
+    for (let box = facts; box; box = box.parentElement) {
+      const how = getComputedStyle(box).overflowY;
+      if ((how === 'auto' || how === 'scroll') && box.scrollHeight > box.clientHeight) return true;
+    }
+    return false;
+  })(),
 };
 
 seg('view').click();
@@ -2974,16 +2982,17 @@ def test_the_width_handle_finds_the_pane_in_every_view(client: TestClient, tmp_p
     assert not edit["hidden"], "no width handle in the edit view, whose width is the measure"
     assert edit["onEdge"] and edit["spare"] > 20, edit
 
+    # **And not in the split, since 2026-09-16.** This asserted the opposite for
+    # three weeks, and the reason it changed is the page, not the arithmetic: the
+    # split's column is the window now that the record page fills it, so the
+    # handle has nothing on the far side of it and its whole range is inwards.
+    # Two vertical bars a hand's width apart, one of which only shrinks. jcanton,
+    # seeing it there: "in side-by-side there is still a horizontal dragging to
+    # the very right of the typed fields, can you remove it from there and only
+    # leave it for edit and preview views?" `#splitter` is this view's width
+    # control and it sits between the panes, with something on both sides of it.
     both = got["inView"]["both"]
-    assert not both["hidden"], "no width handle in the split view"
-    # `>= 20` here and `> 20` above, and the difference is the split's own shape
-    # rather than a slacker test: `.panes` carries `max-width: 100%`, and the
-    # split asks for one measure plus one body, which at this window is more than
-    # there is. So the column sits AT the article's edge and the spare is exactly
-    # the body's padding. What the number is guarding against is the handle
-    # parking against the edge of the SCREEN, which is what it did when it was
-    # measured against a hidden element — that reads 0, not 20.
-    assert both["onEdge"] and both["spare"] >= 20, both
+    assert both["hidden"], "the width handle is still on the page in the split view"
 
     assert not got["back"]["hidden"] and got["back"]["onEdge"], (
         "the handle did not come back with the column"
@@ -3258,17 +3267,14 @@ def test_the_facts_column_does_not_move_when_the_join_between_the_panes_does(
     assert got["stored"]["split"] > 1, got["stored"]
     assert got["stored"]["mode"] == "both"
 
-    # Both handles are on screen, and that is the arrangement now rather than the
-    # thing this line refused. `#splitter` moves the boundary BETWEEN the two
-    # panes and `#grip` moves the outside edge of both — the pair every editor
-    # with a split has, and what jcanton asked for on 2026-08-25: "I can only
-    # resize the edit pane wrt the preview pane but not all together".
-    #
-    # What kept them apart was arithmetic, not confusion: the split's column is
-    # one measure plus one body wide, so the grip used to move the measure twice
-    # the drag. It divides by that factor now. `got["grip"]` reports the grip
-    # HIDDEN, so this asserts it is not.
-    assert not got["grip"], "the width grip left the page when the split opened"
+    # One handle in this view, and it is this one. `#grip` was here too between
+    # 2026-08-25 and 2026-09-16 — the pair every editor with a split has — and it
+    # went when the page started filling the window: the column's outside edge is
+    # the window's edge now, so the outer handle stood against the screen with
+    # nothing to give it. The inner one still has a pane on each side, which is
+    # what makes it the control worth keeping. `got["grip"]` reports the grip
+    # HIDDEN, so this asserts it is.
+    assert got["grip"], "the width grip is still on the page beside the splitter"
 
 
 @pytest.mark.parametrize("where", ["/detail/{task}", "/new?kind=issue", "/new?kind=note", "/new"])
@@ -4740,7 +4746,16 @@ const box = sel => {
 };
 // The six above the line, in the order they are drawn. The nav is beside them
 // as the thing they are level with, and not as one of them.
-const HEADER = ['.back', '.editbar', '#commitbar', '.eyebrow',
+//
+// `.toolrow` and not `.editbar` since 2026-09-16. The full-width row that has to
+// be level with the nav is the one holding the controls, and that is the row the
+// commit bar moved into that day; `.editbar` is now the first item INSIDE it and
+// is as wide as the buttons it holds (225px against the nav's 1360), which is
+// what a flex item sized by its content is. The claim jcanton made — "full
+// width, so they stay left aligned like the nav and don't move anymore at all" —
+// is about the row, and `editbar-first` below is what still says the controls
+// themselves begin where the nav begins.
+const HEADER = ['.back', '.toolrow', '#commitbar', '.eyebrow',
                 'article.record h1', 'article.record .meta'];
 // And the CONTROLS inside one of those six, because a box that holds while its
 // contents slide is what the six alone cannot see. `.editbar` is the page's
@@ -4829,14 +4844,38 @@ def test_opening_a_session_moves_nothing_above_the_document(client: TestClient, 
     )
     landing = got["landing"]
 
-    assert got["writing"] == landing, (
+    # **The commit bar's own WIDTH is the one number allowed to change, and only
+    # since 2026-09-16.** The bar moved into the switcher's row that day — it had
+    # a reserved band of its own below it, which is what jcanton asked to reclaim
+    # — so it is a flex item sized by the sentence in it, and that sentence goes
+    # from "Nothing to save" to "Nothing changed yet" with Save and Reset beside
+    # it. Measured: 258px against 288px, same `top`, same `left`, and nothing
+    # after it in the row. His sentence is about things MOVING, and a box whose
+    # right edge extends into space nothing else occupies moves nothing. Its
+    # `top` and `left` are still held, below, because those are the numbers that
+    # would shove the row about.
+    def held(spot: dict) -> dict:
+        return {k: v for k, v in spot.items() if k != "width"}
+
+    def compare(view: dict) -> dict:
+        return {name: (held(spot) if name == "#commitbar" else spot) for name, spot in view.items()}
+
+    assert compare(got["writing"]) == compare(landing), (
         f"opening a session moved the header: {got['writing']} against {landing}"
     )
-    assert got["back"] == landing, (
+    assert compare(got["back"]) == compare(landing), (
         f"leaving the session did not put the page back: {got['back']} against {landing}"
     )
+    for view in ("writing", "back", "split"):
+        for edge in ("top", "left"):
+            assert got[view]["#commitbar"][edge] == landing["#commitbar"][edge], (
+                f"the {view} view moved the commit bar's {edge}: "
+                f"{got[view]['#commitbar']} against {landing['#commitbar']}"
+            )
     for name in got["header"] + got["switcher"]:
-        assert got["split"][name] == landing[name], (
+        want = held(landing[name]) if name == "#commitbar" else landing[name]
+        have = held(got["split"][name]) if name == "#commitbar" else got["split"][name]
+        assert have == want, (
             f"the split view moved {name}: {got['split'][name]} against {landing[name]}"
         )
     assert got["split"]["facts"]["top"] == landing["facts"]["top"], (
@@ -4850,6 +4889,12 @@ def test_opening_a_session_moves_nothing_above_the_document(client: TestClient, 
     for view in ("landing", "writing", "split"):
         nav = got[view]["nav"]
         for name in got["header"]:
+            # The commit bar is inside `.toolrow` since 2026-09-16 and is as wide
+            # as the sentence in it, so the row is what carries the "full width,
+            # like the nav" claim and the bar is what rides in it. Its own edges
+            # are held above, against the other views rather than against the nav.
+            if name == "#commitbar":
+                continue
             spot = got[view][name]
             assert (spot["left"], spot["width"]) == (nav["left"], nav["width"]), (
                 f"in the {view} view {name} is not the page's width beside the "
@@ -6197,14 +6242,27 @@ const rows = element => {
 const state = () => ({
   rows: rows(area),
   factsWhole: Math.round(facts.getBoundingClientRect().height) >= facts.scrollHeight - 1,
-  // How far down the SCROLLER the facts end, against how far that scroller goes.
-  // It was the document's scroll height, and the document stopped scrolling when
-  // the shell began giving a record page the box that keeps the nav and the
-  // footer in view — so a question about reach was being asked of a scrollport
-  // with no travel in it, and answered False about facts one flick away.
-  factsReachable:
-    facts.getBoundingClientRect().bottom - fills.getBoundingClientRect().top
-    + fills.scrollTop <= fills.scrollHeight + 1,
+  // **Can the reader get the facts on screen?** Asked by scrolling whatever
+  // actually scrolls and looking, rather than by arithmetic against a box named
+  // here. Which box that is now depends on the width: side by side the facts
+  // column scrolls inside itself, stacked it is `.panes` that scrolls, and the
+  // document scrolls in neither. Two rewrites of this line have already named
+  // the wrong one — it was `document.documentElement` when the page stopped
+  // scrolling, then `.pagefill` when the frame stopped scrolling — so it names
+  // none and walks up to the first ancestor with travel in it.
+  factsReachable: (() => {
+    let box = facts.parentElement;
+    for (; box; box = box.parentElement) {
+      const how = getComputedStyle(box).overflowY;
+      if ((how === 'auto' || how === 'scroll') && box.scrollHeight > box.clientHeight) break;
+    }
+    box = box || document.scrollingElement;
+    const was = box.scrollTop;
+    box.scrollTop = box.scrollHeight;
+    const reached = facts.getBoundingClientRect().bottom <= innerHeight + 1;
+    box.scrollTop = was;
+    return reached;
+  })(),
 });
 
 // The create form is always editing; the record page opens a session here.
@@ -8267,6 +8325,56 @@ def test_the_plain_slide_editor_draws_a_toolbar_and_a_status_strip(
     assert got["said"].strip(), "the plain slide editor drew no status strip at all"
 
 
+_SLIDE_WRITING_BOX = r"""
+const box = document.querySelector('[data-fills]');
+const pane = document.querySelector('.pane.pick');
+const surface = document.querySelector('.acebox') || document.querySelector('.bodywrap');
+return {
+  surface: Math.round(surface.getBoundingClientRect().height),
+  lines: document.querySelectorAll('.ace_line').length,
+  paneOver: Math.round(pane.getBoundingClientRect().bottom - box.getBoundingClientRect().bottom),
+  scrolls: document.documentElement.scrollHeight - document.documentElement.clientHeight,
+};
+"""
+
+
+@pytest.mark.parametrize("surface", ("", PLAIN))
+def test_the_slide_editor_has_a_writing_box_with_a_height_in_it(
+    client: TestClient, surface: str, tmp_path: Path
+):
+    """The box is sized by the pane it is in, and the pane is sized by the row the
+    shell measures — there is no number anywhere in the chain.
+
+    There used to be one: `--writing: 60vh`, carried by `textarea.body-field` and
+    by `.acebox`. It went with the record page's drag handle on 2026-09-16, and
+    this page kept nothing in its place. Ace draws an absolutely positioned
+    renderer inside whatever box it is handed, so a `.bodywrap` whose height is
+    its content is a 0px editor and a pane that looks like the writing box was
+    simply left out of the page. jcanton, the same day: "?view=slide lost the text
+    box for the body editing."
+
+    Both surfaces, because only one of them collapses silently: a bare textarea
+    with no height still draws its own default rows, so a fix measured on the
+    plain editor says nothing at all about the one a writer actually gets.
+    """
+    got = measured_in(
+        chrome(),
+        client.get(f"/detail/{TASK}?view=slide{surface and '&' + surface[1:]}").text,
+        tmp_path / f"slide-box{surface and '-plain'}.html",
+        1400,
+        _SLIDE_WRITING_BOX,
+        query=surface,
+        patience=3000,
+    )
+    assert got["surface"] >= 90, (
+        f"the slide's writing box is {got['surface']}px tall, which is no box to write in"
+    )
+    assert got["paneOver"] <= 2, (
+        f"the pane holding it hangs {got['paneOver']}px below the box the shell measured"
+    )
+    assert got["scrolls"] == 0, f"the slide page scrolls the document {got['scrolls']}px"
+
+
 _SLIDE_READER_SURFACE = r"""
 return {
   hasBodySurface: typeof bodySurface !== 'undefined',
@@ -9227,3 +9335,185 @@ def test_escape_backs_out_of_the_question_and_discard_throws_the_drawing_away(
             "a discarded drawing still left an embed in the body — nothing was ever posted "
             "for one to reference"
         )
+
+
+_VIM_WALKS = r"""
+  flipEditing();
+  await new Promise(r => setTimeout(r, 300));
+  const editor = SURFACE.editor;
+  const keymap = [...document.querySelectorAll('#statusbar button')]
+    .find(b => b.textContent.startsWith('Keymap'));
+  if (!keymap) return {noPicker: true};
+  keymap.click();
+  await new Promise(r => setTimeout(r, 150));
+
+  // One paragraph, no newline in it, far longer than the box is wide — so the
+  // file has one line and the screen has several. That is the whole case: `j` on
+  // a file line steps over every screen line at once, `gj` steps to the next one.
+  const long = 'alpha beta gamma delta epsilon zeta eta theta iota kappa '.repeat(12);
+  SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, long));
+  await new Promise(r => setTimeout(r, 120));
+  editor.focus();
+
+  const input = SURFACE.el.querySelector('textarea');
+  const press = (key, code, keyCode) => input.dispatchEvent(new KeyboardEvent(
+    'keydown', {key, code, keyCode, which: keyCode, bubbles: true, cancelable: true}));
+  // A printable key does not arrive as a keydown Ace acts on: Ace reads typed
+  // characters off its hidden textarea's `input` event and hands them to the
+  // keymap from there, which under vim is `Vim.handleKey`. Dispatching only a
+  // keydown for `j` moved nothing and looked exactly like a mapping that had not
+  // been registered — measured, and it is why this helper exists beside `press`.
+  const type = ch => {
+    input.value = ch;
+    input.dispatchEvent(new InputEvent('input',
+      {bubbles: true, data: ch, inputType: 'insertText'}));
+  };
+
+  const out = {wrapped: editor.session.getUseWrapMode(),
+               rows: editor.session.getDocument().getLength(),
+               screenRows: editor.session.getScreenLength()};
+  press('Escape', 'Escape', 27);          // NORMAL, wherever the click left us
+  await new Promise(r => setTimeout(r, 60));
+  editor.moveCursorTo(0, 0);
+  type('j');
+  await new Promise(r => setTimeout(r, 80));
+  const after = editor.getCursorPosition();
+  out.afterJ = {row: after.row, column: after.column};
+  out.screenAfterJ = editor.session.documentToScreenPosition(after.row, after.column).row;
+  return out;
+"""
+
+
+def test_j_and_k_walk_the_screen_line_under_vim(client: TestClient, tmp_path: Path):
+    """jcanton, 2026-09-16: "can we also change the default behaviour of vim keys
+    in the editor and have j/k send gj/gk?"
+
+    Every document written here is prose in a soft-wrapped box, so one line of the
+    file is routinely several on the screen and vim's `j` steps over all of them
+    at once. The mapping is the one in half the vimrcs in the world, and this is
+    the case it is for: a paragraph with no newline in it, where plain `j` cannot
+    move at all — there is no second file line — and `gj` moves down one screen
+    line without leaving row 0.
+
+    Asked of the browser with a real keystroke at Ace's own input, because the
+    claim is about what a key does. `Vim.map` being called proves the call was
+    made; it does not prove `j` moved anybody, and the mapping is registered on a
+    keymap object shared by every Ace on the page.
+    """
+    got = measured_in(
+        chrome(),
+        client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "vim-walks.html",
+        1400,
+        _VIM_WALKS,
+        query="?editor=ace",
+        patience=6800,
+    )
+    assert not got.get("noPicker"), "the second editor carries no keymap control"
+    # The controls first: a box that did not wrap, or a paragraph that fitted on
+    # one screen line, would make the assertion below true for the wrong reason.
+    assert got["wrapped"], "the box does not soft-wrap, so there is no screen line to walk"
+    assert got["rows"] == 1, f"the document has {got['rows']} file lines, so plain j would move"
+    assert got["screenRows"] > 1, "the paragraph fits on one screen line, so nothing can move"
+
+    assert got["afterJ"]["row"] == 0, (
+        f"j left file row 0, so it is still the file-line move: {got['afterJ']}"
+    )
+    assert got["screenAfterJ"] == 1, (
+        f"j did not move down one screen line: it landed on screen row "
+        f"{got['screenAfterJ']} at {got['afterJ']}"
+    )
+
+
+_VIM_YANK = r"""
+  flipEditing();
+  await new Promise(r => setTimeout(r, 300));
+  const editor = SURFACE.editor;
+  const keymap = [...document.querySelectorAll('#statusbar button')]
+    .find(b => b.textContent.startsWith('Keymap'));
+  if (!keymap) return {noPicker: true};
+
+  // **The clipboard is stubbed, and that is the honest way to ask this.** A
+  // headless Chrome has no clipboard permission and `writeText` rejects, so a
+  // test that read the real one would report "no" about a page that works. What
+  // this repository owns is the call — that a yank makes it, with the yanked
+  // text, and that a delete does not — so the call is what is recorded. The
+  // `navigator.clipboard` this replaces is the same object the page reaches.
+  const wrote = [];
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: {writeText: text => { wrote.push(text); return Promise.resolve(); }},
+  });
+  keymap.click();
+  await new Promise(r => setTimeout(r, 150));
+
+  SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, 'alpha\nbeta\ngamma\n'));
+  await new Promise(r => setTimeout(r, 120));
+  editor.focus();
+  const input = SURFACE.el.querySelector('textarea');
+  const type = ch => {
+    input.value = ch;
+    input.dispatchEvent(new InputEvent('input',
+      {bubbles: true, data: ch, inputType: 'insertText'}));
+  };
+  const press = (key, code, keyCode) => input.dispatchEvent(new KeyboardEvent(
+    'keydown', {key, code, keyCode, which: keyCode, bubbles: true, cancelable: true}));
+
+  press('Escape', 'Escape', 27);
+  await new Promise(r => setTimeout(r, 60));
+  editor.moveCursorTo(0, 0);
+  // A gap between the two, and it is not politeness. Ace reads typed text by
+  // diffing its hidden textarea's value against its own copy, so `y` followed
+  // immediately by `y` — the same value, dispatched twice in one task — is one
+  // keystroke as far as the editor is concerned, and `yy` never completes. The
+  // register stayed empty and it read exactly like a hook that had not been
+  // installed; it had.
+  type('y');
+  await new Promise(r => setTimeout(r, 60));
+  type('y');                                  // yank the first line
+  await new Promise(r => setTimeout(r, 200));
+  const afterYank = wrote.slice();
+
+  // And a delete, which goes through the same register controller and must NOT
+  // reach the clipboard: `d` is how you move text about inside a document.
+  editor.moveCursorTo(1, 0);
+  type('d');
+  await new Promise(r => setTimeout(r, 60));
+  type('d');
+  await new Promise(r => setTimeout(r, 200));
+  return {afterYank, afterDelete: wrote.slice(), text: SURFACE.text()};
+"""
+
+
+def test_a_vim_yank_reaches_the_system_clipboard(client: TestClient, tmp_path: Path):
+    """jcanton, 2026-09-16: "in the editor with vim keys yanking with `y` doesn't
+    copy to the system's clipboard, can this be done?"
+
+    Vim's registers are vim's own — `y` fills the unnamed register and `p` reads
+    it — which is right inside one editor and wrong the moment what you wanted
+    the text for is a commit message or the terminal beside this tab.
+
+    The hook is on the register controller rather than a remapping of `y`, so
+    every yank goes through it and no list of key sequences has to be kept
+    complete. Which is also what makes the second half of this test the
+    interesting one: `d` and `x` push through the same controller, and a
+    clipboard that changed on every deletion would be a clipboard nobody could
+    hold anything in.
+    """
+    got = measured_in(
+        chrome(),
+        client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "vim-yank.html",
+        1400,
+        _VIM_YANK,
+        query="?editor=ace",
+        patience=6800,
+    )
+    assert not got.get("noPicker"), "the second editor carries no keymap control"
+    assert got["afterYank"] == ["alpha\n"], (
+        f"yanking a line did not put that line on the clipboard: {got['afterYank']}"
+    )
+    assert got["afterDelete"] == got["afterYank"], (
+        f"deleting a line wrote to the clipboard as well: {got['afterDelete']}"
+    )
+    assert "beta" not in got["text"], "the delete did not happen, so it proves nothing"
