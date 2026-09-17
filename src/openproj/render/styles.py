@@ -1228,7 +1228,16 @@ article.record h1 { font-size: 1.5rem; margin: .2rem 0; }
    the shell's (0,1,0), and scoped to the article on purpose: the cycle page
    loads this sheet with a commit bar that is not inside an `article.record`,
    and it keeps the shell's spacing. */
-article.record .editbar { margin-bottom: 0; }
+article.record .editbar { margin-block: 0; }
+/* The top half of that margin went on 2026-09-17, and it is the last of the same
+   sentence. `.toolrow` is `align-items: center`, which centres MARGIN boxes: the
+   editbar's `.4rem` top margin made its 33.4px box the tallest thing on the line
+   and then sat its buttons 6px below the centre the commit bar beside them was
+   centred on. So the bar was level with nothing, and the row was 33px of which 6
+   were a band above the controls. jcanton, having had the bar's own box removed:
+   "bar is better but not in line with the text of the [Delete] button [...]
+   please make all in line". Both are `margin-block` now, the row is the height of
+   the controls in it, and the two children sit on one line. */
 /* And since 2026-09-16 there is no band left to remove, because there is no
    second row: `.toolrow` holds the switcher, Delete and the commit bar on one
    line. jcanton, asked for the same vertical space a third time and from the
@@ -1241,12 +1250,24 @@ article.record .editbar { margin-bottom: 0; }
    text baseline and leave its box a few pixels low. */
 .toolrow { display: flex; flex-wrap: wrap; align-items: center;
            gap: .4rem .75rem; margin-bottom: .4rem; }
-/* Flattened into the row. The box stays — `.dirty` turns its border amber and
-   that is the one signal saying "closing this tab loses something" — but the
-   margin the shell gives a bar standing alone, and the padding sized for one,
-   would make this row taller than the switcher in it. */
+/* Flattened into the row, and since 2026-09-17 the box goes with it. The
+   padding and the border were what made this bar taller than every other
+   control on the line — jcanton: "the [...] bar in the editor is higher than
+   the view and delete buttons to its right [...] should we then just remove the
+   outline? just keep the text and the two buttons". The two it holds are the
+   same `button` as Delete beside it, so with nothing around them the row is one
+   height.
+
+   **Where the amber went.** This box used to stay precisely because
+   `.commitbar.dirty` turns its border `--warn`, and that border was called the
+   one signal saying "closing this tab loses something". It was never the only
+   one: `#unsaved` goes `--warn` at `font-weight: 600` in the same state, and it
+   is the sentence that says what is unsaved rather than a line around it. The
+   rule above still applies on the cycle page, whose bar stands alone outside
+   `article.record`. */
 article.record .toolrow .commitbar {
-  position: static; margin: 0; padding: .1rem .5rem;
+  position: static; margin: 0; padding: 0;
+  border: 0; border-radius: 0; background: none;
 }
 /* The way to this record's slide, between the view switcher and Delete and
    spaced away from both — jcanton, 2026-08-25: "little space [slide] little

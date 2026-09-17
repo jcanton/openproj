@@ -1141,4 +1141,153 @@ switcher still but leaves it indented behind 71px of nothing, which answers "don
 contradicts "left aligned like the nav". Delete going second is also right on its own: it is the
 destructive control, and the leading edge of a row is where a pointer arrives.
 
+## Two small things the full-height editor made wrong, 2026-09-17
+
+Both asked for by jcanton after living in the box, and both are one line of configuration each —
+which is worth saying, because the interesting part of each is not the line but what it reveals
+about where a number lives.
+
+**The last line could not reach the top.** Ace stops the scroll with the last row against the foot
+of the scroller. That is the right default for an editor in a page that scrolls around it; it is
+the wrong one here, where since "editing a record is the same page you were reading" the editor IS
+the page and nothing else moves. The consequence is that past a windowful of text every line you
+are about to write is drawn along the bottom edge of the screen, with the whole document above it
+and nothing below.
+
+`scrollPastEnd: 1` is the switch, and `1` is not a pixel count — the renderer computes
+`(scrollerHeight - lineHeight) * $scrollPastEnd`, so one is "a screenful less a line" and the last
+row can reach the top row at any window size, with nothing to recompute when `openproj:room` changes
+the height. The space below the text is viewport and not document: the gutter is drawn from rows
+that exist, so it numbers none of it, and `text()` does not grow by a character. Both are asserted.
+
+The measurement is ordered, and the order is the evidence. Written the obvious way round — set the
+option, scroll, read the row — the test passed with the line deleted from `editor.py`, because what
+it measured was the option the test had just turned on. It reads the shipped state first and only
+then sets the option to `0` for the contrast: 377 of 400 with Ace's default, 399 with the line.
+
+**The indent width needed a reload.** The number lives in two places, because the two surfaces
+indent in two different ways, and only one of them was being moved. A textarea's Tab is the page's:
+`indentLines` reads the module-level `INDENT` on every press, so the picker is live there. Ace
+answers Tab itself, out of `tabSize`, which `setOptions` read once when the surface was built — and
+`setIndentWidth` cannot reach it.
+
+What that cost is the shape this repository keeps paying for: a control that lies. Pressing
+"Spaces: 4" moved the label, wrote the preference, and announced "Tab now types 4 spaces" into the
+live region — and the next press typed two, until the page was loaded again. The fix is a
+`setIndent` member on the Ace surface, called from the picker behind `if (surface.setIndent)`, on
+the same pattern as `setKeymap`: a textarea has no second copy of the number, so the caller looks
+for the member rather than being handed a flag that says the same thing twice.
+
+Not done, and stated rather than left to be rediscovered as an omission: **the plain `?editor=plain`
+textarea still stops at its last line.** A textarea's scroll space is its content plus its padding,
+so matching this would mean writing a pixel number into `padding-bottom` on every `openproj:room` —
+a computed length in a box whose geometry three other layers (the gutter, the seat bands, the
+mirror in `measuredLines`) already measure independently. That is a real change in a place this file
+records going quietly wrong before, for a surface reachable only by typing a parameter. The default
+surface is Ace and that is where the ask came from.
+
+## The reconnection that never said what it had missed, 2026-09-17
+
+One hole, three complaints, and they were reported as three.
+
+A room commits on Save, after twenty seconds of quiet, and when the last person
+leaves. A socket survives none of those on its own schedule — Cloud Run closes one
+at five minutes, a tunnel closes one whenever it likes — so "the room committed
+while you were disconnected" is an ordinary state on this page and not a rare one.
+
+The welcome a returning socket gets carries `base`, the commit the room is settled
+at, and `welcomed` in `render/editor.py` took it. What it did not take, because
+there was nothing to take, was what that commit HELD. `ORIGINAL_BODY` — the only
+thing `dirty()` measures the body against — went on holding the text the server
+rendered into the page before any of it happened. From that one stale string:
+
+* the bar said **"1 unsaved change"** about a document already in git, and said it
+  for ever;
+* **Save answered "nothing changed"** every time. It sent no fields, because none
+  had changed, and `_commit_room`'s `not fields and not room.pending()` is
+  exactly right — the body WAS committed. There was nothing this page could press
+  to clear the count;
+* the shell drew **"This was just changed by somebody else"** over it. That commit
+  goes down `/api/events` like any other, and `openproj:ours` — which exists
+  precisely so a room's own commit is not read as a stranger's — is dispatched
+  from the `saved` frame, which this tab was not there to hear. The banner named
+  the sha the footer's live `#planhead` was already showing, which is what made it
+  look like a phantom: the two agree by construction, because both name the head.
+
+The welcome carries `committed` now, the file's text at `base`, and the hello
+carries the page's own `base` so the server sends it **only to a page that is
+behind** — it is a whole body, and the ordinary reconnection has missed nothing.
+`welcomed` adopts it in the reconnection arm alone: `ORIGINAL_BODY`, `BASELINE`
+beside it as the pair they are, `forgetDraft()` when nothing is left over, and
+`openproj:ours` for the commit.
+
+**Never `text.toString()`, and that is the whole of the care here.** The document
+at that instant is the room's text merged with whatever this tab typed while it
+was disconnected, and that offline work is exactly what must keep counting as
+unsaved. A fix that took the room's word for it would delete the work it exists to
+keep. `test_a_reconnection_after_a_commit_stops_counting_it_as_unsaved` asserts the
+box still holds the person's text in the same run as the counter going quiet.
+
+**The first join is deliberately untouched.** Its `mine`/`theirs` arbitration keys
+off `ORIGINAL_BODY` being the rendered text; moving it there would make a page with
+no draft at all read as one with unsent work, and push a stale render into the room
+as an edit.
+
+## Three smaller things, same day
+
+**A caret this page moves is scrolled into view — in TWO places, and the second is
+the one that was reported.** Ace scrolls the caret into view from inside its own
+commands and nowhere else. The first pass put `renderer.scrollCursorIntoView()` in
+the surface's `setCaret`, on the reasoning that the four things here that move a
+caret without being Ace commands — the list continuation, `indentLines`, the
+toolbar's marks and Reset — all go through it.
+
+Three of them do. The list continuation does not: it writes
+`\n${indent}${bullet} ` and STOPS, because `applyDelta` moves Ace's anchors for it,
+so the caret arrives on a new line with `setCaret` never having been called. That is
+the gesture jcanton pressed — Enter at the end of a checklist item, the `- [ ] `
+written, the strip saying "Line 144, Column 7" about a line below the bottom edge,
+and the box jumping only on the next character because that one was Ace's own
+command. He reported it a second time, on a build carrying the first fix, which is
+what a claim reasoned from a list of callers is worth against one measured.
+
+So `splice` scrolls too, in its "a person's edit" branch, and the `applying` branch
+above it returns first — a page writing somebody else's text into this box must not
+drag this reader's view to it. The test presses the real Enter and asserts the SCROLL
+OFFSET moved: `getLastVisibleRow` counts a row one pixel into the box, so it is not
+on its own the question "can this be read", and the version of this test that asked
+it passed with the fix removed.
+
+**The banner's reload keeps the view.** `href=""` is the current address without
+its fragment, so `?edit` and `?both` survive it for somebody who arrived by link —
+and a session opened by pressing Write is in no address at all. Save already knew
+that and calls `keepView()` before the reload IT needs; the banner's reload is the
+other reload on this page and did not, so pressing it closed the editor. Guarded on
+`typeof keepView === 'function'`, because the shell is on every page and one of
+them has a view to keep.
+
+**The commit bar stopped drawing a box.** jcanton: "higher than the view and delete
+buttons to its right [...] should we then just remove the outline? just keep the
+text and the two buttons". It was 32px against their 27px, and the difference was
+its own border and padding — a bar sized to stand alone on the cycle page, standing
+inside a row of controls. The box used to stay because `.commitbar.dirty` turns its
+border `--warn` and the stylesheet called that the one signal saying "closing this
+tab loses something". It was never the only one: `#unsaved` goes `--warn` at
+`font-weight: 600` in the same state and is the sentence that says WHAT is unsaved,
+and the test measures that in the same run as the height. The `.4rem` top margin
+`.editbar` keeps from the shell went with it, on the second half of the same report
+— "not in line with the text of the [Delete] button [...] please make all in line".
+`.toolrow` is `align-items: center`, which centres MARGIN boxes, so that margin made
+the editbar's box the tallest thing on the line and then sat its buttons 6px below
+the centre the bar beside them was centred on. Both are `margin-block: 0` now, the
+row is the height of the controls in it, and the two sit on one line.
+
+**And the indent picker says nothing.** It announced "Tab now types N spaces.
+Nothing already written was changed." — the second sentence because a person
+pressing something called "Spaces" on a document full of tabs is entitled to think
+the document changed. jcanton asked for its removal the day the picker started
+taking effect without a reload: the label says the width, the next Tab demonstrates
+it, and a banner across the top of the page for two characters in a status strip is
+the wallpaper this repository keeps taking down.
+
 🤖 Written by an agent on behalf of @jcanton

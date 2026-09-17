@@ -6014,6 +6014,442 @@ def test_the_toolbar_and_the_keymap_do_not_cancel_each_other(client: TestClient,
     assert got["aceGutter"] == 1, "the editor's own gutter is not there either"
 
 
+_PAST_THE_END = r"""
+  flipEditing();
+  await new Promise(r => setTimeout(r, 300));
+  const editor = SURFACE.editor;
+  const long = Array.from({length: 400}, (_, i) => 'line ' + (i + 1)).join('\n');
+  SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, long));
+  editor.resize(true);
+  await new Promise(r => setTimeout(r, 80));
+
+  // As far down as the box will go, asked for by a number no document is long
+  // enough to reach: the renderer clamps it to whatever the maximum actually is,
+  // which is the number under measurement.
+  const bottom = async () => {
+    editor.session.setScrollTop(1e7);
+    editor.renderer.$loop._flush();
+    await new Promise(r => setTimeout(r, 60));
+    return editor.renderer.getFirstVisibleRow();
+  };
+
+  // **As the page shipped it, and that order is the whole of the evidence.**
+  // Written the other way round — set the option, then measure — this passed
+  // with the line deleted from `editor.py`, because the measurement was of the
+  // option the test had just turned on. Measured here, by deleting it: 1 passed.
+  const reached = await bottom();
+  // And then the zero, so the number above is a difference and not an identity:
+  // with Ace's own default the scroll stops with the last line against the foot.
+  editor.setOption('scrollPastEnd', 0);
+  const stopped = await bottom();
+
+  const cells = [...document.querySelectorAll('.ace_gutter-cell')]
+    .map(cell => Number(cell.textContent.trim()))
+    .filter(n => n);
+  return {
+    rows: editor.session.getScreenLength(),
+    onScreen: Math.round(editor.renderer.$size.scrollerHeight / editor.renderer.lineHeight),
+    stopped, reached,
+    highest: Math.max(...cells),
+    length: SURFACE.text().length,
+    wrote: long.length,
+  };
+"""
+
+
+def test_the_last_line_can_be_scrolled_to_the_top_of_a_full_height_editor(
+    client: TestClient, tmp_path: Path
+):
+    """The editor IS the page here — `design/pagefill.md`, nothing on a record
+    page scrolls except the panes — so where Ace stops scrolling is where the
+    caret lives once a document is longer than the window: along the bottom edge
+    of the screen, with every line you are about to write below the fold.
+
+    jcanton asked for the last line to reach the TOP instead, and guessed it was
+    a switch Ace already has. It is: `scrollPastEnd`, a multiple of the box's own
+    height rather than a pixel count, which is why nothing here recomputes on
+    resize.
+
+    Two numbers, and the first is what makes the second mean something. With the
+    option off the scroll stops with the last row at the foot — `firstRow` is a
+    screenful back from the end — and with it on `firstRow` is the last row
+    itself. The same box, the same document, in one run.
+
+    And the space below is not document: the gutter numbers no row that does not
+    exist, and `text()` is the length that was written into it.
+    """
+    got = measured_in(
+        chrome(),
+        client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "pastend.html",
+        1400,
+        _PAST_THE_END,
+        query="?editor=ace",
+        patience=4800,
+    )
+
+    assert got["rows"] == 400, got["rows"]
+    assert got["onScreen"] > 4, (
+        f"the editor is {got['onScreen']} rows tall, which is too short for the "
+        "difference this measures to be visible"
+    )
+    # A screenful back from the end, give or take the row that is half drawn:
+    # `onScreen` is a fractional height divided by a fractional line and then
+    # rounded, so the exact integer is the rounding's and not the behaviour's.
+    assert abs(got["rows"] - got["onScreen"] - got["stopped"]) <= 1, (
+        f"Ace's own default put the top of the box at row {got['stopped']} of "
+        f"{got['rows']}, in a box {got['onScreen']} rows tall — this test no "
+        "longer measures what it says it does"
+    )
+    assert got["reached"] == got["rows"] - 1, (
+        f"the last line scrolls no higher than row {got['reached']} of "
+        f"{got['rows']}: `scrollPastEnd` is not on"
+    )
+    assert got["highest"] == 400, f"the gutter numbers a line that does not exist: {got['highest']}"
+    assert got["length"] == got["wrote"], (
+        "the document grew by the room made below it — this has to be viewport and never text"
+    )
+
+
+_CARET_FOLLOWED = r"""
+  flipEditing();
+  await new Promise(r => setTimeout(r, 300));
+  const editor = SURFACE.editor;
+  const lines = Array.from({length: 400}, (_, i) => 'line ' + (i + 1));
+  // The gesture that was reported is Enter at the end of a checklist item.
+  lines[399] = '- [ ] the last item';
+  const long = lines.join('\n');
+  SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, long));
+  editor.resize(true);
+  editor.session.setScrollTop(0);
+  editor.renderer.$loop._flush();
+  await new Promise(r => setTimeout(r, 60));
+  // `getLastVisibleRow` counts a row that is one pixel into the box, so it is
+  // not on its own the question "can this be read". `top` is: the scroll offset
+  // moves by a line when the box follows the caret and does not move at all when
+  // it does not, and that is a difference no partial row can fake.
+  const seen = () => ({first: editor.renderer.getFirstVisibleRow(),
+                       last: editor.renderer.getLastVisibleRow(),
+                       top: Math.round(editor.session.getScrollTop()),
+                       row: editor.getCursorPosition().row});
+  const before = seen();
+
+  // **One: a caret the page puts somewhere.** The first character of line 300,
+  // counted the way the surface counts — UTF-16 code units from the start.
+  SURFACE.setCaret(lines.slice(0, 299).join('\n').length + 1);
+  editor.renderer.$loop._flush();
+  await new Promise(r => setTimeout(r, 60));
+  const put = seen();
+
+  // **Two: a caret that moves because the page wrote in front of it.** The list
+  // continuation never calls `setCaret` — Ace's own `applyDelta` moves the
+  // anchors — so this is a different path and it is the one jcanton pressed.
+  // The caret goes to the end of the last item with that line at the FOOT of the
+  // box, which is where somebody writing down a list is.
+  SURFACE.setCaret(long.length);
+  const rows = Math.round(editor.renderer.$size.scrollerHeight / editor.renderer.lineHeight);
+  editor.session.setScrollTop((400 - rows) * editor.renderer.lineHeight);
+  editor.renderer.$loop._flush();
+  await new Promise(r => setTimeout(r, 60));
+  const sitting = seen();
+  // At Ace's own input, where a keystroke really arrives; `keyCode` in the init
+  // dict because that is what Ace reads and Chrome gives a synthesised event 0.
+  SURFACE.el.querySelector('textarea').dispatchEvent(new KeyboardEvent('keydown', {
+    key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true}));
+  editor.renderer.$loop._flush();
+  await new Promise(r => setTimeout(r, 80));
+  const after = seen();
+  return {before, put, sitting, after, wrote: SURFACE.text().slice(-24)};
+"""
+
+
+def test_a_caret_the_page_moves_is_scrolled_into_view(client: TestClient, tmp_path: Path):
+    """ "if adding a new line with enter [...] the text box correctly adds `- [ ]`
+    automatically, but doesn't scroll to its line until I type" — jcanton,
+    2026-09-17, with the status strip in the shot saying "Line 144, Column 7"
+    about a line off the bottom of the box.
+
+    Ace scrolls the caret into view from inside its own commands and from nowhere
+    else, and there are two ways this page moves a caret that are not Ace
+    commands. Both are here, because the first fix covered one of them and
+    jcanton reported the same thing again:
+
+    * `setCaret` — `indentLines`, the toolbar's marks and Reset;
+    * `splice` with no `setCaret` at all, which is the list continuation. It
+      writes `\n<indent><bullet> ` and stops; Ace's `applyDelta` moves the
+      anchors, so the caret lands on a new line without anything here having put
+      it there. This is the one that was reported, twice.
+
+    Neither fires while `applying`, which is the page writing somebody else's
+    text into this box rather than a person typing in it.
+    """
+    got = measured_in(
+        chrome(),
+        client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "caret.html",
+        1400,
+        _CARET_FOLLOWED,
+        query="?editor=ace",
+        patience=4800,
+    )
+
+    assert got["before"]["first"] == 0, f"the box did not start at the top: {got['before']}"
+    assert got["put"]["row"] == 299, f"the caret is on row {got['put']['row']}"
+    assert got["put"]["first"] <= 299 <= got["put"]["last"], (
+        f"a caret put on row 299 is not on screen: rows {got['put']['first']}–{got['put']['last']}"
+    )
+
+    assert got["sitting"]["row"] == 399, got["sitting"]
+    assert got["sitting"]["last"] == 399, (
+        f"the run did not put the list item at the foot of the box: {got['sitting']}"
+    )
+    assert got["wrote"].endswith("- [ ] "), f"Enter did not continue the list: {got['wrote']!r}"
+    assert got["after"]["row"] == 400, got["after"]
+    assert got["after"]["first"] <= 400 <= got["after"]["last"], (
+        f"the list continued onto row 400 and the box is showing rows "
+        f"{got['after']['first']}–{got['after']['last']}"
+    )
+    assert got["after"]["top"] > got["sitting"]["top"], (
+        f"the box did not move: {got['sitting']['top']}px before the Enter and "
+        f"{got['after']['top']}px after it. The new item is drawn past the bottom "
+        "edge, which is exactly what was reported — twice"
+    )
+
+
+_INDENT_NOW = r"""
+  flipEditing();
+  await new Promise(r => setTimeout(r, 300));
+  const bar = document.getElementById('statusbar');
+  const spaces = [...bar.querySelectorAll('button')]
+    .find(b => b.textContent.startsWith('Spaces'));
+  if (!spaces) return {noPicker: true};
+  const before = SURFACE.editor.getOption('tabSize');
+  spaces.click();
+  await new Promise(r => setTimeout(r, 60));
+  const after = SURFACE.editor.getOption('tabSize');
+
+  // And the press itself, at Ace's own input, because `tabSize` is only the
+  // reason — what was asked for is that Tab types four without a reload. See
+  // `test_the_toolbar_and_the_keymap_do_not_cancel_each_other` for why `keyCode`
+  // is in the init dict.
+  SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, 'abc\n'));
+  SURFACE.setCaret(0, 0);
+  SURFACE.el.querySelector('textarea').dispatchEvent(new KeyboardEvent('keydown', {
+    key: 'Tab', code: 'Tab', keyCode: 9, which: 9, bubbles: true, cancelable: true}));
+  await new Promise(r => setTimeout(r, 40));
+  const text = SURFACE.text();
+  return {before, after, label: spaces.textContent,
+          typed: text.slice(0, text.indexOf('abc')),
+          said: document.getElementById('state').textContent};
+"""
+
+
+def test_the_indent_picker_moves_the_second_editor_without_a_reload(
+    client: TestClient, tmp_path: Path
+):
+    """`Spaces: 4` said so and the box went on typing two.
+
+    The number lives in two places because the two surfaces indent in two ways.
+    A textarea's Tab is the page's — `indentLines` reads `INDENT` on the press,
+    so the picker is live there, which
+    `test_the_status_bar_says_where_the_caret_is_how_long_it_is_and_what_tab_types`
+    already holds. Ace answers Tab itself out of `tabSize`, read once when the
+    surface was built, and `setIndentWidth` cannot reach it.
+
+    What that cost was a control that lies: the label moved, the preference was
+    written, and the next press typed two until the page was loaded again.
+
+    The press is measured and not just the option, because the option is the
+    reason rather than the thing asked for.
+
+    Nothing is announced any more — jcanton, 2026-09-17, "it's not necessary",
+    once the picker started taking effect immediately. That the live region stays
+    quiet is asserted below, because a banner across the top of the page for two
+    characters in a status strip is the wallpaper this repository keeps removing.
+    """
+    got = measured_in(
+        chrome(),
+        client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "indent.html",
+        1400,
+        _INDENT_NOW,
+        query="?editor=ace",
+        patience=4800,
+    )
+
+    assert not got.get("noPicker"), "the second editor carries no indent control"
+    assert got["before"] == 2 and got["after"] == 4, (
+        f"the picker moved to {got['label']!r} and the editor's tab is {got['after']} wide"
+    )
+    assert got["label"] == "Spaces: 4", got["label"]
+    assert got["typed"] == "    ", (
+        f"Tab typed {got['typed']!r} in the second editor after the picker was "
+        "moved to four — the width still needs a reload"
+    )
+    assert "Tab now types" not in got["said"], f"the removed announcement is back: {got['said']!r}"
+
+
+_ROW_HEIGHTS = (
+    _STUB_RENDER
+    + r"""
+flipEditing();
+await new Promise(r => setTimeout(r, 250));
+const h = sel => {
+  const el = document.querySelector(sel);
+  return el ? Math.round(el.getBoundingClientRect().height) : null;
+};
+const warn = getComputedStyle(document.documentElement)
+  .getPropertyValue('--warn').trim();
+const unsaved = document.getElementById('unsaved');
+const area = document.querySelector('textarea[name=body]');
+area.value = area.value + '\nsomething unsaved';
+area.dispatchEvent(new Event('input', {bubbles: true}));
+await new Promise(r => setTimeout(r, 40));
+const said = getComputedStyle(unsaved);
+const bar = getComputedStyle(document.getElementById('commitbar'));
+const kids = [...document.querySelector('.toolrow').children].map(
+  el => [el.className || el.id, Math.round(el.getBoundingClientRect().height)]);
+return {row: h('.toolrow'), bar: h('#commitbar'), del: h('.editbar .delete'), kids,
+        views: h('#views'), save: h('#save'),
+        said: unsaved.textContent, colour: said.color, weight: said.fontWeight,
+        warn, border: bar.borderTopWidth, pad: bar.paddingTop};
+"""
+)
+
+
+def test_the_commit_bar_is_the_same_height_as_the_controls_beside_it(
+    client: TestClient, tmp_path: Path
+):
+    """jcanton: "the [...] bar in the editor is higher than the view and delete
+    buttons to its right [...] should we then just remove the outline? just keep
+    the text and the two buttons".
+
+    It was, and correctly so: Save and Reset are the same `button` as Delete, and
+    the bar wrapped them in the padding and the border a bar standing alone on
+    the cycle page needs. Inside a row of controls that is one control drawn
+    inside a box, a few pixels taller than everything level with it.
+
+    **What the box was keeping is asserted here too**, because it was the reason
+    it stayed: `.commitbar.dirty` turns its border `--warn`, and the comment in
+    the stylesheet called that the one signal saying "closing this tab loses
+    something". It was never the only one — `#unsaved` goes `--warn` at
+    `font-weight: 600` in the same state, and it is the sentence that says what
+    is unsaved rather than a line around it. So the border goes and the warning
+    is measured, in the same run, on a document with something in it to lose.
+    """
+    got = measured_in(
+        chrome(),
+        # The plain surface, because the sentence under measurement is written by
+        # `dirty()` on a form `input` and the point of the run is the row's
+        # geometry, which is the same on both.
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "row.html",
+        1400,
+        _ROW_HEIGHTS,
+        patience=4800,
+    )
+
+    assert got["del"] and got["del"] > 8, f"nothing was measured: {got}"
+    assert got["bar"] == got["del"], (
+        f"the commit bar is {got['bar']}px against Delete's {got['del']}px — it "
+        "is still drawing a box of its own inside the row"
+    )
+    # And the row is no longer as tall as the bar made it. `#views` is the
+    # segmented control and is the tallest thing on this line — it always was —
+    # so the claim that holds is that the bar is not what sets the height.
+    assert got["bar"] <= got["views"], (
+        f"the commit bar is {got['bar']}px against the switcher's "
+        f"{got['views']}px, so it is still the tallest thing in the row"
+    )
+    assert got["kids"] == [["editbar", got["del"]], ["commitbar dirty", got["del"]]], got["kids"]
+    # And the row is the height of the controls in it, with nothing above them.
+    # `.toolrow` centres MARGIN boxes, so the `.4rem` the shell gives `.editbar`
+    # made its box the tallest thing on the line and sat its buttons 6px below
+    # the centre the bar beside them was centred on — which is the second half of
+    # the report, "not in line with the text of the [Delete] button".
+    assert got["row"] == got["del"], (
+        f"the row is {got['row']}px and its controls are {got['del']}px: there is "
+        "still a band above them, and the two children are centred on different "
+        "lines because of it"
+    )
+    assert (got["border"], got["pad"]) == ("0px", "0px"), (
+        f"border {got['border']}, padding {got['pad']} — the outline is still there"
+    )
+
+    # The warning, in the state it is for.
+    assert got["said"] == "1 unsaved change", got["said"]
+    assert got["weight"] == "600", f"the unsaved sentence is not emphasised: {got['weight']}"
+    assert got["colour"] == _rgb(got["warn"]), (
+        f"the unsaved sentence is {got['colour']} and `--warn` is {got['warn']} — "
+        "the border was the only thing carrying the warning and it has just gone"
+    )
+
+
+def _rgb(colour: str) -> str:
+    """A `#rrggbb` as Chrome reports a computed colour."""
+    raw = colour.lstrip("#")
+    return "rgb({}, {}, {})".format(*(int(raw[at : at + 2], 16) for at in (0, 2, 4)))
+
+
+_NO_STREAM = """
+window.__es = null;
+function FakeES() { window.__es = this; }
+FakeES.prototype.close = function () {};
+window.EventSource = FakeES;
+"""
+
+_BANNER_RELOAD = r"""
+flipEditing();
+await new Promise(r => setTimeout(r, 200));
+const moved = document.getElementById('moved');
+const was = VIEW;
+window.__es.onmessage({data: JSON.stringify({commit: 'a'.repeat(40), changed: [ID]})});
+const link = document.getElementById('movedgo');
+// The link really navigates, and a navigation in here is the harness losing its
+// answer. Prevented in the capture phase, which does not stop the element's own
+// handler from running — that handler is what is under test.
+addEventListener('click', event => event.preventDefault(), true);
+link.click();
+return {hidden: moved.hidden, said: moved.textContent, was,
+        resumed: forThisTab.get('openproj:resumed')};
+"""
+
+
+def test_the_banners_reload_lands_back_in_the_view_it_was_pressed_from(
+    client: TestClient, tmp_path: Path
+):
+    """ "clicking reload kicks you out of edit mode and into preview" — jcanton.
+
+    `href=""` is the current address without its fragment, so it keeps `?edit`
+    and `?both` for somebody who arrived by link. A session opened by pressing
+    Write is in no address at all: the mode lives in the page, and Save already
+    knows that — it calls `keepView()` before the reload IT needs, which puts the
+    mode in `sessionStorage` for `RESUMING` to pick up on the way back.
+
+    The banner's reload is the other reload on this page and it did not, so
+    pressing it over an open editor closed the editor.
+    """
+    got = measured_in(
+        chrome(),
+        _before_the_page_runs(client.get(f"/detail/{TASK}").text, _NO_STREAM),
+        tmp_path / "banner.html",
+        1400,
+        _BANNER_RELOAD.replace("ID", json.dumps(TASK)),
+        patience=4800,
+    )
+
+    assert got["hidden"] is False, "the banner did not open on a commit somebody else made"
+    assert "This was just changed by somebody else" in got["said"], got["said"]
+    assert got["was"] in ("edit", "both"), (
+        f"the page was in {got['was']!r}, so this run cannot say anything about "
+        "keeping a session's view"
+    )
+    assert got["resumed"] == got["was"], (
+        f"the reload kept {got['resumed']!r} of a session in {got['was']!r} — "
+        "pressing it lands back on the reading view"
+    )
+
+
 _KEYMAP_KEPT = r"""
   flipEditing();
   await new Promise(r => setTimeout(r, 300));

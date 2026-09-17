@@ -281,6 +281,27 @@ function aceSurface(area, seeded) {
     // initialised is a TDZ throw rather than `undefined`.
     tabSize: (typeof INDENT === 'string' ? INDENT : '  ').length,
     wrap: true,
+    // **The last line can be scrolled to the top of the box, and this is the
+    // whole of what a full-height editor needed.** Ace stops the scroll with the
+    // last line against the FOOT of the scroller, so once a document is longer
+    // than the window every newly typed line is written along the bottom edge of
+    // the screen — the page does not scroll, the editor is the page, and there
+    // is nowhere else for the caret to be.
+    //
+    // `1` is a MULTIPLE of the box's own height, not a pixel count:
+    // `(scrollerHeight - lineHeight) * $scrollPastEnd` is the renderer's own
+    // arithmetic, so one is "a screenful less a line" and the caret can reach
+    // the top row at any window size with nothing recomputed on resize — which
+    // matters here, where `openproj:room` changes that height on every one.
+    //
+    // The space below the document is not document. Ace's gutter is drawn from
+    // the rows that exist, so it numbers none of it, and `getValue()` does not
+    // grow by a character; this is the viewport being allowed further down, not
+    // lines being added under the text.
+    //
+    // `$maxLines` is what would disable it — the renderer reads
+    // `!this.$maxLines && this.$scrollPastEnd` — and this surface never sets it.
+    scrollPastEnd: 1,
     showPrintMargin: false,
     // The default is a `<textarea>` 2.5x1 CSS px at the caret with opacity 0,
     // and Ace rewrites its `aria-label` — so the box that used to say "Shaping
@@ -552,6 +573,25 @@ function aceSurface(area, seeded) {
     setCaret(from, to) {
       editor.selection.setRange(
         Range.fromPoints(positionOf(from), positionOf(to === undefined ? from : to)));
+      if (!applying) editor.renderer.scrollCursorIntoView();
+      // **And the box follows it.** Ace scrolls the caret into view from inside
+      // its own commands — `insertstring`, the arrow keys, the vim motions — and
+      // from nowhere else, so a caret this page moves lands wherever it lands
+      // and the view does not budge. jcanton, 2026-09-17: pressing Enter at the
+      // end of a checklist item wrote the `- [ ] ` the page continues the list
+      // with, put the caret on line 144, and left line 143 as the last one on
+      // screen; the status strip said "Line 144, Column 7" about a line nobody
+      // could see, and the box only jumped when the next character was typed —
+      // by Ace's own command, not by this.
+      //
+      // Here and not in the callers, because every one of them is the same case:
+      // `indentLines`, the toolbar's marks and Reset all move a caret this
+      // person cannot see move. A caret put somewhere is a caret meant to be
+      // typed at.
+      //
+      // Not while `applying`, which is the page writing rather than a person —
+      // `reflect()` is the room putting somebody else's paragraph into this box,
+      // and scrolling to it would drag the view away from whoever is reading.
     },
 
     // The only write, and NEVER `session.setValue` or `session.replace`. Both
@@ -574,6 +614,19 @@ function aceSurface(area, seeded) {
       editor.focus();
       editor.startOperation({command: {name: 'openproj'}});
       try { run(); } finally { editor.endOperation(); }
+      // **And here as well as in `setCaret`, because this is the path the report
+      // was actually about.** The list continuation writes
+      // `\n${indent}${bullet} ` and STOPS: it never touches the caret, because
+      // `applyDelta` moves Ace's anchors for it — so the caret arrives on a new
+      // line without `setCaret` having been called, and the guard one member up
+      // never runs. Measured by jcanton twice, the second time on a build that
+      // had the other half of this fix in it: line 48 of 48, "Line 48, Column 7"
+      // in the strip, and line 47 the last one on screen.
+      //
+      // The `applying` branch above returns before this, which is the whole of
+      // the discrimination: a page writing somebody else's text must not move
+      // this reader's view.
+      editor.renderer.scrollCursorIntoView();
     },
 
     onInput(listener) { heard.input.push(listener); },
@@ -644,6 +697,23 @@ function aceSurface(area, seeded) {
       // away and nothing anywhere says so.
       if (claimed) editor.keyBinding.addKeyboardHandler(claimed, 1);
     },
+
+    // What Tab types, changed without a reload — and the reason this member has
+    // to exist is that the two surfaces hold the number in different places.
+    //
+    // `INDENT` is a page-level `let` that the status bar's picker moves, and
+    // `indentLines` reads it on the press, so a textarea follows the picker
+    // immediately. Nothing of that reaches here: Ace's own soft tab answers Tab
+    // before the page's keydown listener ever sees it, out of `tabSize`, which
+    // `setOptions` read ONCE at construction. So pressing "Spaces: 4" moved the
+    // label, wrote the preference and left this box typing two — under an
+    // announcement that says "Tab now types 4 spaces", which was a sentence that
+    // only became true on the next page load.
+    //
+    // Only on this surface, like `setKeymap` above: a textarea has no second
+    // copy of the number to keep in step, and the caller looks for the member
+    // rather than being handed a flag saying the same thing twice.
+    setIndent(width) { editor.setOption('tabSize', width); },
 
     // --- completing a link to another record ---------------------------------
     //
@@ -1451,8 +1521,52 @@ const COEDIT = (() => {
       ownHistory();
     } else {
       // A reconnection. The document already merged everything typed while the
-      // socket was down, so there is nothing to decide.
+      // socket was down, so there is nothing to decide about the TEXT.
       reflect();
+      // **What there is to decide is which commit that text belongs to.**
+      //
+      // A room commits on Save, after twenty seconds of quiet, and when the last
+      // person leaves — so a socket that drops while somebody is writing (an
+      // idle tunnel, Cloud Run's teardown, a lid) comes back to a room that has
+      // committed in its absence. This arm used to take the text and nothing
+      // else, and `ORIGINAL_BODY` went on holding what the SERVER RENDERED into
+      // the page before any of it happened. Three things followed from that one
+      // stale string, and jcanton reported all three from the deployed service
+      // as separate complaints:
+      //
+      // * `dirty()` counts the body as unsaved whenever it differs from
+      //   `ORIGINAL_BODY`, so the bar said "1 unsaved change" over a document
+      //   that was already in git, for ever.
+      // * Pressing Save sent no fields — none had changed — and the room had
+      //   nothing pending, so the answer was the `t: 'nothing'` frame: "nothing
+      //   changed", every time, with the counter still saying one. Nothing this
+      //   page could do would clear it.
+      // * The commit was announced to `/api/events` like any other, and with no
+      //   `openproj:ours` for it the shell drew "This was just changed by
+      //   somebody else" — naming the sha the footer's live `#planhead` was
+      //   already showing, which is what made it look like a phantom.
+      //
+      // `committed` is the file's own text at `message.base`, sent only when the
+      // `base` in the hello above says this page is behind. Never
+      // `text.toString()`: the document at this instant is the room's text
+      // merged with whatever this tab typed while it was disconnected, and that
+      // offline work is exactly what must keep counting as unsaved.
+      if (typeof message.committed === 'string') {
+        ORIGINAL_BODY = message.committed;
+        // The pair, as everywhere else: `BASELINE` is the commit `ORIGINAL_BODY`
+        // belongs to, and Reset restores the two together.
+        BASELINE = message.base;
+        // A draft holding nothing that is not in git is a receipt for work that
+        // has already landed — the same rule `saved` applies, for the same
+        // reason.
+        if (SURFACE.text() === ORIGINAL_BODY) forgetDraft();
+        dirty();
+        // And the banner, which is about a commit this room made while this tab
+        // was away. The text it holds is in the box in front of you, which is
+        // the argument the `saved` handler makes for every other member of the
+        // room.
+        dispatchEvent(new CustomEvent('openproj:ours', {detail: message.base}));
+      }
     }
     // Whatever this tab has that the room has not seen: nothing on a first
     // connection to a room that seeded it, every keystroke made while the socket
@@ -1733,7 +1847,13 @@ const COEDIT = (() => {
       if (opened !== socket || !wanted) return;
       arrived = true;
       attempts = 0;
-      send({t: 'hello', seed: seed, sv: b64(YJS.encodeStateVector(doc))});
+      // `base` as well as the seed, and they answer different questions. The
+      // seed decides whether these two documents share a history at all; the
+      // base says which commit this page believes it is looking at, so a room
+      // that has committed while this socket was down can say so in its
+      // welcome. See `welcomed`'s reconnection arm.
+      send({t: 'hello', seed: seed, base: BASE.value,
+            sv: b64(YJS.encodeStateVector(doc))});
     };
     socket.onmessage = event => {
       if (opened !== socket || !wanted) return;

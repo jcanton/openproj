@@ -1949,13 +1949,23 @@ function attachStatus(surface, bar) {
     document.createElement('button'), 'Spaces', INDENT_WIDTHS, EDITOR.indent,
     width => {
       setIndentWidth(width);
+      // And the surface, if it keeps its own copy. `setIndentWidth` moves the
+      // page's `INDENT`, which is what `indentLines` types into a textarea; the
+      // second editor answers Tab itself and was told its width once, when it
+      // was built. Without this line the announcement below is false until a
+      // reload on the surface most people are on.
+      if (surface.setIndent) surface.setIndent(width);
       rememberEditor({indent: width});
-      // In the words of what it is and what it is not. A person who has just
-      // pressed something called "Spaces" on a document full of tabs is entitled
-      // to think the document changed, and it did not: re-indenting a whole
-      // document reaches a live room as one delete-everything-insert-everything,
-      // which is measurably larger than a body is allowed to be.
-      announce(`Tab now types ${width} spaces. Nothing already written was changed.`);
+      // **Nothing is announced, and that is jcanton's call rather than an
+      // omission.** This used to say "Tab now types N spaces. Nothing already
+      // written was changed." — the second sentence because a person pressing
+      // something called "Spaces" on a document full of tabs is entitled to
+      // think the document changed, and it does not. Asked for its removal on
+      // 2026-09-17, "it's not necessary", on the same day the picker started
+      // taking effect without a reload: the control's own label says the width,
+      // the next Tab now demonstrates it immediately, and a banner across the
+      // top of the page for two characters in a status strip is the wallpaper
+      // this repository keeps taking down.
     });
   const size = document.createElement('span');
   size.className = 'stat';
