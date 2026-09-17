@@ -6116,23 +6116,50 @@ _CARET_FOLLOWED = r"""
   await new Promise(r => setTimeout(r, 300));
   const editor = SURFACE.editor;
   const lines = Array.from({length: 400}, (_, i) => 'line ' + (i + 1));
+  // The gesture that was reported is Enter at the end of a checklist item.
+  lines[399] = '- [ ] the last item';
   const long = lines.join('\n');
   SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, long));
   editor.resize(true);
   editor.session.setScrollTop(0);
   editor.renderer.$loop._flush();
   await new Promise(r => setTimeout(r, 60));
-  const before = editor.renderer.getFirstVisibleRow();
+  // `getLastVisibleRow` counts a row that is one pixel into the box, so it is
+  // not on its own the question "can this be read". `top` is: the scroll offset
+  // moves by a line when the box follows the caret and does not move at all when
+  // it does not, and that is a difference no partial row can fake.
+  const seen = () => ({first: editor.renderer.getFirstVisibleRow(),
+                       last: editor.renderer.getLastVisibleRow(),
+                       top: Math.round(editor.session.getScrollTop()),
+                       row: editor.getCursorPosition().row});
+  const before = seen();
 
-  // The first character of line 300, counted the way the surface counts: UTF-16
-  // code units from the start of the document.
-  const at = lines.slice(0, 299).join('\n').length + 1;
-  SURFACE.setCaret(at);
+  // **One: a caret the page puts somewhere.** The first character of line 300,
+  // counted the way the surface counts — UTF-16 code units from the start.
+  SURFACE.setCaret(lines.slice(0, 299).join('\n').length + 1);
   editor.renderer.$loop._flush();
   await new Promise(r => setTimeout(r, 60));
-  return {before, row: editor.getCursorPosition().row,
-          first: editor.renderer.getFirstVisibleRow(),
-          last: editor.renderer.getLastVisibleRow()};
+  const put = seen();
+
+  // **Two: a caret that moves because the page wrote in front of it.** The list
+  // continuation never calls `setCaret` — Ace's own `applyDelta` moves the
+  // anchors — so this is a different path and it is the one jcanton pressed.
+  // The caret goes to the end of the last item with that line at the FOOT of the
+  // box, which is where somebody writing down a list is.
+  SURFACE.setCaret(long.length);
+  const rows = Math.round(editor.renderer.$size.scrollerHeight / editor.renderer.lineHeight);
+  editor.session.setScrollTop((400 - rows) * editor.renderer.lineHeight);
+  editor.renderer.$loop._flush();
+  await new Promise(r => setTimeout(r, 60));
+  const sitting = seen();
+  // At Ace's own input, where a keystroke really arrives; `keyCode` in the init
+  // dict because that is what Ace reads and Chrome gives a synthesised event 0.
+  SURFACE.el.querySelector('textarea').dispatchEvent(new KeyboardEvent('keydown', {
+    key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true}));
+  editor.renderer.$loop._flush();
+  await new Promise(r => setTimeout(r, 80));
+  const after = seen();
+  return {before, put, sitting, after, wrote: SURFACE.text().slice(-24)};
 """
 
 
@@ -6143,14 +6170,18 @@ def test_a_caret_the_page_moves_is_scrolled_into_view(client: TestClient, tmp_pa
     about a line off the bottom of the box.
 
     Ace scrolls the caret into view from inside its own commands and from nowhere
-    else. Four things on this page move a caret that are not Ace commands — the
-    list continuation, `indentLines`, the toolbar's marks and Reset — and all
-    four went through `setCaret`, which set a range and returned. The view moved
-    on the NEXT keystroke, because that one was Ace's.
+    else, and there are two ways this page moves a caret that are not Ace
+    commands. Both are here, because the first fix covered one of them and
+    jcanton reported the same thing again:
 
-    Measured as the general case rather than as the checklist: a caret put on
-    line 300 of a document scrolled to the top. The Enter that reported it is one
-    caller of the one function under test.
+    * `setCaret` — `indentLines`, the toolbar's marks and Reset;
+    * `splice` with no `setCaret` at all, which is the list continuation. It
+      writes `\n<indent><bullet> ` and stops; Ace's `applyDelta` moves the
+      anchors, so the caret lands on a new line without anything here having put
+      it there. This is the one that was reported, twice.
+
+    Neither fires while `applying`, which is the page writing somebody else's
+    text into this box rather than a person typing in it.
     """
     got = measured_in(
         chrome(),
@@ -6162,11 +6193,26 @@ def test_a_caret_the_page_moves_is_scrolled_into_view(client: TestClient, tmp_pa
         patience=4800,
     )
 
-    assert got["before"] == 0, f"the box did not start at the top: {got['before']}"
-    assert got["row"] == 299, f"the caret is on row {got['row']}, not where it was put"
-    assert got["first"] <= got["row"] <= got["last"], (
-        f"the caret is on row {got['row']} and the box is showing rows "
-        f"{got['first']}–{got['last']} — it was moved somewhere nobody can see it"
+    assert got["before"]["first"] == 0, f"the box did not start at the top: {got['before']}"
+    assert got["put"]["row"] == 299, f"the caret is on row {got['put']['row']}"
+    assert got["put"]["first"] <= 299 <= got["put"]["last"], (
+        f"a caret put on row 299 is not on screen: rows {got['put']['first']}–{got['put']['last']}"
+    )
+
+    assert got["sitting"]["row"] == 399, got["sitting"]
+    assert got["sitting"]["last"] == 399, (
+        f"the run did not put the list item at the foot of the box: {got['sitting']}"
+    )
+    assert got["wrote"].endswith("- [ ] "), f"Enter did not continue the list: {got['wrote']!r}"
+    assert got["after"]["row"] == 400, got["after"]
+    assert got["after"]["first"] <= 400 <= got["after"]["last"], (
+        f"the list continued onto row 400 and the box is showing rows "
+        f"{got['after']['first']}–{got['after']['last']}"
+    )
+    assert got["after"]["top"] > got["sitting"]["top"], (
+        f"the box did not move: {got['sitting']['top']}px before the Enter and "
+        f"{got['after']['top']}px after it. The new item is drawn past the bottom "
+        "edge, which is exactly what was reported — twice"
     )
 
 
@@ -6211,11 +6257,15 @@ def test_the_indent_picker_moves_the_second_editor_without_a_reload(
     surface was built, and `setIndentWidth` cannot reach it.
 
     What that cost was a control that lies: the label moved, the preference was
-    written, the live region said "Tab now types 4 spaces", and the next press
-    typed two until the page was loaded again.
+    written, and the next press typed two until the page was loaded again.
 
     The press is measured and not just the option, because the option is the
     reason rather than the thing asked for.
+
+    Nothing is announced any more — jcanton, 2026-09-17, "it's not necessary",
+    once the picker started taking effect immediately. That the live region stays
+    quiet is asserted below, because a banner across the top of the page for two
+    characters in a status strip is the wallpaper this repository keeps removing.
     """
     got = measured_in(
         chrome(),
@@ -6236,7 +6286,7 @@ def test_the_indent_picker_moves_the_second_editor_without_a_reload(
         f"Tab typed {got['typed']!r} in the second editor after the picker was "
         "moved to four — the width still needs a reload"
     )
-    assert "Tab now types 4 spaces" in got["said"], got["said"]
+    assert "Tab now types" not in got["said"], f"the removed announcement is back: {got['said']!r}"
 
 
 _ROW_HEIGHTS = (
@@ -6311,12 +6361,17 @@ def test_the_commit_bar_is_the_same_height_as_the_controls_beside_it(
         f"the commit bar is {got['bar']}px against the switcher's "
         f"{got['views']}px, so it is still the tallest thing in the row"
     )
-    # What the row's own height still is, said rather than left to look like an
-    # oversight: 33px against the 27px of everything in it, because
-    # `.editbar` keeps the `.4rem` top margin the shell gives it. That band is
-    # not this bar's and is not what was reported; every control on the line is
-    # centred in it and they are now all the same height.
     assert got["kids"] == [["editbar", got["del"]], ["commitbar dirty", got["del"]]], got["kids"]
+    # And the row is the height of the controls in it, with nothing above them.
+    # `.toolrow` centres MARGIN boxes, so the `.4rem` the shell gives `.editbar`
+    # made its box the tallest thing on the line and sat its buttons 6px below
+    # the centre the bar beside them was centred on — which is the second half of
+    # the report, "not in line with the text of the [Delete] button".
+    assert got["row"] == got["del"], (
+        f"the row is {got['row']}px and its controls are {got['del']}px: there is "
+        "still a band above them, and the two children are centred on different "
+        "lines because of it"
+    )
     assert (got["border"], got["pad"]) == ("0px", "0px"), (
         f"border {got['border']}, padding {got['pad']} — the outline is still there"
     )

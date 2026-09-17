@@ -1228,7 +1228,16 @@ article.record h1 { font-size: 1.5rem; margin: .2rem 0; }
    the shell's (0,1,0), and scoped to the article on purpose: the cycle page
    loads this sheet with a commit bar that is not inside an `article.record`,
    and it keeps the shell's spacing. */
-article.record .editbar { margin-bottom: 0; }
+article.record .editbar { margin-block: 0; }
+/* The top half of that margin went on 2026-09-17, and it is the last of the same
+   sentence. `.toolrow` is `align-items: center`, which centres MARGIN boxes: the
+   editbar's `.4rem` top margin made its 33.4px box the tallest thing on the line
+   and then sat its buttons 6px below the centre the commit bar beside them was
+   centred on. So the bar was level with nothing, and the row was 33px of which 6
+   were a band above the controls. jcanton, having had the bar's own box removed:
+   "bar is better but not in line with the text of the [Delete] button [...]
+   please make all in line". Both are `margin-block` now, the row is the height of
+   the controls in it, and the two children sit on one line. */
 /* And since 2026-09-16 there is no band left to remove, because there is no
    second row: `.toolrow` holds the switcher, Delete and the commit bar on one
    line. jcanton, asked for the same vertical space a third time and from the

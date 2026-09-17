@@ -573,6 +573,7 @@ function aceSurface(area, seeded) {
     setCaret(from, to) {
       editor.selection.setRange(
         Range.fromPoints(positionOf(from), positionOf(to === undefined ? from : to)));
+      if (!applying) editor.renderer.scrollCursorIntoView();
       // **And the box follows it.** Ace scrolls the caret into view from inside
       // its own commands — `insertstring`, the arrow keys, the vim motions — and
       // from nowhere else, so a caret this page moves lands wherever it lands
@@ -583,11 +584,14 @@ function aceSurface(area, seeded) {
       // could see, and the box only jumped when the next character was typed —
       // by Ace's own command, not by this.
       //
-      // Here and not in the four callers, because every one of them is the same
-      // case: `indentLines`, the toolbar's marks, the list continuation and
-      // Reset all move a caret this person cannot see move. A caret put
-      // somewhere is a caret meant to be typed at.
-      editor.renderer.scrollCursorIntoView();
+      // Here and not in the callers, because every one of them is the same case:
+      // `indentLines`, the toolbar's marks and Reset all move a caret this
+      // person cannot see move. A caret put somewhere is a caret meant to be
+      // typed at.
+      //
+      // Not while `applying`, which is the page writing rather than a person —
+      // `reflect()` is the room putting somebody else's paragraph into this box,
+      // and scrolling to it would drag the view away from whoever is reading.
     },
 
     // The only write, and NEVER `session.setValue` or `session.replace`. Both
@@ -610,6 +614,19 @@ function aceSurface(area, seeded) {
       editor.focus();
       editor.startOperation({command: {name: 'openproj'}});
       try { run(); } finally { editor.endOperation(); }
+      // **And here as well as in `setCaret`, because this is the path the report
+      // was actually about.** The list continuation writes
+      // `\n${indent}${bullet} ` and STOPS: it never touches the caret, because
+      // `applyDelta` moves Ace's anchors for it — so the caret arrives on a new
+      // line without `setCaret` having been called, and the guard one member up
+      // never runs. Measured by jcanton twice, the second time on a build that
+      // had the other half of this fix in it: line 48 of 48, "Line 48, Column 7"
+      // in the strip, and line 47 the last one on screen.
+      //
+      // The `applying` branch above returns before this, which is the whole of
+      // the discrimination: a page writing somebody else's text must not move
+      // this reader's view.
+      editor.renderer.scrollCursorIntoView();
     },
 
     onInput(listener) { heard.input.push(listener); },

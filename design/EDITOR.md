@@ -1235,15 +1235,28 @@ as an edit.
 
 ## Three smaller things, same day
 
-**A caret this page moves is scrolled into view.** Ace scrolls the caret into view
-from inside its own commands and nowhere else, so the four things here that move a
-caret without being one — the list continuation, `indentLines`, the toolbar's marks
-and Reset — put it wherever it fell. jcanton pressed Enter at the end of a checklist
-item, the page wrote the `- [ ] ` that continues the list, and the status strip said
-"Line 144, Column 7" about a line below the bottom of the box; it jumped into view on
-the next character, because that one was Ace's. `setCaret` calls
-`renderer.scrollCursorIntoView()` now — in the one function rather than in the four
-callers, because a caret put somewhere is a caret meant to be typed at.
+**A caret this page moves is scrolled into view — in TWO places, and the second is
+the one that was reported.** Ace scrolls the caret into view from inside its own
+commands and nowhere else. The first pass put `renderer.scrollCursorIntoView()` in
+the surface's `setCaret`, on the reasoning that the four things here that move a
+caret without being Ace commands — the list continuation, `indentLines`, the
+toolbar's marks and Reset — all go through it.
+
+Three of them do. The list continuation does not: it writes
+`\n${indent}${bullet} ` and STOPS, because `applyDelta` moves Ace's anchors for it,
+so the caret arrives on a new line with `setCaret` never having been called. That is
+the gesture jcanton pressed — Enter at the end of a checklist item, the `- [ ] `
+written, the strip saying "Line 144, Column 7" about a line below the bottom edge,
+and the box jumping only on the next character because that one was Ace's own
+command. He reported it a second time, on a build carrying the first fix, which is
+what a claim reasoned from a list of callers is worth against one measured.
+
+So `splice` scrolls too, in its "a person's edit" branch, and the `applying` branch
+above it returns first — a page writing somebody else's text into this box must not
+drag this reader's view to it. The test presses the real Enter and asserts the SCROLL
+OFFSET moved: `getLastVisibleRow` counts a row one pixel into the box, so it is not
+on its own the question "can this be read", and the version of this test that asked
+it passed with the fix removed.
 
 **The banner's reload keeps the view.** `href=""` is the current address without
 its fragment, so `?edit` and `?both` survive it for somebody who arrived by link —
@@ -1261,8 +1274,20 @@ inside a row of controls. The box used to stay because `.commitbar.dirty` turns 
 border `--warn` and the stylesheet called that the one signal saying "closing this
 tab loses something". It was never the only one: `#unsaved` goes `--warn` at
 `font-weight: 600` in the same state and is the sentence that says WHAT is unsaved,
-and the test measures that in the same run as the height. The row is still 33px
-because `.editbar` keeps the `.4rem` top margin the shell gives it; that band is
-not this bar's, and it is asserted rather than left to look like an oversight.
+and the test measures that in the same run as the height. The `.4rem` top margin
+`.editbar` keeps from the shell went with it, on the second half of the same report
+— "not in line with the text of the [Delete] button [...] please make all in line".
+`.toolrow` is `align-items: center`, which centres MARGIN boxes, so that margin made
+the editbar's box the tallest thing on the line and then sat its buttons 6px below
+the centre the bar beside them was centred on. Both are `margin-block: 0` now, the
+row is the height of the controls in it, and the two sit on one line.
+
+**And the indent picker says nothing.** It announced "Tab now types N spaces.
+Nothing already written was changed." — the second sentence because a person
+pressing something called "Spaces" on a document full of tabs is entitled to think
+the document changed. jcanton asked for its removal the day the picker started
+taking effect without a reload: the label says the width, the next Tab demonstrates
+it, and a banner across the top of the page for two characters in a status strip is
+the wallpaper this repository keeps taking down.
 
 🤖 Written by an agent on behalf of @jcanton
