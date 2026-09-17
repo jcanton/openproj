@@ -573,6 +573,21 @@ function aceSurface(area, seeded) {
     setCaret(from, to) {
       editor.selection.setRange(
         Range.fromPoints(positionOf(from), positionOf(to === undefined ? from : to)));
+      // **And the box follows it.** Ace scrolls the caret into view from inside
+      // its own commands — `insertstring`, the arrow keys, the vim motions — and
+      // from nowhere else, so a caret this page moves lands wherever it lands
+      // and the view does not budge. jcanton, 2026-09-17: pressing Enter at the
+      // end of a checklist item wrote the `- [ ] ` the page continues the list
+      // with, put the caret on line 144, and left line 143 as the last one on
+      // screen; the status strip said "Line 144, Column 7" about a line nobody
+      // could see, and the box only jumped when the next character was typed —
+      // by Ace's own command, not by this.
+      //
+      // Here and not in the four callers, because every one of them is the same
+      // case: `indentLines`, the toolbar's marks, the list continuation and
+      // Reset all move a caret this person cannot see move. A caret put
+      // somewhere is a caret meant to be typed at.
+      editor.renderer.scrollCursorIntoView();
     },
 
     // The only write, and NEVER `session.setValue` or `session.replace`. Both
@@ -1489,8 +1504,52 @@ const COEDIT = (() => {
       ownHistory();
     } else {
       // A reconnection. The document already merged everything typed while the
-      // socket was down, so there is nothing to decide.
+      // socket was down, so there is nothing to decide about the TEXT.
       reflect();
+      // **What there is to decide is which commit that text belongs to.**
+      //
+      // A room commits on Save, after twenty seconds of quiet, and when the last
+      // person leaves — so a socket that drops while somebody is writing (an
+      // idle tunnel, Cloud Run's teardown, a lid) comes back to a room that has
+      // committed in its absence. This arm used to take the text and nothing
+      // else, and `ORIGINAL_BODY` went on holding what the SERVER RENDERED into
+      // the page before any of it happened. Three things followed from that one
+      // stale string, and jcanton reported all three from the deployed service
+      // as separate complaints:
+      //
+      // * `dirty()` counts the body as unsaved whenever it differs from
+      //   `ORIGINAL_BODY`, so the bar said "1 unsaved change" over a document
+      //   that was already in git, for ever.
+      // * Pressing Save sent no fields — none had changed — and the room had
+      //   nothing pending, so the answer was the `t: 'nothing'` frame: "nothing
+      //   changed", every time, with the counter still saying one. Nothing this
+      //   page could do would clear it.
+      // * The commit was announced to `/api/events` like any other, and with no
+      //   `openproj:ours` for it the shell drew "This was just changed by
+      //   somebody else" — naming the sha the footer's live `#planhead` was
+      //   already showing, which is what made it look like a phantom.
+      //
+      // `committed` is the file's own text at `message.base`, sent only when the
+      // `base` in the hello above says this page is behind. Never
+      // `text.toString()`: the document at this instant is the room's text
+      // merged with whatever this tab typed while it was disconnected, and that
+      // offline work is exactly what must keep counting as unsaved.
+      if (typeof message.committed === 'string') {
+        ORIGINAL_BODY = message.committed;
+        // The pair, as everywhere else: `BASELINE` is the commit `ORIGINAL_BODY`
+        // belongs to, and Reset restores the two together.
+        BASELINE = message.base;
+        // A draft holding nothing that is not in git is a receipt for work that
+        // has already landed — the same rule `saved` applies, for the same
+        // reason.
+        if (SURFACE.text() === ORIGINAL_BODY) forgetDraft();
+        dirty();
+        // And the banner, which is about a commit this room made while this tab
+        // was away. The text it holds is in the box in front of you, which is
+        // the argument the `saved` handler makes for every other member of the
+        // room.
+        dispatchEvent(new CustomEvent('openproj:ours', {detail: message.base}));
+      }
     }
     // Whatever this tab has that the room has not seen: nothing on a first
     // connection to a room that seeded it, every keystroke made while the socket
@@ -1771,7 +1830,13 @@ const COEDIT = (() => {
       if (opened !== socket || !wanted) return;
       arrived = true;
       attempts = 0;
-      send({t: 'hello', seed: seed, sv: b64(YJS.encodeStateVector(doc))});
+      // `base` as well as the seed, and they answer different questions. The
+      // seed decides whether these two documents share a history at all; the
+      // base says which commit this page believes it is looking at, so a room
+      // that has committed while this socket was down can say so in its
+      // welcome. See `welcomed`'s reconnection arm.
+      send({t: 'hello', seed: seed, base: BASE.value,
+            sv: b64(YJS.encodeStateVector(doc))});
     };
     socket.onmessage = event => {
       if (opened !== socket || !wanted) return;

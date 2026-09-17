@@ -3498,7 +3498,23 @@ function showMoved(message) {
   // The sha comes off a stream, so it is escaped like anything else that
   // arrives from outside this script — a value nothing on this page validates.
   moved.innerHTML = (seen ? 'This was just changed by somebody else. ' : 'The plan changed. ')
-    + `<a href="">reload</a> <span class="sha">${esc(String(commit).slice(0, 7))}</span>`;
+    + `<a href="" id="movedgo">reload</a> `
+    + `<span class="sha">${esc(String(commit).slice(0, 7))}</span>`;
+  // **And it lands you back in the view you were in.** `href=""` is the current
+  // address without its fragment, which keeps `?edit` and `?both` for somebody
+  // who arrived by link — and a session opened by pressing Write is in no
+  // address at all, so reloading from here dropped a person out of the editor
+  // and into the reading view with their draft folded away. Reported by jcanton
+  // beside the banner itself.
+  //
+  // `keepView` is the record page's, and it is the same call Save makes before
+  // the reload IT needs: the mode goes into `sessionStorage` and `RESUMING` puts
+  // it back. Guarded on the function rather than on a page name, because the
+  // shell is on every page and only one of them has a view to keep — the same
+  // shape `aceSurface` uses for the preferences block it cannot assume.
+  document.getElementById('movedgo').onclick = () => {
+    if (typeof keepView === 'function') keepView();
+  };
 }
 
 const source = new EventSource('/api/events');

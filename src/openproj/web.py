@@ -4628,6 +4628,18 @@ def create_app(
                 "sv": _b64(room.state()),
                 "update": _b64(room.since(_raw(hello.get("sv")))),
             }
+            # **What the file holds, for a page that has missed a commit.** The
+            # room commits on the quiet window and on the last person out as well
+            # as on Save, so a socket that drops mid-session comes back to a room
+            # whose base has moved — and the page's `ORIGINAL_BODY`, which is what
+            # its unsaved counter measures against, is still the text the server
+            # rendered. `welcomed` in `render/editor.py` says what that cost.
+            #
+            # Only when the hello says this page is behind: `room.committed` is a
+            # whole body, the frame beside it already carries the document once,
+            # and the ordinary reconnection has missed nothing at all.
+            if hello.get("base") != room.base:
+                welcome["committed"] = room.committed
             outbox.offer(json.dumps(welcome))
             rooms.enter(room, connection, user.login)
             _to_room(room, {"t": "who", "people": room.people(), "where": room.where()})

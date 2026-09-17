@@ -6111,6 +6111,65 @@ def test_the_last_line_can_be_scrolled_to_the_top_of_a_full_height_editor(
     )
 
 
+_CARET_FOLLOWED = r"""
+  flipEditing();
+  await new Promise(r => setTimeout(r, 300));
+  const editor = SURFACE.editor;
+  const lines = Array.from({length: 400}, (_, i) => 'line ' + (i + 1));
+  const long = lines.join('\n');
+  SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, long));
+  editor.resize(true);
+  editor.session.setScrollTop(0);
+  editor.renderer.$loop._flush();
+  await new Promise(r => setTimeout(r, 60));
+  const before = editor.renderer.getFirstVisibleRow();
+
+  // The first character of line 300, counted the way the surface counts: UTF-16
+  // code units from the start of the document.
+  const at = lines.slice(0, 299).join('\n').length + 1;
+  SURFACE.setCaret(at);
+  editor.renderer.$loop._flush();
+  await new Promise(r => setTimeout(r, 60));
+  return {before, row: editor.getCursorPosition().row,
+          first: editor.renderer.getFirstVisibleRow(),
+          last: editor.renderer.getLastVisibleRow()};
+"""
+
+
+def test_a_caret_the_page_moves_is_scrolled_into_view(client: TestClient, tmp_path: Path):
+    """ "if adding a new line with enter [...] the text box correctly adds `- [ ]`
+    automatically, but doesn't scroll to its line until I type" — jcanton,
+    2026-09-17, with the status strip in the shot saying "Line 144, Column 7"
+    about a line off the bottom of the box.
+
+    Ace scrolls the caret into view from inside its own commands and from nowhere
+    else. Four things on this page move a caret that are not Ace commands — the
+    list continuation, `indentLines`, the toolbar's marks and Reset — and all
+    four went through `setCaret`, which set a range and returned. The view moved
+    on the NEXT keystroke, because that one was Ace's.
+
+    Measured as the general case rather than as the checklist: a caret put on
+    line 300 of a document scrolled to the top. The Enter that reported it is one
+    caller of the one function under test.
+    """
+    got = measured_in(
+        chrome(),
+        client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "caret.html",
+        1400,
+        _CARET_FOLLOWED,
+        query="?editor=ace",
+        patience=4800,
+    )
+
+    assert got["before"] == 0, f"the box did not start at the top: {got['before']}"
+    assert got["row"] == 299, f"the caret is on row {got['row']}, not where it was put"
+    assert got["first"] <= got["row"] <= got["last"], (
+        f"the caret is on row {got['row']} and the box is showing rows "
+        f"{got['first']}–{got['last']} — it was moved somewhere nobody can see it"
+    )
+
+
 _INDENT_NOW = r"""
   flipEditing();
   await new Promise(r => setTimeout(r, 300));
@@ -6178,6 +6237,162 @@ def test_the_indent_picker_moves_the_second_editor_without_a_reload(
         "moved to four — the width still needs a reload"
     )
     assert "Tab now types 4 spaces" in got["said"], got["said"]
+
+
+_ROW_HEIGHTS = (
+    _STUB_RENDER
+    + r"""
+flipEditing();
+await new Promise(r => setTimeout(r, 250));
+const h = sel => {
+  const el = document.querySelector(sel);
+  return el ? Math.round(el.getBoundingClientRect().height) : null;
+};
+const warn = getComputedStyle(document.documentElement)
+  .getPropertyValue('--warn').trim();
+const unsaved = document.getElementById('unsaved');
+const area = document.querySelector('textarea[name=body]');
+area.value = area.value + '\nsomething unsaved';
+area.dispatchEvent(new Event('input', {bubbles: true}));
+await new Promise(r => setTimeout(r, 40));
+const said = getComputedStyle(unsaved);
+const bar = getComputedStyle(document.getElementById('commitbar'));
+const kids = [...document.querySelector('.toolrow').children].map(
+  el => [el.className || el.id, Math.round(el.getBoundingClientRect().height)]);
+return {row: h('.toolrow'), bar: h('#commitbar'), del: h('.editbar .delete'), kids,
+        views: h('#views'), save: h('#save'),
+        said: unsaved.textContent, colour: said.color, weight: said.fontWeight,
+        warn, border: bar.borderTopWidth, pad: bar.paddingTop};
+"""
+)
+
+
+def test_the_commit_bar_is_the_same_height_as_the_controls_beside_it(
+    client: TestClient, tmp_path: Path
+):
+    """jcanton: "the [...] bar in the editor is higher than the view and delete
+    buttons to its right [...] should we then just remove the outline? just keep
+    the text and the two buttons".
+
+    It was, and correctly so: Save and Reset are the same `button` as Delete, and
+    the bar wrapped them in the padding and the border a bar standing alone on
+    the cycle page needs. Inside a row of controls that is one control drawn
+    inside a box, a few pixels taller than everything level with it.
+
+    **What the box was keeping is asserted here too**, because it was the reason
+    it stayed: `.commitbar.dirty` turns its border `--warn`, and the comment in
+    the stylesheet called that the one signal saying "closing this tab loses
+    something". It was never the only one — `#unsaved` goes `--warn` at
+    `font-weight: 600` in the same state, and it is the sentence that says what
+    is unsaved rather than a line around it. So the border goes and the warning
+    is measured, in the same run, on a document with something in it to lose.
+    """
+    got = measured_in(
+        chrome(),
+        # The plain surface, because the sentence under measurement is written by
+        # `dirty()` on a form `input` and the point of the run is the row's
+        # geometry, which is the same on both.
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "row.html",
+        1400,
+        _ROW_HEIGHTS,
+        patience=4800,
+    )
+
+    assert got["del"] and got["del"] > 8, f"nothing was measured: {got}"
+    assert got["bar"] == got["del"], (
+        f"the commit bar is {got['bar']}px against Delete's {got['del']}px — it "
+        "is still drawing a box of its own inside the row"
+    )
+    # And the row is no longer as tall as the bar made it. `#views` is the
+    # segmented control and is the tallest thing on this line — it always was —
+    # so the claim that holds is that the bar is not what sets the height.
+    assert got["bar"] <= got["views"], (
+        f"the commit bar is {got['bar']}px against the switcher's "
+        f"{got['views']}px, so it is still the tallest thing in the row"
+    )
+    # What the row's own height still is, said rather than left to look like an
+    # oversight: 33px against the 27px of everything in it, because
+    # `.editbar` keeps the `.4rem` top margin the shell gives it. That band is
+    # not this bar's and is not what was reported; every control on the line is
+    # centred in it and they are now all the same height.
+    assert got["kids"] == [["editbar", got["del"]], ["commitbar dirty", got["del"]]], got["kids"]
+    assert (got["border"], got["pad"]) == ("0px", "0px"), (
+        f"border {got['border']}, padding {got['pad']} — the outline is still there"
+    )
+
+    # The warning, in the state it is for.
+    assert got["said"] == "1 unsaved change", got["said"]
+    assert got["weight"] == "600", f"the unsaved sentence is not emphasised: {got['weight']}"
+    assert got["colour"] == _rgb(got["warn"]), (
+        f"the unsaved sentence is {got['colour']} and `--warn` is {got['warn']} — "
+        "the border was the only thing carrying the warning and it has just gone"
+    )
+
+
+def _rgb(colour: str) -> str:
+    """A `#rrggbb` as Chrome reports a computed colour."""
+    raw = colour.lstrip("#")
+    return "rgb({}, {}, {})".format(*(int(raw[at : at + 2], 16) for at in (0, 2, 4)))
+
+
+_NO_STREAM = """
+window.__es = null;
+function FakeES() { window.__es = this; }
+FakeES.prototype.close = function () {};
+window.EventSource = FakeES;
+"""
+
+_BANNER_RELOAD = r"""
+flipEditing();
+await new Promise(r => setTimeout(r, 200));
+const moved = document.getElementById('moved');
+const was = VIEW;
+window.__es.onmessage({data: JSON.stringify({commit: 'a'.repeat(40), changed: [ID]})});
+const link = document.getElementById('movedgo');
+// The link really navigates, and a navigation in here is the harness losing its
+// answer. Prevented in the capture phase, which does not stop the element's own
+// handler from running — that handler is what is under test.
+addEventListener('click', event => event.preventDefault(), true);
+link.click();
+return {hidden: moved.hidden, said: moved.textContent, was,
+        resumed: forThisTab.get('openproj:resumed')};
+"""
+
+
+def test_the_banners_reload_lands_back_in_the_view_it_was_pressed_from(
+    client: TestClient, tmp_path: Path
+):
+    """ "clicking reload kicks you out of edit mode and into preview" — jcanton.
+
+    `href=""` is the current address without its fragment, so it keeps `?edit`
+    and `?both` for somebody who arrived by link. A session opened by pressing
+    Write is in no address at all: the mode lives in the page, and Save already
+    knows that — it calls `keepView()` before the reload IT needs, which puts the
+    mode in `sessionStorage` for `RESUMING` to pick up on the way back.
+
+    The banner's reload is the other reload on this page and it did not, so
+    pressing it over an open editor closed the editor.
+    """
+    got = measured_in(
+        chrome(),
+        _before_the_page_runs(client.get(f"/detail/{TASK}").text, _NO_STREAM),
+        tmp_path / "banner.html",
+        1400,
+        _BANNER_RELOAD.replace("ID", json.dumps(TASK)),
+        patience=4800,
+    )
+
+    assert got["hidden"] is False, "the banner did not open on a commit somebody else made"
+    assert "This was just changed by somebody else" in got["said"], got["said"]
+    assert got["was"] in ("edit", "both"), (
+        f"the page was in {got['was']!r}, so this run cannot say anything about "
+        "keeping a session's view"
+    )
+    assert got["resumed"] == got["was"], (
+        f"the reload kept {got['resumed']!r} of a session in {got['was']!r} — "
+        "pressing it lands back on the reading view"
+    )
 
 
 _KEYMAP_KEPT = r"""

@@ -95,6 +95,11 @@ def stored_body(plan: Path, path: str = PATH) -> str:
     return split_front_matter(stored(plan, path))[1]
 
 
+def shown_body(client: TestClient, record_id: str = TASK) -> str:
+    """The body as a page renders it, which is what `ORIGINAL_BODY` holds."""
+    return client.get("/api/index.json").json()["plan"][record_id]["body"]
+
+
 def log_of(plan: Path) -> list[tuple[str, str]]:
     """(author, message) for every commit, newest first."""
     repo = pygit2.Repository(str(plan))
@@ -130,7 +135,9 @@ class Session:
     asked of Chrome at the bottom of this file.
     """
 
-    def __init__(self, socket, login: str, seed: str | None = None) -> None:
+    def __init__(
+        self, socket, login: str, seed: str | None = None, base: str | None = None
+    ) -> None:
         self.socket = socket
         self.login = login
         # Never `coedit.SEED`. The seed's client id belongs to the seed, and a
@@ -140,6 +147,11 @@ class Session:
         self.doc[coedit.BODY] = coedit.Text()
         self.text = self.doc[coedit.BODY]
         self.seed = seed
+        # Which commit this browser believes it is looking at. The page sends it
+        # so a room that has committed while the socket was down can say so; a
+        # `None` here is a client that has never been told one, which is every
+        # test that does not care.
+        self.base = base
         self.welcome: dict = {}
         self.heard: list[dict] = []
 
@@ -148,6 +160,7 @@ class Session:
             {
                 "t": "hello",
                 "seed": self.seed,
+                "base": self.base,
                 "sv": base64.b64encode(self.doc.get_state()).decode(),
             }
         )
@@ -155,6 +168,7 @@ class Session:
         if message["t"] == "welcome":
             self.welcome = message
             self.seed = message["seed"]
+            self.base = message["base"]
             if message["update"]:
                 self.doc.apply_update(base64.b64decode(message["update"]))
             self.send(self.doc.get_update(base64.b64decode(message["sv"])))
@@ -1198,6 +1212,58 @@ def test_a_reconnection_to_a_room_seeded_at_the_same_commit_is_silent(client: Te
     # And exactly once. Two documents built independently from one text merge
     # into that text twice, which is the failure this seed exists to prevent.
     assert back.body().count("typed before the socket went") == 1
+
+
+def test_a_reconnection_is_told_what_landed_while_it_was_away(client: TestClient, plan: Path):
+    """A room commits on Save, after twenty seconds of quiet, and when the last
+    person leaves. A socket does not survive any of those on its own schedule —
+    Cloud Run closes one at five minutes, a tunnel closes one whenever it likes —
+    so "the room committed while you were disconnected" is an ordinary state and
+    not a rare one.
+
+    The welcome carried the new `base` and nothing else, and the page had no way
+    to learn what that commit HELD. Its `ORIGINAL_BODY` — the only thing its
+    unsaved counter measures against — went on being the text the server rendered
+    before any of it happened. jcanton reported the three symptoms separately:
+    a bar stuck at "1 unsaved change", a Save answered "nothing changed" every
+    time, and a "this was just changed by somebody else" banner naming the sha
+    the footer was already showing.
+
+    `committed` is the file's text at that commit, and it is sent only when the
+    hello says this page is behind: it is a whole body, and the ordinary
+    reconnection has missed nothing.
+    """
+    with open_room(client, "ann") as one:
+        ann = Session(one, "ann")
+        # No base at all — a client that has never been told one, which is behind
+        # by definition.
+        first = ann.hello()
+        # Against what the PAGE renders into `ORIGINAL_BODY` — the index's body —
+        # and not against the file's bytes: a room normalises what it is seeded
+        # with, and the counter this feeds compares against the rendered text.
+        assert first["committed"] == shown_body(client)
+        ann.type(0, "typed and committed while the socket was up\n")
+        ann.save()
+        landed = ann.take("saved")
+        seed, doc, was = ann.seed, ann.doc, first["base"]
+
+    with open_room(client, "ann") as two:
+        back = Session(two, "ann", seed=seed, base=was)
+        back.doc, back.text = doc, doc[coedit.BODY]
+        behind = back.hello()
+    assert behind["base"] == landed["commit"], "the room did not move"
+    assert behind["committed"] == shown_body(client), (
+        "a page that missed the commit is not told what it holds"
+    )
+    assert "typed and committed while the socket was up" in behind["committed"]
+
+    with open_room(client, "ann") as three:
+        current = Session(three, "ann", seed=seed, base=landed["commit"])
+        current.doc, current.text = doc, doc[coedit.BODY]
+        caught_up = current.hello()
+    assert "committed" not in caught_up, (
+        "a page that is already on the room's commit is sent a whole body it has no use for"
+    )
 
 
 def test_a_client_seeded_at_another_commit_is_told_to_reload(client: TestClient):
@@ -2439,6 +2505,83 @@ area.value = NEXT;
 area.dispatchEvent(new Event('input'));
 return {errors: window.__errors, sent: window.__sent, opened, box: area.value};
 """
+
+
+_BACK_IN_CHROME = r"""
+const area = document.querySelector('textarea[name=body]');
+const unsaved = document.getElementById('unsaved');
+// `bubbles`, and it is the difference between measuring the counter and
+// measuring nothing: `dirty` is on the FORM, and `new Event('input')` does not
+// bubble unless it is asked to.
+area.value = TYPED;
+area.dispatchEvent(new Event('input', {bubbles: true}));
+await new Promise(r => setTimeout(r, 40));
+const before = unsaved.textContent;
+window.__ours = [];
+addEventListener('openproj:ours', event => window.__ours.push(event.detail));
+// The socket dropped, the room committed what is in the box, and this is the
+// welcome that comes back.
+window.__room.onmessage({data: SECOND});
+await new Promise(r => setTimeout(r, 80));
+return {errors: window.__errors, sent: window.__sent, before,
+        after: unsaved.textContent, ours: window.__ours,
+        box: area.value,
+        base: document.querySelector('[name=base_commit]').value};
+"""
+
+
+def test_a_reconnection_after_a_commit_stops_counting_it_as_unsaved(
+    client: TestClient, plan: Path, tmp_path: Path
+):
+    """The page's half of the same defect, in a browser.
+
+    The counter is `dirty()`, and the only thing it measures the body against is
+    `ORIGINAL_BODY` — the text the server rendered. A room that commits while
+    this socket is down moves the file and never touches that string, so the bar
+    said "1 unsaved change" about a document already in git, and it said it for
+    ever: pressing Save sent no fields, the room had nothing pending, and the
+    answer was "nothing changed" with the counter still at one.
+
+    Driven in Chrome against a real `coedit.Room` with a fake wire, because the
+    claim is about what the PAGE does with a welcome: no shim has the counter,
+    the form or the surface adapter under it.
+
+    The `openproj:ours` in the same run is the third symptom's fix. That commit
+    is announced to `/api/events` like any other, and with nothing saying it was
+    the room's, the shell drew "This was just changed by somebody else" naming
+    the sha the footer's own `#planhead` was already showing.
+    """
+    shown = shown_body(client)
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    typed = shown + "\nwritten while the socket was up\n"
+    landed = "b" * 40
+    # The room committed exactly what is in the box, which is the ordinary case:
+    # the quiet window fires twenty seconds after the last keystroke.
+    back = {**_welcome(room), "base": landed, "committed": typed}
+    answer = in_chrome_room(
+        client,
+        tmp_path / "back.html",
+        room,
+        _welcome(room),
+        _BACK_IN_CHROME.replace("TYPED", json.dumps(typed)).replace(
+            "SECOND", json.dumps(json.dumps(back))
+        ),
+    )
+
+    assert answer["before"] == "1 unsaved change", answer["before"]
+    assert answer["after"] == "Nothing changed yet", (
+        f"the bar still says {answer['after']!r} about a document the room has "
+        "committed — this is the count nothing on the page could clear"
+    )
+    assert answer["base"] == landed, answer["base"]
+    assert answer["ours"] == [landed], (
+        f"the room's own commit was not claimed: {answer['ours']} — the shell "
+        "draws 'this was just changed by somebody else' over it"
+    )
+    # And the text is still the person's. A reconnection that took the room's
+    # last-known body instead would be this fix deleting the work it exists to
+    # keep counting.
+    assert answer["box"] == typed
 
 
 # The same corpus as the shim test above, asked again through the adapter and of

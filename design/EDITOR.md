@@ -1186,4 +1186,83 @@ mirror in `measuredLines`) already measure independently. That is a real change 
 records going quietly wrong before, for a surface reachable only by typing a parameter. The default
 surface is Ace and that is where the ask came from.
 
+## The reconnection that never said what it had missed, 2026-09-17
+
+One hole, three complaints, and they were reported as three.
+
+A room commits on Save, after twenty seconds of quiet, and when the last person
+leaves. A socket survives none of those on its own schedule — Cloud Run closes one
+at five minutes, a tunnel closes one whenever it likes — so "the room committed
+while you were disconnected" is an ordinary state on this page and not a rare one.
+
+The welcome a returning socket gets carries `base`, the commit the room is settled
+at, and `welcomed` in `render/editor.py` took it. What it did not take, because
+there was nothing to take, was what that commit HELD. `ORIGINAL_BODY` — the only
+thing `dirty()` measures the body against — went on holding the text the server
+rendered into the page before any of it happened. From that one stale string:
+
+* the bar said **"1 unsaved change"** about a document already in git, and said it
+  for ever;
+* **Save answered "nothing changed"** every time. It sent no fields, because none
+  had changed, and `_commit_room`'s `not fields and not room.pending()` is
+  exactly right — the body WAS committed. There was nothing this page could press
+  to clear the count;
+* the shell drew **"This was just changed by somebody else"** over it. That commit
+  goes down `/api/events` like any other, and `openproj:ours` — which exists
+  precisely so a room's own commit is not read as a stranger's — is dispatched
+  from the `saved` frame, which this tab was not there to hear. The banner named
+  the sha the footer's live `#planhead` was already showing, which is what made it
+  look like a phantom: the two agree by construction, because both name the head.
+
+The welcome carries `committed` now, the file's text at `base`, and the hello
+carries the page's own `base` so the server sends it **only to a page that is
+behind** — it is a whole body, and the ordinary reconnection has missed nothing.
+`welcomed` adopts it in the reconnection arm alone: `ORIGINAL_BODY`, `BASELINE`
+beside it as the pair they are, `forgetDraft()` when nothing is left over, and
+`openproj:ours` for the commit.
+
+**Never `text.toString()`, and that is the whole of the care here.** The document
+at that instant is the room's text merged with whatever this tab typed while it
+was disconnected, and that offline work is exactly what must keep counting as
+unsaved. A fix that took the room's word for it would delete the work it exists to
+keep. `test_a_reconnection_after_a_commit_stops_counting_it_as_unsaved` asserts the
+box still holds the person's text in the same run as the counter going quiet.
+
+**The first join is deliberately untouched.** Its `mine`/`theirs` arbitration keys
+off `ORIGINAL_BODY` being the rendered text; moving it there would make a page with
+no draft at all read as one with unsent work, and push a stale render into the room
+as an edit.
+
+## Three smaller things, same day
+
+**A caret this page moves is scrolled into view.** Ace scrolls the caret into view
+from inside its own commands and nowhere else, so the four things here that move a
+caret without being one — the list continuation, `indentLines`, the toolbar's marks
+and Reset — put it wherever it fell. jcanton pressed Enter at the end of a checklist
+item, the page wrote the `- [ ] ` that continues the list, and the status strip said
+"Line 144, Column 7" about a line below the bottom of the box; it jumped into view on
+the next character, because that one was Ace's. `setCaret` calls
+`renderer.scrollCursorIntoView()` now — in the one function rather than in the four
+callers, because a caret put somewhere is a caret meant to be typed at.
+
+**The banner's reload keeps the view.** `href=""` is the current address without
+its fragment, so `?edit` and `?both` survive it for somebody who arrived by link —
+and a session opened by pressing Write is in no address at all. Save already knew
+that and calls `keepView()` before the reload IT needs; the banner's reload is the
+other reload on this page and did not, so pressing it closed the editor. Guarded on
+`typeof keepView === 'function'`, because the shell is on every page and one of
+them has a view to keep.
+
+**The commit bar stopped drawing a box.** jcanton: "higher than the view and delete
+buttons to its right [...] should we then just remove the outline? just keep the
+text and the two buttons". It was 32px against their 27px, and the difference was
+its own border and padding — a bar sized to stand alone on the cycle page, standing
+inside a row of controls. The box used to stay because `.commitbar.dirty` turns its
+border `--warn` and the stylesheet called that the one signal saying "closing this
+tab loses something". It was never the only one: `#unsaved` goes `--warn` at
+`font-weight: 600` in the same state and is the sentence that says WHAT is unsaved,
+and the test measures that in the same run as the height. The row is still 33px
+because `.editbar` keeps the `.4rem` top margin the shell gives it; that band is
+not this bar's, and it is asserted rather than left to look like an oversight.
+
 🤖 Written by an agent on behalf of @jcanton
