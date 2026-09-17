@@ -6014,6 +6014,172 @@ def test_the_toolbar_and_the_keymap_do_not_cancel_each_other(client: TestClient,
     assert got["aceGutter"] == 1, "the editor's own gutter is not there either"
 
 
+_PAST_THE_END = r"""
+  flipEditing();
+  await new Promise(r => setTimeout(r, 300));
+  const editor = SURFACE.editor;
+  const long = Array.from({length: 400}, (_, i) => 'line ' + (i + 1)).join('\n');
+  SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, long));
+  editor.resize(true);
+  await new Promise(r => setTimeout(r, 80));
+
+  // As far down as the box will go, asked for by a number no document is long
+  // enough to reach: the renderer clamps it to whatever the maximum actually is,
+  // which is the number under measurement.
+  const bottom = async () => {
+    editor.session.setScrollTop(1e7);
+    editor.renderer.$loop._flush();
+    await new Promise(r => setTimeout(r, 60));
+    return editor.renderer.getFirstVisibleRow();
+  };
+
+  // **As the page shipped it, and that order is the whole of the evidence.**
+  // Written the other way round — set the option, then measure — this passed
+  // with the line deleted from `editor.py`, because the measurement was of the
+  // option the test had just turned on. Measured here, by deleting it: 1 passed.
+  const reached = await bottom();
+  // And then the zero, so the number above is a difference and not an identity:
+  // with Ace's own default the scroll stops with the last line against the foot.
+  editor.setOption('scrollPastEnd', 0);
+  const stopped = await bottom();
+
+  const cells = [...document.querySelectorAll('.ace_gutter-cell')]
+    .map(cell => Number(cell.textContent.trim()))
+    .filter(n => n);
+  return {
+    rows: editor.session.getScreenLength(),
+    onScreen: Math.round(editor.renderer.$size.scrollerHeight / editor.renderer.lineHeight),
+    stopped, reached,
+    highest: Math.max(...cells),
+    length: SURFACE.text().length,
+    wrote: long.length,
+  };
+"""
+
+
+def test_the_last_line_can_be_scrolled_to_the_top_of_a_full_height_editor(
+    client: TestClient, tmp_path: Path
+):
+    """The editor IS the page here — `design/pagefill.md`, nothing on a record
+    page scrolls except the panes — so where Ace stops scrolling is where the
+    caret lives once a document is longer than the window: along the bottom edge
+    of the screen, with every line you are about to write below the fold.
+
+    jcanton asked for the last line to reach the TOP instead, and guessed it was
+    a switch Ace already has. It is: `scrollPastEnd`, a multiple of the box's own
+    height rather than a pixel count, which is why nothing here recomputes on
+    resize.
+
+    Two numbers, and the first is what makes the second mean something. With the
+    option off the scroll stops with the last row at the foot — `firstRow` is a
+    screenful back from the end — and with it on `firstRow` is the last row
+    itself. The same box, the same document, in one run.
+
+    And the space below is not document: the gutter numbers no row that does not
+    exist, and `text()` is the length that was written into it.
+    """
+    got = measured_in(
+        chrome(),
+        client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "pastend.html",
+        1400,
+        _PAST_THE_END,
+        query="?editor=ace",
+        patience=4800,
+    )
+
+    assert got["rows"] == 400, got["rows"]
+    assert got["onScreen"] > 4, (
+        f"the editor is {got['onScreen']} rows tall, which is too short for the "
+        "difference this measures to be visible"
+    )
+    # A screenful back from the end, give or take the row that is half drawn:
+    # `onScreen` is a fractional height divided by a fractional line and then
+    # rounded, so the exact integer is the rounding's and not the behaviour's.
+    assert abs(got["rows"] - got["onScreen"] - got["stopped"]) <= 1, (
+        f"Ace's own default put the top of the box at row {got['stopped']} of "
+        f"{got['rows']}, in a box {got['onScreen']} rows tall — this test no "
+        "longer measures what it says it does"
+    )
+    assert got["reached"] == got["rows"] - 1, (
+        f"the last line scrolls no higher than row {got['reached']} of "
+        f"{got['rows']}: `scrollPastEnd` is not on"
+    )
+    assert got["highest"] == 400, f"the gutter numbers a line that does not exist: {got['highest']}"
+    assert got["length"] == got["wrote"], (
+        "the document grew by the room made below it — this has to be viewport and never text"
+    )
+
+
+_INDENT_NOW = r"""
+  flipEditing();
+  await new Promise(r => setTimeout(r, 300));
+  const bar = document.getElementById('statusbar');
+  const spaces = [...bar.querySelectorAll('button')]
+    .find(b => b.textContent.startsWith('Spaces'));
+  if (!spaces) return {noPicker: true};
+  const before = SURFACE.editor.getOption('tabSize');
+  spaces.click();
+  await new Promise(r => setTimeout(r, 60));
+  const after = SURFACE.editor.getOption('tabSize');
+
+  // And the press itself, at Ace's own input, because `tabSize` is only the
+  // reason — what was asked for is that Tab types four without a reload. See
+  // `test_the_toolbar_and_the_keymap_do_not_cancel_each_other` for why `keyCode`
+  // is in the init dict.
+  SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, 'abc\n'));
+  SURFACE.setCaret(0, 0);
+  SURFACE.el.querySelector('textarea').dispatchEvent(new KeyboardEvent('keydown', {
+    key: 'Tab', code: 'Tab', keyCode: 9, which: 9, bubbles: true, cancelable: true}));
+  await new Promise(r => setTimeout(r, 40));
+  const text = SURFACE.text();
+  return {before, after, label: spaces.textContent,
+          typed: text.slice(0, text.indexOf('abc')),
+          said: document.getElementById('state').textContent};
+"""
+
+
+def test_the_indent_picker_moves_the_second_editor_without_a_reload(
+    client: TestClient, tmp_path: Path
+):
+    """`Spaces: 4` said so and the box went on typing two.
+
+    The number lives in two places because the two surfaces indent in two ways.
+    A textarea's Tab is the page's — `indentLines` reads `INDENT` on the press,
+    so the picker is live there, which
+    `test_the_status_bar_says_where_the_caret_is_how_long_it_is_and_what_tab_types`
+    already holds. Ace answers Tab itself out of `tabSize`, read once when the
+    surface was built, and `setIndentWidth` cannot reach it.
+
+    What that cost was a control that lies: the label moved, the preference was
+    written, the live region said "Tab now types 4 spaces", and the next press
+    typed two until the page was loaded again.
+
+    The press is measured and not just the option, because the option is the
+    reason rather than the thing asked for.
+    """
+    got = measured_in(
+        chrome(),
+        client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "indent.html",
+        1400,
+        _INDENT_NOW,
+        query="?editor=ace",
+        patience=4800,
+    )
+
+    assert not got.get("noPicker"), "the second editor carries no indent control"
+    assert got["before"] == 2 and got["after"] == 4, (
+        f"the picker moved to {got['label']!r} and the editor's tab is {got['after']} wide"
+    )
+    assert got["label"] == "Spaces: 4", got["label"]
+    assert got["typed"] == "    ", (
+        f"Tab typed {got['typed']!r} in the second editor after the picker was "
+        "moved to four — the width still needs a reload"
+    )
+    assert "Tab now types 4 spaces" in got["said"], got["said"]
+
+
 _KEYMAP_KEPT = r"""
   flipEditing();
   await new Promise(r => setTimeout(r, 300));

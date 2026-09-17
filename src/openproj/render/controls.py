@@ -1949,6 +1949,12 @@ function attachStatus(surface, bar) {
     document.createElement('button'), 'Spaces', INDENT_WIDTHS, EDITOR.indent,
     width => {
       setIndentWidth(width);
+      // And the surface, if it keeps its own copy. `setIndentWidth` moves the
+      // page's `INDENT`, which is what `indentLines` types into a textarea; the
+      // second editor answers Tab itself and was told its width once, when it
+      // was built. Without this line the announcement below is false until a
+      // reload on the surface most people are on.
+      if (surface.setIndent) surface.setIndent(width);
       rememberEditor({indent: width});
       // In the words of what it is and what it is not. A person who has just
       // pressed something called "Spaces" on a document full of tabs is entitled

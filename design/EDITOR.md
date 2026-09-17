@@ -1141,4 +1141,49 @@ switcher still but leaves it indented behind 71px of nothing, which answers "don
 contradicts "left aligned like the nav". Delete going second is also right on its own: it is the
 destructive control, and the leading edge of a row is where a pointer arrives.
 
+## Two small things the full-height editor made wrong, 2026-09-17
+
+Both asked for by jcanton after living in the box, and both are one line of configuration each —
+which is worth saying, because the interesting part of each is not the line but what it reveals
+about where a number lives.
+
+**The last line could not reach the top.** Ace stops the scroll with the last row against the foot
+of the scroller. That is the right default for an editor in a page that scrolls around it; it is
+the wrong one here, where since "editing a record is the same page you were reading" the editor IS
+the page and nothing else moves. The consequence is that past a windowful of text every line you
+are about to write is drawn along the bottom edge of the screen, with the whole document above it
+and nothing below.
+
+`scrollPastEnd: 1` is the switch, and `1` is not a pixel count — the renderer computes
+`(scrollerHeight - lineHeight) * $scrollPastEnd`, so one is "a screenful less a line" and the last
+row can reach the top row at any window size, with nothing to recompute when `openproj:room` changes
+the height. The space below the text is viewport and not document: the gutter is drawn from rows
+that exist, so it numbers none of it, and `text()` does not grow by a character. Both are asserted.
+
+The measurement is ordered, and the order is the evidence. Written the obvious way round — set the
+option, scroll, read the row — the test passed with the line deleted from `editor.py`, because what
+it measured was the option the test had just turned on. It reads the shipped state first and only
+then sets the option to `0` for the contrast: 377 of 400 with Ace's default, 399 with the line.
+
+**The indent width needed a reload.** The number lives in two places, because the two surfaces
+indent in two different ways, and only one of them was being moved. A textarea's Tab is the page's:
+`indentLines` reads the module-level `INDENT` on every press, so the picker is live there. Ace
+answers Tab itself, out of `tabSize`, which `setOptions` read once when the surface was built — and
+`setIndentWidth` cannot reach it.
+
+What that cost is the shape this repository keeps paying for: a control that lies. Pressing
+"Spaces: 4" moved the label, wrote the preference, and announced "Tab now types 4 spaces" into the
+live region — and the next press typed two, until the page was loaded again. The fix is a
+`setIndent` member on the Ace surface, called from the picker behind `if (surface.setIndent)`, on
+the same pattern as `setKeymap`: a textarea has no second copy of the number, so the caller looks
+for the member rather than being handed a flag that says the same thing twice.
+
+Not done, and stated rather than left to be rediscovered as an omission: **the plain `?editor=plain`
+textarea still stops at its last line.** A textarea's scroll space is its content plus its padding,
+so matching this would mean writing a pixel number into `padding-bottom` on every `openproj:room` —
+a computed length in a box whose geometry three other layers (the gutter, the seat bands, the
+mirror in `measuredLines`) already measure independently. That is a real change in a place this file
+records going quietly wrong before, for a surface reachable only by typing a parameter. The default
+surface is Ace and that is where the ask came from.
+
 🤖 Written by an agent on behalf of @jcanton

@@ -281,6 +281,27 @@ function aceSurface(area, seeded) {
     // initialised is a TDZ throw rather than `undefined`.
     tabSize: (typeof INDENT === 'string' ? INDENT : '  ').length,
     wrap: true,
+    // **The last line can be scrolled to the top of the box, and this is the
+    // whole of what a full-height editor needed.** Ace stops the scroll with the
+    // last line against the FOOT of the scroller, so once a document is longer
+    // than the window every newly typed line is written along the bottom edge of
+    // the screen — the page does not scroll, the editor is the page, and there
+    // is nowhere else for the caret to be.
+    //
+    // `1` is a MULTIPLE of the box's own height, not a pixel count:
+    // `(scrollerHeight - lineHeight) * $scrollPastEnd` is the renderer's own
+    // arithmetic, so one is "a screenful less a line" and the caret can reach
+    // the top row at any window size with nothing recomputed on resize — which
+    // matters here, where `openproj:room` changes that height on every one.
+    //
+    // The space below the document is not document. Ace's gutter is drawn from
+    // the rows that exist, so it numbers none of it, and `getValue()` does not
+    // grow by a character; this is the viewport being allowed further down, not
+    // lines being added under the text.
+    //
+    // `$maxLines` is what would disable it — the renderer reads
+    // `!this.$maxLines && this.$scrollPastEnd` — and this surface never sets it.
+    scrollPastEnd: 1,
     showPrintMargin: false,
     // The default is a `<textarea>` 2.5x1 CSS px at the caret with opacity 0,
     // and Ace rewrites its `aria-label` — so the box that used to say "Shaping
@@ -644,6 +665,23 @@ function aceSurface(area, seeded) {
       // away and nothing anywhere says so.
       if (claimed) editor.keyBinding.addKeyboardHandler(claimed, 1);
     },
+
+    // What Tab types, changed without a reload — and the reason this member has
+    // to exist is that the two surfaces hold the number in different places.
+    //
+    // `INDENT` is a page-level `let` that the status bar's picker moves, and
+    // `indentLines` reads it on the press, so a textarea follows the picker
+    // immediately. Nothing of that reaches here: Ace's own soft tab answers Tab
+    // before the page's keydown listener ever sees it, out of `tabSize`, which
+    // `setOptions` read ONCE at construction. So pressing "Spaces: 4" moved the
+    // label, wrote the preference and left this box typing two — under an
+    // announcement that says "Tab now types 4 spaces", which was a sentence that
+    // only became true on the next page load.
+    //
+    // Only on this surface, like `setKeymap` above: a textarea has no second
+    // copy of the number to keep in step, and the caller looks for the member
+    // rather than being handed a flag saying the same thing twice.
+    setIndent(width) { editor.setOption('tabSize', width); },
 
     // --- completing a link to another record ---------------------------------
     //
