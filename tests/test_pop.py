@@ -2186,6 +2186,196 @@ def test_two_presses_with_no_gap_send_one_patch(index: Index, tmp_path: Path):
 
 
 # --------------------------------------------------------------------------- #
+# A second menu, opened while the first one's answer is still in the air
+# --------------------------------------------------------------------------- #
+
+
+_A_SECOND_MENU = """
+const first = rowWhere(one => one.kind === 'task' && one.status === 'ready');
+if (!first) return {error: 'the corpus holds no ready task to move'};
+const otherRow = menuRows().find(tr => tr.dataset.id !== first.id);
+if (!otherRow) return {error: 'the table drew only one row, so there is no second record'};
+const second = {id: otherRow.dataset.id, title: DATA.rows[otherRow.dataset.id].title};
+// A rule's own sentence, raised before anything is written — the same 409 shape
+// `test_a_refusal_leaves_the_menu_up_saying_what_the_server_said` asks about.
+const RULE = 'a project cannot be filed under a project and proj-000002 is under prod-0f0002';
+
+// The answer HELD, which is the whole of the window this guard is about: a write
+// here is a commit and a push against a repository on GitHub, so it is seconds,
+// and this box stays up for all of them.
+let release = null;
+const holding = answer => {
+  release = null;
+  ANSWER = () => new Promise(done => { release = () => done(answer); });
+};
+
+// Dismissed the way a reader dismisses it — a press outside — and then a press
+// on a DIFFERENT row. That is the ordinary way to open a second menu and it is
+// the order a trusted right press produces: pointerdown, then contextmenu.
+const moveToTheOtherRecord = () => {
+  document.body.dispatchEvent(
+    new PointerEvent('pointerdown', {bubbles: true, clientX: 5, clientY: 5}));
+  openOn(second.id);
+  return {open: popIsOpen(), about: popAbout(), kinds: popKinds(),
+          label: POP.getAttribute('aria-label')};
+};
+
+const pressShapingOn = id => {
+  openOn(id);
+  itemIn('status').click();
+  itemIn('status-shaping').click();
+};
+
+// --- a refusal, which DRAWS its sentence and takes the keyboard -------------
+holding({status: 409, body: {detail: RULE}});
+pressShapingOn(first.id);
+await rest(150);
+if (!release) return {error: 'the first press sent no PATCH, so nothing is in the air'};
+const moved = moveToTheOtherRecord();
+release();
+await rest(700);
+const refused = {open: popIsOpen(), about: popAbout(), kinds: popKinds(),
+                 label: POP.getAttribute('aria-label'),
+                 focused: document.activeElement.dataset.kind,
+                 drawn: popControls().map(wordIn), said: said()};
+
+// --- and a write that LANDS, which closes -----------------------------------
+//
+// Read inside the host's own `wrote()`, which is where `popWrite` goes
+// immediately after the close it is gated on. The `openproj:wrote` in its
+// `finally` carries a sha, and every open menu dies on one — this second box
+// included, and rightly, because the tbody under it has just been replaced. So
+// the end of the write is the one moment this half cannot be asked about.
+let duringWrote = null;
+const hostWrote = POP_HOST.wrote;
+POP_HOST.wrote = async (answer, id) => {
+  duringWrote = {open: popIsOpen(), about: popAbout()};
+  return hostWrote(answer, id);
+};
+popClose();
+holding({status: 200,
+         body: {outcome: 'committed', commit: 'c0ffee9', pushed: true}});
+pressShapingOn(first.id);
+await rest(150);
+if (!release) return {error: 'the second press sent no PATCH, so nothing is in the air'};
+const movedAgain = moveToTheOtherRecord();
+release();
+await rest(900);
+return {first: {id: first.id, title: first.title}, second, RULE,
+        moved, refused, movedAgain, duringWrote,
+        landed: {said: said(), base: baseNow(), open: popIsOpen()},
+        sent: patches().map(one => one.url), beats: beatsNow()};
+"""
+
+
+def test_an_answer_to_one_menus_write_does_not_reach_the_menu_opened_after_it(
+    index: Index, tmp_path: Path
+):
+    """**`POP_GEN`, and the two ways a stale answer lands in a box it is not
+    about.**
+
+    A write here is a commit and a push against a repository on GitHub, so it
+    takes seconds, and this box stays up for every one of them. In that window a
+    reader can dismiss it and right-click a different record — which is not an
+    exotic race but the ordinary way to open a second menu, and the `pointerdown`
+    listener in `pop.py` documents that exact sequence. `popWrite` therefore
+    snapshots `POP_GEN` as `mine` before it sends, and the answer is applied only
+    while the box on screen is still that same opening.
+
+    Both halves are asked because they fail differently and neither is visible in
+    the other:
+
+    - a REFUSED write goes through `popSaid`, and `popSay` *draws* the sentence
+      as the first item of whatever level is up and puts the keyboard on it. Into
+      the second record's menu that is a true sentence about one record under the
+      title of another, taking focus with it. It must still be announced, because
+      a refusal nobody is told about is a write that looks like it worked — so
+      the live region is asserted to carry it, which is also what proves the
+      answer arrived at all and that the assertions above it are not vacuous.
+    - a LANDED write ends in `popDone()`, which closes the box and gives the
+      keyboard back. Ungated, that shuts the second record's menu under the
+      reader's pointer.
+
+    The landed half is measured inside the host's `wrote()`, and that is the only
+    place it can be: `popWrite`'s `finally` dispatches `openproj:wrote` carrying
+    the sha, and every open menu dies on one — the second box included, and
+    correctly, because the tbody beneath it has just been replaced. `wrote()` is
+    what `popWrite` awaits immediately after the close it is gated on, so it is
+    the one moment where a box that was closed and a box that was left alone are
+    two different answers.
+
+    Driven both ways in headless Chrome on 2026-09-18, with the guards patched
+    out of the rendered page as strings: with `popSaid` drawing unconditionally
+    the second menu's first item was the refusal and `document.activeElement` was
+    on it; with `popDone()` ungated the box measured closed inside `wrote()`.
+    """
+    got = _at_the_table(index, tmp_path / "second.html", _A_SECOND_MENU, patience=5000)
+
+    assert not got.get("error"), got
+    assert got["second"]["id"] != got["first"]["id"], got
+
+    # The control for both halves: the second menu really is a second menu, about
+    # the other record. Without this every assertion below is true of a page that
+    # opened nothing the second time.
+    for which, seen in (("refusal", got["moved"]), ("landed write", got["movedAgain"])):
+        assert seen["open"] is True, f"no second menu opened during the {which}"
+        assert seen["about"] == got["second"]["id"], (
+            f"the second menu of the {which} is about {seen['about']} and it was "
+            f"opened on {got['second']['id']}"
+        )
+        assert seen["label"] == f"Actions for {got['second']['title']}", seen
+
+    assert got["refused"]["said"] == got["RULE"], (
+        f"the refusal was not announced at all: the live region says "
+        f"{got['refused']['said']!r}. A refusal nobody is told about is a write "
+        "that looks like it worked — and if nothing was said, no answer came back "
+        "and the assertions below are about nothing"
+    )
+    assert "said" not in got["refused"]["kinds"], (
+        "the first write's refusal was drawn into the menu of a record it is not "
+        f"about: {got['refused']['kinds']}"
+    )
+    assert got["RULE"] not in got["refused"]["drawn"], got["refused"]["drawn"]
+    assert got["refused"]["kinds"] == got["moved"]["kinds"], (
+        f"the second menu's items changed under an answer about {got['first']['id']}: "
+        f"{got['moved']['kinds']} became {got['refused']['kinds']}"
+    )
+    assert got["refused"]["focused"] != "said", (
+        "the first write's refusal took the keyboard inside the second record's menu"
+    )
+    assert got["refused"]["about"] == got["second"]["id"], got["refused"]
+    assert got["refused"]["label"] == f"Actions for {got['second']['title']}", (
+        f"the box renamed itself {got['refused']['label']!r} under the answer"
+    )
+    assert got["refused"]["open"] is True, "the refusal closed the second record's menu"
+
+    assert got["duringWrote"] is not None, (
+        "the host's `wrote()` never ran, so the landed half of this test never "
+        "reached the moment it is written for"
+    )
+    assert got["duringWrote"]["open"] is True, (
+        "a write that landed closed the menu somebody had opened on a different "
+        "record while it was in the air — `popDone()` is gated on `POP_GEN === mine` "
+        "for exactly this"
+    )
+    assert got["duringWrote"]["about"] == got["second"]["id"], got["duringWrote"]
+    assert got["landed"]["said"] == f"{got['first']['title']} is now {HUMAN['shaping']}", (
+        f"the write that landed announced {got['landed']['said']!r}"
+    )
+    assert got["landed"]["base"] == "c0ffee9", (
+        f"`#base` is still {got['landed']['base']} after a commit"
+    )
+    assert got["landed"]["open"] is False, (
+        "the second menu outlived an `openproj:wrote` carrying a sha, so it is "
+        "pointing at a row in a tbody that has been replaced since it opened"
+    )
+    assert got["sent"] == [f"/api/record/{got['first']['id']}"] * 2, (
+        f"the presses did not both write to {got['first']['id']}: {got['sent']}"
+    )
+    assert got["beats"] == {"writing": 2, "wrote": [None, "c0ffee9"]}, got["beats"]
+
+
+# --------------------------------------------------------------------------- #
 # What each view adds of its own
 # --------------------------------------------------------------------------- #
 
