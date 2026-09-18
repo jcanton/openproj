@@ -2565,9 +2565,17 @@ const CARD_DELAY = 600;
 const CARD_GRACE = 220;
 let cardTimer = 0;
 let cardLeaving = 0;
+// Whether a right-click menu is up. `design/context-menus.md`: **opening the menu
+// kills the card, and the card does not come back while the menu is up** — and the
+// third of that rule's three parts is this flag, because the pointer is sitting over
+// the row the menu covers and every `pointermove` re-arms the card underneath it.
+//
+// Declared here beside the timers rather than beside `cardYields` below, so there is
+// no question about a `let` that `queueCard`'s body reads being declared after it.
+let cardStandsDown = false;
 
 function queueCard(row, x, y, extra) {
-  if (!CARD || !row) return;
+  if (!CARD || !row || cardStandsDown) return;
   clearTimeout(cardTimer);
   clearTimeout(cardLeaving);
   // Ask for the document NOW, and draw it in 600ms. The wait before a card
@@ -2800,6 +2808,30 @@ function hideCardNow() {
   clearTimeout(cardLeaving);
   cardShowing = null;
   CARD.hidden = true;
+}
+
+// The card, out of the way while the right-click menu owns the pointer, and back
+// afterwards. One function for `pop.py` to call rather than three globals for it to
+// reach into, because what it enforces is one rule and not three lines that each
+// happen to be needed.
+//
+// `hideCardNow`'s `cardResizing` early return is deliberately NOT consulted, and that
+// is the half of the rule a test has to go out of its way to reach: a right-click
+// during a grip drag must still get its menu, and a card that believes it is being
+// resized would otherwise sit over that menu for the whole of the drag. The pending
+// `cardTimer` goes with it, because a card queued 400ms ago and not yet drawn would
+// appear on top of the menu a moment after it opened.
+//
+// `cardResizing` itself is left alone. The drag's own `pointerup`/`pointercancel`
+// ends it, and clearing it here would be this function guessing about the end of a
+// gesture it cannot see.
+function cardYields(yielding) {
+  cardStandsDown = yielding;
+  if (!yielding) return;
+  clearTimeout(cardTimer);
+  clearTimeout(cardLeaving);
+  cardShowing = null;
+  if (CARD) CARD.hidden = true;
 }
 
 // The card is a thing you can put the pointer in, which is what makes a long

@@ -83,6 +83,7 @@ from .markdown import (
 from .markdown import (
     _inlined_assets as inlined_assets,
 )
+from .pop import _POP_STYLE, _pop_js
 from .records import render_records
 from .rows import _row
 from .shell import _SHELL, CSP, ROUTES, STATIC, _page
@@ -171,6 +172,7 @@ __all__ = [
     "_LADDER_OF",
     "_MARK_WORDS",
     "_MIN_BAR_PX",
+    "_POP_STYLE",
     "_ROLE_FILTER",
     "_ROLE_ORDER",
     "_ROW_PX",
@@ -206,6 +208,7 @@ __all__ = [
     "_new_row_fields",
     "_page",
     "_payload",
+    "_pop_js",
     "_row",
     "_scheme_css",
     "_shaping_hints",

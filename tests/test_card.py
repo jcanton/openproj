@@ -207,11 +207,24 @@ def test_a_document_that_arrives_late_is_not_drawn_on_the_wrong_card(index: Inde
     assert "first document" not in html, "one record's document is under another's title"
 
 
-def test_a_rendered_file_draws_a_card_with_no_server_to_ask(index: Index):
+def test_a_rendered_files_card_asks_no_server_for_a_document(index: Index):
     """The static export has no server, so the card degrades: the fields it was
     given, and no document. The title beside it is still a link into
     `detail.html#id`, where the whole document is — the same shape as co-editing
-    falling back to a plain textarea."""
+    falling back to a plain textarea.
+
+    **Named for what it actually proves**, after this test spent some time called
+    `test_a_rendered_file_draws_a_card_with_no_server_to_ask` while no card was
+    drawn on a rendered file at all: `MOVING` was declared inside the editable
+    branch and read by the `pointerover` listener outside it, so every hover on
+    an export threw before it could queue one. This test never saw it, and could
+    not: it calls `showCard` directly in the node shim, and `showCard` does not
+    read `MOVING`. A shim has no layout to hover.
+
+    So the claim here is about what the card DRAWS once something has asked for
+    it. Whether anything asks is a browser question, and it is
+    `test_hovering_a_title_on_a_rendered_file_draws_the_card`
+    (`tests/test_table.py`) that holds it."""
     record_id = one_pitch(index)
     page = render_table(index)  # STATIC links: no `body` route
 

@@ -15,6 +15,7 @@ from .controls import (
     _summary_html,
 )
 from .env import _compiled
+from .pop import _POP_STYLE, _pop_js
 from .rows import _row
 from .shell import STATIC, Links, _page, _titles
 from .styles import _SCROLL_STYLE, _SUGGEST_STYLE, _TREE_STYLE
@@ -369,6 +370,11 @@ _TABLE = """
 <script id="payload" type="application/json">{{ payload|tojson }}</script>
 {% if editable %}{{ combobox }}{% endif %}
 {{ filters }}
+{#- Above the script below, and it has to be: these are classic scripts sharing
+    one global scope, and a function in a later block is not hoisted into an
+    earlier one — the `popServes(...)` call in the table's own script needs this
+    block to have already run. -#}
+{{ pop }}
 <script>
 // A payload that did not survive the trip is a third kind of empty, and it used
 // to look exactly like the other two: a header row over a void. A truncated
@@ -1350,6 +1356,79 @@ tbody.addEventListener('pointerout', event => {
 // `pointerout`.
 addEventListener('openproj:filter', hideCardNow);
 
+// --- the right-click menu, on a row ---------------------------------------
+//
+// The card's sibling, and written next to it because the two are the only
+// floating boxes over these rows and they owe each other one rule: opening the
+// menu kills the card, and the card does not come back while the menu is up.
+// That rule is `cardYields`, called inside `popMenu` (`pop.py`) — nothing on
+// this page has to remember it.
+//
+// Outside `if (EDITABLE)` for the same reason the card is. Cut 2's menu is Open,
+// Open in new tab and Copy link, and the rendered file somebody reads on a train
+// is the copy that most wants a way from a row to its document. Which is a
+// constraint on what may be named in here: `DRAFT_ID` is declared inside the
+// editable branch further down, so a rendered file naming it throws inside the
+// listener and no menu ever opens there. `MOVING` was the second name on that
+// list until the card's `pointerover` listener above — which also names it —
+// proved what the list costs, and it is declared beside `WRITING` now.
+popServes({
+  // The map of fields this reader may write, or null. The write half of the menu
+  // is cuts 3 to 5 and nothing in cut 2 asks — `EDITABLE` is spelled here rather
+  // than a boolean of it because it is the same answer every other gate on this
+  // page is written against.
+  may: () => EDITABLE,
+  // The record, not the row element under the pointer: `draw()` replaces the
+  // whole tbody, so a `<tr>` is one drawing of a record and not the record. A
+  // press on the draft row asks this for `'+'`, which is not a record and is not
+  // in here, so `popMenu` answers false and the press falls through to the
+  // browser's own menu — which is the right menu over a row somebody is typing
+  // into, because it is the one with Paste on it.
+  rows: id => DATA.rows[id],
+  // Not called in cut 2, and not callable on a rendered file, where
+  // `refreshRows` is not declared at all: cut 3's writes are behind `may()`,
+  // which is null there.
+  wrote: () => refreshRows(),
+});
+
+// `ContextMenu` and Shift+F10 arrive here too — they deliver a `contextmenu`
+// event from the focused cell, which is inside a row like any press — so the
+// keyboard path needs nothing of its own. Only the coordinates differ, and
+// `popAt` (`pop.py`) is where that is answered.
+tbody.addEventListener('contextmenu', event => {
+  // The shift-through the design promises on all three views: the browser's own
+  // menu, and with it Inspect, Save as and Copy link address on a row.
+  if (event.shiftKey) return;
+  // Keyed off the ROW and not off `td[data-record]`, which only an editable cell
+  // carries (`cellHtml`): a derived column — Progress, Blocked by — has no
+  // `data-record` on it, so keying off the cell would give the menu to nine
+  // columns of a row and the browser's to five, with nothing on screen saying
+  // which is which. It also settles three of the bails structurally rather than
+  // by asking: the adder row and all three empty states (`tr.nothing`) carry no
+  // `data-id`, and `<thead>` — with the column-resize grips, which are
+  // `pointerdown` handlers on a `<th>` — is not inside this element at all.
+  const row = event.target.closest('tr[data-id]');
+  if (!row) return;
+  // Two gestures already have the pointer, and a box opening over either is in
+  // the way of the thing being done — the same pair the card refuses to queue
+  // under, asked again here because these are two boxes and not one.
+  //
+  // The open editor is asked of the DOM, the way `createDraft` and the bulk
+  // selection's Escape already ask it, and a right press inside a text box has
+  // to reach the browser's menu anyway: that is where Paste is.
+  if (tbody.querySelector('td.edit input, td.edit select')) return;
+  // The move is asked of the class and not of `MOVING`, which is reachable from
+  // out here on every render mode now and would answer the same thing.
+  // `startMoving` sets both and `stopMoving` clears both, and the class is on the TABLE
+  // rather than on a row — it is already the page-wide statement of the state,
+  // the switch the stylesheet's `.moving` rules read.
+  if (table.classList.contains('moving')) return;
+  // `preventDefault` only when a menu actually opened. A press on a row this
+  // view has no record for gets the browser's menu rather than an empty box of
+  // ours, and `popMenu` is what knows which of the two happened.
+  if (popMenu(event.clientX, event.clientY, row.dataset.id)) event.preventDefault();
+});
+
 // The row a write is in the air for, or null. One at a time, because one drag is
 // one drop: this is not a queue, it is the row the reader is looking at.
 //
@@ -1359,6 +1438,22 @@ addEventListener('openproj:filter', hideCardNow);
 // the branch it does not exist at all on a rendered file — both of which are a
 // page that throws before a single row is drawn.
 let WRITING = null;
+
+// Which row is being moved, whether it is being dragged or carried by the
+// keyboard. One variable for both, because they are one act: what is legal, what
+// is drawn and what is written are the same three answers whichever hand is on it.
+//
+// Out here for the second half of `WRITING`'s reason, and out here because that
+// half was paid rather than argued. It was declared beside `startMoving`, inside
+// the editable branch, while the card's `pointerover` listener above reads it on
+// every view — so on a rendered export, hovering a title cell threw
+// `ReferenceError: MOVING is not defined` inside the listener and no card was
+// ever queued. Measured in Chrome against `render_table(index)`: one uncaught
+// ReferenceError per hover, `#card` still hidden 900ms later, while the served
+// page drew the card. The export is the copy with no server to ask for a
+// document, which makes the card the only thing on it that says what a row is
+// about — so it was dead on exactly the page it matters most on.
+let MOVING = null;
 
 // The commits this tab has saved that no landing has confirmed yet, commit sha
 // to row id, in the order their answers arrived — which is ancestry order,
@@ -2681,11 +2776,6 @@ async function createDraft() {
 // ---------------------------------------------------------------------------
 // A row you move
 // ---------------------------------------------------------------------------
-
-// Which row is being moved, whether it is being dragged or carried by the
-// keyboard. One variable for both, because they are one act: what is legal, what
-// is drawn and what is written are the same three answers whichever hand is on it.
-let MOVING = null;
 
 // Why that row may not hold this one, in words, or '' when it may.
 //
@@ -4902,11 +4992,20 @@ def render_table(
         ),
         filters=_FILTER_JS,
         combobox=_combobox_html(index, live=base_commit is not None),
+        # A function and not a constant, because the one thing the menu's script
+        # does not know for itself is where a record's page is: `/detail/` from
+        # the server and `detail.html#` in the export.
+        pop=_pop_js(links),
     )
     return _page(
         "openproj — table",
         body,
-        _TABLE_STYLE + _SUGGEST_STYLE,
+        # Concatenated here rather than reached through a shared sheet, exactly as
+        # `_SUGGEST_STYLE` beside it already is: the menu's three hosts load no
+        # stylesheet in common except the shell's, and the shell ships on all
+        # twelve pages for a box three of them draw. `pop.py`'s own comment is
+        # the argument.
+        _TABLE_STYLE + _SUGGEST_STYLE + _POP_STYLE,
         links,
         "table",
         index.unreadable,

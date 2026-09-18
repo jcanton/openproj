@@ -9,6 +9,7 @@ from ..model import RUNG, Config, days_after, size_weeks
 from ..schedule import build_end
 from .controls import _FILTER_JS, _facets_html, _summary_html
 from .env import _compiled, _fragment
+from .pop import _POP_STYLE, _pop_js
 from .rows import _row
 from .shell import STATIC, Links, _page, _titles
 from .tokens import HUMAN, STATUS_GLYPH, STATUSES, _human, _status_class
@@ -609,6 +610,11 @@ _TIMELINE = """
 </div>
 <script id="bars" type="application/json">{{ bars|tojson }}</script>
 {{ filters }}
+{#- Above the view's own script, and that is not a preference: these are classic
+    scripts sharing one global scope, and a function declared in a later block is
+    not hoisted into an earlier one — the `popServes(…)` call below needs this
+    block to have run. -#}
+{{ pop }}
 <script>
 const scroller = document.querySelector('.scroll');
 const svg = scroller.querySelector('svg');
@@ -683,10 +689,30 @@ const human = value => (DATA && DATA.human[value]) || value;
 // and the table draw the same one now; see the card block in `_SHELL`.
 function showTip(id, x, y, now) {
   const row = DATA && DATA.rows[id];
+  if (!row) return;
+  // **The one path in the app that reaches a card without going through
+  // `queueCard`, which is where the menu's half of the rule otherwise stops.**
+  // `cardStandsDown` (`shell.py`) is consulted by `queueCard` and deliberately
+  // not by `showCard`, on the grounds that `showCard`'s other caller is a
+  // timeout `cardYields` has just cancelled. The `now` branch below is the
+  // exception that reasoning names — it is this page's keyboard route, and the
+  // label anchor it hangs off can take focus while the menu is up.
+  //
+  // **Kept although nothing here can reproduce it, which is the honest half.**
+  // Measured on this machine in headless Chrome, 2026-09-18: Shift+Tab out of
+  // the open box lands on `div.scroll` first, because Chrome makes a scrollable
+  // element focusable, and focusing it scrolls — which closes the menu through
+  // `pop.py`'s capture `scroll` listener, so the label anchor is reached only
+  // once the box is already gone. That is a browser build doing the work, not
+  // this page: Firefox makes no scroller focusable, and Firefox is the browser
+  // this menu is already written around (it reports a menu key's coordinates as
+  // 0,0). A card under an open menu is the one thing the two boxes owe each
+  // other not to do, and one comparison on a focus is what it costs.
+  if (now && popIsOpen()) return;
   // `now` for the keyboard: focus is a deliberate act and a delay after one is a
   // page ignoring you. A pointer crossing the plot is not deliberate, so it
   // waits like everywhere else.
-  if (row) (now ? showCard : queueCard)(row, x, y);
+  (now ? showCard : queueCard)(row, x, y);
 }
 
 svg.addEventListener('pointerover', event => {
@@ -711,6 +737,51 @@ for (const [id, row] of LABELS) {
 // somewhere else. The markup keeps it so a page without script still explains
 // itself; the anchor carries the accessible name either way.
 if (DATA) for (const title of svg.querySelectorAll('title')) title.remove();
+
+// --- the right-click menu, on a bar ---------------------------------------
+//
+// **This page is a reader's, and that is structural rather than a list of items
+// it happens not to ask for.** `render_timeline` takes neither `may_write` nor
+// `base_commit`, because `/timeline` (`web.py`) is the one view route with no
+// `request` in its signature — so there is no server answer on this page for
+// `may()` to hand back, and no `#base` for a compare-and-swap to be built on.
+// The write half cannot be switched on here by a template variable that merely
+// happens to be false today: it costs a parameter on the route, a parameter on
+// the renderer and a value in this block, all three visible in a diff.
+//
+// The host is two keys. No `extras`, so there is no place in this file where a
+// menu item is produced at all — the reader's three are `popItems`' and nowhere
+// else's. No `wrote`, because nothing here writes.
+popServes({
+  may: () => false,
+  // `DATA &&`, the same question everything else in this block asks of it: the
+  // bars are the server's and a payload that will not parse costs the menu and
+  // not the chart. `popMenu` reads a falsy row as "this view has no record
+  // there" and hands the press back to the browser's own menu.
+  rows: id => DATA && DATA.rows[id],
+});
+
+// One listener for both halves of a row, because both halves carry the id: the
+// `<rect>` in the plot and the `.row` beside it in the label column. `.tl` holds
+// the two and nothing else with a `data-id` on it, and a press inside the menu
+// never reaches here — the box is on `<body>`, outside this element entirely.
+//
+// The hatch rects and the status glyph are `pointer-events: none` (see the
+// stylesheet), so a press over a bar always lands on the bar itself and never on
+// what is drawn over it.
+//
+// The keyboard's menu key arrives here too, and on this page it arrives on a
+// label anchor: the SVG anchors are `tabindex="-1"` deliberately, so the label
+// column is the whole of the keyboard's route through the chart. `contextmenu`
+// from a key bubbles like any other, and the coordinates it carries are the ones
+// `popMenu` falls back on when they are 0,0 or absent — they are passed through
+// unchanged for exactly that reason.
+plot.addEventListener('contextmenu', event => {
+  // Shift falls through to the browser's own menu, on every view.
+  if (event.shiftKey) return;
+  const held = event.target.closest('rect[data-id], .row[data-id]');
+  if (held && popMenu(event.clientX, event.clientY, held.dataset.id)) event.preventDefault();
+});
 
 // One filter model, three views: the timeline's answer to it is which rows
 // are on the chart. A hidden row leaves no gap: the rows below it move up, the
@@ -1052,8 +1123,15 @@ def render_timeline(
             summary=_summary_html(index, len(timeline["bars"])),
         ),
         filters=_FILTER_JS,
+        pop=_pop_js(links),
         # The rows the shared `matches()` reads, for the bars that were drawn. Not
         # the whole plan: a bar that is not on this window cannot be filtered onto it.
         bars={"rows": timeline["rows"], "human": HUMAN},
     )
-    return _page("openproj — timeline", body, _timeline_css(), links, "timeline", index.unreadable)
+    # `+ _POP_STYLE` and not a sheet of its own: there is no stylesheet all three
+    # of the menu's hosts already load — `.drawmenu` lives in `_DETAIL_STYLE`,
+    # `_SUGGEST_STYLE` is the table's — and the shell's, which they do share,
+    # ships on all twelve pages for a box three of them draw. Concatenated the way
+    # `table.py` already writes `_TABLE_STYLE + _SUGGEST_STYLE`.
+    style = _timeline_css() + _POP_STYLE
+    return _page("openproj — timeline", body, style, links, "timeline", index.unreadable)

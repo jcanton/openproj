@@ -117,11 +117,17 @@ jobs:
   # more. The lists had not gone stale in the sense of being slightly wrong; the
   # scheme they belong to had stopped being able to express the answer.
   #
-  # Percentages and not seconds, deliberately. The table under this
-  # (`.test_durations`) was recorded on a laptop and this runner is a different
-  # machine; what transfers between them is each test's SHARE of the suite, which
-  # is what a split is decided by. Absolute seconds below are that laptop's, and
-  # are marked.
+  # **The table under this (`.test_durations`) is THIS hardware's, since
+  # 2026-09-18.** It was a laptop's until then, and the paragraph below about the
+  # spread says what that cost; the `measure` job at the foot of this file finally
+  # ran end to end and replaced it, which is the thing that paragraph said was
+  # owed. 2265 tests, 844s serial.
+  #
+  # Percentages rather than seconds is still how to read what follows, because the
+  # simulation numbers below were computed against the laptop's table and have not
+  # been re-run. What transfers between the two is each test's SHARE of the suite,
+  # which is what a split is decided by. Absolute seconds below are the laptop's,
+  # and are marked.
   #
   # `pytest-split` takes the recorded durations and cuts the collected list into
   # N chunks of roughly equal time. Simulated over the real numbers, the worst
@@ -149,9 +155,12 @@ jobs:
   # laptop in aggregate but 0.56-0.99x per test. Rescaling the table by that
   # aggregate was tried and simulated WORSE — 67s of spread — because only the 25
   # slowest per leg have real numbers and a flat factor mis-scales the rest. A
-  # coherent table from one machine beats a mixed one, so the laptop's stands
-  # until a full serial run on this hardware replaces it. That is what the
-  # `measure` job below is for.
+  # coherent table from one machine beats a mixed one, so the laptop's stood
+  # until a full serial run on this hardware could replace it. **That has now
+  # happened** — 2026-09-18, run 35337889584 — so the mis-scaling described in
+  # this paragraph is history rather than a live cost, and the next re-cut of the
+  # eight legs has a table taken on the machine the legs run on. The spread it
+  # produces has not been re-simulated; the first push after it is the measurement.
   #
   # **`duration_based_chunks`, which is the default, and not `least_duration`.**
   # The greedy one bin-packs and hits the ideal exactly at every N — it is 2s
@@ -375,7 +384,32 @@ jobs:
       # `--clean-durations` is safe here and nowhere else: this run is the whole
       # suite, so a test missing from it is a test that no longer exists.
       - run: uv run pytest -q --store-durations --clean-durations
+      # `if: always()`, and it is what makes this job able to do its one job.
+      #
+      # `test_the_durations_table_still_knows_what_the_suite_is_made_of` reads
+      # `.test_durations` off the disk DURING the run, while `--store-durations`
+      # writes it at session finish. So a suite that has gained a whole new test
+      # file fails that assertion here exactly as it fails on the eight legs —
+      # and this is the job whose entire purpose is to cure that. Without this
+      # line the step goes red, the upload never runs, and the measurement that
+      # was correctly taken is thrown away: the one situation `measure` exists
+      # for is the one situation it could not answer. Measured 2026-09-18, on
+      # the run that was supposed to admit `tests/test_pop.py`.
+      #
+      # The artifact is trustworthy despite the red: the table is written in
+      # `pytest_sessionfinish`, which runs whatever the outcome, and
+      # `--clean-durations` drops what did not run rather than what did not
+      # pass. A test that fails is still a test that was timed.
       - uses: actions/upload-artifact@v5
+        if: always()
         with:
           name: test-durations
           path: .test_durations
+          # **`.test_durations` is a dotfile, and `upload-artifact` skips those.**
+          # `include-hidden-files` defaults false since v4.4, and the miss is a
+          # warning rather than an error — "No files were found with the provided
+          # path", on a green step, with no artifact at the end of it. So this job
+          # has been running the whole suite for fifteen minutes and uploading
+          # nothing, for however long it has been on a version that defaults this
+          # way, and the only sign was an artifact list nobody looked at.
+          include-hidden-files: true

@@ -176,7 +176,7 @@ cells, and the box is not inside either. The fifth is not: `table.py` is
 `addEventListener('keydown', …)` on the **document**, and it drops a bulk selection. An Escape from
 the menu bubbles to it. So the box's own Escape handler ends in `stopPropagation()`, after an
 `if (event.defaultPrevented) return;` first, and the comment there says which four are structural and
-which one is arbitrated. `test_escape_in_the_menu_does_not_discard_the_draft_row` is the test that
+which one is arbitrated. `test_escape_in_the_menu_does_not_discard_the_bulk_selection` is the test that
 fails if the box is ever mounted inside the tbody.
 
 ### The keyboard's menu key has no pointer
