@@ -184,7 +184,16 @@ def test_the_inbox_routes_render_the_landing_held_to_one_kind(tmp_path: Path):
         assert '<th data-col="kind">' in view and '<th data-col="who">' in view
         assert 'id="q"' in view and 'id="landing"' in view
         assert "state-filter" not in view
-        assert 'class="facet"' not in view and "data-field=" not in view
+        assert 'class="facet"' not in view
+        # **Asked of the cells and not of the bytes.** It was `"data-field=" not
+        # in view`, which is what an editable cell carries — and on 2026-09-18
+        # the shell's hover card started building its own rows with that
+        # attribute, in a script every page ships, so the bare substring began
+        # answering yes about a page whose table is still read-only. The claim
+        # was always about the table.
+        assert not re.search(r"<t[dh][^>]*data-field=", view), (
+            "the landing draws an editable cell, which is the old pages' second vocabulary"
+        )
 
 
 def test_each_view_offers_its_own_create_button(tmp_path: Path):

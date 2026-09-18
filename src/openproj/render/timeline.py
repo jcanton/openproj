@@ -1134,4 +1134,17 @@ def render_timeline(
     # ships on all twelve pages for a box three of them draw. Concatenated the way
     # `table.py` already writes `_TABLE_STYLE + _SUGGEST_STYLE`.
     style = _timeline_css() + _POP_STYLE
-    return _page("openproj — timeline", body, style, links, "timeline", index.unreadable)
+    return _page(
+        "openproj — timeline",
+        body,
+        style,
+        links,
+        "timeline",
+        index.unreadable,
+        # **The one view whose payload is not the plan.** A bar is work that
+        # has dates, so the project a task is filed under is often not drawn
+        # here at all — and the hover card names it. The other two pages
+        # carry every record already and pass nothing.
+        cardtitles={record_id: record.title or record_id
+                    for record_id, record in index.plan.items()},
+    )

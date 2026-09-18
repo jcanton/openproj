@@ -2799,26 +2799,74 @@ const headingIn = () => {
   const said = POP.querySelector('[data-kind="form-heading"]');
   return said ? said.textContent : '';
 };
-const fieldIn = name => POP.querySelector('.popfield[data-field="' + name + '"]');
-// The CONTROL and not the row it sits in. Both carry `data-field`, which is the
-// module's own choice and a sensible one — the row is what a reader of the DOM
-// finds a field by and the control is what carries the value — so a bare
-// `[data-field=…]` answers the wrapper, and every `.value` read off it is
-// `undefined` rather than wrong in a way anything notices.
-const boxIn = name => {
-  const field = fieldIn(name);
-  return field ? field.querySelector('input, select') : null;
+// **The part of the card this field is drawn on**, which is one of three
+// shapes: the title line, a chip on the chip line, or a row of the list. All
+// three carry `data-field`, which is `cardHtml`'s own marker and the only thing
+// this box finds a field by.
+// `:not(input):not(select)`, because an OPEN control carries `data-field` too —
+// it is how `document.activeElement.dataset.field` answers which box the
+// keyboard is in — and a bare attribute selector would find the control inside
+// the part as well as the part.
+const PART = '[data-field="%"]:not(input):not(select)';
+const fieldIn = name => POP.querySelector(PART.replace('%', name));
+// The cell the value lives in: a list row's `<dd>`, and the part itself for the
+// title and the chips, which have no inner box.
+const cellIn = name => {
+  const part = fieldIn(name);
+  if (!part) return null;
+  return part.matches('.card-fact') ? part.querySelector('dd') : part;
 };
-const fieldsInForm = () => [...POP.querySelectorAll('.popfield')].map(one => one.dataset.field);
-// The field's NAME, without the mark the label also carries. A `<label>` holding
-// `Appetite` and an `aria-hidden` ` *` reads `Appetite *` as text, and the two are
-// separate facts with separate readers — `markIn` below is the mark's.
-const nameIn = name => [...fieldIn(name).querySelector('.popname').childNodes]
-  .filter(one => one.nodeType === 3).map(one => one.textContent).join('');
-const markIn = name => fieldIn(name).querySelector('.popreq').textContent;
+// The CONTROL, which exists only while this field is open. A card shows words;
+// clicking one puts a box where the word was, and closing it takes the box away
+// again — so `boxIn` answering `null` is the normal state and not a failure.
+const boxIn = name => {
+  const cell = cellIn(name);
+  return cell ? cell.querySelector('input, select') : null;
+};
+// What the card SAYS this field is, as text. The value when nothing is open,
+// and the control's own value when something is.
+const valueIn = name => {
+  const box = boxIn(name);
+  if (box) return box.type === 'checkbox' ? String(box.checked) : box.value;
+  const cell = cellIn(name);
+  if (!cell) return '';
+  // A chip's WORD, without the mark beside it. `↘In progress` is the glyph and
+  // the word run together as text, and they are two facts with two readers —
+  // the mark finds the rung and the word says which it is.
+  const word = cell.querySelector('.chipword');
+  return word ? word.textContent : cell.textContent;
+};
+// Click it, the way somebody does. Not `popOpenField(name)`: what is being
+// asked is that the thing on screen is a thing you can press.
+const openField = name => { fieldIn(name).click(); return boxIn(name); };
+const fieldsInForm = () =>
+  [...POP.querySelectorAll('[data-field]:not(input):not(select)')].map(one => one.dataset.field);
+// Which of them can be opened at all, and which say why not.
+const opensInForm = () =>
+  [...POP.querySelectorAll('.popopens')].map(one => one.dataset.field);
+const lockedInForm = () =>
+  [...POP.querySelectorAll('.poplocked')].map(one => one.dataset.field);
+// The field's NAME, without the mark the `<dt>` also carries when the status
+// demands it. `''` when there is no name at all, which is a real answer and not
+// a missing one: the title and the two chips are drawn the way the card draws
+// them, with nothing over them, and a helper that threw there would make "this
+// field carries no visible name" the one claim these tests could not state.
+const nameIn = name => {
+  const part = fieldIn(name);
+  const term = part && part.matches('.card-fact') ? part.querySelector('dt') : null;
+  return term ? [...term.childNodes]
+    .filter(one => one.nodeType === 3).map(one => one.textContent).join('') : '';
+};
+const markIn = name => {
+  const part = fieldIn(name);
+  const star = part ? part.querySelector('.popreq') : null;
+  return star ? star.textContent : '';
+};
+// Why a field will not open. On the element rather than under it: a card has no
+// room for a paragraph per row.
 const noteIn = name => {
-  const said = fieldIn(name).querySelector('[data-kind="form-note"]');
-  return said ? said.textContent : '';
+  const part = fieldIn(name);
+  return part ? (part.title || '') : '';
 };
 const optionsIn = name =>
   [...boxIn(name).options].map(one => ({value: one.value, text: one.textContent}));
@@ -2826,6 +2874,12 @@ const whyLines = () =>
   [...POP.querySelectorAll('[data-kind="form-why-line"]')].map(one => one.textContent);
 const saveIn = () => POP.querySelector('[data-kind="form-save"]');
 const cancelIn = () => POP.querySelector('[data-kind="form-cancel"]');
+// Which fields have a control on them right now. A card's values are words until
+// they are pressed, so this is normally empty — what is in it is what the box
+// opened on, or what somebody has clicked.
+const opensNow = () =>
+  [...POP.querySelectorAll('[data-field] input, [data-field] select')]
+    .map(one => one.dataset.field);
 // **Whether a form is on screen, which is not the same question as whether one
 // is in the box.** `popClose` deliberately leaves the children where they are —
 // `.drawmenu` cleared its own on close because it had no `[hidden]` rule, and
@@ -2843,13 +2897,23 @@ const formIsUp = () => ({up: formUp(), role: POP.getAttribute('role'),
 // fields and re-places the box — so a test that assigned `.value` alone would be
 // asking about a form nobody had touched.
 const typeInto = (name, value) => {
-  const box = boxIn(name);
+  const box = boxIn(name) || openField(name);
   if (box.type === 'checkbox') box.checked = !!value;
   else box.value = value;
   box.dispatchEvent(new Event('input', {bubbles: true}));
   box.dispatchEvent(new Event('change', {bubbles: true}));
   return box;
 };
+// Typed, and then finished with. **Blur is what commits**, on a live box as one
+// PATCH and on a staged one into what the button will send — the table's own
+// bargain, and `Enter` reaches it by blurring. Written as a helper because
+// every test that changes a value has to say where the value went.
+const answer = (name, value) => { typeInto(name, value); boxIn(name).blur(); };
+// And typed, then given up on. Escape must not bubble: `popClose` is listening
+// for it on the way up, and a test that dispatched a bubbling one would be
+// asking about the box closing rather than about the field reverting.
+const giveUp = name => boxIn(name).dispatchEvent(
+  new KeyboardEvent('keydown', {key: 'Escape', bubbles: true, cancelable: true}));
 // The press, and not a call to `popSave()`. The button is `type="submit"` inside
 // a real `<form>`, so what is being asked is that the browser's own submit
 // reaches the handler — which is also the whole of the keyboard's path through
@@ -2869,6 +2933,17 @@ const shortOf = least => {
   return null;
 };
 """
+
+
+# What `fieldsInForm()` reads in, given a kind's editable fields.
+#
+# The form is the hover card, so it draws what the card draws: the title line,
+# then the chip line, then the `<dl>`. Three fields therefore come out of the
+# schema's order and go to the front in the card's own — kind, priority, status
+# is `cardHtml`'s chip order and jcanton's, from 2026-08-21.
+def _the_cards_order(schema: list[str]) -> list[str]:
+    face = [name for name in ("title", "priority", "status") if name in schema]
+    return face + [name for name in schema if name not in face]
 
 
 def _at_a_form(
@@ -3013,26 +3088,19 @@ const kind = POP_SCHEMA.child_kinds[parent.kind][0];
 openOn(parent.id);
 itemIn('new-child').click();
 itemIn('new-child-' + kind).click();
-const box = boxIn('parent');
-const filled = box.value;
-// Pushed at, with the id of a record that really could hold this kind. The
-// option is not in the list, so the box cannot be told to hold it — which is a
-// stronger reading of "locked" than `disabled` on its own, and the strongest one
-// is in the test below, where the POST is read after the control has been forced.
-const other = Object.values(DATA.rows).find(one => one.id !== parent.id
-  && (POP_SCHEMA.parent_kinds[kind] || []).includes(one.kind));
-box.value = other ? other.id : 'nothing-000000';
-const tampered = box.value;
-box.dispatchEvent(new Event('change', {bubbles: true}));
+// Clicked, the way somebody does. A locked field must answer the press by not
+// opening — that is the whole of what "locked" means on a card whose values are
+// words until you press one.
+fieldIn('parent').click();
 const first = document.activeElement;
 return {parent: {id: parent.id, title: parent.title, kind: parent.kind}, kind,
-        other: other ? other.id : null, filled, tampered,
         up: formIsUp(), heading: headingIn(), label: POP.getAttribute('aria-label'),
         fields: fieldsInForm(), schema: POP_SCHEMA.fields[kind],
-        parentBox: {tag: box.tagName, value: box.value, disabled: box.disabled,
-                    options: optionsIn('parent')},
+        opens: opensInForm(), locked: lockedInForm(),
+        parentSays: valueIn('parent'), parentBox: !!boxIn('parent'),
         note: noteIn('parent'),
-        status: boxIn('status').value, opens: POP_SCHEMA.opens[kind],
+        status: valueIn('status'), at: POP_SCHEMA.opens[kind],
+        title: valueIn('title'),
         verb: saveIn().textContent, cancel: cancelIn().textContent,
         focused: {field: first.dataset.field, tag: first.tagName},
         why: whyLines(), hidden: POP.querySelector('[data-kind="form-why"]').hidden,
@@ -3041,24 +3109,30 @@ return {parent: {id: parent.id, title: parent.title, kind: parent.kind}, kind,
 
 
 def test_new_child_opens_the_form_with_the_parent_filled_and_locked(index: Index, tmp_path: Path):
-    """The box's third face: `role="dialog"`, a form of this kind's fields, and
-    not one `.popitem` left underneath it.
+    """The box's third face: `role="dialog"`, a blank card of this kind, and not
+    one `.popitem` left underneath it.
+
+    **A record that does not exist cannot be written one field at a time**, so
+    this is the box's staged half: what you answer is held in it and one button
+    sends the lot. `POST /api/record` takes the whole record, which is the whole
+    of the reason — and the box looks exactly like the live one, because it is
+    the same card.
 
     **The parent is filled and locked, and the lock is drawn rather than
     hidden.** It is not a choice — it is the record the menu was opened on, and
-    offering it again is the gesture said twice — so the control is there,
-    disabled, holding one option, with the sentence under it saying why. A
-    control that disappears teaches nothing about why, which is the same rule
-    that draws a refused item instead of leaving it out.
+    offering it again is the gesture said twice — so the row is there, saying
+    which record, refusing to open, with the sentence on it saying why. A row
+    that disappears teaches nothing about why, which is the same rule that draws
+    a refused item instead of leaving it out.
 
-    Three things beside it are asserted because each is a lie the form could tell
+    Three things beside it are asserted because each is a lie the box could tell
     instead. The fields are `POP_SCHEMA.fields[kind]` — per kind, off
-    `_editable_for`, so the form cannot offer a box the validator then complains
-    about. The status box opens holding `opens_at(kind)` rather than empty, which
-    is both a required field answered and the form not lying about what Create
-    will write. And the keyboard lands in Title — never the locked picker and
-    never `<body>` — because a title is the one thing the record cannot be
-    created without.
+    `_editable_for`, so it cannot offer a field the validator then complains
+    about. The status chip says `opens_at(kind)` rather than nothing, which is
+    both a required field answered and the box not lying about what Create will
+    write. And the keyboard lands in Title, open and waiting — never the locked
+    parent and never `<body>` — because a title is the one thing the record
+    cannot be created without.
     """
     got = _at_a_form(index, tmp_path / "newchild.html", _NEW_CHILD_FORM)
 
@@ -3070,43 +3144,37 @@ def test_new_child_opens_the_form_with_the_parent_filled_and_locked(index: Index
         f"the box announces itself as {got['label']!r} while it is a form — a reader "
         "arriving inside it is told which menu they are in"
     )
-    assert got["fields"] == got["schema"], (
-        f"the form drew {got['fields']} and this kind's editable fields are {got['schema']}"
+    assert got["fields"] == _the_cards_order(got["schema"]), (
+        f"the form drew {got['fields']} and this kind's editable fields, in the order the "
+        f"card draws them, are {_the_cards_order(got['schema'])}"
     )
-    assert got["parentBox"]["tag"] == "SELECT", (
-        f"the parent is a {got['parentBox']['tag']}, and a box you can type an id into is "
-        "the one control that can express a record that does not exist"
+    assert got["parentSays"] == got["parent"]["title"], (
+        f"the parent row says {got['parentSays']!r} and the menu was opened on "
+        f"{got['parent']['title']!r} — `New child` means this record and no other"
     )
-    assert got["filled"] == got["parent"]["id"], (
-        f"the picker opened holding {got['filled']!r} and the menu was opened on "
-        f"{got['parent']['id']!r} — `New child` means this record and no other"
+    assert "parent" in got["locked"] and "parent" not in got["opens"], (
+        f"the parent of a new child can be changed: opens {got['opens']}, locked {got['locked']}"
     )
-    assert got["parentBox"]["disabled"] is True, "the parent of a new child can be changed"
-    assert got["parentBox"]["options"] == [
-        {"value": got["parent"]["id"], "text": got["parent"]["title"]}
-    ], (
-        f"the locked picker offers {got['parentBox']['options']} — one option and no "
-        "`— nothing —`, because an unfiled new child is not what New child means"
-    )
-    assert got["other"], "the corpus holds no second record of a kind that could hold this one"
-    assert got["tampered"] != got["other"], (
-        "the locked picker took the id of a record it does not offer: a `<select>` told to "
-        "hold a value with no option for it is the one state this control must not reach"
+    assert got["parentBox"] is False, (
+        "pressing the locked parent opened a control in it, so the lock is a class and "
+        "not a rule"
     )
     assert got["note"] == (
         f'Filed under "{got["parent"]["title"]}", which is what New child means.'
     ), got["note"]
-    assert got["status"] == got["opens"], (
-        f"the status box opens holding {got['status']!r} and this kind opens at "
-        f"{got['opens']!r} — an empty one is a required field the reader has to fill "
-        "before they have said anything, and a form lying about what Create writes"
+    assert got["status"] == HUMAN[got["at"]], (
+        f"the status chip says {got['status']!r} and this kind opens at {got['at']!r} — "
+        "nothing there is a required field the reader has to fill before they have said "
+        "anything, and a box lying about what Create writes"
     )
     assert got["verb"] == f"Create {HUMAN[got['kind']].lower()}", got["verb"]
     assert got["cancel"] == "Cancel"
     assert got["focused"] == {"field": "title", "tag": "INPUT"}, (
         f"the keyboard landed on {got['focused']}, and the one field a record cannot be "
-        "created without is Title"
+        "created without is Title — open, because a blank card with nothing to type in is "
+        "a card"
     )
+    assert got["title"] == "", f"the title of a record nobody has named reads {got['title']!r}"
     assert got["why"] == [] and got["hidden"] is True, (
         "the refusal list is drawn over a form nobody has pressed Save on yet"
     )
@@ -3121,18 +3189,17 @@ const title = 'A child made from the menu';
 openOn(parent.id);
 itemIn('new-child').click();
 itemIn('new-child-' + kind).click();
-typeInto('title', title);
-// **The locked picker forced open and pointed somewhere else**, which is what
-// makes the assertion on the POST below a claim about the lock rather than about
-// a box nobody touched. `popCreated` reads the ROW the menu was opened on and
-// never this control, and that is the whole of what `New child` means.
+answer('title', title);
+// **A parent staged behind the lock's back**, which is what makes the assertion
+// on the POST below a claim about the rule rather than about a row nobody
+// touched. The locked row will not open, so this reaches past it and writes the
+// answer straight into what the button sends: `popCreated` takes the parent from
+// the ROW the menu was opened on and never from there, and that is the whole of
+// what `New child` means.
 const stray = Object.values(DATA.rows).find(one => one.id !== parent.id
   && (POP_SCHEMA.parent_kinds[kind] || []).includes(one.kind));
 if (!stray) return {error: 'the corpus holds no second record that could hold this kind'};
-const picker = boxIn('parent');
-picker.disabled = false;
-picker.append(new Option(stray.title, stray.id));
-picker.value = stray.id;
+POP_FORM.values.parent = stray.id;
 pressSave();
 const during = {disabled: saveIn().disabled, said: said(), posts: posts().length};
 await rest(1000);
@@ -3161,10 +3228,11 @@ def test_saving_the_form_creates_the_record_under_the_record_it_was_opened_on(
     and the parent — and nothing else, out of fifteen controls.
 
     **The parent is the row the menu was opened on**, and this test forces the
-    control to say otherwise before pressing Save: the picker is re-enabled, given
-    an option for a different record and set to it. A form that read its own
-    control would file the record under the stray, and it is the one defect here
-    that no reading of the DOM can see afterwards.
+    box to say otherwise before pressing Save: a different record's id is staged
+    behind the lock's back, which is the nearest a card whose locked row will not
+    open can be got to tampering. A box that read what it was holding would file
+    the record under the stray, and it is the one defect here that no reading of
+    the DOM can see afterwards.
 
     The rest is the receipt. `popLanded` names the title AND the id — the id was
     minted a moment ago and nobody has seen it, the title is the half the person
@@ -3189,8 +3257,8 @@ def test_saving_the_form_creates_the_record_under_the_record_it_was_opened_on(
         "body": None,
     }, got["sent"][0]["body"]
     assert got["sent"][0]["body"]["fields"]["parent"] != got["stray"], (
-        "the record was filed under the record the forced control named rather than "
-        "under the one the menu was opened on"
+        "the record was filed under the staged id rather than under the record the menu "
+        "was opened on"
     )
     assert got["during"]["posts"] == 1, "the press sent no create at all"
     assert got["during"]["disabled"] is True, (
@@ -3236,7 +3304,7 @@ ANSWER = seen => new Promise(done => {
 openOn(parent.id);
 itemIn('new-child').click();
 itemIn('new-child-' + kind).click();
-typeInto('title', 'Pressed twice');
+answer('title', 'Pressed twice');
 pressSave();
 const held = {disabled: saveIn().disabled, posts: posts().length};
 // Twice more, by both routes. The button is how a pointer repeats it; the submit
@@ -3246,7 +3314,7 @@ pressSave();
 formIn().dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
 await rest(250);
 const during = {posts: posts().length, why: whyLines(), form: formUp(),
-                open: popIsOpen(), title: boxIn('title').value, writing: beats.writing};
+                open: popIsOpen(), title: valueIn('title'), writing: beats.writing};
 if (!release) return {error: 'the first press sent no create, so nothing is in the air'};
 release();
 await rest(1000);
@@ -3322,58 +3390,81 @@ const item = itemIn('edit');
 const word = wordIn(item);
 item.click();
 const opened = {up: formIsUp(), heading: headingIn(), fields: fieldsInForm(),
-                schema: POP_SCHEMA.fields[row.kind], held: {}, locked: {}, names: {}};
+                schema: POP_SCHEMA.fields[row.kind],
+                opens: opensInForm(), locked: lockedInForm(),
+                save: !!saveIn(), boxes: POP.querySelectorAll('input, select').length,
+                says: {}, held: {}, names: {}};
 for (const name of fieldsInForm()) {
-  const box = boxIn(name);
-  opened.held[name] = box.type === 'checkbox' ? box.checked : box.value;
-  opened.locked[name] = box.disabled;
+  opened.says[name] = valueIn(name);
   opened.names[name] = nameIn(name);
 }
 opened.note = noteIn('depends_on');
-// Nothing touched. A Save here has nothing to send, and it has to say so in the
-// box rather than by closing it: a form that quietly dismissed itself is
-// indistinguishable from one that wrote something.
-pressSave();
-await rest(400);
-const quiet = {why: whyLines(), sent: patches().length, form: formUp(),
-               focused: document.activeElement.dataset.kind};
+// Every field opened and read back, one at a time, then given up on. The round
+// trip is the claim: a value this card renders one way and reads another shows
+// up here as a control holding something the record does not.
+for (const name of opensInForm()) {
+  const box = openField(name);
+  opened.held[name] = box.type === 'checkbox' ? box.checked : box.value;
+  giveUp(name);
+}
+const quiet = {sent: patches().length, form: formUp(), boxes: POP.querySelectorAll('input').length};
+// Opened, closed with nothing typed. Not a write: a cell somebody looked at is
+// not news, and a PATCH naming a field that did not move is a line in this
+// record's history that is not true.
+openField('title');
+boxIn('title').blur();
+await rest(300);
+const untouched = {sent: patches().length, form: formUp(), title: valueIn('title')};
 const title = row.title + ' (edited from the menu)';
-typeInto('title', title);
-pressSave();
+answer('title', title);
 await rest(1000);
-return {id: row.id, was: row, title, word, opened, quiet,
-        sent: patches(), posted: posts().length, said: said(), closed: !popIsOpen(),
-        base: baseNow(), now: DATA.rows[row.id].title, beats: beatsNow()};
+return {id: row.id, was: row, title, word, opened, quiet, untouched,
+        sent: patches(), posted: posts().length, said: said(), open: popIsOpen(),
+        form: formUp(), base: baseNow(), now: DATA.rows[row.id].title, beats: beatsNow()};
 """
 
 
-def test_edit_opens_on_the_record_and_saves_only_what_changed(index: Index, tmp_path: Path):
-    """Every field `_editable_for` offers this kind, holding what the record
-    holds — and a Save that sends the difference and nothing else.
+def test_edit_opens_on_the_record_and_writes_one_field_as_it_is_answered(
+    index: Index, tmp_path: Path
+):
+    """**`Edit…` opens the hover card, and every value on it is a word until you
+    press it.** Then that one word is a box, blur saves it as its own PATCH, and
+    Escape puts the word back — which is `openEditor`'s bargain in the table to
+    the letter, chosen by jcanton on 2026-09-18 for exactly that reason: "it
+    could be like the table where you have to click one field to enter edit mode
+    for that field?".
 
-    **Diff-only, and the reason is the commit message rather than the commit.**
-    `_merge_frontmatter` would skip a key whose stored value already equals the
-    one being sent, so a whole-form PATCH would commit exactly the same thing —
-    but the message NAMES the fields, and a line saying fifteen fields were
-    written when one was is a line in somebody's history that is not true.
-    `git log --follow` on a record is one of the two ways this plan is read.
+    So there is **no Save button and no box** on a card nobody has clicked. That
+    is the assertion this whole test turns on: a box with fifteen controls in it
+    is the form this replaced, and the way to tell the two apart from the DOM is
+    to count the controls before anything is pressed.
 
-    That also makes the round trip a claim rather than an accident: every control
-    here is drawn from the row, read back, and compared, so a value this form
-    renders one way and reads another shows up as a field in the payload that
-    nobody touched. A list joined with the wrong separator, a number that came
-    back a string, a date box that reports something other than what it was
-    given — each of them is a silent rewrite of a field the reader never looked
-    at, and each fails on the length of `fields` below.
+    **One PATCH per field, and it names that field only.** The reason is the
+    commit message rather than the commit: `_merge_frontmatter` would skip a key
+    whose stored value already equals the one being sent, so a whole-card PATCH
+    would commit exactly the same thing — but the message NAMES the fields, and a
+    line saying fifteen fields were written when one was is a line in somebody's
+    history that is not true. `git log --follow` on a record is one of the two
+    ways this plan is read.
 
-    **`depends_on` is drawn disabled with a sentence, and that is the single most
-    useful thing the per-kind schema produced.** `_row` (`rows.py`) ships
-    `blocked_by` — a COUNT — and no `depends_on` at all, while the graph's node
-    data carries the list, because `_elements` adds it. A form that drew the box
-    unconditionally would show an empty list over a record with three
-    dependencies on this view, and anything typed there REPLACES them. The form
-    asks `name in row` rather than carrying a list of field names, so the same
-    code writes a box on one host and a sentence on the other.
+    Every field is opened and read back here, which makes the round trip a claim
+    rather than an accident: a list joined with the wrong separator, a number that
+    came back a string, a date box reporting something other than what it was
+    given — each is a silent rewrite of a field the reader never looked at, and
+    each fails on `held` below.
+
+    **`depends_on` will not open, and that is the single most useful thing the
+    per-kind schema produced.** `_row` (`rows.py`) ships `blocked_by` — a COUNT —
+    and no `depends_on` at all, while the graph's node data carries the list,
+    because `_elements` adds it. A card that opened a box there would show an
+    empty list over a record with three dependencies on this view, and anything
+    typed REPLACES them. The rule asks `name in row` rather than carrying a list
+    of field names, so the same code locks a row on one host and opens it on the
+    other.
+
+    **The box does not close on its own write.** Every other write in this module
+    dismisses the menu, and the reason it dismisses is that a menu is a list of
+    things to do next; a card you are editing in is the thing you are doing.
     """
     got = _at_a_form(index, tmp_path / "editing.html", _EDITING, patience=4500)
 
@@ -3387,9 +3478,22 @@ def test_edit_opens_on_the_record_and_saves_only_what_changed(index: Index, tmp_
         "form": True,
     }, got["opened"]["up"]
     assert got["opened"]["heading"] == f'Edit "{was["title"]}"', got["opened"]["heading"]
-    assert got["opened"]["fields"] == got["opened"]["schema"], (
-        f"the form drew {got['opened']['fields']} and this kind's editable fields are "
-        f"{got['opened']['schema']}"
+    assert got["opened"]["boxes"] == 0, (
+        f"the card opened with {got['opened']['boxes']} controls already on it — a card is "
+        "words, and a box of controls is the form this replaced"
+    )
+    assert got["opened"]["save"] is False, (
+        "a live card has a Save button, so it is not writing each field as it is answered"
+    )
+    assert got["opened"]["fields"] == _the_cards_order(got["opened"]["schema"]), (
+        f"the card drew {got['opened']['fields']} and this kind's editable fields, in the "
+        f"order the card draws them, are {_the_cards_order(got['opened']['schema'])}"
+    )
+    says = got["opened"]["says"]
+    assert says["title"] == was["title"], says["title"]
+    assert says["status"] == HUMAN[was["status"]], (
+        f"the status chip says {says['status']!r} and the record is {was['status']!r} — the "
+        "card spells a rung the way every other page does"
     )
     held = got["opened"]["held"]
     # Spelled out per type rather than run through the module's own `popRawOf`,
@@ -3402,24 +3506,30 @@ def test_edit_opens_on_the_record_and_saves_only_what_changed(index: Index, tmp_
     assert held["review_waived"] is bool(was["review_waived"]), held
     assert held["start_date"] == (was["start_date"] or ""), held
     assert got["opened"]["names"]["person_weeks"] == LABELS["person_weeks"], (
-        "the form names a field by its own key rather than by the one word the whole "
+        "the card names a field by its own key rather than by the one word the whole "
         f"app calls it: {got['opened']['names']['person_weeks']!r}"
     )
-    assert got["opened"]["locked"]["title"] is False, "the title of a record cannot be edited"
-    assert got["opened"]["locked"]["depends_on"] is True, (
-        "the table carries `blocked_by`, a count, and no `depends_on` — so this box is "
-        "drawn empty over a record that has dependencies, and a Save deletes them"
+    assert got["opened"]["names"]["title"] == "", (
+        "the title line carries a name, and on a card it carries none"
     )
+    assert "depends_on" in got["opened"]["locked"], (
+        "the table carries `blocked_by`, a count, and no `depends_on` — so a box opened "
+        "there is drawn empty over a record that has dependencies, and blur deletes them"
+    )
+    assert "depends_on" not in got["opened"]["opens"], got["opened"]["opens"]
     assert got["opened"]["note"] == (
         "This view does not carry it — edit it on the record's own page."
     ), got["opened"]["note"]
-    assert got["quiet"]["why"] == ["Nothing has changed."], got["quiet"]["why"]
-    assert got["quiet"]["sent"] == 0, "a Save with nothing changed went out as a PATCH"
-    assert got["quiet"]["form"] is True, (
-        "a Save with nothing to send closed the form, which is what a Save that wrote "
-        "something looks like"
+    assert got["quiet"]["sent"] == 0, (
+        "opening every field and giving each one up wrote to the plan"
     )
-    assert got["quiet"]["focused"] == "form-why", got["quiet"]
+    assert got["quiet"]["boxes"] == 0, "Escape left the control where the value should be"
+    assert got["quiet"]["form"] is True, "Escape on a field took the whole box down"
+    assert got["untouched"]["sent"] == 0, (
+        "a field opened and closed with nothing typed went out as a PATCH, which commits a "
+        "message naming a field that did not move"
+    )
+    assert got["untouched"]["title"] == was["title"], got["untouched"]
     assert len(got["sent"]) == 1, got["sent"]
     assert got["posted"] == 0, "editing a record that exists went out as a create"
     assert got["sent"][0]["url"] == f"/api/record/{got['id']}", got["sent"][0]
@@ -3428,13 +3538,189 @@ def test_edit_opens_on_the_record_and_saves_only_what_changed(index: Index, tmp_
         "fields": {"title": got["title"]},
         "body": None,
     }, (
-        "the Save sent more than the one field that changed — which commits a message "
-        f"naming every one of them: {got['sent'][0]['body']}"
+        "the write sent more than the one field that was answered — which commits a "
+        f"message naming every one of them: {got['sent'][0]['body']}"
     )
     assert got["said"] == f"{was['title']}: {LABELS['title']} saved", got["said"]
-    assert got["closed"] is True and got["base"] == "c0ffee1"
+    assert got["form"] is True and got["open"] is True, (
+        "the card closed on its own write, and a card you are editing in is the thing you "
+        "are doing rather than a list of things to do next"
+    )
+    assert got["base"] == "c0ffee1"
     assert got["now"] == got["title"], "the row still reads the old title after its own write"
     assert got["beats"] == {"writing": 1, "wrote": ["c0ffee1"]}, got["beats"]
+
+
+# --------------------------------------------------------------------------- #
+# The shape of it, which is the card's
+# --------------------------------------------------------------------------- #
+
+
+# What the box adds to the card and the card has no reason to carry: the classes
+# that say a value can be pressed, and the two children that are the box's own.
+# Everything else must be the same, node for node.
+_THE_BOXES_OWN = ['popopens', 'poplocked', 'popediting', 'popcard']
+_THE_BOXES_PARTS = ['popheading', 'popwhy', 'popacts']
+# And the one element the box adds inside the card's own: the mark on a field the
+# status now in the box will make the server refuse the record without. A card is
+# read and asks for nothing, so it has none.
+_THE_BOXES_MARKS = ['popreq']
+
+
+_THE_CARDS_SHAPE = """
+const row = rowWhere(one => one.kind === 'task' && one.title && one.status && one.priority);
+if (!row) return {error: 'the corpus draws no task carrying both ladders'};
+const MINE = """ + repr(_THE_BOXES_OWN).replace("'", '"') + """;
+const MARKS = ["popreq"];
+const PARTS = """ + repr(_THE_BOXES_PARTS).replace("'", '"') + """;
+// Every element under this one, as tag plus the classes that are not the box's
+// own. Two boxes drawn by one function have the same list; two boxes drawn by
+// two functions agree until somebody edits one of them.
+const classOf = one => (one.getAttribute('class') || '').trim().split(' ').filter(Boolean);
+const boneOf = one => one.tagName
+  + classOf(one).filter(c => !MINE.includes(c)).map(c => '.' + c).join('');
+const bonesOf = root => [...root.children]
+  // The document is fetched and appended to the card and is not in the box, by
+  // design — jcanton, 2026-09-18: "as by design, not making the body editable".
+  .filter(one => !classOf(one).includes('card-body'))
+  .flatMap(one => [one, ...one.querySelectorAll('*')])
+  .filter(one => !classOf(one).some(c => MARKS.includes(c)))
+  .map(boneOf);
+// The words, which is the other half of "the same box": a structure that matches
+// while the text does not is two boxes that merely look alike.
+const wordsOf = root => [...root.querySelectorAll('dt, dd, .chipword, .card-title')]
+  // Without the mark, for the reason the mark is left out of the bones: a card
+  // asks for nothing, so `Appetite *` against `Appetite` is the box adding the
+  // one thing it is supposed to add.
+  .map(one => [...one.childNodes]
+    .filter(node => !(node.nodeType === 1 && MARKS.includes(node.className)))
+    .map(node => node.textContent).join('').trim());
+// The card first, on the same row, so that what the box is compared against is
+// the thing itself rather than a description of one. Caught, because the
+// document behind a card is fetched and this page is served over `file://` —
+// the fields are drawn in the first pass either way.
+await showCard(row, 300, 300, []).catch(() => {});
+const card = {width: getComputedStyle(CARD).maxWidth, bones: bonesOf(CARD),
+              words: wordsOf(CARD), hill: !!CARD.querySelector('.card-hill')};
+popClose();
+openOn(row.id);
+itemIn('edit').click();
+const form = formIn();
+// The box's own children set aside, and what is left compared with the card.
+const mine = [...form.children].filter(one => PARTS.includes(String(one.className).split(' ')[0]));
+// `kept` and not `rest`: `_READERS` already declares a `rest`, and a duplicate
+// top-level `const` is a SyntaxError for the whole block — which reports as a
+// page that said nothing at all rather than as a test that failed.
+const kept = document.createElement('div');
+for (const one of [...form.children]) if (!mine.includes(one)) kept.append(one.cloneNode(true));
+const seen = {
+  card: card,
+  width: getComputedStyle(POP).maxWidth,
+  bones: bonesOf(kept),
+  words: wordsOf(kept),
+  hill: !!form.querySelector('.card-hill'),
+  extra: mine.map(one => String(one.className).split(' ')[0]),
+  // No document in the box, and no control on a card nobody has pressed.
+  body: !!form.querySelector('.card-body'),
+  boxes: form.querySelectorAll('input, select').length,
+  named: {title: nameIn('title'), priority: nameIn('priority'), status: nameIn('status')},
+};
+// The status chip is the status control, so the picture beside it has to be the
+// status too — the card draws the same fact twice and so does this.
+const before = form.querySelector('.card-chips .hill-ball').dataset.word;
+const pick = openField('status');
+const other = [...pick.options].map(one => one.value).find(one => one && one !== row.status);
+if (other) {
+  typeInto('status', other);
+  seen.moved = {
+    to: other, was: before,
+    chip: form.querySelector('.card-chips [data-field="status"]').className,
+    ball: form.querySelector('.card-chips .hill-ball')
+      ? form.querySelector('.card-chips .hill-ball').dataset.word : '',
+  };
+}
+return {id: row.id, kind: row.kind, was: row.status, seen: seen};
+"""
+
+
+def test_the_box_a_right_click_opens_is_the_hover_card_itself(index: Index, tmp_path: Path):
+    """**The box a right-click opens to edit a record is the box a hover opens to
+    read one — the same markup, from the same function, under the same
+    stylesheet.**
+
+    jcanton, 2026-09-18, after two passes that merely resembled it: *"I meant
+    this card"*, *"it should display the editable fields as the edit view, so
+    owner, assignees, reviewer, etc etc"*, and — for how a value becomes a
+    control without the box turning back into a form — *"it could be like the
+    table where you have to click one field to enter edit mode for that field?"*.
+
+    So the claim is asserted structurally, against the live card rather than
+    against a description of one: the card is opened on the row, read, dismissed,
+    and the box opened in its place. Every element under both is listed as tag
+    plus classes, and the two lists must be equal — the only classes allowed to
+    differ are the box's own, the ones that say a value can be pressed. The
+    visible words are compared beside them, because a structure that matches
+    while the text does not is two boxes that merely look alike.
+
+    `cardHtml` (`shell.py`) is what makes that possible and is the whole design:
+    one builder, called by the hover and by the box, and `:is(#card, .popcard)`
+    in the stylesheet so there is no second copy of the rules either.
+
+    **Nothing on the box is a control until it is pressed.** That is the
+    assertion that tells this apart from every earlier cut: a box with fifteen
+    outlined controls in it is the form this replaced, and counting them before
+    anything is clicked is how the DOM can say which one it is.
+
+    The hill is the last of it. The card draws the status twice — the word in the
+    chip and the shape under it — so the picture has to follow the `<select>`,
+    and a chip reading `Done` over a ball still on the near slope would be the
+    card confidently wrong about the one record it is showing.
+    """
+    got = _at_a_form(index, tmp_path / "shape.html", _THE_CARDS_SHAPE, patience=4500)
+
+    assert not got.get("error"), got
+    seen = got["seen"]
+    card = seen["card"]
+    # The card itself came up, which everything below is measured against.
+    assert len(card["bones"]) > 10 and card["words"], (
+        f"the hover card drew almost nothing to compare the box with: {card}"
+    )
+
+    assert seen["width"] == card["width"], (
+        f"the box is capped at {seen['width']} and the card it stands in for at {card['width']}"
+    )
+    assert seen["bones"] == card["bones"], (
+        "the box and the card are not the same markup. The box drew\n"
+        f"  {seen['bones']}\nand the card drew\n  {card['bones']}"
+    )
+    assert seen["words"] == card["words"], (
+        f"the box says {seen['words']} and the card says {card['words']}"
+    )
+    assert seen["extra"] == ["popheading", "popwhy"], (
+        f"the box's own children are {seen['extra']} — a live card has no Save button, "
+        "because each field is written as it is answered"
+    )
+    assert seen["boxes"] == 0, (
+        f"the box opened with {seen['boxes']} controls already on it — a card is words, "
+        "and a box of controls is the form this replaced"
+    )
+    assert seen["body"] is False, "a document reached the box, which is the detail page's"
+    assert seen["hill"] is True and card["hill"] is True, (
+        "the card draws a hill beside its status chip and the box does not"
+    )
+    # The three on the card's face carry no visible name, which is the part that
+    # was asked for by name. `aria-label` carries the fact instead.
+    assert seen["named"] == {"title": "", "priority": "", "status": ""}, seen["named"]
+
+    moved = seen.get("moved")
+    assert moved, "the corpus offers this kind only one status, so the chip cannot be moved"
+    assert f"st-{moved['to']}" in moved["chip"], (
+        f"the status chip still reads {moved['chip']} after the picker was moved to "
+        f"{moved['to']} — a chip in the old rung's tint is confidently wrong"
+    )
+    assert moved["ball"] and moved["ball"] != moved["was"], (
+        f"the hill still says {moved['was']!r} after the status moved to {moved['to']!r}"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -3455,14 +3741,12 @@ ANSWER = () => ({status: 409, body: {detail: RULE}});
 openOn(row.id);
 itemIn('edit').click();
 const typed = row.title + ' — typed and not yet saved';
-typeInto('title', typed);
-typeInto('owner', somebody);
-pressSave();
+answer('title', typed);
 await rest(900);
 const refused = {form: formUp(), up: formIsUp(), why: whyLines(),
-                 title: boxIn('title').value, owner: boxIn('owner').value,
-                 focused: document.activeElement.dataset.kind,
-                 disabled: saveIn().disabled, sent: patches().length,
+                 title: valueIn('title'), open: !!boxIn('title'),
+                 focused: document.activeElement.dataset.field,
+                 sent: patches().length,
                  base: baseNow(), beats: beatsNow(), now: DATA.rows[row.id].title};
 // **The five signals that take a MENU away, every one of which would be a silent
 // deletion of what somebody has typed.** Each is sent the way the page produces
@@ -3474,23 +3758,24 @@ document.querySelector('.table-scroll').dispatchEvent(new Event('scroll'));
 dispatchEvent(new CustomEvent('openproj:filter'));
 dispatchEvent(new CustomEvent('openproj:wrote', {detail: 'c0ffeeff'}));
 // And a right press on a DIFFERENT row, which is the one signal that would not
-// merely hide the box: it is a `replaceChildren` over every control in it.
+// merely hide the box: it is a `replaceChildren` over everything in it.
 const elsewhere = menuRows().find(tr => tr.dataset.id !== row.id);
 const stray = rightOn(elsewhere, 420, 420);
-const survived = {form: formUp(), title: boxIn('title').value, owner: boxIn('owner').value,
+const survived = {form: formUp(), title: valueIn('title'),
                   open: popIsOpen(), about: popAbout(), prevented: stray.defaultPrevented,
                   why: whyLines()};
-// Pressed again, and this time it lands. What goes out is what is still in the
-// boxes, which is what proves the values were KEPT rather than merely drawn.
+// Answered again, and this time the server takes it. What goes out is what is
+// still in the box, which is what proves the answer was KEPT rather than merely
+// drawn once.
 ANSWER = () => ({status: 200,
                  body: {outcome: 'committed', commit: 'c0ffee2', pushed: true}});
-pressSave();
+boxIn('title').blur();
 await rest(1000);
-const landed = {sent: patches(), said: said(), closed: !popIsOpen(), base: baseNow()};
-// And the two ways a form is left on purpose, which are the only two that work.
-openOn(row.id);
-itemIn('edit').click();
-typeInto('title', 'thrown away on purpose');
+const landed = {sent: patches(), said: said(), open: popIsOpen(), form: formUp(),
+                base: baseNow(), title: valueIn('title')};
+// And the way a box is left on purpose.
+answer('owner', somebody);
+await rest(600);
 pressKey('Escape');
 const escaped = {open: popIsOpen(), form: formUp(), said: said(),
                  sent: patches().length};
@@ -3498,32 +3783,34 @@ return {id: row.id, was: row.title, typed, somebody, RULE, refused, survived, la
 """
 
 
-def test_a_refusal_keeps_the_form_open_with_everything_typed_still_in_it(
+def test_a_refusal_keeps_the_box_open_with_the_answer_still_in_it(
     index: Index, tmp_path: Path
 ):
-    """**This is why the form is a face of `#pop` and not a page**, and it is the
-    one rule cut 2 wrote down that cut 4 changes.
+    """**This is why the box is a face of `#pop` and not a page**, and it is the
+    one rule cut 2 wrote down that cut 4 changed.
 
-    A refusal keeps the form open with the reader's values in it: `popSay`
-    branches on `POP_FORM` and puts the sentence into the form's own list without
-    rebuilding anything, so the controls are the same elements holding the same
-    typing. The second Save is what proves it — the values that go out are the
-    ones that were on screen, and a form that redrew itself from the row would
-    send the row's.
+    A refusal keeps the box open with the reader's answer in it: `popSay`
+    branches on `POP_FORM` and puts the sentence into the box's own list without
+    rebuilding anything, and `popTook` puts the refused answer back into the
+    control it came out of. A card that swallowed both would leave somebody
+    looking at the old value with no idea why their new one did not take.
+
+    Blurring it again is what proves it — what goes out the second time is what
+    is on screen, and a box that had redrawn itself from the row would send the
+    row's.
 
     And the box is **not dismissed by somebody looking at the page**. Every one
     of the six signals that kill a menu means "the reader is reaching for
     something else", which for a list of words is a reason to get out of the way
-    and for a half-filled form is a silent deletion: a click on the row behind
+    and for a half-answered card is a silent deletion: a click on the row behind
     it, a scroll of the table under it, a filter, a write landing elsewhere, and
     the work is gone with nothing said. Three of the last four audit rounds
     shipped a defect of exactly that shape. `popClose` returns early while
     `POP_FORM` is set unless `POP_SHUTTING`, which only `popDone` sets — so
-    Escape, Cancel and a commit that landed are the three ways out, and they are
-    all decisions.
+    Escape and a commit that landed are the ways out, and they are decisions.
 
     A right press elsewhere is the sixth and the only one that is not a hide:
-    `popMenu` answers `true` without touching the form, so the view still calls
+    `popMenu` answers `true` without touching the box, so the view still calls
     `preventDefault` and the browser's own menu does not open over the top of it.
     That is the contract change — "whether this module answered the press" rather
     than "whether a menu was opened", which is what the call site was always
@@ -3533,27 +3820,25 @@ def test_a_refusal_keeps_the_form_open_with_everything_typed_still_in_it(
 
     assert not got.get("error"), got
     assert got["refused"]["form"] is True, (
-        "the refusal closed the form, so everything typed into it is gone and the "
-        "reason went with it"
+        "the refusal closed the box, so the answer is gone and the reason went with it"
     )
     assert got["refused"]["up"]["up"] is True and got["refused"]["up"]["role"] == "dialog"
     assert got["refused"]["why"] == [got["RULE"]], (
-        f"the form says {got['refused']['why']} and the server said {got['RULE']!r} — a "
+        f"the box says {got['refused']['why']} and the server said {got['RULE']!r} — a "
         "rule's own sentence read as the store's conflict report sends the reader to "
         "reload against a plan nobody touched"
+    )
+    assert got["refused"]["open"] is True, (
+        "the control closed on a write that was refused, so the answer is only in the "
+        "reader's memory"
     )
     assert got["refused"]["title"] == got["typed"], (
         f"the title box holds {got['refused']['title']!r} after a refusal and "
         f"{got['typed']!r} was typed into it"
     )
-    assert got["refused"]["owner"] == got["somebody"], got["refused"]
-    assert got["refused"]["focused"] == "form-why", (
-        f"the keyboard is on {got['refused']['focused']!r} rather than on the reason the "
-        "Save did not happen"
-    )
-    assert got["refused"]["disabled"] is False, (
-        "Save is still disabled after a refusal, so the one thing to do about it cannot "
-        "be done"
+    assert got["refused"]["focused"] == "title", (
+        f"the keyboard is on {got['refused']['focused']!r} rather than back in the box "
+        "whose answer was refused"
     )
     assert got["refused"]["sent"] == 1 and got["refused"]["base"] == HEAD
     assert got["refused"]["now"] == got["was"], "the row changed under a write that was refused"
@@ -3562,39 +3847,43 @@ def test_a_refusal_keeps_the_form_open_with_everything_typed_still_in_it(
     )
     assert got["survived"]["form"] is True, (
         "a press outside, a scroll, a filter, a write landing elsewhere or a right press "
-        "on another row took a half-filled form away"
+        "on another row took a half-answered card away"
     )
     assert got["survived"]["title"] == got["typed"], got["survived"]
-    assert got["survived"]["owner"] == got["somebody"], got["survived"]
     assert got["survived"]["why"] == [got["RULE"]], (
-        "the reason went off the screen while the boxes it is about stayed"
+        "the reason went off the screen while the box it is about stayed"
     )
     assert got["survived"]["about"] == got["id"], (
         f"the box is now about {got['survived']['about']}, so the right press rebuilt it "
-        "over the form"
+        "over the card"
     )
     assert got["survived"]["prevented"] is True, (
         "the view did not call `preventDefault` on a press this module answered, so the "
-        "browser's own menu opens on top of a half-filled form"
+        "browser's own menu opens on top of a half-answered card"
     )
     assert len(got["landed"]["sent"]) == 2, got["landed"]["sent"]
-    assert got["landed"]["sent"][1]["body"]["fields"] == {
-        "title": got["typed"],
-        "owner": got["somebody"],
-    }, (
-        "the second Save sent something other than what was in the boxes: the form was "
-        f"rebuilt from the row under the refusal — {got['landed']['sent'][1]['body']}"
+    assert got["landed"]["sent"][1]["body"]["fields"] == {"title": got["typed"]}, (
+        "the second write sent something other than what was in the box: it was rebuilt "
+        f"from the row under the refusal — {got['landed']['sent'][1]['body']}"
     )
-    assert got["landed"]["said"] == (
-        f"{got['was']}: {LABELS['title']} and {LABELS['owner']} saved"
-    ), got["landed"]["said"]
-    assert got["landed"]["closed"] is True and got["landed"]["base"] == "c0ffee2"
+    assert got["landed"]["said"] == f"{got['was']}: {LABELS['title']} saved", got["landed"]["said"]
+    assert got["landed"]["open"] is True and got["landed"]["form"] is True, (
+        "the card closed on the write that landed, and a card you are editing in is the "
+        "thing you are doing"
+    )
+    assert got["landed"]["title"] == got["typed"], (
+        f"the card still says {got['landed']['title']!r} after writing {got['typed']!r}"
+    )
+    assert got["landed"]["base"] == "c0ffee2"
     assert got["escaped"]["open"] is False and got["escaped"]["form"] is False, (
-        "Escape did not take the form away, and it is one of the three closes that are "
-        "decisions rather than somebody looking at the page"
+        "Escape did not take the card away, and it is the close that is a decision rather "
+        "than somebody looking at the page"
     )
     assert got["escaped"]["said"] == "nothing was changed", got["escaped"]["said"]
-    assert got["escaped"]["sent"] == 2, "Escape out of a form wrote to the plan"
+    assert got["escaped"]["sent"] == 3, (
+        f"{got['escaped']['sent']} writes went out for three answers: the refused title, "
+        "the one that landed, and the owner"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -3620,24 +3909,35 @@ openOn(row.id);
 const item = itemIn('parent');
 const word = wordIn(item);
 item.click();
+// **Open already**, which is what `Change parent…` means on a card whose values
+// are words until they are pressed: somebody who chose that item has said which
+// field they came to change.
 const box = boxIn('parent');
 const opened = {up: formIsUp(), heading: headingIn(), fields: fieldsInForm(),
-                tag: box.tagName, disabled: box.disabled, value: box.value,
-                inputs: POP.querySelectorAll('.popform input').length,
+                tag: box ? box.tagName : '', disabled: box ? box.disabled : null,
+                value: box ? box.value : '',
+                // And nothing else opened with it: this is the card, and every
+                // other value on it is still a word.
+                boxes: POP.querySelectorAll('input, select').length,
+                save: !!saveIn(),
                 options: optionsIn('parent')};
 opened.kinds = opened.options.filter(one => one.value)
   .map(one => (DATA.rows[one.value] || {}).kind || null);
 const next = opened.options.map(one => one.value)
   .find(one => one && one !== row.parent);
 if (!next) return {error: 'the corpus offers no second legal parent to move to'};
-typeInto('parent', next);
-pressSave();
+answer('parent', next);
 await rest(1000);
-const landed = {sent: patches(), said: said(), closed: !popIsOpen(),
+const landed = {sent: patches(), said: said(), open: popIsOpen(),
                 now: DATA.rows[row.id].parent, posted: posts().length};
 // And the host that cannot list its records at all, which is the timeline and
-// the static export. The item refuses with a sentence rather than opening a form
+// the static export. The item refuses with a sentence rather than opening a card
 // over a picker with nothing in it.
+//
+// `popDone()` first, because the card is still up: a live write leaves it open,
+// and `popClose` refuses to take a box with a form in it down. A right press
+// that arrived now would find the card and not rebuild the menu.
+popDone();
 POP_HOST.all = undefined;
 openOn(row.id);
 const blind = {disabled: itemIn('parent').getAttribute('aria-disabled'),
@@ -3716,17 +4016,21 @@ def test_assign_parent_offers_a_select_of_the_records_that_may_hold_this_one(
     )
     assert got["opened"]["up"]["role"] == "dialog", got["opened"]["up"]
     assert got["opened"]["heading"] == f'Where "{got["title"]}" is filed', got["opened"]["heading"]
-    assert got["opened"]["fields"] == ["parent"], (
-        f"`Assign parent…` drew {got['opened']['fields']} — it is `only: ['parent']`, and "
-        "every other box in it is a field somebody did not come here to change"
+    assert "parent" in got["opened"]["fields"] and len(got["opened"]["fields"]) > 1, (
+        f"`Change parent…` drew {got['opened']['fields']} — it is the same card as "
+        "`Edit…`, because a card of one row is not a card; what the item buys is that the "
+        "one field somebody came to change is already open"
     )
     assert got["opened"]["tag"] == "SELECT", (
         f"the parent control is a {got['opened']['tag']}: a box you can type into is the "
         "one control that can name a record that does not exist"
     )
-    assert got["opened"]["inputs"] == 0, (
-        "this form carries a text box, which is the shape that put a dangling parent "
-        "into the plan in silence"
+    assert got["opened"]["boxes"] == 1, (
+        f"the card opened with {got['opened']['boxes']} controls on it — `Change parent…` "
+        "opens the one field somebody came to change and leaves the rest words"
+    )
+    assert got["opened"]["save"] is False, (
+        "the card grew a Save button, so the parent is not written the moment it is picked"
     )
     assert got["opened"]["disabled"] is False, "the picker that is the whole point is locked"
     assert got["opened"]["value"] == got["was"], (
@@ -3758,6 +4062,10 @@ def test_assign_parent_offers_a_select_of_the_records_that_may_hold_this_one(
     assert got["landed"]["sent"][0]["body"]["fields"] == {"parent": got["next"]}, (
         f"moving a record sent {got['landed']['sent'][0]['body']['fields']}"
     )
+    assert got["landed"]["open"] is True, (
+        "the card closed on its own write, and a card you are editing in is the thing you "
+        "are doing rather than a list of things to do next"
+    )
     assert got["landed"]["now"] == got["next"], "the row is still filed where it was"
     assert got["landed"]["said"] == f'{got["title"]} is now inside "{got["nextTitle"]}"', (
         f"the receipt reads {got['landed']['said']!r} — `Take out of \"X\"` says the same "
@@ -3765,7 +4073,7 @@ def test_assign_parent_offers_a_select_of_the_records_that_may_hold_this_one(
         "spelled three ways on one screen"
     )
     assert got["blind"]["disabled"] == "true", (
-        "a view that cannot list its records opened a form over a picker with nothing in it"
+        "a view that cannot list its records opened a card over a picker with nothing in it"
     )
     assert got["blind"]["why"] == (
         "This view cannot list the records here, so there is nothing to pick from — "
@@ -3793,14 +4101,20 @@ const item = itemIn('status-' + gate);
 const seen = {disabled: item.getAttribute('aria-disabled'), why: item.dataset.why || '',
               word: wordIn(item), role: item.getAttribute('role')};
 item.click();
+// The box the gate opens is STAGED: a `done` and the PRs it demands cannot be
+// written one at a time, because the gate refuses whichever arrives first. So
+// the fields it names are open, the rest of the card is words, and one button
+// sends them together.
 const opened = {up: formIsUp(), heading: headingIn(), fields: fieldsInForm(),
-                status: boxIn('status').value, required: {}, marks: {}};
-for (const name of fieldsInForm()) {
+                status: valueIn('status'), open: opensNow(), save: !!saveIn(),
+                pressable: opensInForm(),
+                required: {}, marks: {}};
+for (const name of opensNow()) {
   opened.required[name] = boxIn(name).getAttribute('aria-required');
   opened.marks[name] = markIn(name);
 }
 // Saved with the boxes still empty. The gate is asked HERE, before anything goes
-// out, and of the boxes this form drew and no others.
+// out, and of the fields this box is about and no others.
 pressSave();
 await rest(400);
 const early = {why: whyLines(), sent: patches().length, form: formUp(),
@@ -3872,13 +4186,24 @@ def test_a_gated_status_opens_the_form_on_what_it_needs_and_saves_both(
     assert got["opened"]["heading"] == (
         f"{HUMAN[got['gate']]} needs {'this' if len(got['missing']) == 1 else 'these'}"
     ), got["opened"]["heading"]
-    assert got["opened"]["fields"] == ["status", *got["missing"]], (
-        f"the form drew {got['opened']['fields']} and the gate names {got['missing']} — the "
-        "status first, which is the order the sentence over the boxes reads in"
+    # The whole card is drawn — it is the card — and what the gate is about is the
+    # part of it that can be touched: the fields it names are open, the status it
+    # is asking for is on the chip, and every other value is a word nothing wires.
+    assert got["opened"]["open"] == got["missing"], (
+        f"the box opened on {got['opened']['open']} and the gate names {got['missing']} — "
+        "somebody who chose a gated status has already said what they are doing"
     )
-    assert got["opened"]["status"] == got["gate"], (
-        f"the status box holds {got['opened']['status']!r}: the rung that was picked is "
-        "not in it, so one Save cannot commit the status and the answers together"
+    assert sorted(got["opened"]["pressable"]) == sorted(["status", *got["missing"]]), (
+        f"{sorted(got['opened']['pressable'])} can be pressed on a box that is about "
+        f"{sorted(['status', *got['missing']])} — the rest of the card is a word each"
+    )
+    assert set(got["opened"]["fields"]) > set(got["opened"]["pressable"]), (
+        f"the box drew only {got['opened']['fields']}, so it is a form about a gate rather "
+        "than the card with a gate open on it"
+    )
+    assert got["opened"]["status"] == HUMAN[got["gate"]], (
+        f"the status chip says {got['opened']['status']!r}: the rung that was picked is "
+        "not on it, so one Save cannot commit the status and the answers together"
     )
     for name in got["missing"]:
         assert got["opened"]["required"][name] == "true", (
@@ -3944,7 +4269,9 @@ itemIn('new-child').click();
 itemIn('new-child-' + kind).click();
 const title = 'A child the filter will not draw';
 typeInto('title', title);
-const opens = boxIn('status').value;
+// The chip's word, because the status of a record nobody has touched is not a
+// control on this card — it is staged, and `popForm` put it there.
+const opens = POP_FORM.values.status;
 pressSave();
 await rest(1200);
 const id = Object.keys(MADE)[0] || null;

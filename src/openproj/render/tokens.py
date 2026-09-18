@@ -878,3 +878,72 @@ TEMPLATES = {
     "product": _PRODUCT_TEMPLATE,
     "blank": "",
 }
+
+
+def blank_record(kind: str) -> Record:
+    """A record of this kind with nothing in it, to ask the editors about.
+
+    The same device `required_at` (`model.py`) uses, and for the same reason:
+    what a form may offer is a function of the kind, and running the real
+    function over a blank record cannot drift from it the way a list written out
+    beside it would. The id is well-formed because `Record` validates its own,
+    and it is never written anywhere.
+
+    Here rather than in `pop.py`, where it was, because the hover card now needs
+    the same question answered and `shell.py` cannot import `pop.py` — `pop.py`
+    imports `Links` from it.
+    """
+    return _KIND_MODELS[kind](id=f"{PREFIX[kind]}-000000", kind=kind, title="")
+
+
+# The three fields the hover card draws ABOVE its list, and therefore the three
+# its list must not draw again: the title is the card's first line and priority
+# and status are two of the three chips under it.
+_ON_THE_CARDS_FACE = ("title", "status", "priority")
+
+
+def card_facts() -> dict[str, list[dict[str, str]]]:
+    """What the hover card lists under its chips, per kind.
+
+    **The kind's own editable fields, in `EDITABLE`'s order, minus the three the
+    card already draws above the list.** Asked of `_editable_for` over a blank
+    record, which is the same function the record page, the create form and the
+    right-click form draw their controls from — so the card and the box that
+    edits it cannot list different fields.
+
+    That identity is the whole point of this function existing, and it is
+    jcanton's, on 2026-09-18: the right-click box "should display the editable
+    fields as the edit view, so owner, assignees, reviewer, etc etc". The card
+    used to draw its own shorter vocabulary — `With`, which is the assignees
+    minus the owner, a compression that reads well and is not a field anybody can
+    edit. A box that shows `With` and a box that edits `assignees` are two boxes
+    however alike they look.
+
+    Progress is not here. It is not a field — it is counted — so it is appended
+    by `cardHtml` where the row carries it, and it is the one row of the card
+    that is a fact rather than a value.
+    """
+    return {
+        kind: {
+            # The two of the three above this kind actually reads. A product is
+            # not `in_progress` and has no priority, so it has no chip for
+            # either — and a kind that reads one gets a chip whether or not the
+            # record has filled it in, because an empty chip is what you click
+            # to fill it.
+            # Priority, then status — jcanton's order from 2026-08-21, and the
+            # order `cardHtml` has drawn them in ever since. Written here rather
+            # than taken from `_editable_for`, whose order is the record page's
+            # form and puts status first.
+            "chips": [
+                name
+                for name in ("priority", "status")
+                if name in {field["name"] for field in _editable_for(blank_record(kind))}
+            ],
+            "facts": [
+                {"name": field["name"], "label": LABELS.get(field["name"], field["name"])}
+                for field in _editable_for(blank_record(kind))
+                if field["name"] not in _ON_THE_CARDS_FACE
+            ],
+        }
+        for kind in KINDS
+    }

@@ -49,11 +49,8 @@ from markupsafe import Markup
 from ..index import Index
 from ..model import (
     CHILD_KINDS,
-    MODELS,
     PARENT_KINDS,
-    PREFIX,
     RUNG,
-    Record,
     opens_at,
     required_at,
     unread_fields,
@@ -61,7 +58,21 @@ from ..model import (
 from .controls import _suggestions
 from .env import _fragment
 from .shell import Links
-from .tokens import EDITABLE, HUMAN, LABELS, PRIORITIES, STATUS_GLYPH, SUGGESTS, _editable_for
+from .tokens import (
+    EDITABLE,
+    HUMAN,
+    LABELS,
+    PRIORITIES,
+    STATUS_GLYPH,
+    SUGGESTS,
+    _editable_for,
+)
+
+# `_blank` was defined here until the hover card needed the same question
+# answered. It lives in `tokens.py` now, beside `_editable_for`, because
+# `shell.py` draws the card and cannot import this module — this one imports
+# `Links` from it.
+from .tokens import blank_record as _blank
 
 # The menu's own stylesheet, and **it lives beside the menu because of which
 # pages load what.** `.drawmenu` — this repository's other floating menu — is in
@@ -218,71 +229,108 @@ _POP_STYLE = """
    `min-width: 17rem` is a box 272px wide in a 260px window, hanging off the far
    edge of a `position: fixed` element there is no way to scroll to. The menu's
    own 20rem happens to fit the narrowest desktop window anybody opens; a form's
-   23rem does not. */
+   26rem does not. */
+/* **26rem is `#card`'s own `max-width`, and the two are the same number on
+   purpose.** jcanton, 2026-09-18, on the first form drawn: "can the `edit` box
+   be the same as the floating card box, just with clickable/editable fields?
+   instead of a new tall, column box" — and, when the first answer widened the
+   box without wearing the card: "I meant this card". So the form IS the card:
+   its width, its title line, its chip line and its `<dl>`, with a control
+   wherever the card draws a value. */
 /* The confirmation takes the same range for a different reason and gets it from
    the same rule rather than a second copy of the arithmetic: its lines are
    prose — a sentence with a record's title inside it — and the menu's 20rem is
    sized for single words. */
 #pop.popforming, #pop.popasking {
   min-width: min(17rem, calc(100vw - 16px));
-  max-width: min(23rem, calc(100vw - 16px));
+  max-width: min(34rem, calc(100vw - 16px));
   padding: 0;
 }
+#pop .popheading { margin: 0; font-size: 13px; font-weight: 600; }
+/* The form's copy of it, off the screen and still in the document. `.sr-only`'s
+   own declarations rather than the class, because `#pop .popheading` above is
+   (1,1,0) and would win the margin back off a (0,1,0) class — and a rule that
+   only half applies is the worst of the two. The confirmation's heading keeps
+   the visible one: it is the box's first line there, and there is no title
+   above it to say the same thing. */
+#pop .popform .popheading {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+/* **The box is the hover card**, so the padding is the card's and everything
+   inside it is drawn by the card's own rules — see `:is(#card, .popcard)` in
+   `shell.py`, which is one block serving both. What is left here is the part
+   that is only true of the box you can edit in. */
 #pop .popform {
   /* `flex: none` for the reason `.popitem` has it, and the failure is the same
-     one: `#pop` is a flex column with a `max-height`, so a form taller than 70vh
-     would be resolved by squashing the one child rather than by scrolling. A
-     task's form is fifteen controls and reaches that on any laptop. */
+     one: `#pop` is a flex column with a `max-height`, so a card taller than 70vh
+     would be resolved by squashing the one child rather than by scrolling. */
   flex: none;
-  display: flex; flex-direction: column; gap: .5rem;
-  padding: .6rem .75rem .7rem;
+  padding: .4rem .55rem .5rem;
 }
-#pop .popheading { margin: 0; font-size: 13px; font-weight: 600; }
-#pop .popfield { display: flex; flex-direction: column; gap: .15rem; }
-/* The one control whose name reads to the right of it rather than above it: a
-   checkbox is a mark beside a statement, and a label stacked over a 13px box
-   leaves the box floating under a word it does not touch. */
-#pop .popfield.popbool { flex-direction: row; align-items: center; gap: .45rem; }
-#pop .popname { color: var(--muted); font-size: 12px; }
-#pop .popfield.popbool .popname { color: inherit; font-size: 13px; }
+/* Something you can click. No border and no fill — a card with twelve outlined
+   boxes on it is the form this replaced — so what says a value is a control is
+   the cursor, a tint under the pointer, and the focus ring when the keyboard
+   arrives. The table says it the same way and for the same reason: a cell is a
+   word until you are on it. */
+#pop .popopens { cursor: pointer; border-radius: 2px; }
+#pop .popopens:hover { background: var(--surface-2); box-shadow: 0 0 0 2px var(--surface-2); }
+/* The title line and the chips are not `<dd>`s and have no cell to tint, so the
+   ring is drawn on the thing itself. `outline-offset` rather than a margin,
+   because a card's chip line must not move when you point at it. */
+#pop .popopens:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+/* A field this box will not open: the parent of a new child, a value this view
+   does not carry. Dimmed rather than removed, for the reason a refused item is
+   drawn rather than left out — a row that disappears teaches nothing about why —
+   and the sentence is on `title`, because a card has no room for a paragraph
+   per row. */
+#pop .poplocked { color: var(--muted); cursor: help; }
+/* The cell while it holds a control. It is the one place the card's own
+   `overflow: hidden` has to be lifted: a `<select>` inside a clipped cell draws
+   its list from a box one line tall. */
+#pop .popediting { overflow: visible; }
+/* Every control this box opens, and it is the cell editor's shape rather than a
+   fourth one. The shell gives an `input` its background and its ink and nothing
+   else — "the padding, border and radius of a text box are set where each of
+   them is drawn".
+
+   `#pop` is on the front so that the specificity question is settled rather than
+   left to source order: the shell's own
+   `input:not([type="checkbox"]):not([type="radio"])` is (0,2,1) and an
+   unprefixed `.popbox` would be (0,1,0). */
+#pop .popbox {
+  font: inherit; font-size: 12px; width: 100%; box-sizing: border-box;
+  padding: .1rem .25rem; border-radius: 2px;
+  border: 1px solid var(--accent);
+  background: var(--surface); color: var(--fg);
+}
+#pop input.popbox[type="checkbox"] { width: auto; }
+/* The title line's control is the title's own size and weight, because the line
+   it replaces is. */
+#pop .card-title .popbox { font-size: 13px; font-weight: 600; }
+/* A chip being changed. The chip keeps its tint and its mark — the colour that
+   says which rung this is must not blink to grey while you pick the next one —
+   and the `<select>` inside it is drawn in nothing at all. */
+#pop .card-chips .popbox {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+  width: auto; padding: 0 .1rem; border-color: var(--accent);
+  background: none; color: inherit;
+}
 /* The mark on a field the chosen status will make the server refuse the record
    without. `--sev-blocker` and not `--warn`: it is the same news the table's own
    blocker marks carry, which is that a save will be refused rather than
    grumbled at. It is `aria-hidden` and the control carries `aria-required`, so
    this is the sighted half of one fact and never the only half. */
 #pop .popreq { color: var(--sev-blocker); }
-/* Every box somebody types into. The shell gives an `input` its background and
-   its ink and nothing else — "the padding, border and radius of a text box are
-   set where each of them is drawn" — so the shape is this form's, and it is the
-   cell editor's shape rather than a fourth one.
-
-   `#pop` is on the front of all of these so that the specificity question is
-   settled rather than left to source order: the shell's own
-   `input:not([type="checkbox"]):not([type="radio"])` is (0,2,1) and an
-   unprefixed `.popform input:not(…)` would be (0,2,1) as well — a tie decided
-   by which stylesheet is inlined second, which is exactly the kind of thing
-   that is true until somebody reorders two lines in `_page`. With the id it is
-   (1,2,1) and wins outright. */
-#pop .popform input:not([type="checkbox"]), #pop .popform select {
-  font: inherit; font-size: 13px; width: 100%; box-sizing: border-box;
-  padding: .25rem .4rem; border-radius: 3px;
-  border: 1px solid var(--line-strong);
-  background: var(--surface); color: var(--fg);
-}
-#pop .popform select { cursor: pointer; }
-#pop .popform input:hover, #pop .popform select:hover { border-color: var(--accent); }
-/* A control the form drew and will not let you change — a locked parent, a
-   field this view does not carry the value of. Dimmed rather than removed, for
-   the reason a refused item is drawn rather than left out: a control that
-   disappears teaches nothing about why, and the sentence under it is the why.
-
-   Scoped to the boxes and not written as `#pop .popform :disabled`, which would
-   also be (1,2,0) and would therefore outrank `#pop .popsave` — painting the
-   muted grey of a locked field over the accent fill of the Save button for the
-   whole of the second it is disabled while a commit is in the air. */
-#pop .popform input:disabled, #pop .popform select:disabled {
-  color: var(--muted); cursor: default; opacity: 1;
-}
+/* The three rules that dressed a form full of boxes were here, and they are
+   gone with it: there is no form full of boxes any more. `#pop .popbox` above is
+   the one control this box ever draws, and it is (1,1,0) — an id beats the
+   shell's own `input:not([type="checkbox"]):not([type="radio"])` at (0,2,1) on
+   the first component, so the question is settled rather than left to which
+   stylesheet `_page` inlines second. */
+/* A sentence under a control, which only the delete confirmation draws now: the
+   card says why a row will not open in its `title` instead, because a card has
+   no room for a paragraph per row. */
 #pop .popnote { margin: 0; color: var(--muted); font-size: 12px; }
 /* What the server, or the gate, said about this save. A list because a create
    is refused with a `problems` array and three blockers read as three lines
@@ -298,7 +346,8 @@ _POP_STYLE = """
   color: var(--sev-blocker); background: var(--sev-blocker-soft);
 }
 #pop .popwhy:focus-visible { outline-offset: -2px; }
-#pop .popacts { display: flex; gap: .4rem; justify-content: flex-end; }
+#pop .popacts { display: flex; gap: .4rem; justify-content: flex-end;
+                margin-top: .25rem; }
 /* The verb. `.button.primary` in the shell is for an `<a class="button">`, and
    this is a real `<button>`, so the fill is written here — two declarations,
    against vendoring a class that would have to be kept in step with a sheet
@@ -1528,6 +1577,12 @@ function popStatusChoice(row, status) {
       // over the boxes reads in. It is drawn rather than sent invisibly: this
       // form's one job is that nothing is committed that the reader cannot see.
       only: ['status', ...missing],
+      // Open, so the box asks rather than waiting to be clicked: somebody who
+      // chose a gated status has already said what they are doing.
+      opens: missing,
+      // **Staged**, because a `done` and the PRs it demands cannot be written
+      // one at a time — the gate refuses whichever arrives first.
+      staged: true,
       values: {status: status},
       // `askFor`'s own opening clause, because it is the same question asked by
       // the same rule about the same record — see `popNeeds` for what is shared
@@ -1659,6 +1714,9 @@ function popNewChildItem(row) {
     stays: true,
     run: () => popForm({
       mode: 'new', kind: kind, parent: row,
+      // **Staged**, because a record that does not exist cannot be written one
+      // field at a time: `POST /api/record` takes the whole of it.
+      staged: true,
       label: `New ${popHuman(kind).toLowerCase()} in "${popTitle(row)}"`,
       verb: `Create ${popHuman(kind).toLowerCase()}`,
     }),
@@ -1672,10 +1730,11 @@ function popEditItem(row) {
   // the model and this is the one item that draws all of it.
   if (!((POP_SCHEMA.fields || {})[row.kind] || []).length)
     return {kind: 'edit', text: 'Edit…', why: `A ${row.kind} has nothing to edit here.`};
+  // Live: the card, with nothing open. Every value in it is a thing you click,
+  // and each one is written as it is answered.
   return {kind: 'edit', text: 'Edit…', stays: true, run: () => popForm({
     mode: 'edit', row: row,
     label: `Edit "${popTitle(row)}"`,
-    verb: 'Save',
   })};
 }
 
@@ -1702,10 +1761,12 @@ function popParentItem(row) {
   if (!candidates.length)
     return {kind: 'parent', text: named,
             why: `There is nothing on this plan that a ${row.kind} may be filed under.`};
+  // The same card as `Edit…` — every field on it is still a field — with the one
+  // somebody came here to change already open. `only` would draw a box about one
+  // field, and the box is a card: a card of one row is not a card.
   return {kind: 'parent', text: named, stays: true, run: () => popForm({
-    mode: 'edit', row: row, only: ['parent'],
+    mode: 'edit', row: row, opens: ['parent'],
     label: `Where "${popTitle(row)}" is filed`,
-    verb: 'Save',
   })};
 }
 
@@ -1761,6 +1822,34 @@ let POP_FIELD_N = 0;
 // The one value in a picker that is not a record.
 const POP_NOTHING = '— nothing —';
 
+// **The box a right-click opens to edit a record is the hover card, and it is
+// the same markup drawn by the same function.**
+//
+// jcanton, 2026-09-18, after two passes that merely resembled it: "I meant this
+// card", "it should display the editable fields as the edit view", and — for
+// how a value becomes a control without the box turning into a form — "it could
+// be like the table where you have to click one field to enter edit mode for
+// that field?".
+//
+// So `popDrawForm` calls `cardHtml` (`shell.py`) and wires what comes back.
+// There is no second builder and no second stylesheet: what the card draws is
+// what this draws, and the whole of the difference is that clicking a value
+// here puts a control where the value was.
+//
+// **Two ways of committing, and the split is not a preference.**
+//
+//   live    — an existing record. Blur saves and Escape discards, which is
+//             `openEditor`'s bargain in the table to the letter, and each field
+//             is its own PATCH exactly as `saveCell` sends one.
+//   staged  — a record that does not exist yet, and a status that demands
+//             fields the record has not got. Neither can be written one field
+//             at a time: `POST /api/record` needs the whole record, and a
+//             `done` with no PRs is refused by the gate whichever order the two
+//             arrive in. So the values are held in the box and one button
+//             commits them together.
+//
+// The two look identical. A staged box is the same card showing the values you
+// have typed, with one button under it.
 function popForm(spec) {
   const kind = spec.mode === 'new' ? spec.kind : spec.row.kind;
   const every = (POP_SCHEMA.fields || {})[kind] || [];
@@ -1768,25 +1857,91 @@ function popForm(spec) {
   // names fields out of `required_at` and the form draws `_editable_for`, and
   // those are two functions: a box drawn for a field this kind has not got is a
   // box the create route answers `a task has no …` to.
+  const only = spec.only ? spec.only.filter(name => every.includes(name)) : null;
   POP_FORM = {
     mode: spec.mode, kind: kind, row: spec.row || null, parent: spec.parent || null,
-    label: spec.label, verb: spec.verb, values: spec.values || {},
-    names: spec.only ? spec.only.filter(name => every.includes(name)) : every,
-    controls: new Map(), marks: new Map(), why: null, save: null,
+    label: spec.label, verb: spec.verb,
+    // What has been typed and not yet written. Empty on a live box — where a
+    // field that has been answered is a field that has been saved — and the
+    // whole of a staged one's answer.
+    values: Object.assign(
+      // **The status a new record opens at is an answer, not a default.** The
+      // chip says it before anything is typed — `opens_at(kind)` through the
+      // schema — and a create that did not send it would be the box lying about
+      // what pressing Create writes, which is the draft row's own argument for
+      // showing the same value. Staged here rather than read off a control at
+      // save time, because on this card there is no control until somebody
+      // presses the chip.
+      spec.mode === 'new' ? {status: (POP_SCHEMA.opens || {})[kind] || null} : {},
+      spec.values || {}),
+    names: only || every,
+    staged: !!spec.staged,
+    // Opened the moment the box is drawn, rather than waiting to be clicked.
+    // `Assign parent…` is the item that wants this: somebody who chose it has
+    // already said which field they came to change. A record that does not exist
+    // yet opens on its title, which is the one field it cannot be created
+    // without.
+    //
+    // **Decided here and not in `popDrawForm`, and that is not tidying.** It was
+    // decided there, per draw, and every redraw therefore re-opened the title —
+    // so a refusal, which draws its list and then moves the keyboard onto it,
+    // blurred that control, staged it and redrew the box, wiping the refusal it
+    // had just drawn. `popRedraw` passes the fields that were open when it ran,
+    // which is empty unless something really was.
+    opens: spec.opens || (spec.mode === 'new' ? ['title'] : []),
+    controls: new Map(), marks: new Map(), why: null, save: null, hill: null,
   };
   popDrawForm();
+}
+
+// The record the card is drawn from.
+//
+// **Re-read from the host on every redraw, not held.** A live box stays open
+// across its own writes, and the row it was opened with is replaced wholesale by
+// `wrote()` — the table's `draw()` rebuilds the whole tbody. A box drawing the
+// row it started with would show the old value one beat after saving the new
+// one, which is the one thing a box you edit in may not do.
+//
+// A staged box has no record behind it, or has one plus unsaved answers, so its
+// row is the base with `values` laid over it.
+function popFormRow() {
+  const form = POP_FORM;
+  const base = form.row && POP_HOST && POP_HOST.rows
+    ? (POP_HOST.rows(form.row.id) || form.row)
+    : form.row;
+  if (form.mode !== 'new' && !Object.keys(form.values).length) return base;
+  // `kind` and `id` are what `cardHtml` and the writers need and are never
+  // typed. A new record's id does not exist yet and nothing here reads it.
+  const draft = Object.assign({}, base || {}, {kind: form.kind});
+  if (form.mode === 'new') {
+    draft.id = '';
+    draft.title = '';
+    // Nothing until somebody says so. `status` is not here: `popForm` staged the
+    // kind's opening one, and the loop below lays `values` over this.
+    draft.priority = null;
+    draft.status = null;
+    // The one field a new child does not ask about, because choosing it again is
+    // the gesture said twice. `popCreated` sends it from here too.
+    if (form.parent) draft.parent = form.parent.id;
+  }
+  for (const [name, value] of Object.entries(form.values)) draft[name] = value;
+  return draft;
 }
 
 function popDrawForm() {
   const form = POP_FORM;
   const box = document.createElement('form');
-  box.className = 'popform';
+  box.className = 'popform popcard';
   box.dataset.kind = 'form';
   // The browser's own validation bubbles are off. They are drawn against the
   // control, anchored outside a `position: fixed` box that has its own
   // scrollbar and flips against the far gutter, and this form answers in a list
   // it places itself — see `popFormSays`.
   box.noValidate = true;
+  // The sentence this box is about, for a reader who arrives inside it with no
+  // pointer. **`.sr-only` and not drawn**: the card's first line is the record's
+  // title, so a visible `Edit "X"` over a box that already shows X is the same
+  // fact twice. `[data-kind="form-heading"]` is what the tests read the copy off.
   const heading = document.createElement('p');
   heading.className = 'popheading';
   heading.dataset.kind = 'form-heading';
@@ -1794,29 +1949,38 @@ function popDrawForm() {
   // title, and this is the JavaScript half of the one escaping boundary.
   heading.textContent = form.label;
   box.append(heading);
-  for (const name of form.names) box.append(popField(name));
+  // **The card itself.** `cardHtml` escapes everything it writes — it is the
+  // function a hover has been putting a record's own text through since the card
+  // existed — and this is the same call the hover makes.
+  const drawn = document.createElement('template');
+  drawn.innerHTML = cardHtml(popFormRow(), []);
+  box.append(...drawn.content.children);
   form.why = document.createElement('ul');
   form.why.className = 'popwhy';
   form.why.dataset.kind = 'form-why';
   form.why.hidden = true;
   // Focusable and not tabbable: a refusal is put under the keyboard when it
   // arrives — the same move `popSay` makes in the menu — and Tab out of it then
-  // lands on Save, which is the next thing in the document.
+  // lands on the button, which is the next thing in the document.
   form.why.tabIndex = -1;
   box.append(form.why);
-  const acts = document.createElement('div');
-  acts.className = 'popacts';
-  form.save = popPress('form-save', form.verb, 'popsave');
-  // A real submit, so Enter in any box saves — which is what every other box on
-  // these pages answers to, and a panel that has to be dismissed with the mouse
-  // is a panel that breaks the keyboard path the table is built around.
-  form.save.type = 'submit';
-  const cancel = popPress('form-cancel', 'Cancel', 'popcancel');
-  // `askFor`'s own sentence for the same press, because it is the same news.
-  cancel.onclick = () => { announce('nothing was changed'); popDone(); };
-  acts.append(form.save, cancel);
-  box.append(acts);
-  box.addEventListener('submit', event => { event.preventDefault(); popSave(); });
+  if (form.staged) {
+    const acts = document.createElement('div');
+    acts.className = 'popacts';
+    form.save = popPress('form-save', form.verb, 'popsave');
+    // A real submit, so Enter anywhere in the box commits — which is what every
+    // other box on these pages answers to.
+    form.save.type = 'submit';
+    const cancel = popPress('form-cancel', 'Cancel', 'popcancel');
+    // `askFor`'s own sentence for the same press, because it is the same news.
+    cancel.onclick = () => { announce('nothing was changed'); popDone(); };
+    acts.append(form.save, cancel);
+    box.append(acts);
+  }
+  box.addEventListener('submit', event => {
+    event.preventDefault();
+    if (form.staged) popSave();
+  });
   POP.classList.add('popforming');
   // **`role="dialog"` and not `menu`, and the swap is not cosmetic**: a `<form>`
   // is not a child a `role="menu"` may have, and a reader arriving inside one
@@ -1826,18 +1990,267 @@ function popDrawForm() {
   POP.setAttribute('aria-label', form.label);
   POP.replaceChildren(box);
   POP.scrollTop = 0;
+  form.controls = new Map();
+  popWireFields(box);
   popMarkRequired();
   popPlace();
-  // Into the first box somebody can actually answer. Never the locked parent and
-  // never `<body>`: `New child ▸ task` opens with the cursor in Title, which is
-  // the one field the record cannot be created without.
-  const first = [...form.controls.values()].find(control => !control.disabled);
-  (first || form.save).focus();
+  // Into the field somebody came here to change, if there is one.
+  for (const name of form.opens.filter(name => form.names.includes(name)))
+    popOpenField(name);
+  if (!form.controls.size) popFirstSlot(box);
+}
+
+// Every part of the card that is a field, made clickable.
+//
+// **`[data-field]` and nothing else.** `cardHtml` puts it on the title line, on
+// each ladder chip the kind reads, and on each row of the list; a part of the
+// card that is not a field — the kind chip, the hill, Progress — carries none
+// and is therefore not wired here. That is one marker doing the work rather than
+// three lists agreeing with each other.
+function popWireFields(box) {
+  const form = POP_FORM;
+  for (const part of box.querySelectorAll('[data-field]')) {
+    const name = part.dataset.field;
+    if (!form.names.includes(name)) continue;
+    const why = popLockedWhy(name);
+    if (why) {
+      part.classList.add('poplocked');
+      // The sentence, on the element rather than under it. A card has no room
+      // for a paragraph per row, and the reason a control will not open is a
+      // thing you ask about rather than a thing you read down the page.
+      part.title = why;
+      continue;
+    }
+    part.classList.add('popopens');
+    part.tabIndex = 0;
+    // The name, for a reader who arrives here with Tab and finds a row of words.
+    // The title line and the two chips have no `<dt>` beside them at all.
+    part.setAttribute('role', 'button');
+    part.setAttribute('aria-label', popLabel(name) + ': ' + popSaidOf(name));
+    part.onclick = () => popOpenField(name);
+    part.onkeydown = event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      // The grid's own Escape and the menu's own keys are somebody else's; these
+      // two are this element's, and a space that scrolls the page under an open
+      // card is the page ignoring you.
+      event.preventDefault();
+      popOpenField(name);
+    };
+  }
+}
+
+// What this field says right now, as one line of text — the accessible name of
+// the thing you are about to click.
+function popSaidOf(name) {
+  const value = popStartOf(name);
+  if (popEmpty(value)) return 'nothing';
+  if (Array.isArray(value)) return value.join(', ');
+  if (value === true) return 'yes';
+  return String(value);
+}
+
+// Where the control goes when this field is opened: the `<dd>` of a list row,
+// and the element itself for the title line and the chips, which have no inner
+// box to put anything in.
+function popSlotIn(box, name) {
+  const part = (box || POP).querySelector(`[data-field="${name}"]`);
+  if (!part) return null;
+  return part.matches('.card-fact') ? part.querySelector('dd') : part;
+}
+
+// Put a control where the value is.
+//
+// **The value is remembered and the slot is emptied**, so that Escape can put
+// back exactly what was there rather than re-deriving it — a redraw would also
+// work and would cost a re-read of the row in the middle of a keystroke.
+function popOpenField(name) {
+  const form = POP_FORM;
+  if (form.controls.has(name)) { form.controls.get(name).focus(); return; }
+  const slot = popSlotIn(POP, name);
+  if (!slot) return;
+  const type = (POP_SCHEMA.types || {})[name] || 'text';
+  const control = popControlOf(name, type);
+  control.id = 'pop-f-' + (++POP_FIELD_N);
+  control.dataset.field = name;
+  control.className = 'popbox';
+  // No `<label>` to point at: the card names a field with a `<dt>` that is not
+  // this control's label, and the title line and the chips name nothing at all.
+  control.setAttribute('aria-label', popLabel(name));
+  if (type === 'text') popComplete(control, name, slot);
+  form.controls.set(name, control);
+  const was = slot.innerHTML;
+  slot.replaceChildren(control);
+  slot.classList.add('popediting');
+  let given = false;
+  // Blur saves and Escape discards, which is the table's rule and not a new one:
+  // "Enter saves and Escape gives up, which is what every other box on this page
+  // does" (`openEditor`, `table.py`). Enter blurs, so it arrives here too.
+  control.onblur = () => {
+    if (given) return;
+    // **A staged box keeps its controls open, and that is not a shortcut.** It
+    // is asking a question of several fields at once — `Done needs these`, or a
+    // record that does not exist yet — and opening the second box would blur the
+    // first, which on a live card means "save it". With nothing to save it TO,
+    // closing would put the word back and lose the answer, so the control stays
+    // and `popSave` reads it where it is. Escape still discards it.
+    if (POP_FORM && POP_FORM.staged) return;
+    given = true;
+    popShutField(name, slot, was, true);
+  };
+  control.onkeydown = event => {
+    if (event.key === 'Enter') { event.preventDefault(); control.blur(); return; }
+    if (event.key !== 'Escape') return;
+    // **It must not bubble**: `popClose` is listening for Escape on the way up
+    // and would take the whole box down, when what was asked for was to undo one
+    // field. The table's own editor stops it for exactly this reason.
+    event.preventDefault();
+    event.stopPropagation();
+    given = true;
+    popShutField(name, slot, was, false);
+  };
+  // Every control, and not only the status one. What a status demands moves when
+  // the status moves, and `reviewers` stops being demanded the moment
+  // `review_waived` is ticked — two controls, one rule, and a listener per
+  // special case is how the third one gets forgotten.
+  control.addEventListener('change', () => { popMarkRequired(); popPlace(); });
+  // And the two that are chips re-dress as they are picked. The box redraws when
+  // a value is written, which is too late: while the picker is open the chip
+  // around it is still wearing the old rung's tint, and a chip reading `Done` in
+  // the ready colour is confidently wrong. `cycles.py` says the same thing about
+  // the betting table's picker, and rebuilds its class the same way.
+  if (slot.matches('.chip'))
+    control.addEventListener('change', () => popDressChip(slot, name, control.value));
+  // Again, now that there is a control to say it on. `popDrawForm` runs this
+  // over the card's `<dt>`s before anything is open, so a box opened afterwards
+  // would carry no `aria-required` at all — and the star and the attribute are
+  // the two halves of one fact.
+  popMarkRequired();
+  control.focus();
   // Selected so that typing replaces it, which is right for the title of a
   // record being edited. Guarded on `type === 'text'` because `select()` is a
   // defined no-op on a date box and a `<select>` has no such method at all —
   // the pair `openEditor` (`table.py`) is careful about for the same two types.
-  if (first && first.type === 'text' && first.select) first.select();
+  if (control.type === 'text' && control.select) control.select();
+  popPlace();
+}
+
+// A chip wearing the value now in it: the class that tints it, the mark inside
+// it, and — for status — the picture beside it, which is the same fact drawn a
+// second way.
+function popDressChip(chip, name, value) {
+  const klass = name === 'status' ? stClass(value) : 'pri pri-' + value;
+  // Rebuilt from the classes that are not a rung's, rather than toggled, so
+  // nothing has to know which rung it was.
+  const kept = [...chip.classList].filter(one =>
+    one !== 'chip' && one !== 'pri' && one !== 'empty-chip'
+    && !one.startsWith('st-') && !one.startsWith('pri-'));
+  chip.className = ['chip', klass, ...kept].join(' ');
+  const mark = chip.querySelector('.chipmark');
+  const glyph = typeof cardMark === 'function' ? cardMark(name, value) : '';
+  if (mark) mark.textContent = glyph;
+  if (name !== 'status') return;
+  const hill = POP.querySelector('.card-chips .card-hill');
+  if (hill && typeof hillHtml === 'function') hill.outerHTML = hillHtml(value);
+}
+
+// Take the control away again, having either read it or thrown it away.
+function popShutField(name, slot, was, keep) {
+  const form = POP_FORM;
+  const control = form.controls.get(name);
+  form.controls.delete(name);
+  slot.classList.remove('popediting');
+  if (!keep || !control) {
+    slot.innerHTML = was;
+    popPlace();
+    return;
+  }
+  // **A half-written date must not clear the date that is there.** A native
+  // picker answers `value === ''` for `2026-0` exactly as it does for a box
+  // somebody emptied on purpose, and an empty one here is a deliberate clear —
+  // so without this the fumble commits a deletion and says nothing, which is
+  // the defect `openEditor` (`table.py`) records in as many words.
+  // `validity.badInput` is the browser's own word for that state and the only
+  // thing here that can tell a slip from an intention; `&&` guards it because
+  // the node driver builds elements that have no `validity` at all.
+  if (control.validity && control.validity.badInput) {
+    slot.innerHTML = was;
+    popFormSays([`${popLabel(name)} was left half-written, so nothing was saved.`]);
+    return;
+  }
+  popTook(name, popReadOf(name, control));
+}
+
+// One answered field: staged, or written on its own.
+async function popTook(name, value) {
+  const form = POP_FORM;
+  // Never reached on a staged box: its controls do not close on blur, so nothing
+  // is read out of one until the button is pressed. Written as a guard rather
+  // than assumed, because "which box am I" is exactly the thing that will be
+  // forgotten by whoever adds the third.
+  if (form.staged) return;
+  // Nothing of this field's is held on a live box: what has been answered has
+  // been written, and the only thing `values` ever holds here is an answer the
+  // server has just refused — see the end of this function.
+  delete form.values[name];
+  // Unchanged is not a write. The table says nothing here either — a cell
+  // somebody opened and closed is not news — and a PATCH naming a field that
+  // did not move is a line in this record's history that is not true.
+  if (popAlike(value, popHeld(name))) { popRedraw(); return; }
+  // **The gate, before the write and only when the status is MOVING.** It is a
+  // rule about arriving at a status, not about standing in one: `validate_all`
+  // reports a record that is already `in_progress` without assignees as a
+  // problem beside it, and the plan is full of records in exactly that state
+  // because that is what a problem list is for.
+  //
+  // A status that demands what this record has not got cannot be written on its
+  // own, so it is not written at all — the box turns into a staged one holding
+  // that status and asking for the rest, which is what `Status ▸` already does
+  // from the menu. One mechanism, reached two ways.
+  if (name === 'status') {
+    const missing = popMissing(form.row, value);
+    if (missing.length) {
+      popForm({
+        mode: 'edit', row: form.row, only: ['status', ...missing], opens: missing,
+        staged: true, values: {status: value},
+        label: `${popHuman(value)} needs ${missing.length === 1 ? 'this' : 'these'}`,
+        verb: 'Save',
+      });
+      popFormSays(missing.map(one => `${popHuman(value)} needs ${popLabel(one)}.`));
+      return;
+    }
+  }
+  const diff = {};
+  diff[name] = value;
+  const gen = POP_GEN;
+  // `true`, so the box stays open and redraws itself. Every other write in this
+  // module closes the menu, and the reason it closes is that a menu is a list of
+  // things to do next; a card you are editing in is the thing you are doing.
+  const wrote = await popWrite(form.row.id, diff, popSavedSaid(form.row, diff), true);
+  if (wrote || POP_GEN !== gen || !POP_FORM) return;
+  // **A refusal keeps what was typed**, which is the whole reason this box stays
+  // up rather than navigating somewhere. The sentence is already drawn — every
+  // refusal here goes through `popSay`, which puts it in the box the reader is
+  // looking at — and the answer goes back into the control beside it, because a
+  // refusal that also threw the answer away is one nobody can act on.
+  POP_FORM.values[name] = value;
+  popOpenField(name);
+}
+
+// The card again, from the row as it now stands. Placed again for the reason
+// `popFormSays` places again: a row of words and the same row as a control are
+// different heights, and a box already flipped against the bottom gutter grows
+// downwards off the screen.
+function popRedraw() {
+  const open = [...POP_FORM.controls.keys()];
+  POP_FORM.opens = open;
+  popDrawForm();
+}
+
+// Focus, when nothing is open: the first field this card can edit, so that a box
+// opened from the keyboard has the keyboard in it.
+function popFirstSlot(box) {
+  const first = box.querySelector('.popopens');
+  (first || box).focus();
 }
 
 function popPress(kind, text, className) {
@@ -1846,61 +2259,15 @@ function popPress(kind, text, className) {
   control.className = className;
   control.dataset.kind = kind;
   control.textContent = text;
+  // **It refuses focus on the way down**, which is the whole of what makes Save
+  // reachable while a field is open. Pressing a button blurs whatever had focus,
+  // and this box's blur stages the answer and redraws the card — so by `mouseup`
+  // the button under the pointer is a different element and the click never
+  // lands. `table.py` records the same sequence from the other end: "mousedown
+  // on the check, blur, mouseup, no click". `popSave` reads the still-open
+  // control itself.
+  control.addEventListener('mousedown', event => event.preventDefault());
   return control;
-}
-
-// One field: its name, its control, and — where there is one — the sentence
-// saying why the control will not let you change it.
-//
-// A real `<label for>` and not a `<span>` beside the box. The quality floor in
-// `AGENTS.md` names this one specifically: "a `<dt>`/`<dd>` pair is not one",
-// and neither is a placeholder, which is the last thing the name computation
-// falls back to and is gone the moment anything is typed.
-function popField(name) {
-  const form = POP_FORM;
-  const type = (POP_SCHEMA.types || {})[name] || 'text';
-  const field = document.createElement('div');
-  field.className = type === 'bool' ? 'popfield popbool' : 'popfield';
-  field.dataset.field = name;
-  const id = 'pop-f-' + (++POP_FIELD_N);
-  const label = document.createElement('label');
-  label.className = 'popname';
-  label.htmlFor = id;
-  label.textContent = popLabel(name);
-  // The mark that says the chosen status will make the server refuse the record
-  // without this. `aria-hidden` and paired with `aria-required` on the control:
-  // a star a screen reader reads as part of the name is a field called "Owner
-  // star", and a star nobody but a sighted reader gets is half a fact.
-  const star = document.createElement('span');
-  star.className = 'popreq';
-  star.setAttribute('aria-hidden', 'true');
-  label.append(star);
-  form.marks.set(name, star);
-  const control = popControlOf(name, type);
-  control.id = id;
-  control.dataset.field = name;
-  form.controls.set(name, control);
-  // A checkbox reads left to right — the mark, then the statement it marks —
-  // and every other control reads top to bottom.
-  if (type === 'bool') field.append(control, label);
-  else field.append(label, control);
-  const locked = popLockedWhy(name);
-  if (locked) {
-    control.disabled = true;
-    const said = document.createElement('p');
-    said.className = 'popnote';
-    said.dataset.kind = 'form-note';
-    said.textContent = locked;
-    field.append(said);
-  } else if (control.type === 'text') {
-    popComplete(control, name, field);
-  }
-  // Every control, and not only the status one. What a status demands moves when
-  // the status moves, and `reviewers` stops being demanded the moment
-  // `review_waived` is ticked — two controls, one rule, and a listener per
-  // special case is how the third one gets forgotten.
-  control.addEventListener('change', () => { popMarkRequired(); popPlace(); });
-  return field;
 }
 
 // Why this control will not let you change it, or `''` when it will.
@@ -2138,48 +2505,61 @@ function popComplete(input, name, field) {
 function popMarkRequired() {
   const form = POP_FORM;
   if (!form) return;
+  const row = popFormRow();
+  // The status now in the box: the open control if there is one, else what the
+  // card is drawing.
   const box = form.controls.get('status');
-  const status = box && !box.disabled ? box.value : popRawOf(popStartOf('status'));
+  const status = box && !box.disabled ? box.value : popRawOf(row ? row.status : null);
   const gates = (POP_SCHEMA.required || {})[form.kind] || {};
   const waived = form.controls.get('review_waived');
-  for (const [name, star] of form.marks) {
-    const wanted = name === 'title'
-      // Not in `required_at` — a titleless record is refused as YAML that will
-      // not read back rather than by a rule — and it is the one field every form
-      // here has and every record needs, so it is marked as what it is.
-      || ((gates[name] || []).includes(status)
-          // `review_waived` is the escape hatch from the reviewer rule, honoured
-          // here for the reason `missingFor` (`table.py`) honours it: asking for
-          // reviewers on a record that has waived them is a nag.
-          && !(name === 'reviewers' && waived && waived.checked));
-    star.textContent = wanted ? ' *' : '';
+  const off = waived ? waived.checked : !!(row && row.review_waived);
+  for (const name of form.names) {
+    const wanted = (gates[name] || []).includes(status)
+      // `review_waived` is the escape hatch from the reviewer rule, honoured
+      // here for the reason `missingFor` (`table.py`) honours it: asking for
+      // reviewers on a record that has waived them is a nag.
+      && !(name === 'reviewers' && off);
     const control = form.controls.get(name);
     if (control) control.setAttribute('aria-required', String(wanted));
+    // **The star goes in the `<dt>`, which is the only name this card has.** The
+    // title line and the two chips carry no name at all — that is what the card
+    // looks like, and it is what was asked for — so a field on the card's face
+    // gets `aria-required` and no mark. Nobody is going to fail to notice that a
+    // record needs a title.
+    const part = POP.querySelector(`.card-fact[data-field="${name}"] dt`);
+    if (!part) continue;
+    let star = part.querySelector('.popreq');
+    if (!wanted) { if (star) star.remove(); continue; }
+    if (star) continue;
+    // `aria-hidden` and paired with `aria-required` on the control: a star a
+    // screen reader reads as part of the name is a field called "Owner star",
+    // and a star nobody but a sighted reader gets is half a fact.
+    star = document.createElement('span');
+    star.className = 'popreq';
+    star.setAttribute('aria-hidden', 'true');
+    star.textContent = ' *';
+    part.append(star);
   }
 }
 
 // --- saving -----------------------------------------------------------------
 
+// **Only a staged box has a Save**, so this is only ever the create door and
+// the gated-status one. A live box wrote each field as it was answered.
 async function popSave() {
   const form = POP_FORM;
-  if (!form) return;
+  if (!form || !form.staged) return;
   const why = [];
-  const values = {};
+  // What has been answered, plus anything still open under the cursor. The
+  // buttons refuse focus on `mousedown` (see `popPress`), so a control open when
+  // Save is pressed is still open here rather than having blurred, staged and
+  // redrawn the box out from under the press.
+  const values = Object.assign({}, form.values);
   let offender = null;
-  for (const name of form.names) {
-    const control = form.controls.get(name);
-    // A locked control is never read. The parent of a new child is taken from
-    // the row the menu was opened on instead — see `popCreated` — and a field
-    // this view does not carry is one the form must not send at all.
-    if (!control || control.disabled) continue;
-    // **A half-written date must not clear the date that is there.** A native
-    // picker answers `value === ''` for `2026-0` exactly as it does for a box
-    // somebody emptied on purpose, and an empty one here is a deliberate clear —
-    // so without this the fumble commits a deletion and says nothing, which is
-    // the defect `openEditor` (`table.py`) records in as many words.
-    // `validity.badInput` is the browser's own word for that state and the only
-    // thing here that can tell a slip from an intention; `&&` guards it because
-    // the node driver builds elements that have no `validity` at all.
+  for (const [name, control] of form.controls) {
+    if (!form.names.includes(name) || control.disabled) continue;
+    // **A half-written date must not clear the date that is there** — see
+    // `popShutField`, which makes the same check for the same reason.
     if (control.validity && control.validity.badInput) {
       why.push(`${popLabel(name)} was left half-written, so nothing was saved.`);
       offender = offender || control;
@@ -2187,43 +2567,36 @@ async function popSave() {
     }
     values[name] = popReadOf(name, control);
   }
-  // The gate, asked before the write and only of the boxes this form drew. A
-  // form of one field cannot answer for a status it is not changing, and a
+  // The gate, asked before the write and only of the fields this box is about. A
+  // box of one field cannot answer for a status it is not changing, and a
   // refusal naming a field the payload does not carry is the failure
   // `_reject_a_start_date_this_write_puts_in_the_past` was rewritten to stop
   // making — on the server, about exactly this shape of question.
-  const status = 'status' in values ? values.status : popRawOf(popStartOf('status'));
+  const status = 'status' in values ? popRawOf(values.status) : popRawOf(popStartOf('status'));
   // **And only when the status is MOVING.** The gate is a rule about arriving at
   // a status, not about standing in one: `validate_all` reports a record that is
   // already `in_progress` without assignees as a problem beside it, and the plan
   // is full of records in exactly that state because that is what a problem list
   // is for. Gating on the standing value instead would refuse every edit to every
-  // one of them — measured on the `test_web` corpus, where three of the four
-  // tasks could not be renamed and the one sitting at `done` without its PRs
-  // answered "Done needs PRs." to a change of title.
+  // one of them.
   //
   // (No record id is spelled in this comment, and that is not fastidiousness:
   // this script ships in the page, `test_a_deleted_record_is_gone_from_every_page_that_drew_it`
   // asks whether a deleted id is still anywhere in `/table`'s bytes, and naming
-  // a fixture record here answered yes. Third time this half of the file has
-  // been caught shipping a comment — a CSS one in cut 2, `base_commit` in cut 4,
-  // and this.)
+  // a fixture record here answered yes.)
   //
-  // A create always moves (from nothing), and the `Status ▸` item that opens this
-  // form always moves, so both keep the gate they are there for.
-  //
-  // Measured against what the RECORD holds, not against what the form started
-  // with. `popStartOf` answers a pre-filled value first, and the gated-status
-  // item pre-fills exactly the status it is asking for — so comparing with it
-  // said "not moving" on the one path whose entire purpose is to move, and the
-  // form took a `done` with no PRs without a word.
+  // Measured against what the RECORD holds, not against what the box started
+  // with: the gated-status box pre-fills exactly the status it is asking for, so
+  // comparing with that would say "not moving" on the one path whose entire
+  // purpose is to move.
   const held = form.mode === 'new' ? null : popRawOf(popHeld('status'));
   const moving = form.mode === 'new' || status !== held;
   const gates = (POP_SCHEMA.required || {})[form.kind] || {};
   for (const name of moving ? form.names : []) {
-    if (!(name in values) || !popEmpty(values[name])) continue;
+    const has = name in values ? values[name] : popStartOf(name);
+    if (!popEmpty(has)) continue;
     if (!(gates[name] || []).includes(status)) continue;
-    if (name === 'reviewers' && values.review_waived) continue;
+    if (name === 'reviewers' && (values.review_waived ?? popStartOf('review_waived'))) continue;
     why.push(`${popHuman(status)} needs ${popLabel(name)}.`);
     offender = offender || form.controls.get(name);
   }
@@ -2236,7 +2609,7 @@ async function popSave() {
   }
   if (why.length) {
     popFormSays(why);
-    if (offender) offender.focus();
+    if (offender) offender.focus(); else popOpenField(form.names[0]);
     return;
   }
   // Held while the commit is in the air. `POP_WRITING`, taken in `popStart` for
@@ -2257,15 +2630,6 @@ async function popSave() {
   }
 }
 
-// What the control holds, as the API takes it.
-//
-// **Not a second copy of `coerce` (`table.py`), and the difference is the point
-// rather than a coincidence.** That function parses a string out of one text box
-// because the table has exactly one editor for fourteen columns. This reads
-// TYPED controls — a checkbox's `checked`, a number box that has already refused
-// everything that is not a number, a `<select>`'s chosen value — so there is
-// nothing to parse and nothing to get wrong twice. Only a list is split, because
-// a list is the one shape no native control has.
 function popReadOf(name, control) {
   const type = (POP_SCHEMA.types || {})[name];
   if (type === 'bool') return control.checked;
@@ -2747,7 +3111,7 @@ function popStart() {
 // `about` is the record this write was about: the id in the path for a change,
 // and nothing at all for a create, which has no id until the server mints one,
 // so there the answer supplies it.
-async function popSettled(flight, response, said, about) {
+async function popSettled(flight, response, said, about, stays) {
   const answer = await answerOf(response);
   // **One reading of a refusal, and it is `refusal()`'s.** A 409 from this
   // server has two shapes — the store's compare-and-swap report and a rule's
@@ -2788,7 +3152,7 @@ async function popSettled(flight, response, said, about) {
   // the table's `draw()` does, it rebuilds the whole tbody — owes the keyboard
   // a home of its own. `rove` is what the table hands focus with, and it
   // survives that redraw.
-  if (POP_GEN === flight.gen) popDone();
+  if (POP_GEN === flight.gen && !stays) popDone();
   // **`wrote` is handed the answer and the id**, which cut 2 declared as
   // taking nothing because nothing here wrote. A host needs both to keep a
   // feature it already has: `markSaved` (`table.py`) remembers a commit the
@@ -2797,6 +3161,11 @@ async function popSettled(flight, response, said, about) {
   // would take that mark off the one gesture that has no other way to earn it.
   // Both arguments are optional to a host that ignores them.
   if (POP_HOST && POP_HOST.wrote) await POP_HOST.wrote(answer, about || answer.id);
+  // **After the host, not before.** `popFormRow` re-reads the row through
+  // `POP_HOST.rows(id)`, and until `wrote()` has run that is still the row this
+  // box was opened with — so a card redrawn first would show the old value one
+  // beat after saving the new one.
+  if (stays && POP_GEN === flight.gen && POP_FORM) popRedraw();
   return answer;
 }
 
@@ -2832,7 +3201,13 @@ function popLost(flight, error, retry) {
 
 // A change to a record that exists. Three call sites in cut 3 and the form's
 // diff-only Save in cut 4.
-async function popWrite(id, fields, said) {
+// `stays` is the card-shaped box saving one field and going on being open.
+//
+// Every other write here closes the menu, and the reason it closes is in
+// `popSettled`: a menu is a list of things to do next, placed against a pointer
+// that has since moved. A card you are editing in is the thing you are doing,
+// so it stays, re-reads the row the host has just replaced, and redraws.
+async function popWrite(id, fields, said, stays) {
   const flight = popStart();
   if (!flight) return false;
   // The shell's banner has to know a write is in the air before it starts: the
@@ -2853,7 +3228,7 @@ async function popWrite(id, fields, said) {
       method: 'PATCH', headers: {'content-type': 'application/json'},
       body: JSON.stringify({base_commit: flight.base.value, fields: fields, body: null}),
     });
-    return Boolean(await popSettled(flight, response, said, id));
+    return Boolean(await popSettled(flight, response, said, id, stays));
   } catch (error) {
     // The repeat is safe because it is the SAME write — same value, same base —
     // and `_merge_frontmatter` skips every key whose stored value already equals
@@ -3045,18 +3420,6 @@ function popWriteItems(row) {
 # rows that exist is the one control that cannot express either of the two holes
 # `parent_refusal` (`model.py`) now closes behind it.
 _AS_SELECT = ("status", "priority", "parent")
-
-
-def _blank(kind: str) -> Record:
-    """A record of this kind with nothing in it, to ask the editors about.
-
-    The same device `required_at` (`model.py`) uses, and for the same reason:
-    what a form may offer is a function of the kind, and running the real
-    function over a blank record cannot drift from it the way a list written out
-    beside it would. The id is well-formed because `Record` validates its own,
-    and it is never written anywhere.
-    """
-    return MODELS[kind](id=f"{PREFIX[kind]}-000000", kind=kind, title="")
 
 
 def _pop_schema(index: Index | None) -> dict | None:

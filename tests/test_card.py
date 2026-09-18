@@ -30,6 +30,11 @@ from openproj.index import Index, build_index
 from openproj.model import RUNG, load_repo
 from openproj.render import ROUTES, render_graph, render_table, render_timeline
 
+# Through the module, because it is the card's own source of truth about which
+# rows it draws — `shell.py` ships its answer as a payload and `pop.py` draws
+# the same list as controls.
+from openproj.render.tokens import card_facts
+
 HEAD = "0123456789abcdef0123456789abcdef01234567"
 
 
@@ -124,8 +129,18 @@ def test_the_three_views_draw_the_same_card(index: Index, tmp_path: Path):
 
 def test_the_card_says_the_things_a_row_does_not(index: Index):
     """A node is a title and a glyph; a bar is a rectangle. What the card is for
-    is the rest of the record, so it says who owns it, when it runs, what it is
-    tagged and what kind it is."""
+    is the rest of the record — and since 2026-09-18 that is **exactly the
+    fields the right-click box edits**, which is jcanton's: the box "should
+    display the editable fields as the edit view, so owner, assignees, reviewer,
+    etc etc".
+
+    So the rows are `card_facts()`'s, per kind, and they are drawn whether or not
+    the record has filled them in: a field with nothing in it is the field
+    somebody opens the box to fill, and a row that is not there is a field that
+    cannot be clicked. The card used to list five compressed facts and leave the
+    empty ones out — `With`, the assignees minus the owner, was one of them, and
+    it is not a field anybody can edit.
+    """
     record_id = one_pitch(index)
     record = index.plan[record_id]
     page = render_table(index, ROUTES, base_commit=HEAD, may_write=True)
@@ -134,8 +149,13 @@ def test_the_card_says_the_things_a_row_does_not(index: Index):
     assert record.title in drawn
     assert record.owner in drawn
     assert record.tags[0] in drawn
-    for word in ("Owner", "Scheduled", "Tags"):
-        assert f"<dt>{word}</dt>" in drawn, word
+    wanted = [fact["label"] for fact in card_facts()[record.kind]["facts"]]
+    for word in wanted:
+        assert f"<dt>{word}</dt>" in drawn, f"{word} is an editable field and no row of the card"
+    assert "<dt>With</dt>" not in drawn, (
+        "the card still lists `With`, which reads well and is not a field: the box beside "
+        "it edits `assignees`, and one of them is lying"
+    )
 
 
 def test_the_document_is_fetched_on_hover_and_not_shipped_with_the_rows(index: Index):

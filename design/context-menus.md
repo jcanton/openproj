@@ -198,6 +198,55 @@ and a primary verb plus Cancel. It is **fields only** — the body stays on the 
 Ace, co-editing seats and a draft receipt, and a markdown editor in a floating box would be competing
 with the page that does it properly.
 
+**The box IS the hover card, and clicking a value is how it becomes a control.** That is where
+three rounds of correction from jcanton landed on 2026-09-18: *"can the `edit` box be the same as
+the floating card box, just with clickable/editable fields? instead of a new tall, column box"*,
+then, on an answer that only resembled it, *"I meant this card"*, then *"it should display the
+editable fields as the edit view, so owner, assignees, reviewer, etc etc"* and *"if having editable
+forms makes it visually different it could be like the table where you have to click one field to
+enter edit mode for that field?"* — and, throughout, *"as by design, not making the body editable"*.
+
+So there is one builder. `cardHtml` (`shell.py`) draws the title line, the chip line and the `<dl>`
+of facts; the hover calls it and `popDrawForm` calls it, and `:is(#card, .popcard)` in the shell's
+stylesheet means there is no second copy of the rules either. `test_the_box_a_right_click_opens_is_
+the_hover_card_itself` opens the card on a row, reads every element under it as tag-plus-classes,
+dismisses it, opens the box in its place and requires the two lists to be equal — the only classes
+allowed to differ are the ones that say a value can be pressed.
+
+**The card lists the kind's editable fields, always, with a dash where there is nothing.** Off
+`card_facts()` (`tokens.py`), which asks `_editable_for` over a blank record — the same function the
+record page, the create form and this box draw their controls from. The card used to list its own
+shorter vocabulary, including `With`, which is the assignees minus the owner: a compression that
+reads well and is not a field anybody can edit. A box that shows `With` and a box that edits
+`assignees` are two boxes however alike they look. Empty rows are drawn for the same reason: a field
+with nothing in it is the field somebody opens this box to fill.
+
+Two facts on the card are not fields and are not editable: **kind**, because changing a record's rung
+moves it between ladders and is the detail page's own panel, and **Progress**, because it is counted
+rather than stored.
+
+**Two ways of committing, and the split is not a preference.**
+
+| | when | how |
+|---|---|---|
+| live | `Edit…`, `Change parent…` — a record that exists | blur saves that one field as its own PATCH, Escape discards. `openEditor`'s bargain in the table, to the letter. |
+| staged | `New child ▸`, and a status that demands fields the record has not got | the controls stay open, and one button sends them together. |
+
+Neither of the staged cases can be written a field at a time: `POST /api/record` takes the whole
+record, and a `done` with no PRs is refused by the gate whichever of the two arrives first. A staged
+box is the same card with its controls open and a button under it.
+
+**A live write leaves the box open.** Every other write in this module closes the menu, and
+`popSettled` says why: a menu is a list of things to do next, placed against a pointer that has since
+moved. A card you are editing in is the thing you are doing, so `popWrite(…, stays)` re-reads the row
+the host has just replaced and redraws. A refusal keeps the box AND puts the refused answer back in
+the control it came out of — a refusal that also threw the answer away is one nobody can act on.
+
+**The three fields on the card's face carry no visible name**, which was asked for by name:
+*"without adding any extra descriptions (e.g. for kind, priority, status that don't have a label)"*.
+They carry `aria-label` instead. The box's heading is `.sr-only` for the same reason — `Edit "X"`
+over a box already showing X is the same fact twice.
+
 **The parent control is a `<select>` built from the host's own rows, never free text.** That picker is
 the only thing standing in front of two holes in the server: `_containment_problems` returns early on
 an unresolvable parent (`model.py`), so a dangling parent commits silently; and PATCH calls
