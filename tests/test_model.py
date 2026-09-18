@@ -215,14 +215,62 @@ def test_a_box_at_the_end_of_a_file_is_a_box():
     This is the half of that fix which is not about the deck: a point with no
     words is a point wherever progress is counted, which is what `checklist_items`
     already said it was."""
-    assert checklist_items("- [ ]") == [(False, "")]
+    assert checklist_items("## Progress\n\n- [ ]") == [(False, "")]
     assert checklist_items("## Progress\n\n- [x]") == [(True, "")]
-    assert checklist("- [x] Gather to rank 0\n- [ ]") == (1, 2)
+    assert checklist("## Progress\n\n- [x] Gather to rank 0\n- [ ]") == (1, 2)
     assert without_checklist("## Progress\n\n- [ ]") == ""
     # Still a marker and not a prefix: what follows the bracket has to be the end
     # of the line or a space, or `[ ]` is somebody's prose about a box.
-    assert checklist_items("- [ ]x nothing ticked here") == []
-    assert checklist_items("- [] no room in it") == []
+    assert checklist_items("## Progress\n\n- [ ]x nothing ticked here") == []
+    assert checklist_items("## Progress\n\n- [] no room in it") == []
+
+
+def test_only_the_boxes_under_progress_are_counted():
+    """jcanton, 2026-09-18: *"the auto progress measurment computed by parsing
+    the body and looking for checkmarks should only collect checkmarks within the
+    ## Progress section, not the entire body (which is what currently happens)"*.
+
+    It read the whole body before, on the argument that real notes also keep
+    boxes under `## Solution`. What that missed is the rest of the template: a
+    rabbit hole written as `- [ ] not this` and a scope cut ticked under `## For
+    later` are not work anybody is doing, and they moved the number on the table.
+    Four of this repository's own fixtures quote a Progress line in their prose,
+    which is the same defect arriving from the corpus rather than from the
+    template.
+
+    The subtree and not `sections`' flat slice: a `### Still to do` under
+    `## Progress` is inside it, which is how the template's own example reads.
+
+    And no heading means no items rather than a fall back to the whole body — a
+    record with a box in its prose and no Progress section is one nobody is
+    measuring.
+    """
+    body = (
+        "Quoting the pitch:\n\n- [x] not ours\n\n"
+        "## Progress\n\n- [x] one\n- [ ] two\n\n"
+        "### Still to do\n\n- [ ] three\n\n"
+        "## Rabbit holes\n\n- [ ] not this either\n"
+    )
+    assert checklist(body) == (1, 3)
+    assert [said for _, said in checklist_items(body)] == ["one", "two", "three"]
+    assert checklist("Prose with a box.\n\n- [x] alone\n") == (0, 0)
+    # A deeper heading is a Progress section too: the template is flat and
+    # whether somebody wrote two hashes or three is not a fact about the plan.
+    assert checklist("### Progress\n\n- [x] deep\n") == (1, 1)
+
+
+def test_a_box_outside_progress_stays_in_the_prose_the_slide_prints():
+    """The other end of the same scoping. `without_checklist` lifts the points a
+    slide draws at its top so they do not print twice — and a box it no longer
+    lifts has to stay where it was written, or the slide loses a line of somebody
+    else's prose that nothing puts back."""
+    kept = without_checklist(
+        "## Rabbit holes\n\n- [ ] not this\n\n## Progress\n\n- [x] this\n"
+    )
+
+    assert "- [ ] not this" in kept
+    assert "- [x] this" not in kept
+    assert "## Progress" not in kept, "the heading the lift emptied is still there"
 
 
 def test_a_body_with_no_checklist_counts_nothing_rather_than_zero_of_zero():
@@ -234,7 +282,9 @@ def test_a_body_with_no_checklist_counts_nothing_rather_than_zero_of_zero():
 def test_a_checklist_inside_a_code_fence_is_somebody_elses_example():
     """A pitch about tooling quotes task lists. Counting them would report
     progress on an example."""
-    body = "## Solution\n\n```markdown\n- [ ] not ours\n- [x] also not\n```\n\n- [x] ours\n"
+    body = (
+        "## Progress\n\n```markdown\n- [ ] not ours\n- [x] also not\n```\n\n- [x] ours\n"
+    )
     assert checklist(body) == (1, 1)
 
 
@@ -287,7 +337,7 @@ def test_a_heading_over_nothing_but_another_empty_heading_goes_too():
     """The other half of the same rule: a heading inside the subtree does not
     count as content, or `## A` stays alive on the strength of a `### B` that
     this same pass is about to delete, and prints as a heading over a blank."""
-    kept = without_checklist("## A\n\n### B\n\n- [ ] gone\n\n## C\n\nReal text.\n")
+    kept = without_checklist("## Progress\n\n### B\n\n- [ ] gone\n\n## C\n\nReal text.\n")
 
     assert kept == "## C\n\nReal text."
 
