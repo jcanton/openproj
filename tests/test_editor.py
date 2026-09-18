@@ -6767,6 +6767,89 @@ def test_the_keymap_a_person_chose_is_the_one_the_next_session_opens_in(
     )
 
 
+_WRITE_PRESSES_SAVE = r"""
+  flipEditing();
+  await new Promise(r => setTimeout(r, 300));
+  const editor = SURFACE.editor;
+  const Vim = ace.require('ace/keyboard/vim').CodeMirror.Vim;
+  const save = document.getElementById('save');
+  // The press is counted and stopped here, on the way down: what is under test
+  // is that `:w` reaches this button, and letting the page's own saver run would
+  // put a PATCH on a `file://` page that reaches no server — a failure somewhere
+  // else entirely, on a promise nothing here awaits.
+  let presses = 0;
+  save.addEventListener('click', event => {
+    presses++;
+    event.stopImmediatePropagation();
+    event.preventDefault();
+  }, true);
+  // The ex line through vim's own handler, which is what typing `:w` and pressing
+  // Enter reaches — `test_coedit.py` drives `%s/…/…/g` the same way and says why.
+  Vim.handleEx(editor.state.cm, 'w');
+  const typed = {presses, said: document.getElementById('state').textContent};
+  // The long spelling, because `defineEx` takes a name and a short name and a
+  // mapping of the two letters would answer only one of the four.
+  Vim.handleEx(editor.state.cm, 'write');
+  const spelled = presses;
+  // And the refusal. The button's own disabled state is the page's answer to "is
+  // there anything to save", and `:w` reads it rather than asking again.
+  save.disabled = true;
+  Vim.handleEx(editor.state.cm, 'w');
+  return {handler: String(editor.getKeyboardHandler().$id), typed, spelled,
+          refused: presses, said: document.getElementById('state').textContent};
+"""
+
+
+def test_colon_w_presses_save_and_says_so_when_there_is_nothing_to_press(
+    client: TestClient, tmp_path: Path
+):
+    """jcanton, 2026-09-18: *"can we have :w in the editor on vim keys work as a
+    [save] click?"*.
+
+    Ace ships `:w` already and it does nothing: its own `defineEx("write", "w",
+    …)` logs ":write is not implemented" to a console nobody has open. That is
+    the worst of the three states this could be in — worse than no command at
+    all — because thirty years of muscle memory reports success and the document
+    is unsaved.
+
+    **It presses the button rather than calling a saver.** `#save` is the one
+    name every page with an editor on it agrees about: the record page, the
+    create form and the slide editor each build their own save and hang it off
+    that id. A `:w` wired to one of those functions is a command that works on
+    one page.
+
+    Both spellings, because `defineEx` registers a name and a short name — `:w`,
+    `:wr`, `:writ` and `:write` all arrive — and a mapping of the two letters
+    would have answered only the first.
+    """
+    page = client.get(f"/detail/{TASK}?editor=ace").text
+
+    got = measured_in(
+        chrome(),
+        _before_the_page_runs(page, _SEED % '{"keymap": "vim"}'),
+        tmp_path / "vim-write.html",
+        1400,
+        _WRITE_PRESSES_SAVE,
+        query="?editor=ace",
+        patience=6800,
+    )
+
+    assert got["handler"] == "ace/keyboard/vim", "the keymap did not come on"
+    assert got["typed"]["presses"] == 1, (
+        f"`:w` pressed Save {got['typed']['presses']} times — Ace's own `:write` logs "
+        "to the console and does nothing, which is what this replaces"
+    )
+    assert got["spelled"] == 2, "`:write` is the same command and did not reach Save"
+    assert got["refused"] == 2, (
+        "`:w` pressed a disabled Save, which on the record page is a save going out "
+        "while one is already in the air"
+    )
+    assert got["said"] == "nothing to save", (
+        f"the refusal was silent, which is the state this was written to remove: "
+        f"{got['said']!r}"
+    )
+
+
 _STICKY_EDITOR = r"""
   return {search: location.search, editor: EDITOR.editor,
           surface: SURFACE.onSplice ? 'ace' : 'textarea',

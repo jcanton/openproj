@@ -169,6 +169,11 @@ at the top are the frontmatter and the box below is the shaping document — one
 one commit. **Reset** puts everything back to what was on the page when you arrived and leaves you
 in the editor.
 
+The keymap button on the status strip turns vim keys on, and the editor keeps three things about
+them: `j` and `k` walk the wrapped line rather than the file, `y` also puts what you yanked on the
+system clipboard, and **`:w` presses Save**. Ace ships `:w` doing nothing at all, which is worse
+than not having it.
+
 The status control is the hill beside the title: drag the ball to the stop you want. Changing a
 record's kind is the chip beside it — a pitch that turns out to be a task does not have to be
 rewritten. **Promote** on an issue or a note writes the pitch, the task or the project it becomes,
