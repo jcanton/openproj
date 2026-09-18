@@ -3723,6 +3723,72 @@ def test_the_box_a_right_click_opens_is_the_hover_card_itself(index: Index, tmp_
     )
 
 
+_A_SPACE = """
+const row = rowWhere(one => one.kind === 'task' && one.title);
+if (!row) return {error: 'the corpus draws no task'};
+openOn(row.id);
+itemIn('edit').click();
+const seen = {};
+for (const name of ['title', 'assignees']) {
+  const box = openField(name);
+  box.value = '';
+  // A space, typed the way a browser delivers one: the `keydown` first, and then
+  // the character — which only arrives if nothing cancelled the key. This is the
+  // whole of the bug: the row this box sits in was listening for a space as
+  // "open me", and swallowed it on the way past.
+  const key = new KeyboardEvent('keydown', {key: ' ', bubbles: true, cancelable: true});
+  box.dispatchEvent(key);
+  seen[name] = {stopped: key.defaultPrevented};
+  if (!key.defaultPrevented) {
+    box.value = 'two words';
+    box.dispatchEvent(new Event('input', {bubbles: true}));
+  }
+  seen[name].held = box.value;
+  giveUp(name);
+}
+// And the row itself still answers a space, which is what the handler is for.
+const part = fieldIn('title');
+part.focus();
+const onRow = new KeyboardEvent('keydown', {key: ' ', bubbles: true, cancelable: true});
+part.dispatchEvent(onRow);
+seen.row = {stopped: onRow.defaultPrevented, opened: !!boxIn('title')};
+return {id: row.id, seen};
+"""
+
+
+def test_a_space_typed_into_a_field_reaches_the_field(index: Index, tmp_path: Path):
+    """**The control this box opens is a CHILD of the element that opens it**, so
+    every key typed into it bubbles up to that element's own handler.
+
+    That handler answers Enter and Space with "open me", and cancels them so a
+    space does not scroll the page under an open card. Written without asking
+    whose key it was, it cancelled the space somebody was typing into the title:
+    jcanton, 2026-09-18, on the released version — "when editing the new card I
+    can't add space characters in the fields (tried title and assignees)".
+
+    `event.target !== part` is the fix, and it is asked rather than inferred from
+    whether a control is open: a `<select>` inside the same element answers space
+    and the arrow keys itself, and this handler has no business with any of them.
+
+    Both halves are asserted, because the fix that only does the first half is
+    deleting the handler: a space typed in the box is not cancelled, and a space
+    typed on the row still opens it.
+    """
+    got = _at_a_form(index, tmp_path / "space.html", _A_SPACE)
+
+    assert not got.get("error"), got
+    for name in ("title", "assignees"):
+        assert got["seen"][name]["stopped"] is False, (
+            f"the space typed into {name} was cancelled before the box could have it"
+        )
+        assert got["seen"][name]["held"] == "two words", got["seen"][name]
+    assert got["seen"]["row"]["stopped"] is True, (
+        "a space pressed on the row itself is not answered, so the card cannot be opened "
+        "from the keyboard — and the page scrolls under it instead"
+    )
+    assert got["seen"]["row"]["opened"] is True, "the space on the row opened nothing"
+
+
 # --------------------------------------------------------------------------- #
 # A refusal, which is the whole reason the form is a face of this box
 # --------------------------------------------------------------------------- #
