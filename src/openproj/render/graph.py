@@ -170,6 +170,23 @@ _GRAPH = """
     sentence about how many nodes are faded — went with it. -#}
 </div>
 
+  {#- The way out of a focused subtree, and the only one there is. The focus is
+      page state and not a query parameter — `matches()` (`controls.py`) answers
+      about one row at a time, and "is filed under this box" is a question about
+      the tree rather than about a row — so `showTheWayOut` cannot see it and the
+      facet bar's own Clear does not draw itself for it. A narrowing with nothing
+      on screen to undo it is a one-way door, so this bar is up for exactly as
+      long as the focus is, it names what is being shown, and its button is the
+      whole of the undo.
+
+      Drawn for a reader as well: focusing hides nodes and writes nothing, so it
+      belongs to the same half of this page as panning, zooming and the filters,
+      which the rendered export has always had. -#}
+  <div class="focusbar" id="focusbar" hidden>
+    <span class="focusname"></span>
+    <button type="button" id="unfocus">Show the whole plan</button>
+  </div>
+
   {#- `data-fills`: this is the box the shell measures the window into. A canvas
       has no size of its own — whatever it is told, it draws — so of the three
       boxes the shell measures (the table's, this one, the timeline's) it is
@@ -983,6 +1000,62 @@ function layoutSoon() {
 const NOTHING = document.getElementById('nothing');
 const CLEAR = document.getElementById('clear-filters');
 
+// --- one record and what is inside it ---------------------------------------
+//
+// **Containment, never connectivity.** A subtree here is `descendants()` — the
+// compound hierarchy cytoscape already holds, which is `parent` and nothing else
+// — and deliberately not `successors()`, which walks EDGES. An edge on this
+// canvas is a dependency and is never containment, and the one function on this
+// page that forgot the difference took every box on the drawing apart:
+// `packComponents` split the plan by `components()`, and the real plan's 31
+// records came out as 25 pieces with six of the eight boxes spread across more
+// than one of them. The note where it used to be is the long version.
+//
+// **The focus is a filter, and it is the one that is not in the query string.**
+// Every other control here keeps its state in `params` so a narrowed view can be
+// pasted to somebody; this one cannot, because `matches()` (`controls.py`) is
+// asked one row at a time and "is filed under that box" is a question about the
+// tree. What that costs is written up at `#focusbar`, which is the answer to it.
+let FOCUS = null;
+const FOCUSBAR = document.getElementById('focusbar');
+const UNFOCUS = document.getElementById('unfocus');
+
+// What a node is called. `label` is the record's title — the same ink the box is
+// drawn with — and the id is the fallback for the reason the table's `titleOf`
+// has one: a record hand-written in git can carry no title at all.
+const nameOf = node => node.data('label') || node.id();
+
+// The ids a focus keeps: the record, and everything filed under it however deep.
+// `null` when nothing is focused, and also when the focused record is no longer
+// on this canvas — which nothing can do while the page stands, and which would
+// otherwise be a focus that hides the entire plan.
+function focusKeeps() {
+  if (!FOCUS) return null;
+  const root = cy.getElementById(FOCUS);
+  if (!root.length) return null;
+  return new Set([FOCUS, ...root.descendants().map(node => node.id())]);
+}
+
+function focusOn(id) {
+  // The guard is what lets `Clear filters` ask for this unconditionally: a press
+  // with nothing focused must not cost the canvas a second filter pass.
+  if (FOCUS === id) return;
+  FOCUS = id;
+  drawFocus();
+  applyFilter();
+}
+
+function drawFocus() {
+  FOCUSBAR.hidden = !FOCUS;
+  if (!FOCUS) return;
+  // `textContent`, never `innerHTML`: this is a record's own title, and this is
+  // the JavaScript half of the app's one escaping boundary.
+  FOCUSBAR.querySelector('.focusname').textContent =
+    `Only "${nameOf(cy.getElementById(FOCUS))}" and what is inside it`;
+}
+
+UNFOCUS.onclick = () => focusOn(null);
+
 // Three ways for a canvas to be empty, and they drew one picture. Which one it
 // is decides what to do next, so the box says which one it is — the same three
 // sentences the table gives, because it is the same three facts about the same
@@ -1000,6 +1073,15 @@ function drawNothing() {
     headline = 'This plan has no records yet.';
     detail = 'Nothing has been pitched, shaped or scheduled.';
     clearable = false;
+  } else if (FOCUS) {
+    // Two things are narrowing this canvas and only one of them is a control the
+    // reader can see, so blaming the filters alone sends them to the wrong one.
+    // A focus on its own can never empty the canvas — the focused record always
+    // matches its own focus — so getting here means the controls above are set
+    // as well, and Clear drops both.
+    headline = `Nothing inside "${nameOf(cy.getElementById(FOCUS))}" matches these filters.`;
+    detail = 'The focus and the controls above are both narrowing this canvas, '
+      + 'and Clear filters drops both.';
   }
   NOTHING.querySelector('.headline').textContent = headline;
   NOTHING.querySelector('.hint').textContent = detail;
@@ -1008,7 +1090,18 @@ function drawNothing() {
 
 function applyFilter() {
   const keep = new Set();
-  cy.nodes().forEach(node => { if (matches(node.data())) keep.add(node.id()); });
+  // The focus narrows the kept set and nothing else, so everything below is
+  // unchanged by it: the containing boxes are still drawn, because a group's
+  // name is how you know where the cards inside it live, and a dependency
+  // outside the focus is still faded rather than hidden — with `#context`
+  // already saying how many and why. "Only what is inside this box" is the
+  // answer to what is SHOWN; what that work waits on is the second half of the
+  // same question and has never been a thing this canvas takes away.
+  const focused = focusKeeps();
+  cy.nodes().forEach(node => {
+    if (focused && !focused.has(node.id())) return;
+    if (matches(node.data())) keep.add(node.id());
+  });
   const aside = new Set();
   for (const id of keep)
     cy.getElementById(id).neighborhood('node').forEach(near => {
@@ -1061,7 +1154,13 @@ function applyFilter() {
 relayout();
 
 addEventListener('openproj:filter', applyFilter);
-CLEAR.onclick = clearFilters;
+// Clear drops the focus as well as the query string. Both narrow this canvas,
+// and a control that says "clear" while leaving half the narrowing in place is
+// the control this repository keeps rediscovering — one that teaches people it
+// is decoration. `clearFilters` ends in `openproj:filter`, so the redraw above
+// is what actually re-runs the filter; `focusOn(null)` returns immediately when
+// there is nothing focused, which is the ordinary press.
+CLEAR.onclick = () => { focusOn(null); clearFilters(); };
 applyFilter();
 
 // The canvas changed shape. Cytoscape holds the size it measured when it was
@@ -1124,6 +1223,35 @@ function tally(extra) {
   // canvas that has to give the row back — this is the one thing on any of these
   // pages that changes the height below the box without the window changing.
   fitRoom();
+}
+
+// **Which mode the canvas is in, set in one place.** Four facts — the flag, the
+// half-drawn edge's blocker, the ring on whatever it was going to be drawn from,
+// and the word on the button that leaves the mode — and they are one mode. The
+// menu's `Add dependency from here` is the second way in, and a mode entered
+// from two places with the button still reading "Edit dependencies" is a canvas
+// in edit mode offering no way out of it.
+//
+// Only ever called where `#commitbar` exists: `CONNECT.onclick` is inside
+// `if (CONNECT)`, and the menu item is built only when `CONNECT` is there to
+// build it with. The rendered export ships this same script with no bar to
+// reach, which is what makes it inert there.
+function connectingIs(on) {
+  connecting = on;
+  blocker = null;
+  cy.nodes().removeClass('picked');
+  CONNECT.textContent = connecting ? 'Discard and exit' : 'Edit dependencies';
+}
+
+// The first tap of the gesture: this node is what must finish first. The menu's
+// `Add dependency from here` is that same tap made from a box instead of from
+// the canvas, and it calls this rather than carrying a copy — the sentence is
+// the instruction for the tap AFTER it, and one gesture described two ways is
+// how the two descriptions come to disagree.
+function pickBlocker(node) {
+  blocker = node;
+  node.addClass('picked');
+  tally(`${node.id()} must finish first — now click what waits for it`);
 }
 
 // Opening is on double-click: a single tap is also the first half of drawing an
@@ -1321,6 +1449,47 @@ CYBOX.addEventListener('contextmenu', event => {
 // browser's own menu. Which is the right answer for a box whose whole content is
 // a sentence and a Clear filters button.
 
+// --- this view's own two items ----------------------------------------------
+//
+// Spliced into the menu between the write half and Open — `pop.py` holds the
+// slot and decides the order. Built on every open and never stored, which is
+// `attachDrawing`'s rule and the reason an item can refuse against state that
+// has moved since the last press.
+
+// The first half of the connecting gesture, started from a box instead of from
+// the canvas: turn the mode on, and pick this node as what must finish first.
+// Both halves already existed, and this item calls them rather than repeating
+// them — cut 2 made the menu refuse to open at all while `connecting` is already
+// true, so this run always starts from a canvas that is not in the mode.
+//
+// **Deliberately not refused for `off_plan_deps`.** That refusal belongs to the
+// record that WAITS: Save rebuilds the whole `depends_on` of every waiter out of
+// what this canvas can draw, so a record whose stored field also names something
+// off the plan must not be the second tap, or the save silently deletes a line
+// nobody was shown. This item makes the node the BLOCKER, and no Save here
+// writes the blocker's file at all — `wanted` is keyed by `edge.target()`. The
+// canvas already says the same thing by refusing the second tap for it and the
+// first tap for nothing whatever. A refusal here would be a second rule, wider
+// than the one it mirrors, telling a reader their off-plan dependencies are in
+// the way while nothing of theirs is being edited.
+function graphDependencyItem(node) {
+  return {kind: 'add-dependency', text: 'Add dependency from here',
+          run: () => { connectingIs(true); pickBlocker(node); }};
+}
+
+// Show this record and everything filed under it. Not refused on a record that
+// holds nothing: a leaf focused on its own is this canvas answering "what does
+// this one thing touch" — it stays drawn, its containing boxes stay drawn, and
+// what it waits on is faded beside it, which is a reading of the plan and not an
+// empty screen.
+function graphFocusItem(node) {
+  if (FOCUS === node.id())
+    return {kind: 'focus-subtree', text: 'Focus subtree',
+            why: `This canvas is already showing only ${nameOf(node)} and what is `
+                 + 'inside it.'};
+  return {kind: 'focus-subtree', text: 'Focus subtree', run: () => focusOn(node.id())};
+}
+
 // The host contract — registered once, and this page then knows nothing else
 // about the menu. `pop.py` has the whole of it.
 popServes({
@@ -1343,16 +1512,43 @@ popServes({
   // `undefined` and not a throw — checked against the vendored build,
   // 2026-09-18 — which is the falsy `popMenu` asks for before it opens anything.
   rows: id => cy.getElementById(id).data(),
+  extras: row => {
+    const node = cy.getElementById(row.id);
+    // `Add dependency from here` only where there is a bar to save it with, and
+    // NOT drawn refused the way a row's own refusals are. What is missing on a
+    // reader's page is not this record's state but the whole mode: `#commitbar`
+    // is not rendered at all, so an item explaining why dependencies cannot be
+    // edited would be the only thing on that page mentioning that they ever can
+    // be. `Focus subtree` moves nothing and is a reader's item as much as a
+    // writer's, so it is drawn on every render including the export.
+    //
+    // This is also what keeps `connectingIs` safe to call: the item that calls
+    // it exists only where `CONNECT` does.
+    const items = CONNECT ? [graphDependencyItem(node)] : [];
+    items.push(graphFocusItem(node));
+    return items;
+  },
+  // **A write from the menu has to redraw the node**, and this page's answer is
+  // the one its own Save already gives. The PATCH answers a commit and a
+  // `pushed` flag and no record (`web.py`), the elements block is built by the
+  // server out of `_row`, and a node's fill, its glyph and its ring are all
+  // styled off `data()` — so there is nothing on the wire to update them from
+  // and nothing this page could re-read them with. Without this a status written
+  // from the menu leaves the node drawn in the colour it used to have, which is
+  // the failure this canvas is least able to show: a graph that is wrong looks
+  // exactly like a graph that is right.
+  //
+  // `popWrite` has already closed the box and given the keyboard back before
+  // this runs, so nothing here is destroying the element focus was returned to —
+  // the whole document is going.
+  wrote: () => { location.reload(); },
 });
 
 if (CONNECT) {
   CONNECT.onclick = () => {
     const dropped = connecting ? pending().length + dropping().length : 0;
     if (dropped) { cy.remove(pending()); dropping().removeClass('dropping'); }
-    connecting = !connecting;
-    blocker = null;
-    cy.nodes().removeClass('picked');
-    CONNECT.textContent = connecting ? 'Discard and exit' : 'Edit dependencies';
+    connectingIs(!connecting);
     // The hint under the heading stays put in both modes. It was swapped for a
     // second paragraph on the way in and back again on the way out, so pressing
     // the button reflowed the page under the pointer — and everything it says is
@@ -1395,13 +1591,10 @@ if (CONNECT) {
     let written = 0;
     for (const [id, sources] of wanted) {
       const node = cy.getElementById(id);
-      // What this card is called on the canvas it was just dragged on. `label` is
-      // the record's title — the same ink `labelOf` draws inside the box — so the
+      // What this card is called on the canvas it was just dragged on, so the
       // sentence in the live region names the thing the reader is looking at
-      // instead of the id under it, which is drawn nowhere on this page. The id
-      // is the fallback for the same reason the table's `titleOf` has one: a
-      // record hand-written in git can carry no title at all.
-      const name = node.data('label') || id;
+      // instead of the id under it, which is drawn nowhere on this page.
+      const name = nameOf(node);
       const gone = new Set(unwanted.get(id) || []);
       // Added first and removed second, so a dependency drawn and then marked in
       // one session comes out as removed rather than as whichever the loops ran
@@ -1517,12 +1710,7 @@ cy.on('tap', 'edge', evt => {
 cy.on('tap', 'node', evt => {
   const node = evt.target;
   if (!connecting) return;
-  if (!blocker) {
-    blocker = node;
-    node.addClass('picked');
-    tally(`${node.id()} must finish first — now click what waits for it`);
-    return;
-  }
+  if (!blocker) { pickBlocker(node); return; }
   const from = blocker;
   blocker = null;
   from.removeClass('picked');
@@ -1586,8 +1774,7 @@ _GRAPH_STYLE = """
 .keys { position: absolute; top: .5rem; right: .75rem; z-index: 5;
         display: flex; flex-direction: column; align-items: flex-end; gap: .1rem;
         pointer-events: none;
-        padding: .35rem .5rem; border-radius: 3px;
-        background: color-mix(in srgb, var(--bg) 82%, transparent); }
+        padding: .35rem .5rem; border-radius: 3px; }
 .keys .legend { margin: 0; pointer-events: auto; gap: .2rem .45rem; }
 /* Both rows the same length — jcanton, 2026-08-20. Each row is five keys and a
    name, so five keys of one width and a name of one width is two rows of one
@@ -1651,6 +1838,37 @@ _GRAPH_STYLE = """
 #nothing[hidden] { display: none; }
 #nothing .headline { margin: 0 0 .25rem; font-size: 15px; }
 #nothing .hint { margin: 0 0 .75rem; }
+/* The way out of a focused subtree. An OVERLAY for the reason the keys are one:
+   `#cy` is `height: var(--room)`, so a bar in the flow costs the drawing exactly
+   the height it is drawn in, and the room is what this page has least of. Top
+   left, because the keys hold the top right and the layout runs left to right,
+   so this is the emptier of the two corners that are left.
+
+   Above `#nothing` rather than beside it — z-index 6 against its `auto`, and the
+   only place on this page that has to outrank it. A focus and a query can empty
+   the canvas between them, and the box that then covers it is `inset: 0` with an
+   opaque background: without this the one control that undoes half of what
+   emptied the canvas would be painted over by the sentence explaining it. */
+.focusbar { position: absolute; top: .5rem; left: .75rem; z-index: 6;
+            display: flex; align-items: center; gap: .5rem;
+            padding: .35rem .5rem; border-radius: 3px; }
+/* The one wash, for both overlays. They are the same veil over the same canvas
+   for the same reason — a box floating on the drawing has to be readable over
+   whatever node is under it without hiding that node — and written twice they
+   are two numbers that will be tuned once. AGENTS.md: two constants that are the
+   same number are the same defect. */
+.keys, .focusbar { background: color-mix(in srgb, var(--bg) 82%, transparent); }
+/* Written out, because `[hidden]`'s UA rule loses to any author `display` on
+   cascade origin alone — the same trap `#nothing` above is guarded against, and
+   the one `.drawmenu` was reported for on 2026-08-26. Without it a bar saying
+   the canvas is focused would stand over a canvas that is not. */
+.focusbar[hidden] { display: none; }
+/* A title is a record's own words and can be a sentence long. Clamped so it
+   cannot grow this bar across the canvas into the keys — the ellipsis is the
+   same bargain `#pop .poptext` makes, with the control that is the way out
+   never being the part that shrinks. */
+.focusbar .focusname { overflow: hidden; text-overflow: ellipsis;
+                       white-space: nowrap; max-width: 18rem; }
 /* **A corner is not a width.** `.keys` is pinned by its right edge and sized by
    its content, and its content is a grid of `auto repeat(6, max-content)` — a
    row of six status keys and their name, which measures about 620px whatever the
@@ -1681,6 +1899,20 @@ _GRAPH_STYLE = """
    already the thing a phone has least of. Five wrapped rows over the top of the
    graph is the cheaper trade, and it is still pannable underneath. */
 @media (max-width: 40rem) {
+  /* The keys take both edges here, so they take the top of the canvas with them
+     — five wrapped rows of it — and a bar pinned to the top left would be drawn
+     on top of them. The bottom edge is the corner that is still free at this
+     width, and the focus bar is the shorter of the two boxes.
+
+     Both edges for the same reason the keys were given both: **a corner is not a
+     width.** A box pinned by one edge and sized by its content is as wide as a
+     record's title plus a button, and the one below measured 406px against a
+     390px page — which is how two thirds of the legend came to hang off the left
+     of this canvas, clipped by the document, with nothing overflowing to the
+     right and no scrollbar to say so. With both edges the bar is as wide as the
+     canvas and the title inside it takes the ellipsis it is already set up for,
+     while the button — the way out — keeps its whole width. */
+  .focusbar { top: auto; bottom: .5rem; right: .75rem; }
   .keys { left: .75rem; align-items: stretch; }
   .keys .legends { display: block; }
   .keys .legends .legend { display: flex; }
@@ -1706,13 +1938,17 @@ def render_graph(
     ends both failures for the same reason: Jinja substitutes into the template,
     never into what a value expanded to.
     """
+    # "There is a server behind this page AND this person may write". A local
+    # rather than an argument spelled twice, because two things now ask it: the
+    # template, for `#commitbar`, and the menu, for whether to bake its schema.
+    editable = base_commit is not None and may_write
     body = _compiled(_GRAPH).render(
-        # "There is a server behind this page AND this person may write". The
-        # first half alone shipped here, exactly as it had on the table before
-        # the `reader-table` branch: a signed-out visitor was served "Edit
-        # dependencies", drew edges onto the canvas, pressed Save and collected a
-        # 403 for each of them. `/table` has asked this question since that
-        # branch; `/graph` never did, and took no `request` to ask it with.
+        # The first half of that alone shipped here, exactly as it had on the
+        # table before the `reader-table` branch: a signed-out visitor was served
+        # "Edit dependencies", drew edges onto the canvas, pressed Save and
+        # collected a 403 for each of them. `/table` has asked this question
+        # since that branch; `/graph` never did, and took no `request` to ask it
+        # with.
         #
         # `design/QUEUE.md`'s table entry predicted the flag would have to SPLIT
         # rather than narrow, and on the table it narrowed. Here it narrows
@@ -1723,10 +1959,12 @@ def render_graph(
         # The script below is deliberately NOT behind this. The rendered-file
         # export has shipped the same JavaScript with no `#commitbar` to reach it
         # since the day it existed — `if (CONNECT)` is what makes it inert, and
-        # `connecting` can be turned on from nowhere else — and two tests read
-        # `SAVE.onclick` and the node `tap` handler straight out of `graph.html`.
-        # A reader's served page is that page.
-        editable=base_commit is not None and may_write,
+        # nothing can turn `connecting` on without `CONNECT` in its hand: the
+        # button's own handler is inside that guard, and the menu's `Add
+        # dependency from here` is only built where `CONNECT` is there to build
+        # it. Two tests read `SAVE.onclick` and the node `tap` handler straight
+        # out of `graph.html`. A reader's served page is that page.
+        editable=editable,
         base_commit=base_commit or "",
         facets=_facets_html(
             index.facets,
@@ -1741,7 +1979,16 @@ def render_graph(
         # that script is where a record's page lives — `/detail/` here and
         # `detail.html#` in an export — and `Open` has to land exactly where this
         # canvas's own `dbltap` lands.
-        pop=_pop_js(links),
+        #
+        # **The index goes with it wherever this page may write**, because that
+        # is what bakes `POP_SCHEMA` — the status ladders, the gates, the labels
+        # and the people the write half is built out of. `popServes({may})` here
+        # answers `!!CONNECT`, which is true on exactly the renders `editable` is
+        # true on, and a menu asked to draw a write half with no schema says so
+        # in the box rather than quietly drawing a reader's menu to somebody who
+        # may write. `None` otherwise keeps 3.7 kB off a reader's page and out of
+        # the static export, which has nothing to write to.
+        pop=_pop_js(links, index if editable else None),
         statuses=STATUSES,
         priorities=PRIORITIES,
         glyphs=STATUS_GLYPH,

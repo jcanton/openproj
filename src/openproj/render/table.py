@@ -1372,6 +1372,111 @@ addEventListener('openproj:filter', hideCardNow);
 // listener and no menu ever opens there. `MOVING` was the second name on that
 // list until the card's `pointerover` listener above — which also names it —
 // proved what the list costs, and it is declared beside `WRITING` now.
+
+// Every record filed under this one, however deep, with the record itself first.
+//
+// Off `DATA.rows` and its `parent`, which is the only containment this page has
+// — and the right one: `_row` (`rows.py`) nulls a parent that is not in
+// `index.plan`, so this walk can only reach records the table can draw, which is
+// exactly the population the filter it feeds is about.
+//
+// `seen` because a parent cycle is a blocker this tool REPORTS rather than a
+// plan it refuses to load — `ordered` above draws the members of one flat at the
+// end rather than dropping them, and `_reviewers_under` (`rows.py`) carries this
+// same guard for this same reason. A walk without it never comes back.
+function subtreeOf(id) {
+  const kids = {};
+  for (const row of Object.values(DATA.rows))
+    if (row.parent) (kids[row.parent] || (kids[row.parent] = [])).push(row.id);
+  const found = [id];
+  const seen = new Set(found);
+  for (let at = 0; at < found.length; at++)
+    for (const child of kids[found[at]] || [])
+      if (!seen.has(child)) { seen.add(child); found.push(child); }
+  return found;
+}
+
+// Whether this kind can hold anything at all: `PARENT_KINDS` read the other way
+// round, which is precisely how `CHILD_KINDS` (`model.py`) is derived from it.
+// Not a list of kinds written out here — it would have said `pitch` until a
+// `product` was added above `project`, and a rule that names a rung is wrong the
+// day the ladder grows. `holders` above is the same map read the near way.
+const holdsAnything = kind =>
+  Object.values(PARENT_KINDS).some(kinds => kinds.includes(kind));
+
+// The item itself, refused rather than left out when there is no subtree — a
+// control that disappears teaches nothing about why, which is the rule every
+// other item in this menu is built to.
+//
+// **Two refusals and not one**, which is the distinction `moveTip` above already
+// draws for the drag gesture and `Take out of "X"` (`pop.py`) draws for its own.
+// A task can never hold anything, so telling one that nothing is filed under it
+// implies a fix that does not exist; a pitch with no tasks yet is a state
+// somebody can change this afternoon. An error says what is wrong without
+// implying a remedy that is not there.
+function focusItem(row) {
+  const ids = subtreeOf(row.id);
+  if (ids.length > 1) return {kind: 'focus-subtree', text: 'Focus subtree',
+                              run: () => focusOn(row, ids)};
+  return {kind: 'focus-subtree', text: 'Focus subtree',
+          why: holdsAnything(row.kind)
+            ? `Nothing is filed under ${popTitle(row)} yet.`
+            : `A ${row.kind} holds nothing, so there is no subtree to focus on.`};
+}
+
+// **Narrow the table to this record and the work inside it.**
+//
+// It drives the control bar's own filter and does not invent a second one. A
+// private "only these ids" flag would be invisible in the URL, untouched by
+// Reset, and a second answer to the question "what is on screen" — which is the
+// question this page already answers in one place. `update` (`controls.py`)
+// writes the query string, syncs the box, shows the way out and dispatches
+// `openproj:filter`; that event is what redraws these rows, hides the card and
+// closes this menu, so nothing here has to do any of it.
+//
+// One `id:` term per record rather than one term for the subtree, because the
+// query language has no ancestor operator and should not grow one for this:
+// containment is a walk over `parent`, and what lands in the box is the ANSWER
+// to that walk — readable, editable, and pasteable to somebody else.
+//
+// Quoted, because an id is only `<prefix>-[0-9a-f]{6}` when it passes
+// `ID_PATTERN`. A malformed one is a reported blocker rather than a refusal, so
+// it does reach this page, and an id with a space in it would otherwise be read
+// as two terms.
+//
+// **The facets are deliberately left alone.** Focusing narrows, and the bar
+// above is a standing statement somebody made that is still on screen with a
+// Reset beside it; clearing it would be this item answering a question nobody
+// asked. What it does replace is the query, which is the one control it has to
+// have.
+function focusOn(row, ids) {
+  update('q', ids.map(id => `id:"${id}"`).join(' or '));
+  announce(`Showing ${popTitle(row)} and the ${ids.length - 1} `
+    + `record${ids.length === 2 ? '' : 's'} under it`);
+  // **The keyboard lands on the record that was focused on**, and this is the
+  // half `popDone` cannot do. A trusted right press focuses the cell it lands on
+  // — measured in headless Chrome, 2026-09-18: `POP_RETURN` is the title cell —
+  // and the redraw the filter has just run threw that cell away, so `popDone`
+  // finds a `back` that is no longer in the document and the keyboard falls to
+  // `<body>`, where the next Tab starts from the top of the page.
+  //
+  // `rove` is what this table hands focus with and it survives a redraw. Named
+  // rather than left to `rove`'s own fallback, which is the cell that HELD the
+  // roving tabindex before all this — `all[0]`, the first row drawn, which after
+  // a focus is an ancestor kept for context rather than the record somebody
+  // asked about. The fallback still answers where the record's own row was
+  // filtered out, which a sort other than `id` can do: that sort keeps no
+  // ancestors.
+  //
+  // Walked rather than selected, because an id goes into `tr[data-id="…"]` as a
+  // selector and a malformed one is a reported blocker that does reach this
+  // page. Guarded on `EDITABLE` because `rove` and `stops` are declared inside
+  // the editable branch and do not exist at all on a rendered file — the
+  // constraint the comment above this block names `DRAFT_ID` for. A rendered
+  // file has no roving grid to land in either.
+  if (EDITABLE) rove(stops().find(td => td.parentNode.dataset.id === row.id) || null, true);
+}
+
 popServes({
   // The map of fields this reader may write, or null. The write half of the menu
   // is cuts 3 to 5 and nothing in cut 2 asks — `EDITABLE` is spelled here rather
@@ -1385,10 +1490,55 @@ popServes({
   // browser's own menu — which is the right menu over a row somebody is typing
   // into, because it is the one with Paste on it.
   rows: id => DATA.rows[id],
-  // Not called in cut 2, and not callable on a rendered file, where
-  // `refreshRows` is not declared at all: cut 3's writes are behind `may()`,
-  // which is null there.
-  wrote: () => refreshRows(),
+  // This view's own item, spliced in whole between the write half and the three
+  // that only look. Asked on every open and never stored, which is why the
+  // refusal below can be about the plan as it is now rather than as it was when
+  // some earlier menu was drawn.
+  //
+  // Offered on a rendered file as well as on the served page, and that is the
+  // point rather than an oversight: filtering is the half of this table a file
+  // keeps, and a reader with four hundred rows and no server is who most wants
+  // one branch of them.
+  extras: row => [focusItem(row)],
+  // **What a status or an owner write actually changes here is more than the
+  // cell it was made from**, and cut 2 registered a `wrote` that changed nothing
+  // on screen at all: `refreshRows` replaces `DATA.rows` and nothing redraws
+  // from it, so the menu would have written a status, said so, and left the old
+  // chip sitting in the row — a write that looks exactly like one that did not
+  // take. `draw()` is what puts any of it on screen.
+  //
+  // The re-read and not an `Object.assign` of the fields that were sent. Status
+  // and owner are two of the things this page cannot work out the consequences
+  // of: a status moves the problems, the predicates the facets filter by and the
+  // progress rollup of everything above it, an owner moves the `unowned` mark
+  // and the schedule that follows from staffing, and `parent` moves all of that
+  // plus the row's cycle and dates. `refreshRows` asks `/api/table.json` — the
+  // very payload this page was rendered from — and regroups the problems and
+  // resummarises inside itself, so `refreshProblems` beside it would be a second
+  // read of a fact that has already arrived.
+  //
+  // `markSaved` first, and it is not decoration: the server answers
+  // `pushed: false` while a commit is only on this instance, and every other
+  // write here marks the row until a later read confirms it landed. Without it a
+  // menu write is the one gesture on this page with no way to earn that mark.
+  // The order is `reparent`'s — the mark goes down before the re-read, so
+  // `settleMarks` can clear it off the same answer.
+  //
+  // Focus needs nothing here. `popWrite` gives the keyboard back to the cell the
+  // menu was opened from BEFORE calling this, and `draw()` reads
+  // `document.activeElement` before it detaches anything and hands it back
+  // through `rove` — so the redraw that destroys that cell is also what restores
+  // it.
+  wrote: async (answer, id) => {
+    markSaved(answer, id);
+    const fresh = await refreshRows();
+    draw();
+    // The rows could not be re-read, so the table is a commit behind the
+    // sentence `popWrite` has just said is true of it — the row still shows the
+    // value that was changed, which is what a write that was refused looks like.
+    // `reparent` says the same thing after the same failure.
+    if (!fresh) announce('Saved, but the table could not be read back — reload to see it');
+  },
 });
 
 // `ContextMenu` and Shift+F10 arrive here too — they deliver a `contextmenu`
@@ -4941,6 +5091,13 @@ def render_table(
     may_write: bool = False,
 ) -> str:
     payload = _payload(index)
+    # Asked once, because it now decides three things rather than two: the
+    # template's write machinery, the hint in the control bar, and whether the
+    # menu is given the index its write half is built from. A third hand-written
+    # copy of a two-clause condition is how a page comes to draw one of the three
+    # and not the others. The note under `editable=` below is what all three are
+    # asking.
+    editable = base_commit is not None and may_write
     body = _compiled(_TABLE).render(
         payload=payload,
         # "There is a server behind this page AND this person may write" — the
@@ -4956,7 +5113,7 @@ def render_table(
         # `refreshRows` are reached only from save paths). The rendered-file
         # export has exercised the read-only half since it existed; serving it
         # to a reader is the same page.
-        editable=base_commit is not None and may_write,
+        editable=editable,
         base_commit=base_commit or "",
         links=links,
         columns=_columns_for(index),
@@ -4984,7 +5141,7 @@ def render_table(
         # `{% if editable %}` rather than in the markup unconditionally.
         facets=_facets_html(
             index.facets,
-            aside=_TABLE_HINT if base_commit is not None and may_write else _NO_ASIDE,
+            aside=_TABLE_HINT if editable else _NO_ASIDE,
             titles=_titles(index),
             # `state=True`: this is the one plan view with no commit bar, so the
             # live region a save writes its receipt into belongs here.
@@ -4992,10 +5149,19 @@ def render_table(
         ),
         filters=_FILTER_JS,
         combobox=_combobox_html(index, live=base_commit is not None),
-        # A function and not a constant, because the one thing the menu's script
-        # does not know for itself is where a record's page is: `/detail/` from
-        # the server and `detail.html#` in the export.
-        pop=_pop_js(links),
+        # A function and not a constant, because the two things the menu's script
+        # does not know for itself are where a record's page is — `/detail/` from
+        # the server and `detail.html#` in the export — and what the write half is
+        # built from.
+        #
+        # **The index goes in exactly where `popServes({may})` can answer
+        # truthily.** Without it `POP_SCHEMA` is null and the menu draws one
+        # refused item saying editing is unavailable here, which on this page
+        # would be a wiring mistake rather than the truth. With it, 3.7 kB of
+        # ladder, glyphs, labels, gates and people is baked into the page — so a
+        # reader's copy and the static export, where nothing can be written, are
+        # not asked to carry it.
+        pop=_pop_js(links, index if editable else None),
     )
     return _page(
         "openproj — table",
