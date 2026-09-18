@@ -2813,9 +2813,20 @@ const fieldsInForm = () => [...POP.querySelectorAll('.popfield')].map(one => one
 // The field's NAME, without the mark the label also carries. A `<label>` holding
 // `Appetite` and an `aria-hidden` ` *` reads `Appetite *` as text, and the two are
 // separate facts with separate readers — `markIn` below is the mark's.
-const nameIn = name => [...fieldIn(name).querySelector('.popname').childNodes]
-  .filter(one => one.nodeType === 3).map(one => one.textContent).join('');
-const markIn = name => fieldIn(name).querySelector('.popreq').textContent;
+//
+// **`''` when there is no label at all, which is a real answer and not a
+// missing one**: the title and the two chips are drawn the way the card draws
+// them, with no name over them, and a helper that threw there would make "this
+// field carries no visible name" the one claim these tests could not state.
+const nameIn = name => {
+  const label = fieldIn(name).querySelector('.popname');
+  return label ? [...label.childNodes]
+    .filter(one => one.nodeType === 3).map(one => one.textContent).join('') : '';
+};
+const markIn = name => {
+  const star = fieldIn(name).querySelector('.popreq');
+  return star ? star.textContent : '';
+};
 const noteIn = name => {
   const said = fieldIn(name).querySelector('[data-kind="form-note"]');
   return said ? said.textContent : '';
@@ -2869,6 +2880,17 @@ const shortOf = least => {
   return null;
 };
 """
+
+
+# What `fieldsInForm()` reads in, given a kind's editable fields.
+#
+# The form is the hover card, so it draws what the card draws: the title line,
+# then the chip line, then the `<dl>`. Three fields therefore come out of the
+# schema's order and go to the front in the card's own — kind, priority, status
+# is `cardHtml`'s chip order and jcanton's, from 2026-08-21.
+def _the_cards_order(schema: list[str]) -> list[str]:
+    face = [name for name in ("title", "priority", "status") if name in schema]
+    return face + [name for name in schema if name not in face]
 
 
 def _at_a_form(
@@ -3070,8 +3092,9 @@ def test_new_child_opens_the_form_with_the_parent_filled_and_locked(index: Index
         f"the box announces itself as {got['label']!r} while it is a form — a reader "
         "arriving inside it is told which menu they are in"
     )
-    assert got["fields"] == got["schema"], (
-        f"the form drew {got['fields']} and this kind's editable fields are {got['schema']}"
+    assert got["fields"] == _the_cards_order(got["schema"]), (
+        f"the form drew {got['fields']} and this kind's editable fields, in the order the "
+        f"card draws them, are {_the_cards_order(got['schema'])}"
     )
     assert got["parentBox"]["tag"] == "SELECT", (
         f"the parent is a {got['parentBox']['tag']}, and a box you can type an id into is "
@@ -3387,9 +3410,9 @@ def test_edit_opens_on_the_record_and_saves_only_what_changed(index: Index, tmp_
         "form": True,
     }, got["opened"]["up"]
     assert got["opened"]["heading"] == f'Edit "{was["title"]}"', got["opened"]["heading"]
-    assert got["opened"]["fields"] == got["opened"]["schema"], (
-        f"the form drew {got['opened']['fields']} and this kind's editable fields are "
-        f"{got['opened']['schema']}"
+    assert got["opened"]["fields"] == _the_cards_order(got["opened"]["schema"]), (
+        f"the form drew {got['opened']['fields']} and this kind's editable fields, in the "
+        f"order the card draws them, are {_the_cards_order(got['opened']['schema'])}"
     )
     held = got["opened"]["held"]
     # Spelled out per type rather than run through the module's own `popRawOf`,
@@ -3443,101 +3466,203 @@ def test_edit_opens_on_the_record_and_saves_only_what_changed(index: Index, tmp_
 
 
 _THE_CARDS_SHAPE = """
-const row = rowWhere(one => one.kind === 'task' && one.title);
-if (!row) return {error: 'the corpus draws no task'};
+const row = rowWhere(one => one.kind === 'task' && one.title && one.status && one.priority);
+if (!row) return {error: 'the corpus draws no task carrying both ladders'};
+// The card first, on the same row, so that what the form is compared against is
+// the thing itself and not a description of it.
+const tr = menuRows().find(one => one.dataset.id === row.id);
+// Caught, because the document behind a card is fetched and this page is
+// served over `file://` — the fields are drawn in the first pass either way,
+// and the fields are what is being compared.
+await showCard(row, 300, 300, []).catch(() => {});
+const card = {
+  width: getComputedStyle(CARD).maxWidth,
+  title: CARD.querySelector('.card-title') ? CARD.querySelector('.card-title').textContent : '',
+  chips: [...CARD.querySelectorAll('.card-chips .chip')].map(one => one.className),
+  names: [...CARD.querySelectorAll('dt')].map(one => one.textContent),
+  hill: !!CARD.querySelector('.card-hill'),
+};
+popClose();
 openOn(row.id);
 itemIn('edit').click();
-const shape = {
-  // The two caps, read off the two live boxes rather than compared against a
-  // number written here. `26rem` in two stylesheets is one claim only while
-  // somebody keeps them equal by hand.
-  form: getComputedStyle(POP).maxWidth,
-  card: getComputedStyle(document.getElementById('card')).maxWidth,
-  fields: [],
+const form = formIn();
+const parts = [...form.children].map(one => one.className);
+const seen = {
+  card: card,
+  width: getComputedStyle(POP).maxWidth,
+  // The card's own three class names, in the card's own order, on the form's
+  // own children. The claim is the SHAPE, so it is read as structure.
+  parts: parts,
+  title: (() => {
+    const line = form.querySelector('.card-title');
+    const box = line ? line.querySelector('input') : null;
+    return {where: line ? line.className : '', tag: box ? box.tagName : '',
+            value: box ? box.value : '', named: nameIn('title')};
+  })(),
+  chips: [...form.querySelectorAll('.card-chips .chip')].map(one => ({
+    klass: one.className, field: one.dataset.field || '',
+    control: one.querySelector('select') ? 'SELECT' : '',
+    word: one.querySelector('.chipword') ? one.querySelector('.chipword').textContent : '',
+  })),
+  hill: !!form.querySelector('.card-chips .card-hill'),
+  named: {title: nameIn('title'), priority: nameIn('priority'), status: nameIn('status')},
+  // No document in the box, which is the design's line and not an accident.
+  body: !!form.querySelector('.card-body'),
+  facts: [],
 };
-let stacked = 0, top = Infinity, foot = -Infinity;
 for (const name of fieldsInForm()) {
   const control = boxIn(name);
-  const label = fieldIn(name).querySelector('.popname').getBoundingClientRect();
+  const label = fieldIn(name).querySelector('.popname');
   const box = control.getBoundingClientRect();
-  shape.fields.push({
-    name: name, type: control.type,
-    left: Math.round(label.left), right: Math.round(label.right),
+  const at = label ? label.getBoundingClientRect() : null;
+  seen.facts.push({
+    name: name, type: control.type, listed: !!fieldIn(name).closest('.popfacts'),
+    left: at ? Math.round(at.left) : null, right: at ? Math.round(at.right) : null,
     box: Math.round(box.left),
     // Overlapping on the vertical axis is what "on one row" means, and it is
     // the whole question: a label stacked over its control shares no pixel of
     // it, whatever the two boxes happen to measure.
-    together: Math.min(label.bottom, box.bottom) - Math.max(label.top, box.top) > 0,
+    together: at ? Math.min(at.bottom, box.bottom) - Math.max(at.top, box.top) > 0 : null,
   });
-  // What the same fields would reach if each name still took its own line.
-  stacked += label.height + box.height;
-  top = Math.min(top, label.top, box.top);
-  foot = Math.max(foot, label.bottom, box.bottom);
 }
-shape.span = Math.round(foot - top);
-shape.stacked = Math.round(stacked);
-return {id: row.id, kind: row.kind, shape: shape};
+// The status chip is the status control, so the picture beside it has to be the
+// status too — the card draws the same fact twice and so does this.
+const before = form.querySelector('.card-chips .hill-ball').dataset.word;
+const other = [...boxIn('status').options].map(one => one.value)
+  .find(one => one && one !== row.status);
+if (other) {
+  typeInto('status', other);
+  seen.moved = {
+    to: other,
+    chip: form.querySelector('.card-chips [data-field="status"]').className,
+    was: before,
+    ball: form.querySelector('.card-chips .hill-ball')
+      ? form.querySelector('.card-chips .hill-ball').dataset.word : '',
+  };
+}
+return {id: row.id, kind: row.kind, was: row.status, seen: seen};
 """
 
 
-def test_the_form_is_the_cards_shape_and_not_a_column_of_stacked_fields(
-    index: Index, tmp_path: Path
-):
-    """**The box a right-click opens to edit a record is the box a hover opened
-    to read one, with the right-hand column typed into.**
+def test_the_form_is_the_hover_card_with_its_values_typed_into(index: Index, tmp_path: Path):
+    """**The box a right-click opens to edit a record is the box a hover opens to
+    read one, with a control wherever the card draws a value.**
 
-    jcanton, 2026-09-18, on the first form drawn: *"can the `edit` box be the
-    same as the floating card box, just with clickable/editable fields? instead
-    of a new tall, column box"*. The first cut drew a label above every control,
-    which for a task is fifteen pairs — a box about twice the height of the card
-    the same gesture used to show, over the table it was opened from.
+    jcanton, 2026-09-18, on the first form: *"can the `edit` box be the same as
+    the floating card box, just with clickable/editable fields? instead of a new
+    tall, column box"*, and then, on an answer that widened the box without
+    wearing the card: *"I meant this card"* — followed by *"without adding any
+    extra descriptions (e.g. for kind, priority, status that don't have a label)
+    just make all fields editable?"* and *"as by design, not making the body
+    editable"*.
 
-    So three claims, and each of them is the card's:
+    So the claim is structural, and it is asserted against the live card rather
+    than against a description of one: the card is opened on the same row in the
+    same window, read, dismissed, and the form opened in its place. Both boxes
+    are then the same width, and the form draws the card's three parts under the
+    card's three class names in the card's order — `.card-title`, `.card-chips`,
+    then the list.
 
-    - the same width cap, read off `#card` and `#pop` at the same moment rather
-      than asserted against `26rem` written twice;
-    - every name in one column, which is what `#card dl`'s `auto 1fr` does and
-      what a grid per field would not — a field's own two parts would line up
-      and nothing would line up across fields;
-    - every name on the same row as the control it names, including the
-      checkbox, which was the one field drawn the other way round when a field
-      was a stacked pair.
+    **The three fields on the card's face carry no name, and that is the part
+    that was asked for by name.** Kind, priority and status are chips at the top
+    of a card and the title is the line above them; a form that put TITLE,
+    PRIORITY and STATUS over them would be a different box wearing the card's
+    colours. `aria-label` carries the fact for a reader who cannot see that the
+    tinted box under the title is a status — asserted in
+    `test_a_gated_status_opens_the_form_on_what_it_needs_and_saves_both`, which
+    reads `aria-required` off the same controls.
 
-    The height is asserted as a comparison and not a number: what the same
-    fields would reach with every name on its own line, against what they
-    reach now. A pixel count here would be a fact about this laptop's font.
+    The hill is the last of it. The card draws the status twice — the word in the
+    chip and the shape under it — so the picture has to follow the `<select>`,
+    and a chip reading `Done` over a ball still on the near slope would be the
+    card confidently wrong about the one record it is showing.
     """
-    got = _at_a_form(index, tmp_path / "shape.html", _THE_CARDS_SHAPE)
+    got = _at_a_form(index, tmp_path / "shape.html", _THE_CARDS_SHAPE, patience=4500)
 
     assert not got.get("error"), got
-    shape = got["shape"]
-    fields = shape["fields"]
-    # Not a claim about a form with two boxes in it: the rung under test is the
-    # one with the most fields, and the corpus is free to change but not to stop
-    # drawing a task.
-    assert len(fields) >= 5, f"a {got['kind']} drew only {len(fields)} fields"
-    assert shape["form"] == shape["card"], (
-        f"the form is capped at {shape['form']} and the card it stands in for at {shape['card']}"
+    seen = got["seen"]
+    card = seen["card"]
+    # The card itself came up, which everything below is measured against.
+    assert card["title"] and card["names"] and card["chips"], (
+        f"the hover card drew nothing to compare the form with: {card}"
     )
 
-    stacked = [one for one in fields if not one["together"]]
+    assert seen["width"] == card["width"], (
+        f"the form is capped at {seen['width']} and the card it stands in for at {card['width']}"
+    )
+    assert seen["parts"][:3] == [
+        "popheading",
+        "card-title poptitle popfield",
+        "card-chips popchips",
+    ], (
+        f"the form's first children are {seen['parts'][:3]} — the card draws a title line and "
+        "then a chip line, and this is the box that is supposed to be that card"
+    )
+    assert "popfacts" in seen["parts"], f"the form drew no list of facts at all: {seen['parts']}"
+
+    assert seen["title"]["where"] == "card-title poptitle popfield", seen["title"]
+    assert seen["title"]["tag"] == "INPUT", (
+        f"the card's title line is a {seen['title']['tag'] or 'word'} and not a box: "
+        f"{seen['title']}"
+    )
+    assert seen["title"]["named"] == "", seen["title"]
+    assert seen["title"]["value"], "the title line opened empty on a record that has a title"
+
+    # Kind is drawn and is not a control: changing a record's rung moves it
+    # between ladders and is the detail page's own panel, not a field the form
+    # offers. It is still on the line, because the card draws it there.
+    kinds = [one for one in seen["chips"] if "kind-" in one["klass"]]
+    assert len(kinds) == 1 and kinds[0]["control"] == "" and kinds[0]["word"], (
+        f"the kind chip is missing or is a control: {kinds}"
+    )
+    for name in ("priority", "status"):
+        chip = next((one for one in seen["chips"] if one["field"] == name), None)
+        assert chip, f"{name} is not a chip on the form's chip line: {seen['chips']}"
+        assert chip["control"] == "SELECT", f"the {name} chip holds no picker: {chip}"
+        assert "chip" in chip["klass"], (
+            f"the {name} control is not inside the card's own chip: {chip['klass']}"
+        )
+        assert seen["named"][name] == "", (
+            f"the {name} chip carries the visible name {seen['named'][name]!r}, and a chip on "
+            "a card carries none"
+        )
+    assert seen["named"]["title"] == "", (
+        f"the title line carries the visible name {seen['named']['title']!r}"
+    )
+    assert seen["hill"] is True and card["hill"] is True, (
+        "the card draws a hill beside its status chip and the form does not"
+    )
+    assert seen["body"] is False, "a document reached the form, which is the detail page's"
+
+    # Every remaining field is a row of the card's list: a name on the left, the
+    # control on the right, all the names in one column.
+    listed = [one for one in seen["facts"] if one["listed"]]
+    faced = [one for one in seen["facts"] if not one["listed"]]
+    assert {one["name"] for one in faced} == {"title", "priority", "status"}, (
+        f"something other than the card's face was drawn outside the list: {faced}"
+    )
+    assert len(listed) >= 5, f"a {got['kind']} drew only {len(listed)} fields in its list"
+    stacked = [one for one in listed if not one["together"]]
     assert not stacked, f"drawn with the name above the control: {[one['name'] for one in stacked]}"
-
-    lefts = {one["left"] for one in fields}
+    lefts = {one["left"] for one in listed}
     assert len(lefts) == 1, (
-        f"the names do not line up in one column: {[(one['name'], one['left']) for one in fields]}"
+        f"the names do not line up in one column: {[(one['name'], one['left']) for one in listed]}"
     )
-    over = [one for one in fields if one["right"] > one["box"]]
+    over = [one for one in listed if one["right"] > one["box"]]
     assert not over, f"a name overlaps the control beside it: {[one['name'] for one in over]}"
-
     # The checkbox is named because it is the one that had to change to get here.
-    assert any(one["type"] == "checkbox" for one in fields), (
-        f"this kind draws no checkbox, so the field that was the exception is untested: {fields}"
+    assert any(one["type"] == "checkbox" for one in listed), (
+        f"this kind draws no checkbox, so the field that was the exception is untested: {listed}"
     )
 
-    assert shape["span"] < shape["stacked"], (
-        f"the fields reach {shape['span']}px and would reach {shape['stacked']}px stacked — "
-        "the two columns are buying nothing"
+    moved = seen.get("moved")
+    assert moved, "the corpus offers this kind only one status, so the chip cannot be moved"
+    assert f"st-{moved['to']}" in moved["chip"], (
+        f"the status chip still reads {moved['chip']} after the picker was moved to "
+        f"{moved['to']} — a chip in the old rung's tint is confidently wrong"
+    )
+    assert moved["ball"] and moved["ball"] != moved["was"], (
+        f"the hill still says {moved['was']!r} after the status moved to {moved['to']!r}"
     )
 
 
@@ -3976,9 +4101,9 @@ def test_a_gated_status_opens_the_form_on_what_it_needs_and_saves_both(
     assert got["opened"]["heading"] == (
         f"{HUMAN[got['gate']]} needs {'this' if len(got['missing']) == 1 else 'these'}"
     ), got["opened"]["heading"]
-    assert got["opened"]["fields"] == ["status", *got["missing"]], (
+    assert got["opened"]["fields"] == _the_cards_order(["status", *got["missing"]]), (
         f"the form drew {got['opened']['fields']} and the gate names {got['missing']} — the "
-        "status first, which is the order the sentence over the boxes reads in"
+        "status and what it demands, in the order the card draws them"
     )
     assert got["opened"]["status"] == got["gate"], (
         f"the status box holds {got['opened']['status']!r}: the rung that was picked is "

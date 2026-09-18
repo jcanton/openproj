@@ -222,9 +222,10 @@ _POP_STYLE = """
 /* **26rem is `#card`'s own `max-width`, and the two are the same number on
    purpose.** jcanton, 2026-09-18, on the first form drawn: "can the `edit` box
    be the same as the floating card box, just with clickable/editable fields?
-   instead of a new tall, column box". The form stands where the card stood and
-   says the same facts, so it is the card's width and the card's two columns,
-   and the whole of what changed is that the right-hand one can be typed in. */
+   instead of a new tall, column box" — and, when the first answer widened the
+   box without wearing the card: "I meant this card". So the form IS the card:
+   its width, its title line, its chip line and its `<dl>`, with a control
+   wherever the card draws a value. */
 /* The confirmation takes the same range for a different reason and gets it from
    the same rule rather than a second copy of the arithmetic: its lines are
    prose — a sentence with a record's title inside it — and the menu's 20rem is
@@ -234,38 +235,78 @@ _POP_STYLE = """
   max-width: min(26rem, calc(100vw - 16px));
   padding: 0;
 }
-/* The card's grid and not a column of stacked fields. `#card dl` (`shell.py`) is
-   `grid-template-columns: auto 1fr`, the name in the left column and the value
-   in the right, and this is that shape with a control in the right column. What
-   it replaces was a label above every box: a task's fifteen fields drew about
-   twice the height, which is a form taller than the window it opens over and
-   nothing like the card the same right-click used to show.
-
-   `minmax(0, 1fr)` and not `1fr`: a grid track's automatic minimum is its
-   content's min-content size, and the controls below are `width: 100%` — a
-   `<select>` holding a long owner name, or a `depends_on` box holding three
-   record ids, would push the track past the box rather than shrink inside it. */
+#pop .popheading { margin: 0; font-size: 13px; font-weight: 600; }
+/* The form's copy of it, off the screen and still in the document. `.sr-only`'s
+   own declarations rather than the class, because `#pop .popheading` above is
+   (1,1,0) and would win the margin back off a (0,1,0) class — and a rule that
+   only half applies is the worst of the two. The confirmation's heading keeps
+   the visible one: it is the box's first line there, and there is no title
+   above it to say the same thing. */
+#pop .popform .popheading {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+/* The card's own padding, and the card's own stack: a title, a chip line, a list
+   of facts. `#card` is `.4rem .55rem` and this is a shade more, because the box
+   holds controls with borders on them rather than words. */
 #pop .popform {
   /* `flex: none` for the reason `.popitem` has it, and the failure is the same
      one: `#pop` is a flex column with a `max-height`, so a form taller than 70vh
      would be resolved by squashing the one child rather than by scrolling. A
      task's form is fifteen controls and reaches that on any laptop. */
   flex: none;
-  display: grid; grid-template-columns: auto minmax(0, 1fr);
-  align-items: center; gap: .3rem .6rem;
-  padding: .5rem .6rem .6rem;
+  display: flex; flex-direction: column; gap: .35rem;
+  padding: .45rem .55rem .55rem;
 }
-/* The three parts of a form that are not a field, each across both columns. */
-#pop .popheading, #pop .popwhy, #pop .popacts { grid-column: 1 / -1; }
-#pop .popheading { margin: 0 0 .1rem; font-size: 13px; font-weight: 600; }
-/* **`display: contents`, so that the label and the control are the grid's own
-   children rather than the field's.** It is what makes every name line up in
-   one column: a grid per field would align that field's two parts and nothing
-   across fields, and the column IS the card's look. `[data-field]` stays on the
-   box and the tests still find it — `display: contents` takes a box out of the
-   layout, not out of the document. */
-#pop .popfield { display: contents; }
-/* The card's `dt`, to the letter: the same colour, size, case and tracking. A
+/* `#card .card-title`'s own size and weight, on the line that is now a box you
+   can type in. The title is the one control here that is not indented under a
+   name, because on the card it is not under one either. */
+#pop .poptitle { margin: 0; }
+#pop .poptitle input { font-size: 13px; font-weight: 600; }
+/* `#card .card-chips` — same margin, same flex row, same gap, and the hill at
+   the end of it exactly as `cardHtml` appends one. */
+#pop .popchips { margin: 0; display: flex; align-items: center; flex-wrap: wrap;
+                 gap: .25rem; }
+#pop .pophill .hill { --ball: 11px; --ghost: 6px; max-width: 6.5rem; }
+#pop .pophill .card-hill { display: inline-block; vertical-align: middle; margin-left: .2rem; }
+/* **A chip you may change**: the chip's own box with a `<select>` drawn in
+   nothing inside it, so the tint, the hairline and the mark that say which rung
+   this is stay exactly what the card drew. The caret is what says it is a
+   control — `▾`, which `table.py` already spells, and `pointer-events: none` so
+   that pressing the caret opens the box under it rather than nothing. */
+#pop .popchip { display: inline-flex; align-items: center; gap: .2rem; cursor: pointer; }
+#pop .popchip::after { content: "▾"; font-size: 9px; opacity: .55;
+                       pointer-events: none; margin-left: -.1rem; }
+/* `.popform` is on the front of this one and not only `#pop`, and the third
+   class is load-bearing: the rule below that gives every box in this form a
+   border and `width: 100%` is `#pop .popform select`, which is (1,2,1) — a
+   two-class selector here would lose it, and the chip would draw a bordered
+   input inside a bordered chip. With `.popchip` as well this is (1,3,0), which
+   wins on class count. */
+#pop .popform .popchip select {
+  font: inherit; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+  color: inherit; background: none; border: 0; border-radius: 0;
+  margin: 0; padding: 0; width: auto; appearance: none; cursor: pointer;
+}
+/* `#card dl` to the letter: two columns, the name on the left in `auto` and the
+   value on the right. `minmax(0, 1fr)` and not the card's bare `1fr`, because a
+   grid track's automatic minimum is its content's min-content size and these
+   controls are `width: 100%` — a `<select>` holding a long owner name would
+   push the track past the box rather than shrink inside it, which is a question
+   a card full of words never has to answer. */
+#pop .popfacts {
+  display: grid; grid-template-columns: auto minmax(0, 1fr);
+  align-items: center; gap: .3rem .6rem; margin: 0;
+}
+/* **`display: contents`, so that the `<dt>` and the `<dd>` are the grid's own
+   children rather than the row's.** It is what makes every name line up in one
+   column: a grid per row would align that row's two parts and nothing across
+   rows, and the column IS the card's look. The `<div>` is a child a `<dl>` is
+   allowed, and it is what lets `[data-field]` stay on one box — `display:
+   contents` takes a box out of the layout, not out of the document. */
+#pop .popfacts .popfield { display: contents; }
+#pop .popfacts dt, #pop .popfacts dd { margin: 0; }
+/* `#card dt`, to the letter: the same colour, size, case and tracking. A
    checkbox's name is drawn the same way and sits in the same column as every
    other name — it was the one label that read to the right of its control, and
    in two columns there is nothing left for that exception to fix. */
@@ -309,9 +350,9 @@ _POP_STYLE = """
 #pop .popform input:disabled, #pop .popform select:disabled {
   color: var(--muted); cursor: default; opacity: 1;
 }
-/* `grid-column: 2` and not both columns: the sentence belongs to the control
-   above it, so it starts where that control starts. */
-#pop .popnote { grid-column: 2; margin: 0; color: var(--muted); font-size: 12px; }
+/* Inside the `<dd>` and under the control it is about, so it starts where that
+   control starts without being placed. */
+#pop .popnote { margin: 0; color: var(--muted); font-size: 12px; }
 /* What the server, or the gate, said about this save. A list because a create
    is refused with a `problems` array and three blockers read as three lines
    rather than one long one — `refusalLines` (`table.py`) makes the same split.
@@ -1806,6 +1847,31 @@ function popForm(spec) {
   popDrawForm();
 }
 
+// What the card draws ABOVE its list of facts, and therefore what the `<dl>`
+// below must not draw again.
+//
+// jcanton, 2026-09-18, on the first form: "without adding any extra descriptions
+// (e.g. for kind, priority, status that don't have a label) just make all fields
+// editable?". The title is the card's first line and kind, priority and status
+// are the chips under it, and not one of the four carries a name on the card. A
+// form that put TITLE, PRIORITY and STATUS over them would be a different box
+// wearing the card's colours. Each of these controls carries its name in
+// `aria-label` instead, so the fact is still there for the one reader who cannot
+// see that the coloured box under the title is a status.
+const POP_CARDS_FACE = ['title', 'priority', 'status'];
+
+// The card, with its values typed into.
+//
+// `cardHtml` (`shell.py`) draws three things in this order — a title line, a
+// chip line, and a `<dl>` of named facts — and this draws the same three, in the
+// same order, under the same class names. The whole of the difference is that a
+// fact the reader may change is a control instead of a word.
+//
+// **The body is not here, and that is the design's line rather than an
+// omission** (jcanton, same message: "as by design, not making the body
+// editable"). A document belongs to the detail page, which has Ace, co-editing
+// seats and a draft receipt; the hover card shows one because showing is all it
+// does.
 function popDrawForm() {
   const form = POP_FORM;
   const box = document.createElement('form');
@@ -1816,14 +1882,28 @@ function popDrawForm() {
   // scrollbar and flips against the far gutter, and this form answers in a list
   // it places itself — see `popFormSays`.
   box.noValidate = true;
+  // The sentence this box is about, for a reader who arrives inside it with no
+  // pointer. **`.sr-only` and not drawn**: the card's first line is the record's
+  // title, so a visible `Edit "X"` over a box that already shows X is the same
+  // fact twice and the thing that made the first cut read as a dialog rather
+  // than as the card. `aria-label` on `#pop` says it too — this is the heading a
+  // screen reader lands on, and `[data-kind="form-heading"]` is what the tests
+  // read the copy off.
   const heading = document.createElement('p');
   heading.className = 'popheading';
   heading.dataset.kind = 'form-heading';
   // `textContent`, never `innerHTML`. Every heading here carries a record's
   // title, and this is the JavaScript half of the one escaping boundary.
   heading.textContent = form.label;
-  box.append(heading);
-  for (const name of form.names) box.append(popField(name));
+  box.append(heading, popFormTitle(), popFormChips());
+  // The card's `<dl>`, holding every field that is not already on the face
+  // above. Left out entirely when there is nothing in it, because an empty
+  // `<dl>` between the chips and the buttons is a gap with no reason.
+  const facts = document.createElement('dl');
+  facts.className = 'popfacts';
+  for (const name of form.names)
+    if (!POP_CARDS_FACE.includes(name)) facts.append(popField(name));
+  if (facts.children.length) box.append(facts);
   form.why = document.createElement('ul');
   form.why.className = 'popwhy';
   form.why.dataset.kind = 'form-why';
@@ -1858,8 +1938,8 @@ function popDrawForm() {
   popMarkRequired();
   popPlace();
   // Into the first box somebody can actually answer. Never the locked parent and
-  // never `<body>`: `New child ▸ task` opens with the cursor in Title, which is
-  // the one field the record cannot be created without.
+  // never `<body>`: `New child ▸ task` opens with the cursor in the title line,
+  // which is the one field the record cannot be created without.
   const first = [...form.controls.values()].find(control => !control.disabled);
   (first || form.save).focus();
   // Selected so that typing replaces it, which is right for the title of a
@@ -1867,6 +1947,143 @@ function popDrawForm() {
   // defined no-op on a date box and a `<select>` has no such method at all —
   // the pair `openEditor` (`table.py`) is careful about for the same two types.
   if (first && first.type === 'text' && first.select) first.select();
+}
+
+// The card's first line: the record's title, in the card's own weight.
+//
+// A control when `title` is one of the fields this form draws, and the card's
+// static line when it is not — `Assign parent…` edits one field and the record
+// it is about still has to be named at the top of the box.
+function popFormTitle() {
+  const form = POP_FORM;
+  const line = document.createElement('p');
+  line.className = 'card-title poptitle';
+  if (!form.names.includes('title')) {
+    line.textContent = form.row ? popTitle(form.row) : form.label;
+    return line;
+  }
+  line.classList.add('popfield');
+  line.dataset.field = 'title';
+  const made = popControlFor('title', line);
+  // The card's title line has nothing over it, so the control's own name is the
+  // only name there is. The placeholder is the empty state rather than a second
+  // copy of that name: `New child ▸ task` opens on a blank line, and a blank
+  // line says nothing about what belongs on it.
+  made.control.setAttribute('aria-label', popLabel('title'));
+  made.control.placeholder = popLabel('title');
+  line.append(made.control);
+  if (made.note) line.append(made.note);
+  return line;
+}
+
+// The card's chip line: kind, then priority, then status, then the hill — the
+// order jcanton asked for on 2026-08-21 and the order `cardHtml` draws them in.
+//
+// A chip whose field this form is editing becomes the same chip with a
+// `<select>` inside it, so the colour that says which priority this is goes on
+// being the colour of the thing you press. Kind is drawn and never editable:
+// changing a record's rung moves it between ladders and is the detail page's
+// own control (`becomeswrap`, `detail.py`), not a field `_editable_for` offers.
+function popFormChips() {
+  const form = POP_FORM;
+  const line = document.createElement('p');
+  line.className = 'card-chips popchips';
+  line.append(popChip('kind-' + form.kind, '', popHuman(form.kind)));
+  for (const name of ['priority', 'status']) {
+    const value = popRawOf(popStartOf(name));
+    if (form.names.includes(name)) line.append(popChipControl(name));
+    else if (value) line.append(popChip(popChipClass(name, value), popChipMark(name, value),
+                                        popHuman(value)));
+  }
+  // The picture, and it is read-only on purpose: where a record sits on the hill
+  // is its status drawn a second way, so the `<select>` beside it is the one
+  // control and this follows it. `hillHtml` answers `''` on a page with no hill
+  // payload, which is every page that carries no card either.
+  form.hill = document.createElement('span');
+  form.hill.className = 'pophill';
+  form.hill.innerHTML = popHillOf(popRawOf(popStartOf('status')));
+  line.append(form.hill);
+  return line;
+}
+
+function popHillOf(status) {
+  return status && typeof hillHtml === 'function' ? hillHtml(status) : '';
+}
+
+// One chip, built the way `cardHtml`'s own `chip` builds it — a mark, then the
+// word, inside a box whose class says which ladder and which rung. Written with
+// `createElement` rather than as a string because the escaping boundary in this
+// module is `textContent`, and a chip carries a status a hand-edited file is
+// free to have made anything at all.
+function popChip(klass, glyph, word) {
+  const chip = document.createElement('span');
+  chip.className = 'chip ' + klass;
+  if (glyph) {
+    const mark = document.createElement('span');
+    mark.className = 'chipmark';
+    mark.setAttribute('aria-hidden', 'true');
+    mark.textContent = glyph;
+    chip.append(mark);
+  }
+  if (word) {
+    const said = document.createElement('span');
+    said.className = 'chipword';
+    said.textContent = word;
+    chip.append(said);
+  }
+  return chip;
+}
+
+// The class the card gives this chip. `stClass` (`shell.py`) is the status half,
+// and it exists because `status` is a plain `str` in the model — a hand-edited
+// file may hold a word no rung lists, and `st-${anything}` in a class attribute
+// is how that becomes a chip with no rule and no colour.
+function popChipClass(name, value) {
+  return name === 'status' ? stClass(value) : 'pri pri-' + value;
+}
+
+// The glyph inside it, off the same payload the card reads. Guarded because the
+// marks are a page's payload and a page may carry a menu without one.
+function popChipMark(name, value) {
+  return typeof cardMark === 'function' ? cardMark(name, value) : '';
+}
+
+// A chip you may change: the chip, with a `<select>` drawn in nothing at all
+// inside it. The hairline, the tint and the mark stay the chip's, so the line
+// still reads as the card's chip line, and what says it is a control is the
+// caret and the cursor.
+function popChipControl(name) {
+  const value = popRawOf(popStartOf(name));
+  const chip = popChip(popChipClass(name, value), popChipMark(name, value), '');
+  chip.classList.add('popchip', 'popfield');
+  chip.dataset.field = name;
+  const made = popControlFor(name, chip);
+  made.control.setAttribute('aria-label', popLabel(name));
+  // The word alone in the box, because the mark is already beside it. The status
+  // submenu draws `↘ In progress` in one run of text because it has no chip to
+  // put the glyph in; this has one, and two glyphs on one chip is the mark said
+  // twice.
+  for (const option of made.control.options) option.textContent = popHuman(option.value);
+  chip.append(made.control);
+  // The rung's colour travels with the value, which is `cycles.py`'s rule for
+  // the betting table's picker said again here: "a picker showing `Done` in the
+  // ready tint is worse than an uncoloured one, because it is confidently
+  // wrong". Listened to separately from the form's own `change` handler because
+  // the two are about different things — that one re-marks what is required.
+  made.control.addEventListener('change', () => popDressChip(chip, name, made.control.value));
+  return chip;
+}
+
+// Re-dress a chip around the value now in it, and — for status — redraw the
+// picture that is the same fact.
+function popDressChip(chip, name, value) {
+  chip.className = 'chip ' + popChipClass(name, value) + ' popchip popfield';
+  const mark = chip.querySelector('.chipmark');
+  const glyph = popChipMark(name, value);
+  if (mark) mark.textContent = glyph;
+  else if (glyph) chip.prepend(popChip('x', glyph, '').firstChild);
+  if (name === 'status' && POP_FORM && POP_FORM.hill)
+    POP_FORM.hill.innerHTML = popHillOf(value);
 }
 
 function popPress(kind, text, className) {
@@ -1878,8 +2095,10 @@ function popPress(kind, text, className) {
   return control;
 }
 
-// One field: its name, its control, and — where there is one — the sentence
-// saying why the control will not let you change it.
+// One row of the card's `<dl>`: the name on the left and the control on the
+// right, in a `<div>` grouping its own `<dt>` and `<dd>` — which is a child a
+// `<dl>` is allowed, and is what lets `[data-field]` stay on one box the way
+// every reader of this DOM already expects.
 //
 // A real `<label for>` and not a `<span>` beside the box. The quality floor in
 // `AGENTS.md` names this one specifically: "a `<dt>`/`<dd>` pair is not one",
@@ -1887,14 +2106,15 @@ function popPress(kind, text, className) {
 // falls back to and is gone the moment anything is typed.
 function popField(name) {
   const form = POP_FORM;
-  const type = (POP_SCHEMA.types || {})[name] || 'text';
   const field = document.createElement('div');
   field.className = 'popfield';
   field.dataset.field = name;
-  const id = 'pop-f-' + (++POP_FIELD_N);
+  const term = document.createElement('dt');
+  const said = document.createElement('dd');
+  const made = popControlFor(name, said);
   const label = document.createElement('label');
   label.className = 'popname';
-  label.htmlFor = id;
+  label.htmlFor = made.control.id;
   label.textContent = popLabel(name);
   // The mark that says the chosen status will make the server refuse the record
   // without this. `aria-hidden` and paired with `aria-required` on the control:
@@ -1905,32 +2125,46 @@ function popField(name) {
   star.setAttribute('aria-hidden', 'true');
   label.append(star);
   form.marks.set(name, star);
+  term.append(label);
+  said.append(made.control);
+  if (made.note) said.append(made.note);
+  field.append(term, said);
+  return field;
+}
+
+// The control for one field, made and registered: its id, its `data-field`, the
+// lock if it has one, the completion list if it takes one, and the listener that
+// re-marks what is required. **What differs between the card's three faces is
+// where the control is PUT, not how it is made**, and this is the half they
+// share — the title line, a chip and a `<dl>` row all call it.
+function popControlFor(name, holder) {
+  const form = POP_FORM;
+  const type = (POP_SCHEMA.types || {})[name] || 'text';
   const control = popControlOf(name, type);
-  control.id = id;
+  control.id = 'pop-f-' + (++POP_FIELD_N);
   control.dataset.field = name;
   form.controls.set(name, control);
-  // One order for every kind of control, because the form is two columns and
-  // the name is always the left one. This was `control, label` for a checkbox
-  // back when a field was a stacked pair and a mark under its own word read as
-  // a box floating under nothing.
-  field.append(label, control);
   const locked = popLockedWhy(name);
+  let note = null;
   if (locked) {
+    // A control the form drew and will not let you change — a locked parent, a
+    // field this view does not carry the value of. Dimmed rather than removed,
+    // for the reason a refused item is drawn rather than left out: a control
+    // that disappears teaches nothing about why, and the sentence is the why.
     control.disabled = true;
-    const said = document.createElement('p');
-    said.className = 'popnote';
-    said.dataset.kind = 'form-note';
-    said.textContent = locked;
-    field.append(said);
+    note = document.createElement('p');
+    note.className = 'popnote';
+    note.dataset.kind = 'form-note';
+    note.textContent = locked;
   } else if (control.type === 'text') {
-    popComplete(control, name, field);
+    popComplete(control, name, holder);
   }
   // Every control, and not only the status one. What a status demands moves when
   // the status moves, and `reviewers` stops being demanded the moment
   // `review_waived` is ticked — two controls, one rule, and a listener per
   // special case is how the third one gets forgotten.
   control.addEventListener('change', () => { popMarkRequired(); popPlace(); });
-  return field;
+  return {control: control, note: note};
 }
 
 // Why this control will not let you change it, or `''` when it will.
@@ -2172,7 +2406,11 @@ function popMarkRequired() {
   const status = box && !box.disabled ? box.value : popRawOf(popStartOf('status'));
   const gates = (POP_SCHEMA.required || {})[form.kind] || {};
   const waived = form.controls.get('review_waived');
-  for (const [name, star] of form.marks) {
+  // Over `form.names` and not over `form.marks`, because the two are no longer
+  // the same list: the title and the two chips carry no visible name, so there
+  // is no star to hang on them — and `aria-required` is owed to every control
+  // whether or not a sighted reader gets the mark.
+  for (const name of form.names) {
     const wanted = name === 'title'
       // Not in `required_at` — a titleless record is refused as YAML that will
       // not read back rather than by a rule — and it is the one field every form
@@ -2182,7 +2420,8 @@ function popMarkRequired() {
           // here for the reason `missingFor` (`table.py`) honours it: asking for
           // reviewers on a record that has waived them is a nag.
           && !(name === 'reviewers' && waived && waived.checked));
-    star.textContent = wanted ? ' *' : '';
+    const star = form.marks.get(name);
+    if (star) star.textContent = wanted ? ' *' : '';
     const control = form.controls.get(name);
     if (control) control.setAttribute('aria-required', String(wanted));
   }

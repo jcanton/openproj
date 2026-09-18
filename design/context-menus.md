@@ -198,17 +198,40 @@ and a primary verb plus Cancel. It is **fields only** — the body stays on the 
 Ace, co-editing seats and a draft receipt, and a markdown editor in a floating box would be competing
 with the page that does it properly.
 
-**The form is the hover card's shape, and that is the correction jcanton made on seeing the first
-one** (2026-09-18): *"can the `edit` box be the same as the floating card box, just with
-clickable/editable fields? instead of a new tall, column box"*. The first cut drew a label above
-every control, which for a task is fifteen stacked pairs — past `max-height: 70vh` on a 900px window,
-so four of the fifteen fields were below a scrollbar, over the table the box was opened from. So the
-form takes `#card`'s own `max-width: 26rem` and `#card dl`'s own two columns: the name on the left,
-the control on the right, every name lined up. `.popfield` is `display: contents` so that the label
-and the control are the grid's children rather than the field's — a grid per field would align each
-field's two parts and nothing across fields, and the column is the whole of the card's look. The one
-control that had read the other way round, a checkbox with its word to the right of it, now reads
-like every other field, because in two columns there is nothing left for that exception to fix.
+**The form IS the hover card, with a control wherever the card draws a value.** That is the
+correction jcanton made on seeing the first one (2026-09-18): *"can the `edit` box be the same as
+the floating card box, just with clickable/editable fields? instead of a new tall, column box"*,
+then, on an answer that widened the box without wearing the card, *"I meant this card"*, and
+*"without adding any extra descriptions (e.g. for kind, priority, status that don't have a label)
+just make all fields editable?"*.
+
+The first cut drew a label above every control — fifteen stacked pairs for a task, past `#pop`'s
+`max-height: 70vh` on a 900px window, so four of the fifteen were below a scrollbar in a box standing
+over the table it was opened from.
+
+`cardHtml` (`shell.py`) draws three things in order: a title line, a chip line, and a `<dl>` of named
+facts. `popDrawForm` draws the same three, under the same class names, in the same order:
+
+- **`.card-title`** holds an `<input>` in the card's own size and weight. No `TITLE` over it, because
+  the card has none — and the box's heading goes `.sr-only`, since `Edit "X"` over a box already
+  showing X is the same fact twice.
+- **`.card-chips`** holds the kind chip, then priority, then status, then the hill. A chip whose field
+  the form is editing becomes that same chip with a `<select>` drawn in nothing inside it, so the tint
+  and the mark that say which rung this is stay what the card drew; the caret is what says it is a
+  control. The rung's colour is rewritten on change, which is `cycles.py`'s rule for the betting
+  table's picker — a picker showing `Done` in the ready tint is confidently wrong. The hill follows
+  the `<select>` and is never itself a control: it is the status drawn a second way.
+- **Kind is drawn and is not editable.** Changing a record's rung moves it between ladders and is the
+  detail page's own panel (`becomeswrap`), not a field `_editable_for` offers.
+- **`.popfacts`** is `#card dl`'s two columns — `auto minmax(0, 1fr)`, the name left and the control
+  right — holding every field that is not already on the face above. Each row is a `<div>` grouping
+  its `<dt>` and `<dd>`, which is a child a `<dl>` is allowed and is what lets `[data-field]` stay on
+  one box; the row is `display: contents`, so the names line up across rows rather than within one.
+- **No body**, which is the same line the paragraph above draws and jcanton restated in the same
+  breath: *"as by design, not making the body editable"*.
+
+The three fields on the card's face carry `aria-label` instead of a visible name, so the fact reaches
+the one reader who cannot see that the tinted box under the title is a status.
 
 **The parent control is a `<select>` built from the host's own rows, never free text.** That picker is
 the only thing standing in front of two holes in the server: `_containment_problems` returns early on
