@@ -72,7 +72,14 @@ from openproj.render import (
 # pages are built from, and these two are the route's own reading of the plan —
 # `web.py` reaches them the same way, as `render.detail._cascade_facts`.
 from openproj.render.detail import _cascade_facts, _titles_for
-from openproj.render.tokens import HUMAN, LABELS, STATUS_GLYPH
+from openproj.render.tokens import (
+    HUMAN,
+    LABELS,
+    PRIORITIES,
+    PRIORITY_GLYPH,
+    STATUS_GLYPH,
+    SUGGESTS,
+)
 
 HEAD = "0123456789abcdef0123456789abcdef01234567"
 
@@ -298,8 +305,9 @@ WRITERS_TAIL = [*READER_ITEMS, DELETE_ITEM]
 # this one, where it is filed, then what this view can do. Cut 4 put three in
 # front of cut 3's three rather than after them, which is why every assertion
 # below slices `len(WRITE_ITEMS)` rather than a literal — a seventh item is one
-# edit here and none anywhere else.
-WRITE_ITEMS = ["new-child", "edit", "status", "owner", "parent", "take-out"]
+# edit here and none anywhere else. `priority` is the seventh, added 2026-09-18
+# where jcanton asked for it: "just below status".
+WRITE_ITEMS = ["new-child", "edit", "status", "priority", "owner", "parent", "take-out"]
 
 
 # Read before the press: which row is going to be pressed, which two rows are its
@@ -1806,6 +1814,110 @@ def test_the_status_submenu_is_this_kinds_ladder_and_picking_one_writes_it(
 # in `POP_SCHEMA.fields` for that kind, measured 2026-09-18, so there is no row
 # to press. `popNeeds` keeps its test in the assertion that the two maps still
 # agree, at the top of the cut-4 section.
+
+
+# --------------------------------------------------------------------------- #
+# Priority
+# --------------------------------------------------------------------------- #
+
+
+_THE_RUNGS = """
+const row = rowWhere(one => one.kind === 'task' && one.priority);
+if (!row) return {error: 'the corpus holds no task with a priority'};
+const other = POP_SCHEMA.priorities.find(one => one !== row.priority);
+openOn(row.id);
+const top = popKinds();
+itemIn('priority').click();
+const inside = popControls().map(one => ({
+  kind: one.dataset.kind, role: one.getAttribute('role'), word: wordIn(one),
+  glyph: partIn(one, 'popglyph'), mark: partIn(one, 'popmark'),
+  checked: one.getAttribute('aria-checked')}));
+const landed = document.activeElement.dataset.kind;
+itemIn('priority-' + other).click();
+await rest(700);
+// And the rung it already has writes nothing at all.
+openOn(row.id);
+itemIn('priority').click();
+itemIn('priority-' + other).click();
+await rest(400);
+// The rung a product does not read, which is the same refusal the owner item
+// draws on one.
+const product = rowWhere(one => one.kind === 'product');
+let refused = null;
+if (product) {
+  openOn(product.id);
+  const item = itemIn('priority');
+  refused = {disabled: item.getAttribute('aria-disabled'), why: item.dataset.why || '',
+             opens: item.getAttribute('aria-haspopup')};
+}
+return {id: row.id, title: row.title, was: row.priority, other, top, inside, landed,
+        ladder: POP_SCHEMA.priorities, sent: patches(), said: said(),
+        now: DATA.rows[row.id].priority, refused};
+"""
+
+
+def test_the_priority_submenu_is_the_one_ladder_and_picking_a_rung_writes_it(
+    index: Index, tmp_path: Path
+):
+    """jcanton, 2026-09-18: *"in the right-click menu add priority just below
+    status please, I didn't notice we didn't have it there"*.
+
+    It is the status item's twin and the differences are the ladder's, not this
+    menu's. `PRIORITIES` is one list for every kind, so there is nothing per-rung
+    to look up; what varies is whether the kind reads the field at all, which is
+    `unread_fields` — `priority` is in `_WORK_FIELDS`, so a product holds none
+    and the item says so rather than disappearing. And no status demands a
+    priority, so there is no gate and no form: every rung is writable on every
+    record that reads the field.
+
+    Asserted where he asked for it — **directly below Status** — because "add it
+    to the menu" and "add it under the status" are two different asks and only
+    one of them was made. The glyph is the rising block the chips and the graph's
+    nodes draw, off the shell's own map, so a menu with a private ladder of marks
+    fails here.
+
+    And picking the rung it is already on writes nothing: the server would take
+    it, but a commit is a line in somebody's history.
+    """
+    got = _at_the_table(index, tmp_path / "rungs.html", _THE_RUNGS, patience=5000)
+
+    assert not got.get("error"), got
+    assert got["ladder"] == list(PRIORITIES), got["ladder"]
+    assert got["top"].index("priority") == got["top"].index("status") + 1, (
+        f"priority is not the item under the status: {got['top']}"
+    )
+    inside = {one["kind"]: one for one in got["inside"]}
+    assert [one["kind"] for one in got["inside"]] == ["back"] + [
+        f"priority-{rung}" for rung in PRIORITIES
+    ], got["inside"]
+    for rung in PRIORITIES:
+        one = inside[f"priority-{rung}"]
+        assert one["word"] == HUMAN[rung], f"{rung} is drawn as {one['word']!r}"
+        assert one["glyph"] == PRIORITY_GLYPH[rung], (
+            f"{rung} carries {one['glyph']!r} and its mark on this plan is "
+            f"{PRIORITY_GLYPH[rung]!r}"
+        )
+        assert one["role"] == "menuitemradio", (
+            f"{rung} is a plain menuitem, where `aria-checked` is ignored"
+        )
+        current = rung == got["was"]
+        assert one["checked"] == ("true" if current else "false"), one
+        assert one["mark"] == ("•" if current else ""), one
+    assert got["landed"] == f"priority-{got['was']}", (
+        f"the keyboard landed on {got['landed']} rather than on the rung the record is on"
+    )
+    assert [one["body"]["fields"] for one in got["sent"]] == [{"priority": got["other"]}], (
+        f"picking a rung and then picking it again sent {got['sent']}"
+    )
+    assert got["said"] == f"{got['title']} is already {HUMAN[got['other']]} priority", got["said"]
+    assert got["now"] == got["other"], (
+        "the row still reads the old priority, so the host was never told"
+    )
+    assert got["refused"], "the corpus draws no product, so the unread arm is untested"
+    assert got["refused"]["disabled"] == "true", (
+        f"a product's priority item is offered: {got['refused']}"
+    )
+    assert "product" in got["refused"]["why"], got["refused"]["why"]
 
 
 # --------------------------------------------------------------------------- #
@@ -3787,6 +3899,111 @@ def test_a_space_typed_into_a_field_reaches_the_field(index: Index, tmp_path: Pa
         "from the keyboard — and the page scrolls under it instead"
     )
     assert got["seen"]["row"]["opened"] is True, "the space on the row opened nothing"
+
+
+_COMPLETING = """
+const row = rowWhere(one => one.kind === 'task' && one.title);
+if (!row) return {error: 'the corpus draws no task'};
+openOn(row.id);
+itemIn('edit').click();
+const seen = {};
+// The fields that OPEN, which is not every field the card draws: this host
+// carries a `blocked_by` count and no `depends_on`, and a box drawn empty over a
+// value this view has not got would delete it — so that one is locked, with a
+// sentence, and locked is the right answer rather than a gap in this test.
+for (const name of opensInForm()) {
+  if (!POP_SCHEMA.suggests[name]) continue;
+  const box = openField(name);
+  if (!box) { seen[name] = {error: 'the field would not open'}; continue; }
+  const list = box.getAttribute('list') && document.getElementById(box.getAttribute('list'));
+  seen[name] = {
+    source: POP_SCHEMA.suggests[name],
+    tag: box.tagName,
+    // A datalist attached to the box AND STILL IN THE DOCUMENT, with something
+    // in it: an empty one, or one `replaceChildren` has thrown away, is a
+    // control that completes nothing — which is what was reported.
+    inPage: !!(list && list.isConnected),
+    // `parent` is a `<select>` of the records that may hold this one, and its
+    // own options are its completion. Every other completing field is typed
+    // into.
+    listed: box.tagName === 'SELECT'
+      ? [...box.options].map(one => one.value)
+      : (list ? [...list.options].map(one => one.value) : null),
+  };
+  giveUp(name);
+}
+// And the list fields carry the text already typed through, or a datalist —
+// which matches on the WHOLE value — offers nothing the moment there are two
+// names in the box.
+const many = opensInForm().find(name => POP_SCHEMA.suggests[name]
+  && POP_SCHEMA.types[name] === 'list' && POP_SCHEMA.types[name] !== 'select');
+let carried = null;
+if (many) {
+  const box = openField(many);
+  const first = POP_SCHEMA.suggests[many] === 'people'
+    ? POP_SCHEMA.people[0] : (POP_SCHEMA.lists[POP_SCHEMA.suggests[many]] || [{}])[0].value;
+  box.value = first + ',';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  const list = document.getElementById(box.getAttribute('list'));
+  carried = {name: many, typed: box.value,
+             offers: [...list.options].map(one => one.value).slice(0, 3)};
+  giveUp(many);
+}
+return {id: row.id, seen, carried, lists: Object.keys(POP_SCHEMA.lists || {})};
+"""
+
+
+def test_every_field_that_completes_on_the_record_page_completes_in_the_card(
+    index: Index, tmp_path: Path
+):
+    """jcanton, 2026-09-18: *"autocomplete doesn't work in the forms inside our
+    new editable card. can you enable all as in the /detail?"*.
+
+    Two halves were wrong and the second is the one that was noticed. The call
+    was gated on `type === 'text'`, and a list field's type is `list` — so
+    `assignees`, `reviewers`, `tags`, `depends_on` and `prs`, five of the seven
+    fields anybody completes, had no datalist at all. And `tags`, `prs` and
+    `cycles` were deliberately kept out of the schema when this box was a form of
+    its own, so even the fields that did reach `popComplete` had nothing to offer.
+
+    Asked of `SUGGESTS` rather than of a list here: that map is what the record
+    page draws its own `<datalist>`s from, so "all as in the /detail" is the
+    claim that every field with a source in it completes here too, and a field
+    added to it later fails this test rather than quietly completing nothing.
+
+    The carry-through is the other assertion. A datalist matches against the
+    whole value of the box, so on `ann,` the options have to be `ann, bo` and not
+    `bo` — otherwise picking one would delete the name already typed.
+    """
+    got = _at_a_form(index, tmp_path / "completing.html", _COMPLETING)
+
+    assert not got.get("error"), got
+    # Every field this record has that the detail page completes. Taken off the
+    # form's own rows, so a field the card does not draw is not asked about.
+    wanted = {name for name in got["seen"]}
+    assert wanted, "no completing field was opened at all, so this measured nothing"
+    assert wanted <= set(SUGGESTS), f"the card completes a field the record page does not: {wanted}"
+    for name, one in got["seen"].items():
+        assert not one.get("error"), (name, one)
+        assert one["listed"], (
+            f"{name} completes from {one.get('source')} and its box carries "
+            f"{one['listed']!r} — a control that completes nothing"
+        )
+        # The list has to be ON the page. It was appended to the slot and then
+        # thrown away by the `replaceChildren` that puts the control there, so
+        # every box pointed `list=` at a detached element — a `list` attribute
+        # that is present and completes nothing, which is what a test asking only
+        # for the attribute would have called a pass.
+        if one["tag"] != "SELECT":
+            assert one["inPage"], f"{name}'s list is not in the document"
+    assert set(got["lists"]) == {"tags", "prs", "cycles"}, (
+        f"the three lists that are neither a person nor a record ship as {got['lists']}"
+    )
+    assert got["carried"], "no list field was found, so the carry-through is untested"
+    assert all(one.startswith(got["carried"]["typed"]) for one in got["carried"]["offers"]), (
+        f"{got['carried']['name']} was offered {got['carried']['offers']} after "
+        f"{got['carried']['typed']!r} was typed — picking one would delete what is there"
+    )
 
 
 # --------------------------------------------------------------------------- #
