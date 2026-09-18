@@ -249,10 +249,27 @@ What went with the live door, and where each thing lives now:
 | `popWrite(…, stays)` and the redraw that followed it | nothing: a write that lands closes the box, which is the rule every other write here already followed |
 
 A refusal keeps the box open with the answers still in the controls, and puts the sentence in the
-box's own list — a refusal that also threw the answer away is one nobody can act on. Escape in a
-control gives up that field and returns the keyboard to Save; Escape again leaves the box. (Save and
-not the word it just put back: `.card-fact` is `display: contents`, generates no box, and Chrome
-will not focus an element that has none.)
+box's own list — a refusal that also threw the answer away is one nobody can act on.
+
+**Enter and Escape are a pair, and neither writes.** Enter takes what is in the box, closes that one
+field and draws the card again with the answer in it; Escape puts the old word back. Asked for in
+those words — *"can we instead have 'enter' only close the field being edited, similarly to escape,
+instead of committing on the floating editing card?"* — over the version where Enter reached the
+form's own submit. Two consequences worth knowing:
+
+- Taking one field stages every other open control first, because the redraw rebuilds them all from
+  the row and an answer left in one would be rewritten back to the record's.
+- A half-written date is refused rather than taken: a picker answers `value === ''` for `2026-0`
+  exactly as it does for a box somebody emptied, so taking it stages a deletion nobody asked for.
+  Nothing closes, the box names the field, and the answer stays on screen.
+
+A staged date also moves `row.start`, the scheduler's span, which `cardFact` draws before
+`start_date` — otherwise the word under the answer goes on reading the old span.
+
+The keyboard never leaves `#pop`, because that is where this box's keydown listener is: Escape gives
+a field up and hands it to Save, Enter hands it to whatever is still open or to the card's first
+field. Not to the word just written — `.card-fact` is `display: contents`, generates no box, and
+Chrome will not focus an element that has none.
 
 **The three fields on the card's face carry no visible name**, which was asked for by name:
 *"without adding any extra descriptions (e.g. for kind, priority, status that don't have a label)"*.
