@@ -20,6 +20,7 @@ the `Dockerfile`.
 | `EDITOR.md`          | the library audit behind the markdown editor, and the dated decisions that followed it    |
 | `drawings.md`        | the drawing subsystem: the spike, the five helpers, and why a PNG never touches the merge |
 | `deferred-push.md`   | why a commit lands locally before it goes out, and what the page says while it has not    |
+| `context-menus.md`   | the right-click menu and the popup it opens: two boxes, one host contract, five cuts      |
 | `hackmd-observed.md` | what the team's HackMD actually contained, measured before this tool existed              |
 | `QUEUE.md`           | the work queue: what is next, and what was accepted as a gap                              |
 | `probes/`            | measurements — CI timings, load runs, the concurrency audit                               |
