@@ -2153,22 +2153,72 @@ def lead_text(body: str) -> str:
     return "\n".join(out).strip("\n")
 
 
-def checklist_items(body: str) -> list[tuple[bool, str]]:
-    """Every task-list item as (ticked, what it says), in the order written.
+# The heading a record's progress is counted under, matched lowercased and at any
+# depth for the reason `sections` and `_by_section` match that way: the template
+# is flat and whether somebody wrote `##` or `###` is not a fact about the plan.
+PROGRESS_HEADING = "progress"
 
-    Anywhere, not only under `## Progress`: the template puts them there, and
-    real notes also keep them under `## Solution`. Sub-items are items, and they
-    arrive flat — `checklist` counts them that way, which is what somebody
-    reading "7/12" means by it, and a list drawn with a hierarchy the number does
-    not have is the two-copies-of-one-fact problem in a new spelling.
+
+def _progress_scoped(body: str) -> Iterator[tuple[str, bool, bool]]:
+    """Every line, with whether it is inside code and inside `## Progress`.
+
+    **Its SUBTREE and not the text `sections` would key under it.** `sections` is
+    flat and stops at the next heading of any depth, so a `### Still to do` under
+    `## Progress` — which is how the template's own example reads — would fall
+    outside a section the reader plainly means to include. This ends at the next
+    heading as shallow as the one it started at, which is the same extent
+    `_by_section` and `_without_emptied_headings` already carve.
+
+    The heading line itself is outside: nothing on it is a point, and leaving it
+    in would make `without_checklist` a function that can delete a heading
+    without meaning to.
+    """
+    depth = 0
+    for line, in_code in _outside_code(body):
+        heading = None if in_code else _HEADING.match(line)
+        if heading:
+            level = len(heading.group(1))
+            if heading.group(2).strip().lower() == PROGRESS_HEADING:
+                depth = level
+                yield line, in_code, False
+                continue
+            if depth and level <= depth:
+                depth = 0
+        yield line, in_code, bool(depth)
+
+
+def checklist_items(body: str) -> list[tuple[bool, str]]:
+    """Every task-list item under `## Progress`, as (ticked, what it says).
+
+    **Under that heading and nowhere else**, which is a change and was asked for:
+    jcanton, 2026-09-18 — "the auto progress measurment computed by parsing the
+    body and looking for checkmarks should only collect checkmarks within the ##
+    Progress section, not the entire body (which is what currently happens)". It
+    counted the whole body before, on the argument that real notes also keep
+    boxes under `## Solution`; what that argument missed is that a rabbit hole
+    listed as `- [ ] not this` and a scope cut ticked under `## For later` are not
+    work anybody is doing, and they moved the number on the table.
+
+    `docs/quickstart.md` already said this is what the heading means — "`##
+    Progress` on a task is its checklist" — so the reading and the promise agree
+    now rather than nearly agreeing.
+
+    **No heading, no items.** Not a fallback to the whole body: a record with a
+    box in its prose and no Progress section is a record nobody is measuring, and
+    guessing otherwise is the behaviour this change is here to remove.
+
+    Sub-items are items, and they arrive flat — `checklist` counts them that way,
+    which is what somebody reading "7/12" means by it, and a list drawn with a
+    hierarchy the number does not have is the two-copies-of-one-fact problem in a
+    new spelling.
 
     The text is what follows the box, stripped. A point that is only a box —
     `- [ ]` with nothing after it — keeps its place in the count and says nothing,
     which is exactly what is on the page it came from.
     """
     found: list[tuple[bool, str]] = []
-    for line, in_code in _outside_code(body):
-        if in_code:
+    for line, in_code, counted in _progress_scoped(body):
+        if in_code or not counted:
             continue
         mark = _CHECKBOX.match(line)
         if mark:
@@ -2177,7 +2227,7 @@ def checklist_items(body: str) -> list[tuple[bool, str]]:
 
 
 def checklist(body: str) -> tuple[int, int]:
-    """Ticked and total task-list items anywhere in the body.
+    """Ticked and total task-list items under the body's `## Progress`.
 
     Counted from `checklist_items` rather than by a second walk of the same
     lines. The deck draws those points beside this number: two parses of one
@@ -2208,8 +2258,12 @@ def without_checklist(body: str) -> str:
     return _without_emptied_headings(
         [
             (line, in_code)
-            for line, in_code in _outside_code(body)
-            if in_code or not _CHECKBOX.match(line)
+            for line, in_code, counted in _progress_scoped(body)
+            # Only the points that were LIFTED, which is the other end of
+            # `checklist_items` being scoped: a box in a rabbit hole is not on the
+            # slide's list any more, so taking it out of the prose as well would
+            # delete a line off the slide that nothing anywhere puts back.
+            if in_code or not counted or not _CHECKBOX.match(line)
         ]
     )
 

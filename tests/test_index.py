@@ -1582,7 +1582,9 @@ def test_live_work_with_no_checklist_is_findable_and_shaping_work_is_not():
     records where nobody kept one. An idea nobody has bet on owes nothing."""
     records = [
         a_task("task-c00001", status="in_progress", body="prose"),
-        a_task("task-c00002", status="in_progress", body="- [ ] a"),
+        # Under the heading, because that is the only place progress is counted
+        # from — a box in the prose is somebody quoting a list, not keeping one.
+        a_task("task-c00002", status="in_progress", body="## Progress\n\n- [ ] a"),
         a_task("task-c00003", status="shaping", body="prose"),
     ]
     index = build_index(records, CONFIG, TODAY)
