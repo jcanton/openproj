@@ -225,25 +225,27 @@ def test_a_box_at_the_end_of_a_file_is_a_box():
     assert checklist_items("## Progress\n\n- [] no room in it") == []
 
 
-def test_only_the_boxes_under_progress_are_counted():
+def test_only_the_boxes_under_progress_and_solution_are_counted():
     """jcanton, 2026-09-18: *"the auto progress measurment computed by parsing
     the body and looking for checkmarks should only collect checkmarks within the
-    ## Progress section, not the entire body (which is what currently happens)"*.
+    ## Progress section, not the entire body (which is what currently happens)"*,
+    and then *"make progress count boxes under ## Progress as well as ##
+    Solution; nothing more for now, no fallback to the body"*.
 
-    It read the whole body before, on the argument that real notes also keep
-    boxes under `## Solution`. What that missed is the rest of the template: a
-    rabbit hole written as `- [ ] not this` and a scope cut ticked under `## For
+    It read the whole body before. What that missed is the rest of the template:
+    a rabbit hole written as `- [ ] not this` and a scope cut ticked under `## For
     later` are not work anybody is doing, and they moved the number on the table.
     Four of this repository's own fixtures quote a Progress line in their prose,
     which is the same defect arriving from the corpus rather than from the
-    template.
+    template. `## Solution` is the counted one those two are NOT: it is where a
+    pitch writes the work it is proposing, and the boxes in it get ticked.
 
     The subtree and not `sections`' flat slice: a `### Still to do` under
     `## Progress` is inside it, which is how the template's own example reads.
 
-    And no heading means no items rather than a fall back to the whole body — a
-    record with a box in its prose and no Progress section is one nobody is
-    measuring.
+    And neither heading means no items rather than a fall back to the whole body
+    — a record with a box in its prose and no section either name is one nobody
+    is measuring.
     """
     body = (
         "Quoting the pitch:\n\n- [x] not ours\n\n"
@@ -259,7 +261,34 @@ def test_only_the_boxes_under_progress_are_counted():
     assert checklist("### Progress\n\n- [x] deep\n") == (1, 1)
 
 
-def test_a_box_outside_progress_stays_in_the_prose_the_slide_prints():
+def test_the_two_counted_headings_are_counted_together_and_end_each_other():
+    """One record can carry both — a pitch that lists its solution and then
+    tracks it — and the two are one number, because what the table draws is the
+    record's progress and not one section's.
+
+    The second half is the branch order in `_progress_scoped`: a counted heading
+    reached while another is open opens its own scope rather than closing into
+    nothing. Written down because the obvious spelling — close first, then ask
+    whether this one counts — drops every box under the second heading, and the
+    number it draws is plausible.
+    """
+    body = (
+        "## Solution\n\n- [x] the shape of it\n- [ ] the seam\n\n"
+        "## Progress\n\n- [x] started\n\n"
+        "## For later\n\n- [x] cut, and not progress\n"
+    )
+    assert checklist(body) == (2, 3)
+    assert [said for _, said in checklist_items(body)] == [
+        "the shape of it",
+        "the seam",
+        "started",
+    ]
+    # And on its own, which is the pitch this was asked for: no Progress heading
+    # anywhere in the document.
+    assert checklist("## Solution\n\n- [x] one\n- [ ] two\n") == (1, 2)
+
+
+def test_a_box_outside_the_counted_headings_stays_in_the_prose_the_slide_prints():
     """The other end of the same scoping. `without_checklist` lifts the points a
     slide draws at its top so they do not print twice — and a box it no longer
     lifts has to stay where it was written, or the slide loses a line of somebody

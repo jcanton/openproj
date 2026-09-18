@@ -123,13 +123,14 @@ comments that never render: Problem, Appetite, Solution, Rabbit holes, No-gos, F
 the headings of a pitch note in a wiki, kept as the team it was tailored for already wrote them, so
 a pitch drafted in either place is the same document.
 
-Write prose; nothing validates it. Two headings are read rather than judged:
+Write prose; nothing validates it. Three headings are read rather than judged:
 
-- `## Progress` on a **task** is its checklist, and **only that section is counted** — a box under
-  `## Rabbit holes`, or one quoted in the prose above the headings, is not work anybody is doing. A
-  task with no Progress section reports no progress at all rather than zero. A pitch's progress is
-  its tasks instead, weighted by their sizes — so `4/7.5 wk` means four weeks of a seven-and-a-half-week
-  bet, not four ticks out of seven.
+- `## Progress` on a **task** is its checklist, and so is `## Solution` — a pitch writes the work it
+  is proposing there, and those boxes get ticked as it is done. **Only those two sections are
+  counted**: a box under `## Rabbit holes`, or one quoted in the prose above the headings, is not
+  work anybody is doing. A record with neither section reports no progress at all rather than zero.
+  A pitch's progress is its tasks instead, weighted by their sizes — so `4/7.5 wk` means four weeks
+  of a seven-and-a-half-week bet, not four ticks out of seven.
 - `## For later` on a pitch is scope cut to fit the appetite. It is the only record the plan keeps of
   a bet that was trimmed, and it was invisible until it had a name.
 
