@@ -2326,6 +2326,26 @@ function today() {
 const STATUS_RUNGS = {{ statuses|tojson }};
 const stClass = status => STATUS_RUNGS.includes(status) ? `st-${status}` : 'st-ready';
 
+// A floating box put at the pointer: 14px off the point, flipped to the other
+// side of it when the box would otherwise cross the far gutter, and floored at
+// 8px. Viewport coordinates, because the boxes this places are `position: fixed`
+// on the body — a box placed in page coordinates sits where the pointer was
+// before the page was scrolled.
+//
+// The hover card's own arithmetic until 2026-09-18, when the right-click menu
+// (`design/context-menus.md`) turned out to need exactly it for a second
+// body-mounted box beside the card. Extracted rather than copied into `pop.py`:
+// an invariant written twice is guarded once, and what is guarded here is the
+// floor — a box placed past the near edge has its own contents off the window,
+// on the one element there is no way to scroll back into view.
+function placeFloat(box, x, y) {
+  const size = box.getBoundingClientRect();
+  const left = x + 14 + size.width > innerWidth - 8 ? x - 14 - size.width : x + 14;
+  const top = y + 14 + size.height > innerHeight - 8 ? y - 14 - size.height : y + 14;
+  box.style.left = Math.max(8, left) + 'px';
+  box.style.top = Math.max(8, top) + 'px';
+}
+
 // --- the hover card ---------------------------------------------------------
 //
 // One card, three views: the timeline's bars, the graph's nodes and the table's
@@ -2632,11 +2652,7 @@ let cardAt = {x: 0, y: 0};
 
 function placeCard(x, y) {
   cardAt = {x, y};
-  const box = CARD.getBoundingClientRect();
-  const left = x + 14 + box.width > innerWidth - 8 ? x - 14 - box.width : x + 14;
-  const top = y + 14 + box.height > innerHeight - 8 ? y - 14 - box.height : y + 14;
-  CARD.style.left = Math.max(8, left) + 'px';
-  CARD.style.top = Math.max(8, top) + 'px';
+  placeFloat(CARD, x, y);
 }
 
 // How tall the reader has dragged the document to be, in pixels — or 0, which is

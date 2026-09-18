@@ -410,7 +410,7 @@ def test_the_drawing_gets_colours_it_can_actually_read(tmp_path: Path):
     the browser's own conversion first, and what arrives is `rgb(...)`.
     """
     index = build_index(*_seed(), date(2026, 8, 17))
-    page = render_graph(index, ROUTES, base_commit=HEAD).replace(
+    page = render_graph(index, ROUTES, base_commit=HEAD, may_write=True).replace(
         "<html", '<html data-scheme="solarized" data-theme="dark"', 1
     )
     got = measured_in(

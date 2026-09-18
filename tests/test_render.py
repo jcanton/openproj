@@ -480,7 +480,7 @@ def test_the_graph_commits_in_the_same_place_every_other_page_does(
     """
     from openproj.render import ROUTES, render_graph
 
-    live = render_graph(seed_index, ROUTES, base_commit="deadbee")
+    live = render_graph(seed_index, ROUTES, base_commit="deadbee", may_write=True)
 
     assert '<p class="editbar">' not in live, "the bar it replaced"
     assert live.index('id="commitbar"') < live.index('<div class="canvas">')
@@ -4467,7 +4467,7 @@ def views(seed_index: Index) -> dict[str, str]:
     from openproj.render import STATIC, render_graph, render_table, render_timeline
 
     return {
-        "graph": render_graph(seed_index, STATIC, base_commit="deadbee"),
+        "graph": render_graph(seed_index, STATIC, base_commit="deadbee", may_write=True),
         "table": render_table(seed_index, STATIC, base_commit="deadbee", may_write=True),
         "timeline": render_timeline(seed_index, STATIC),
     }
@@ -6287,7 +6287,7 @@ def phone_pages(seed_index: Index) -> dict[str, str]:
     return {
         "records": render_records(seed_index, STATIC),
         "table": render_table(seed_index, STATIC, base_commit="deadbee", may_write=True),
-        "graph": render_graph(seed_index, STATIC, base_commit="deadbee"),
+        "graph": render_graph(seed_index, STATIC, base_commit="deadbee", may_write=True),
         "timeline": render_timeline(seed_index, STATIC),
         "people": render_people(seed_index, STATIC),
         "cycle": render_cycle(seed_index, 37, ROUTES, base_commit="deadbee"),

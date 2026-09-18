@@ -3207,6 +3207,27 @@ def _people_problems(record: Record, config: Config) -> Iterator[tuple[str, str 
 # one being added.
 PARENT_KINDS = {rung.name: rung.under for rung in KINDS}
 
+# The same containment rule read the other way: which kinds each one may HOLD.
+# Every rung on the ladder faces upwards — `under` is where a record may be filed
+# — and the right-click menu asks the opposite question, about the record under
+# the pointer rather than about the one being created: which kinds can be made
+# inside THIS one.
+#
+# Derived, and by the same argument the block above makes: written out by hand it
+# would say `pitch: ("task",)` and go on saying it after a rung was added beneath
+# `pitch`, in a constant three hundred lines from the one being edited — a menu
+# offering a child the validator would refuse, or, worse, silently not offering
+# one it would take. There is one rule and one place it lives, so the two maps
+# cannot drift apart; `test_the_ladder_reads_the_same_in_both_directions` holds
+# them to being exact inverses.
+#
+# Ladder order rather than `under`'s nearest-first, which here are the same
+# order — the coarsest child of a kind is also its nearest — so the menu draws
+# `New child ▸` in the order the ladder is written and nothing has to re-sort it.
+CHILD_KINDS = {
+    rung.name: tuple(other.name for other in KINDS if rung.name in other.under) for rung in KINDS
+}
+
 
 def is_bettable(record: Record) -> bool:
     """Whether a cycle can be bet on this record.

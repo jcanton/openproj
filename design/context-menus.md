@@ -16,7 +16,7 @@ One new module, `src/openproj/render/pop.py`, holds both faces and is imported b
 that want them. Not `shell.py`: that file is 4021 lines and ships on all twelve pages, including
 `/help` and `/people`, and this thing reads `base_commit` and writes records. A module imported by
 the pages that want it is the shape this codebase already uses three times over — `_FILTER_JS`
-(`controls.py:148`), `_REQUIRED_JS`, and `_combobox_html`, which is called from `cycles.py`,
+(`controls.py`), `_REQUIRED_JS`, and `_combobox_html`, which is called from `cycles.py`,
 `detail.py`, `slides.py` and `table.py`.
 
 ## The hover card does not change
@@ -34,7 +34,7 @@ So the card stays, whole — `queueCard`, `CARD_DELAY`, `CARD_GRACE`, `warmCardB
 the remembered height, all nineteen tests in `tests/test_card.py`. The menu is a **second**
 body-mounted singleton beside it, not the same element wearing a mode. Two boxes and not one, and
 that is deliberate rather than lazy: the card has a live hover timer, a grip drag that suspends its
-own dismissal (`cardResizing`, `shell.py:2773` and `:2782`) and a two-pass draw that exists because a
+own dismissal (`cardResizing`, `shell.py`) and a two-pass draw that exists because a
 one-pass card visibly grew and re-placed itself after appearing — reported 2026-08-20. A menu sharing
 an element with all of that is a menu racing it.
 
@@ -101,7 +101,7 @@ Everything else — which items exist, what they say, which are refused and why 
 `pop.py` from the row and the server-baked schema. The views do not each own a menu; there is one
 menu and three hosts. The timeline registers `may: () => false` and gets the reader's menu, which is
 the right answer for a page that has no `#base` element, no `may_write` on its route
-(`web.py:2098` does not even take a `request`) and not one `fetch` in `timeline.py`.
+(`web.py` does not even take a `request`) and not one `fetch` in `timeline.py`.
 
 ## The items
 
@@ -131,13 +131,13 @@ browser's own context menu on it works.
 **`Status ▸` honours the status gate rather than fighting it.** Picking a status whose `required_at`
 names fields this record does not hold neither writes nor refuses: it opens the form with `only:` the
 missing fields and the new status pre-filled, and saves both together. That is exactly what `askFor`
-(`table.py:1491`) does today, and it is the reason the gate is worth having.
+(`table.py`) does today, and it is the reason the gate is worth having.
 
 **"Take out of X" has three sentences, not two.** `_row` nulls a parent that is not in `index.plan`
-and sets a separate boolean beside it (`rows.py:313` and `:318`). So "it is not inside anything" is
+and sets a separate boolean beside it (`rows.py`). So "it is not inside anything" is
 the wrong sentence for a record that *is* inside something this view cannot draw, and
 `off_plan_parent` gets its own words. This is the same shape as the bug
-`tests/test_exclusion.py:369` was written for.
+`tests/test_exclusion.py` was written for.
 
 ### Submenus drill down; they do not fly out
 
@@ -148,19 +148,19 @@ edge-flipping, and a hover-intent model this app no longer has anywhere. One box
 and one dismissal. It costs a click on `Status ▸`, and it is reversible if that click annoys.
 
 Items are rebuilt from scratch on every open and never stored, which is `attachDrawing`'s rule
-(`controls.py:3150`) and the reason a status submenu cannot show a stale word after a save.
+(`controls.py`) and the reason a status submenu cannot show a stale word after a save.
 
 ## Placement and dismissal
 
-`placeFloat(box, x, y)` is `placeCard` (`shell.py:2633`) extracted as a pure function: 14px from the
+`placeFloat(box, x, y)` is `placeCard` (`shell.py`) extracted as a pure function: 14px from the
 pointer, flipped to the other side when the box would cross the far gutter, floored at 8px. Viewport
 coordinates, because the box is `position: fixed` — not `position: absolute` and parked the way
-`.drawmenu` is, because `.table-scroll`'s `overflow: auto` (`styles.py:329`) and the frozen columns'
+`.drawmenu` is, because `.table-scroll`'s `overflow: auto` (`styles.py`) and the frozen columns'
 sticky stacking contexts clip and under-paint anything absolute.
 
 **The menu never moves once placed; it only dies.** Six signals close it: `pointerdown` on the
 document outside the box (`pointerdown` and not `click`, so a menu over the thing somebody is
-reaching for is gone before the press lands — the reason is written out at `controls.py:3184`),
+reaching for is gone before the press lands — the reason is written out at `controls.py`),
 Escape, a capture-phase `scroll`, `resize`, `openproj:filter`, and `openproj:wrote`. The graph adds
 `cy.on('drag pan zoom')`. This is why the box is never anchored to a row or a node: the table's
 `draw()` replaces the whole tbody, and the graph's `relayout()` ends in `cy.fit()` — a menu anchored
@@ -172,7 +172,7 @@ near the bottom of the window would otherwise push its own Save button off scree
 ### Escape has five meanings on the table, not four
 
 Parking the box on `document.body` routes around four of them — they are bound on the tbody or on
-cells, and the box is not inside either. The fifth is not: `table.py:3389` is
+cells, and the box is not inside either. The fifth is not: `table.py` is
 `addEventListener('keydown', …)` on the **document**, and it drops a bulk selection. An Escape from
 the menu bubbles to it. So the box's own Escape handler ends in `stopPropagation()`, after an
 `if (event.defaultPrevented) return;` first, and the comment there says which four are structural and
@@ -190,7 +190,7 @@ that is the most likely path a keyboard reader takes.
 ## The form
 
 `_pop_schema(index)` is baked per kind by the server, through `_editable_for` on a blank model. Per
-kind and not `_new_rows`' union: that function's `rows.setdefault` (`detail.py:3478`) builds
+kind and not `_new_rows`' union: that function's `rows.setdefault` (`detail.py`) builds
 `parent`'s control from whichever kind reached it first, and cannot express a per-kind picker.
 
 The form draws one control per field, a refusal list filled with `textContent` and never `innerHTML`,
@@ -200,10 +200,10 @@ with the page that does it properly.
 
 **The parent control is a `<select>` built from the host's own rows, never free text.** That picker is
 the only thing standing in front of two holes in the server: `_containment_problems` returns early on
-an unresolvable parent (`model.py:3256`), so a dangling parent commits silently; and PATCH calls
+an unresolvable parent (`model.py`), so a dangling parent commits silently; and PATCH calls
 `loop_made` but never `validate_all`, so a wrong-kind parent commits and is reported afterwards.
 
-One re-entrancy flag guards Save. `CREATING` (`table.py:2289`) exists because two presses 0.9s apart
+One re-entrancy flag guards Save. `CREATING` (`table.py`) exists because two presses 0.9s apart
 minted two records on the deployed service, and `POST /api/record` is not idempotent.
 
 **A record created under a parent the current filter excludes lands nowhere visible.** `refreshRows()`
@@ -221,40 +221,50 @@ use, riding in on a feature request about right-click menus.
 
 The two also answer different questions, which is the stronger reason. `+ New row` is "another row
 like these" — and it **cannot** express a parent at all, because `parent` is not a table column
-(`table.py:196`). The menu's `New child` is "a child of this record", which is the only thing anybody
+(`table.py`). The menu's `New child` is "a child of this record", which is the only thing anybody
 asked for. Revisit after a cycle of use, as its own change with its own release note.
 
 `askFor` is likewise left alone. It anchors to a **cell rect** rather than a pointer, clamps rather
-than flips (`table.py:1522`), and closes with `rove(cell, true)`. Folding it into a pointer-anchored
+than flips (`table.py`), and closes with `rove(cell, true)`. Folding it into a pointer-anchored
 flip-placer is a behaviour change to the status gate smuggled inside a refactor.
 
 ## Delete goes through the server
 
 `GET /api/cascade/{record_id}`, new, answering `{also, deletes, frees, said}` from `cascade_of`, with
-the sentences extracted from the record page's `.confirming` panel (`detail.py:1029`) so the two
+the sentences extracted from the record page's `.confirming` panel (`detail.py`) so the two
 panels cannot drift.
 
 The route is not a convenience. `cascade_of` iterates `index.records`, while `DATA.rows` is
 `index.plan` only — so a cascade computed in the browser would miss any unplanned issue carrying a
-hand-written `depends_on`, and every such delete would 409 against the compare-and-swap at
-`web.py:3469`.
+hand-written `depends_on`, and every such delete would 409 against the compare-and-swap the DELETE
+route holds.
 
 ## Two things found on the way, both unrelated to the menu
 
-**`/graph` has no `may_write` gate.** `web.py:2093` never passes one, so a signed-out reader is served
-"Edit dependencies" and the whole edit mode. `/table`, two functions above it, has asked since the
-`reader-table` branch. Fixed in the first cut.
+**`/graph` had no `may_write` gate.** The route never passed one, so a signed-out reader was served
+"Edit dependencies" and the whole edit mode. `/table`, immediately above it, has asked since the
+`reader-table` branch, and never carried across. Fixed in the first cut.
 
-**`tests/test_table.py:2447` is already half-vacuous.** It reads
-`body.split("// --- the hover card")[0] + body.split("function hideCard()")[-1]`, and the string
-`"// --- the hover card"` does not exist in `table.py`. Half that split is a no-op today; the test
-still asserts through the other half, and the marker is restored rather than the split rewritten.
+**`tests/test_table.py` was vacuous on both halves, not one.** It carved the hover-card JS out of the
+served page with `body.split("// --- the hover card")[0] + body.split("function hideCard()")[-1]` and
+then asserted `"chip kind-" not in table_only` — no kind chip is built for any cell of this table.
+
+Two things were wrong with that. The marker was hunted in `table.py`, but the card's JS is the
+**shell's**, so the split found nothing and `[0]` was the whole body: `table_only` was the page twice
+over rather than the page minus the card. And the needle never matched anything anyway — the page
+writes `class="chip kind-${…}"`, so `chip kind-` is absent in every render mode, card or no card.
+
+So the fix is not a restored marker. `str.split` is replaced by `body.index`, which **raises** when
+the marker moves, and the needle is `kind-${`, which is what a chip being built actually looks like.
+The marker itself now sits in `shell.py` where the card is. A test that cannot fail is worse than no
+test, and this one could not fail twice over.
 
 ## The cuts
 
 | cut | what | rough size |
 | --- | --- | --- |
-| 1 | Groundwork, no behaviour change: `placeFloat` extracted, `may_write` on `/graph`, `kinds_under` on the ladder, a right button in `pressed_in`, the stale split marker restored | ~150 |
+| 1 | Groundwork, no behaviour change: `placeFloat` extracted, `may_write` on `/graph`, `CHILD_KINDS` on the ladder, a right button in `pressed_in`, the doubly-vacuous table assertion made
+capable of failing | ~150 |
 | 2 | The menu: `pop.py`, the host contract, the reader's items, card dismissal, three call sites, shift-through, the Escape arbitration | ~450 |
 | 3 | One-field writes: `Status ▸`, `Owner ▸`, `Take out of X`, `Add dependency from here`, `Focus subtree` | ~400 |
 | 4 | The form: `_pop_schema`, `New child ▸`, `Edit…`, `Assign parent…` — the answer to the original question | ~600 |
@@ -265,11 +275,11 @@ and it is deliberately reader-only so that judgement is made before any of it ca
 
 ## What the tests have to learn
 
-`pressed_in` (`tests/browser.py:326`) dispatches `button: "left"` and nothing else; a right press
+`pressed_in` (`tests/browser.py`) dispatches `button: "left"` and nothing else; a right press
 needs the button and the `buttons` mask. That is the only harness change, and it is in cut 1 so the
 cuts that follow can assume it.
 
-`tests/test_writes.py:366` is the sweep that will actually fail, and it is worth naming here because
+`tests/test_writes.py` is the sweep that will actually fail, and it is worth naming here because
 it is not the one anybody reaches for: it forbids reading a `detail` key off any receiver outside
 `refusal()` itself, with a companion mutation test proving it still catches the two that shipped. A
 new refusal reader in `pop.py` spelled `said.detail || said.conflict` looks perfectly reasonable and

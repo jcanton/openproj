@@ -357,7 +357,7 @@ def every_page(index: Index) -> dict[str, str]:
         # own, so it is in the sweep from the commit that adds it.
         "records": render_records(index, base_commit=HEAD, edited={}, now=0, may_write=True),
         "table": render_table(index, base_commit=HEAD, may_write=True),
-        "graph": render_graph(index, base_commit=HEAD),
+        "graph": render_graph(index, base_commit=HEAD, may_write=True),
         "timeline": render_timeline(index),
         # The people page has no `base_commit`: what it writes is one icon, and
         # `editable` is how it is asked for.

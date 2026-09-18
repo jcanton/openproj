@@ -323,6 +323,17 @@ def _evaluated(call, expression: str, patient: bool = False):
     return answer.get("result", {}).get("result", {}).get("value")
 
 
+# CDP's own spellings for the three buttons, each mapped to the `buttons` bitmask
+# it sets while it is held. **The mask is not the button index**: the index is
+# left 0, middle 1, right 2, and the mask is left 1, right 2, middle 4 — so
+# `1 << index`, the arithmetic that looks right and is right for the only button
+# this harness used to send, swaps middle and right. Getting it wrong is silent.
+# Chrome dispatches the event anyway, carrying the `button` it was asked for and
+# a `buttons` that contradicts it, so a handler reading `event.buttons` — which
+# is how a drag tells which button is down — sees a press nobody made.
+PRESSES = {"left": 1, "right": 2, "middle": 4}
+
+
 def pressed_in(
     browser: str,
     url: str,
@@ -331,6 +342,7 @@ def pressed_in(
     setup: str,
     at: str,
     then: str,
+    button: str = "left",
     settle: float = 1.5,
 ) -> tuple[object, list[str]]:
     """Put the page in a state, press a point on it the way a mouse does, and ask
@@ -353,9 +365,20 @@ def pressed_in(
     viewport coordinates, asked after `setup` so it sees the layout the press
     will actually meet; `then` is the question, asked after `settle` seconds of
     real time so a write path has run to its end.
+
+    **`button` is "left", "right" or "middle", and the right one is why it
+    exists.** `contextmenu` is a default action: the browser fires it off a
+    trusted right press, and a `MouseEvent` a page constructs and dispatches
+    runs no default action at all, so it arrives with no native menu behind it.
+    That is not a slower way to ask the same question — it is a different
+    question. An untrusted event cannot say whether `preventDefault()` actually
+    suppressed the browser's own menu, because in that harness there was never a
+    menu to suppress and the handler passes either way. The right-click menu's
+    tests have to ask exactly that, and a real press is the only way to put it.
     """
     import time
 
+    assert button in PRESSES, f"`button` must be one of {sorted(PRESSES)}; it was {button!r}"
     with _devtools(browser, url, profile) as (call, said):
         # The page has to have drawn before anything can be pressed on it, and
         # `--dump-dom`'s network-idle wait is not available here (see
@@ -374,9 +397,11 @@ def pressed_in(
                     "type": kind,
                     "x": x,
                     "y": y,
-                    "button": "left",
+                    "button": button,
                     "clickCount": 1,
-                    "buttons": 1 if kind == "mousePressed" else 0,
+                    # The mask says which buttons are held, so the release holds
+                    # none whichever button was pressed.
+                    "buttons": PRESSES[button] if kind == "mousePressed" else 0,
                 },
             )
             time.sleep(0.1)

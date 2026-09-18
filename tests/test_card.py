@@ -97,7 +97,7 @@ def test_the_three_views_draw_the_same_card(index: Index, tmp_path: Path):
     record_id = one_pitch(index)
     drawn = {
         "table": render_table(index, ROUTES, base_commit=HEAD, may_write=True),
-        "graph": render_graph(index, ROUTES, base_commit=HEAD),
+        "graph": render_graph(index, ROUTES, base_commit=HEAD, may_write=True),
         "timeline": render_timeline(index, ROUTES),
     }
     html = {
@@ -497,7 +497,7 @@ def test_a_box_answers_for_its_label_and_not_for_its_acres(index: Index, tmp_pat
     pointer through a card about their parent — in the way of the very thing being
     read, on the view whose whole job is showing what is inside what.
     """
-    page = render_graph(index, ROUTES, base_commit=HEAD)
+    page = render_graph(index, ROUTES, base_commit=HEAD, may_write=True)
     # Longer than the default: this answers from a continuation, and the waits it
     # needs are one `CARD_DELAY` per box plus the first one.
     got = measured_in(

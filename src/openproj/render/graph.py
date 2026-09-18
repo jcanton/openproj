@@ -1552,7 +1552,12 @@ _GRAPH_STYLE = """
 """
 
 
-def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = None) -> str:
+def render_graph(
+    index: Index,
+    links: Links = STATIC,
+    base_commit: str | None = None,
+    may_write: bool = False,
+) -> str:
     """The plan as nodes and edges, with the three libraries that draw it inlined.
 
     The libraries are template variables, like the data is. They arrived as
@@ -1566,7 +1571,26 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
     never into what a value expanded to.
     """
     body = _compiled(_GRAPH).render(
-        editable=base_commit is not None,
+        # "There is a server behind this page AND this person may write". The
+        # first half alone shipped here, exactly as it had on the table before
+        # the `reader-table` branch: a signed-out visitor was served "Edit
+        # dependencies", drew edges onto the canvas, pressed Save and collected a
+        # 403 for each of them. `/table` has asked this question since that
+        # branch; `/graph` never did, and took no `request` to ask it with.
+        #
+        # `design/QUEUE.md`'s table entry predicted the flag would have to SPLIT
+        # rather than narrow, and on the table it narrowed. Here it narrows
+        # further: this flag has only ever drawn `#commitbar`, so the reader's
+        # canvas keeps panning, zooming, filtering, the hover card, the dbltap
+        # into a record and the whole legend without a line moving.
+        #
+        # The script below is deliberately NOT behind this. The rendered-file
+        # export has shipped the same JavaScript with no `#commitbar` to reach it
+        # since the day it existed — `if (CONNECT)` is what makes it inert, and
+        # `connecting` can be turned on from nowhere else — and two tests read
+        # `SAVE.onclick` and the node `tap` handler straight out of `graph.html`.
+        # A reader's served page is that page.
+        editable=base_commit is not None and may_write,
         base_commit=base_commit or "",
         facets=_facets_html(
             index.facets,

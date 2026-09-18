@@ -2444,8 +2444,24 @@ def test_a_status_is_a_chip_and_the_id_cell_holds_only_the_id(page: str):
     # and the timeline the kind chip is the only thing saying which kind a node
     # is. So the claim is about the table's own script, which is the thing that
     # draws the cells.
-    table_only = body.split("// --- the hover card")[0] + body.split("function hideCard()")[-1]
-    assert "chip kind-" not in table_only, "no kind chip is built for any cell of this table"
+    #
+    # Carved out with `index` and not `split`. `str.split` on a separator that is
+    # not in the string hands back the whole string, so a marker that is reworded
+    # turns the carve into a no-op and this assertion quietly stops being about
+    # the table at all; `index` raises there instead.
+    #
+    # And the needle is `kind-${`, which is how a kind chip is spelled in this
+    # language — the shell writes ``chip(`kind-${esc(row.kind)}`)`` and a cell
+    # here would write `class="chip kind-${...}"`. It was `chip kind-`, a spelling
+    # that appears nowhere on the page, so the assertion could not have failed for
+    # any input the page can produce, carve or no carve.
+    start = body.index("// --- the hover card")
+    end = body.index("function hideCard()", start) + len("function hideCard()")
+    card, table_only = body[start:end], body[:start] + body[end:]
+    # The sweep swept. Without it the carve is free to cut the wrong range, or the
+    # card to stop building a chip, and the line below goes on passing either way.
+    assert "kind-${" in card, "the card is still where a kind chip is built"
+    assert "kind-${" not in table_only, "no kind chip is built for any cell of this table"
     assert re.search(
         r"""if \(key === 'id'\)\s*\n\s*return \(EDITABLE && movable\(row\) \? GRIP : ''\)"""
         r"""\s*\+ `<span class="eid">\$\{esc\(row\.id\)\}""",
