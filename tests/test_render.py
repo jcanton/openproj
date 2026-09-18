@@ -6008,7 +6008,9 @@ def test_the_progress_column_appears_only_once_a_plan_has_a_checklist(seed_index
         )
 
     assert "progress" not in dict(_columns_for(index_of("prose only")))
-    assert "progress" in dict(_columns_for(index_of("prose only", "- [ ] a\n")))
+    # Under the heading: progress is counted from `## Progress` and nowhere else,
+    # so a box in the prose leaves the column with nothing to draw.
+    assert "progress" in dict(_columns_for(index_of("prose only", "## Progress\n\n- [ ] a\n")))
     # The corpus does keep lists — its migration stubs carry them — so the column
     # is there, which is what makes the two rendered pages differ.
     assert seed_index.progress

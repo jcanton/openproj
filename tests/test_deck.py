@@ -852,13 +852,32 @@ def test_a_note_somebody_wrote_beats_the_plan_it_would_have_fallen_back_to(deck:
 
 def test_a_hand_written_checklist_reaches_the_slide_it_belongs_to(golden_index: Index):
     """Against the frozen corpus, whose checklists are the only ones in this
-    suite nobody wrote for a test — sub-items, `[X]` in capitals, items outside
-    `## Progress`. A generated deck that only works on the fixture it was written
-    beside is not a deck."""
-    found = slides_in(render_deck(golden_index, 36, ROUTES))
+    suite nobody wrote for a test — sub-items, `[X]` in capitals, and boxes
+    quoted in the prose outside any `## Progress`. A generated deck that only
+    works on the fixture it was written beside is not a deck.
+
+    **Every cycle the corpus bets into, rather than 36.** The cycle-36 tasks are
+    the ones that QUOTE a Progress line — "From the Progress list of the
+    distributed driver pitch, verbatim:" — and since 2026-09-18 a quoted box is
+    not a point: progress is counted under `## Progress` and nowhere else. The
+    records that keep a real list are bet into other cycles, so a deck test
+    pinned to one number was asserting a fact about which cycle it picked.
+    """
+    found = [
+        slide
+        for number in sorted({e.cycle for e in golden_index.plan.values() if e.cycle})
+        for slide in slides_in(render_deck(golden_index, number, ROUTES))
+    ]
     ticked = {s["heading"]: s["points"] for s in found if s["points"]}
 
     assert ticked, [s["heading"] for s in found]
+    # And the other side of it, in the corpus's own prose: a task whose only
+    # boxes are a quotation of somebody else's list walks no points at all.
+    quoting = "Reproduce the 2-GPU seam artefact"
+    assert quoting in {s["heading"] for s in found}, [s["heading"] for s in found]
+    assert quoting not in ticked, (
+        "a quoted Progress line is being walked as this record's own work"
+    )
     for heading, points in ticked.items():
         record = next(e for e in golden_index.plan.values() if e.title == heading)
         counted = golden_index.progress[record.id]
