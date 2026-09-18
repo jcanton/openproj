@@ -396,3 +396,11 @@ jobs:
         with:
           name: test-durations
           path: .test_durations
+          # **`.test_durations` is a dotfile, and `upload-artifact` skips those.**
+          # `include-hidden-files` defaults false since v4.4, and the miss is a
+          # warning rather than an error — "No files were found with the provided
+          # path", on a green step, with no artifact at the end of it. So this job
+          # has been running the whole suite for fifteen minutes and uploading
+          # nothing, for however long it has been on a version that defaults this
+          # way, and the only sign was an artifact list nobody looked at.
+          include-hidden-files: true
