@@ -3474,6 +3474,56 @@ def create_app(
             await announce(written.commit, ids)
         return _result(written, base)
 
+    @app.get("/api/cascade/{record_id}")
+    def cascade(record_id: str) -> JSONResponse:
+        """What deleting this record would take with it, asked before the press.
+
+        **This is not a convenience, and the reason is which map each side can
+        see.** `cascade_of` (`index.py`) iterates `index.records`; the menu's own
+        `DATA.rows` is `index.plan` only (`table.py` builds it from
+        `index.plan`), and the graph's payload is narrower still. A cascade
+        computed in the browser would therefore miss any unplanned issue or note
+        carrying a hand-written `depends_on` — and `DELETE /api/record/{id}`
+        refuses a deletion whose `also` list does not match its own, so every
+        such delete would answer 409 against a panel that had listed the
+        consequences honestly as far as it could see them.
+        `test_deleting_what_a_hand_written_issue_waits_on_edits_the_issue`
+        (`tests/test_issues.py`) is that exact record, and it is in `edited`.
+
+        **The same answer the record page's panel draws**, through
+        `_cascade_facts` — the ids for the compare-and-swap and the sentences
+        for the reader, from one derivation. Reached through the module object,
+        which is how `web.py` already reads `render._body_html` and
+        `render._payload`.
+
+        **No `writer()` gate, and that is a decision rather than an omission.**
+        Reads are public here by design, and this answers with record ids and
+        titles — every one of which an anonymous browser already has from
+        `/detail/<id>`, which serves every record in `index.records`, and from
+        `/api/body/{id}` beside it. A gate would protect nothing and would make
+        the panel unavailable in exactly the mode the rest of the page is read
+        in. What IS gated is the menu ITEM, on `may_write` like `/new`: a reader
+        offered `Delete…` is offered a 401 dressed as a control.
+
+        404 for an id this plan has not got, for `/api/body`'s reason: a panel
+        that draws an empty cascade for a typo and an empty cascade for a leaf
+        record cannot say which it is, and the second is a delete somebody is
+        about to authorise.
+        """
+        index = index_now()[1]
+        if record_id not in index.records:
+            raise HTTPException(status_code=404, detail="no such record")
+        return JSONResponse(
+            {
+                "id": record_id,
+                # The record's own title, through the same fallback the cascade
+                # lines use — a record with no title is named by its id in both
+                # halves of one panel or in neither.
+                "title": render.detail._titles_for(index, [record_id])[0],
+                **render.detail._cascade_facts(index, record_id),
+            }
+        )
+
     @app.delete("/api/record/{record_id}")
     async def remove(record_id: str, request: Request) -> JSONResponse:
         """Take one record out of the plan.

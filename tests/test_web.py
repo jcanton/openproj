@@ -1043,6 +1043,77 @@ def test_the_health_route_never_reaches_the_network(with_a_remote, monkeypatch):
         assert answer.json()["ok"] is False
 
 
+def test_the_cascade_route_says_what_a_delete_would_take_with_it(client: TestClient):
+    """The panel that authorises a delete is drawn from this, and it is the only
+    place the two halves of that question are answered together.
+
+    **Not computed in the browser, and the reason is a population difference.**
+    `cascade_of` walks `index.records`; a page has `DATA.rows`, which is
+    `index.plan`. So a browser-side cascade misses anything unplanned that
+    depends on the doomed record — and the DELETE route compare-and-swaps the
+    list it is sent against the one it derives itself, so every such delete would
+    answer 409 on a panel that looked complete.
+
+    `also` is that list, and it is what DELETE checks. `said` carries the titles
+    inside the sentences, so a title with a comma in it cannot read as two
+    records.
+    """
+    answer = client.get(f"/api/cascade/{PITCH}")
+    assert answer.status_code == 200, answer.text
+    facts = answer.json()
+
+    assert facts["id"] == PITCH
+    assert facts["title"]
+    # The pitch holds the three tasks, so all three go with it and `also` is what
+    # the delete will be compared against.
+    assert set(facts["deletes"]) == {TASK, OTHER, DONE}
+    assert set(facts["also"]) == set(facts["deletes"]) | set(facts["frees"])
+    assert facts["said"], "a cascade with records in it said nothing about them"
+    drawn = " ".join(part["lead"] + " " + " ".join(part["names"]) for part in facts["said"])
+    assert "deletes" in {part["kind"] for part in facts["said"]}
+    assert all(name in drawn for name in facts["said"][0]["names"])
+
+
+def test_the_cascade_route_answers_for_a_record_that_takes_nothing_with_it(client: TestClient):
+    """A leaf still gets an answer, and it is an empty one rather than a 404.
+
+    The panel asks before it can offer the destructive control at all, so "this
+    record takes nothing with it" has to be something the route can say."""
+    facts = client.get(f"/api/cascade/{DONE}").json()
+
+    assert facts["deletes"] == [] and facts["also"] == []
+    assert facts["said"] == []
+
+
+def test_the_cascade_route_refuses_an_id_it_has_no_record_for(client: TestClient):
+    """404 and not an empty cascade: an empty answer for a record that does not
+    exist is a panel offering to delete nothing, which reads as a panel that has
+    finished asking."""
+    answer = client.get("/api/cascade/task-ffffff")
+
+    assert answer.status_code == 404, answer.text
+
+
+def test_a_reader_may_ask_what_a_delete_would_take_but_not_make_one(
+    secure_client: TestClient,
+):
+    """The route is a READ and is gated like one — which is to say not at all,
+    because every other read here is public and this one reveals strictly less
+    than `/api/index.json` already does.
+
+    The pairing is the point: the same signed-out client that may ask is refused
+    the delete itself. A gate on the question rather than on the act would be
+    security by keeping a consequence secret.
+    """
+    asked = secure_client.get(f"/api/cascade/{PITCH}")
+    assert asked.status_code == 200, asked.text
+
+    refused = secure_client.request(
+        "DELETE", f"/api/record/{PITCH}", json={"base_commit": "deadbee", "also": []}
+    )
+    assert refused.status_code == 401, refused.text
+
+
 def test_the_index_json_carries_the_plan_the_spans_and_the_problems(client: TestClient):
     """The whole snapshot, so a client can render a view without a second request.
 

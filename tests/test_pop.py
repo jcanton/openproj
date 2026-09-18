@@ -1,10 +1,10 @@
 """The right-click menu, in the three views that draw it.
 
-`design/context-menus.md` is the argument; this covers its first four cuts — the
+`design/context-menus.md` is the argument; this covers all five of its cuts — the
 box, the host contract and the reader's three items, then the three one-field
 writes that turned the menu from something you read into something that changes
-the plan, and then the form that answers the question the whole design started
-from.
+the plan, then the form that answers the question the whole design started from,
+and finally the one gesture on this menu that cannot be undone from the page.
 
 The judgement jcanton makes on cut 2 is menu-versus-hover, so the questions that
 mattered most there are not about the items at all. They are about the two
@@ -14,6 +14,10 @@ which record, how many times, against which base, and what the box does with an
 answer it did not want. Cut 4's are about a box somebody has typed into — what
 it opens holding, what it sends, what it refuses to send, and the five signals
 that take a menu away and must leave a half-filled form exactly where it is.
+Cut 5's are one question asked from both ends: what did the page put on the wire,
+and what did it show somebody before it did — because what goes out is a commit
+that removes files, and the page's own words over the button are "can only be
+undone with git revert".
 
 Nearly all of these are asked of Chrome; `chrome()` skips when there is none,
 because a suite that is green for want of a binary is green for the wrong
@@ -40,6 +44,7 @@ receipt says depends on whether the host can find the record afterwards.
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from datetime import date
@@ -49,7 +54,7 @@ import pytest
 from browser import PRESSES, _devtools, _evaluated, chrome, measured_in, pressed_in
 
 from openproj.index import Index, build_index
-from openproj.model import KINDS, load_repo, parse_text
+from openproj.model import KINDS, RUNG, load_repo, parse_text
 from openproj.render import (
     _POP_STYLE,
     ROUTES,
@@ -62,6 +67,11 @@ from openproj.render import (
     render_table,
     render_timeline,
 )
+
+# Through the module and not the facade: `render/__init__.py` re-exports what
+# pages are built from, and these two are the route's own reading of the plan —
+# `web.py` reaches them the same way, as `render.detail._cascade_facts`.
+from openproj.render.detail import _cascade_facts, _titles_for
 from openproj.render.tokens import HUMAN, LABELS, STATUS_GLYPH
 
 HEAD = "0123456789abcdef0123456789abcdef01234567"
@@ -266,8 +276,18 @@ const rest = ms => new Promise(done => setTimeout(done, ms));
 # reader gets from `popItems` itself. `data-kind` and never the visible text: the
 # slug is the handle and the words are copy.
 #
-# Last on purpose, so their position does not move when somebody signs in.
+# Late on purpose, so their position does not move when somebody signs in.
 READER_ITEMS = ["open", "open-tab", "copy-link"]
+# And the one item that comes after even those, on a writer's menu alone. Cut 5
+# put `Delete…` there rather than beside the other five writes, and the reason is
+# the gesture: a destructive item between `Take out of "X"` and `Focus subtree`
+# is one slip of the wrist away from the two harmless items either side of it.
+# `popItems` lifts it out of `popWriteItems`' return by its slug to get it there.
+DELETE_ITEM = "delete"
+# What a writer's menu ends with, then, and a reader's does not. Spelled as one
+# list because three assertions below ask about the tail and a literal `-4:` in
+# each of them is three places to edit when a seventh item arrives.
+WRITERS_TAIL = [*READER_ITEMS, DELETE_ITEM]
 # And the six that write, first, which is the other end of that same ordering.
 # Between them is the slot each view splices its own items into —
 # `focus-subtree` on the table and the graph, `add-dependency` on the graph, and
@@ -375,7 +395,7 @@ def test_a_right_press_opens_the_menu_at_the_pointer_for_the_row_under_it(
         f"the box names itself {got['label']!r}, which is not the record that was pressed"
     )
     assert got["kinds"][: len(WRITE_ITEMS)] == WRITE_ITEMS, got["kinds"]
-    assert got["kinds"][-3:] == READER_ITEMS, got["kinds"]
+    assert got["kinds"][-4:] == WRITERS_TAIL, got["kinds"]
     # Beside the pointer, which is `placeFloat`'s 14px on both axes. A row in the
     # middle of the window is neither near enough to a gutter to be flipped nor
     # near enough to the corner for "at the pointer" and "at 0,0" to agree.
@@ -873,9 +893,11 @@ def test_a_reader_is_offered_what_only_looks_and_a_writer_the_whole_list(
 
     for who, seen in got.items():
         assert seen["open"] is True, f"the {who}'s page opened no menu"
-        assert seen["kinds"][-3:] == READER_ITEMS, (
-            f"the {who} was offered {seen['kinds']}, which does not end in the three "
-            "items that only look"
+        # The three that only look are the END of a reader's menu and the last
+        # three but one of a writer's, because `Delete…` goes under even them.
+        tail = WRITERS_TAIL if who == "writer" else READER_ITEMS
+        assert seen["kinds"][-len(tail) :] == tail, (
+            f"the {who} was offered {seen['kinds']}, which does not end in {tail}"
         )
         assert seen["refused"] == [], (
             f"the {who} was offered a refused item on a row that is inside something, "
@@ -885,8 +907,13 @@ def test_a_reader_is_offered_what_only_looks_and_a_writer_the_whole_list(
         assert seen["roles"] == ["menuitem"] * len(seen["kinds"]), seen["roles"]
         # A button, a link, a button. The link is the one that must not be a
         # button: an `href` is what makes middle-click and the browser's own
-        # menu work on it.
-        assert seen["tags"][-3:] == ["BUTTON", "A", "BUTTON"], seen["tags"]
+        # menu work on it. Read off the three slugs rather than off the end of
+        # the list, because what is at the end of a writer's list is `Delete…`.
+        assert [seen["tags"][seen["kinds"].index(kind)] for kind in READER_ITEMS] == [
+            "BUTTON",
+            "A",
+            "BUTTON",
+        ], seen["tags"]
         assert seen["tab"] == {
             "href": f"/detail/{seen['id']}",
             "target": "_blank",
@@ -899,7 +926,7 @@ def test_a_reader_is_offered_what_only_looks_and_a_writer_the_whole_list(
         assert seen["focused"] == seen["kinds"][0]
 
     assert got["writer"]["kinds"][: len(WRITE_ITEMS)] == WRITE_ITEMS, got["writer"]["kinds"]
-    for writes in (*WRITE_ITEMS, "no-schema"):
+    for writes in (*WRITE_ITEMS, DELETE_ITEM, "no-schema"):
         assert writes not in got["reader"]["kinds"], (
             f"a signed-out reader is offered {writes!r}: {got['reader']['kinds']}"
         )
@@ -971,7 +998,7 @@ def test_a_right_press_on_a_graph_node_opens_the_menu_for_that_node(index: Index
     )
     assert got["label"] == f"Actions for {got['title']}"
     assert got["kinds"][: len(WRITE_ITEMS)] == WRITE_ITEMS, got["kinds"]
-    assert got["kinds"][-3:] == READER_ITEMS, got["kinds"]
+    assert got["kinds"][-4:] == WRITERS_TAIL, got["kinds"]
     assert abs(got["left"] - (420 + GUTTER)) <= 2 and abs(got["top"] - (300 + GUTTER)) <= 2, (
         f"the box opened at ({got['left']}, {got['top']}) for a press at (420, 300) — "
         "the pointer's own coordinates are the ones a fixed box is placed with"
@@ -1460,6 +1487,12 @@ const WRITTEN = {};
 // of its three sentences, drawn for the wrong reason, and the receipt the form
 // is judged by in two tests below.
 const MADE = {};
+// And what it has TAKEN OUT of the plan, which is the delete's half of the same
+// bargain: the re-read has to answer without the record and without everything
+// that went with it, or `DATA.rows` still holds the row a test is about to
+// assert has gone — and it would go on holding it under a page that deleted
+// nothing at all.
+const DELETED = new Set();
 let MINTED = 0;
 // The id the server would answer with, spelled the way this plan spells one. The
 // prefix is READ off a record of that kind rather than written down: `PREFIX` is
@@ -1501,6 +1534,20 @@ let ANSWER = seen => seen.method === 'POST'
                          commit: 'c0ffee' + (++COMMITS), pushed: true}}
   : {status: 200,
      body: {outcome: 'committed', commit: 'c0ffee' + (++COMMITS), pushed: true}};
+// What `GET /api/cascade/{id}` answers, and **it is `_cascade_facts` itself** —
+// `REACH` is that function run over this very index and handed to the page as
+// JSON (see `_reaches`). A stub that assembled those sentences here would be a
+// second derivation of the thing the whole route exists to have exactly one of,
+// and the tests below would then be asserting that the page agrees with the
+// harness rather than with the plan.
+//
+// 404 for an id the plan has not got, which is the route's own answer and not a
+// nicety: a panel that drew an empty cascade for a typo and an empty cascade for
+// a leaf record cannot say which it is, and the second is a delete somebody is
+// about to authorise.
+let CASCADE = id => REACH[id]
+  ? {status: 200, body: REACH[id]}
+  : {status: 404, body: {detail: 'no such record'}};
 window.fetch = async (url, options) => {
   const asked = options || {};
   const seen = {url: String(url), method: asked.method || 'GET',
@@ -1509,15 +1556,21 @@ window.fetch = async (url, options) => {
   if (seen.url.includes('/api/table.json')) {
     const rows = {};
     for (const [id, row] of Object.entries(DATA.rows))
-      rows[id] = Object.assign({}, row, WRITTEN[id] || {});
+      if (!DELETED.has(id)) rows[id] = Object.assign({}, row, WRITTEN[id] || {});
     // The records this stub has minted, as the real route would be answering
     // with by now. After the plan's own rows, so a create followed by a save on
     // the new record reads back as one row and not two.
     for (const [id, row] of Object.entries(MADE))
-      rows[id] = Object.assign({}, row, WRITTEN[id] || {});
+      if (!DELETED.has(id)) rows[id] = Object.assign({}, row, WRITTEN[id] || {});
     return new Response(
       JSON.stringify({rows: rows, problems: [], parked: [], unpushed: UNPUSHED}),
       {status: 200, headers: {'content-type': 'application/json'}});
+  }
+  if (seen.url.includes('/api/cascade/')) {
+    const asking = decodeURIComponent(seen.url.split('/api/cascade/')[1] || '');
+    const answer = await CASCADE(asking);
+    return new Response(JSON.stringify(answer.body),
+                        {status: answer.status, headers: {'content-type': 'application/json'}});
   }
   // The create door, which has no id in its path because the record does not
   // exist yet — that is what the answer's `id` is for.
@@ -1531,6 +1584,25 @@ window.fetch = async (url, options) => {
                         {status: made.status, headers: {'content-type': 'application/json'}});
   }
   const about = decodeURIComponent((seen.url.split('/api/record/')[1] || ''));
+  // The delete door. One request takes the record and everything filed under it,
+  // which is what makes the assertion "one DELETE" worth making at all — the
+  // route commits the whole subtree at once, so a page sending one request per
+  // doomed record would be a page writing a history that says four things that
+  // are not true.
+  //
+  // What goes out of the plan is `REACH`'s own `deletes` and never the `also` the
+  // page sent: `also` is the compare-and-swap, and a stub that deleted whatever
+  // it was handed could not tell a panel that listed the consequences honestly
+  // from one that made them up.
+  if (seen.method === 'DELETE') {
+    const answer = await ANSWER(seen);
+    if (answer.status === 200) {
+      for (const id of [about, ...((REACH[about] || {}).deletes || [])]) DELETED.add(id);
+      if (answer.body.pushed === false) UNPUSHED += 1;
+    }
+    return new Response(JSON.stringify(answer.body),
+                        {status: answer.status, headers: {'content-type': 'application/json'}});
+  }
   const answer = await ANSWER(seen);
   if (answer.status === 200) {
     WRITTEN[about] = Object.assign({}, WRITTEN[about] || {}, seen.body.fields);
@@ -1541,6 +1613,8 @@ window.fetch = async (url, options) => {
 };
 const patches = () => SENT.filter(one => one.method === 'PATCH');
 const posts = () => SENT.filter(one => one.method === 'POST');
+const deletions = () => SENT.filter(one => one.method === 'DELETE');
+const cascades = () => SENT.filter(one => one.url.includes('/api/cascade/'));
 
 // The pair the shell counts against each other. One `openproj:wrote` for every
 // `openproj:writing` — including on a refusal, or one held-back event stops the
@@ -1550,6 +1624,15 @@ const beats = {writing: 0, wrote: []};
 addEventListener('openproj:writing', () => { beats.writing += 1; });
 addEventListener('openproj:wrote', event => { beats.wrote.push(event.detail || null); });
 const beatsNow = () => ({writing: beats.writing, wrote: beats.wrote.slice()});
+
+// And the beat a DELETE makes instead of those two. `openproj:ours` is the
+// shell's own event for a commit that is this page's, and a delete is the one
+// write here that sends it — see `popDelete`. Collected beside `beats` rather
+// than inside it so a test that asserts `beats` is silent is asserting exactly
+// that, and a test that wants the compensation has it to name.
+const ours = [];
+addEventListener('openproj:ours', event => { ours.push(event.detail || null); });
+const oursNow = () => ours.slice();
 
 const baseNow = () => document.getElementById('base').value;
 // A row with the shape a question needs, chosen from the payload rather than
@@ -1564,6 +1647,36 @@ const openOn = id => {
 """
 
 
+def _reaches(index: Index) -> dict[str, dict]:
+    """What `GET /api/cascade/{id}` would answer for every record on the plan.
+
+    **Derived by running the route's own function, and that is the point.** The
+    sentences a reader decides on are `_cascade_facts`' (`render/detail.py`), and
+    a harness that wrote them out again would be a second derivation of the one
+    thing the route exists to have exactly one of — so every assertion below
+    would be asking whether the page agrees with this file rather than with the
+    plan. The route adds the record's own title beside the facts and this does
+    the same, in the same words, through the same fallback.
+
+    Every planned record and not the one a test presses on: which record has
+    children, or is depended on, is a fact about `seed/`, and the tests choose by
+    shape.
+    """
+    return {
+        record_id: {
+            "id": record_id,
+            "title": _titles_for(index, [record_id])[0],
+            **_cascade_facts(index, record_id),
+        }
+        for record_id in index.plan
+    }
+
+
+def _served(index: Index) -> str:
+    """The plan's cascades, handed to the page as the stub's own answers."""
+    return f"const REACH = {json.dumps(_reaches(index))};\n"
+
+
 def _at_the_table(index: Index, where: Path, script: str, patience: int = 3000) -> dict:
     """One writer's table in Chrome, asked one question about the menu's writes."""
     return measured_in(
@@ -1571,7 +1684,7 @@ def _at_the_table(index: Index, where: Path, script: str, patience: int = 3000) 
         a_writers_table(index),
         where,
         1280,
-        _OPENING + _READERS + _WRITING + script,
+        _OPENING + _READERS + _served(index) + _WRITING + script,
         patience=patience,
     )
 
@@ -2494,7 +2607,7 @@ def test_the_graphs_own_item_puts_the_canvas_into_connecting_mode_at_that_node(
         f"a signed-out reader is offered {_ADD_EDGE!r}: `extras` is spliced in outside "
         "the `may()` gate, so a host that does not ask gets no gate at all"
     )
-    for refused in (*WRITE_ITEMS, "no-schema"):
+    for refused in (*WRITE_ITEMS, DELETE_ITEM, "no-schema"):
         assert refused not in reader["kinds"], (
             f"the reader's graph draws {refused!r}: {reader['kinds']}"
         )
@@ -2772,7 +2885,7 @@ def _at_a_form(
         a_writers_table(index),
         where,
         1280,
-        _OPENING + _READERS + _WRITING + _FORMS + script,
+        _OPENING + _READERS + _served(index) + _WRITING + _FORMS + script,
         height=tall,
         patience=patience,
     )
@@ -3989,3 +4102,1131 @@ def test_the_form_re_places_itself_when_a_refusal_grows_it(index: Index, tmp_pat
         f"Save is at {got['save']}, off a {got['window']}px window — which is the whole "
         "of what the re-placement is for"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Cut 5: `Delete…`, which is the one gesture here that cannot be undone from the
+# page
+#
+# The commit takes the record off the tip of the branch and leaves every version
+# of it in history, which is the whole of what makes a delete button defensible
+# — and is exactly why the questions below are about what somebody was SHOWN
+# before they agreed to it, and not only about what went on the wire.
+#
+# `GET /api/cascade/{id}` is answered by `_cascade_facts` itself (see
+# `_reaches`), so what the stub hands the page is what the route would: the ids
+# the deletion is compare-and-swapped against, and the sentences that name the
+# same records by title.
+# --------------------------------------------------------------------------- #
+
+
+# The title the plan-moved fixture files its late child under. Written down
+# because it is the word that proves a redraw: a panel showing it is a panel
+# drawn from the answer that came back AFTER the refusal.
+LATE_CHILD = "Filed while the panel was open"
+
+
+def _whose_delete_reaches(index: Index) -> str:
+    """A planned record that takes at least two others with it and frees a third.
+
+    Searched by shape rather than named, which is this file's rule everywhere
+    else: `seed/` is the demo and is free to be rewritten, so a test that names
+    an id in it is a test a copy edit turns red. Two and not one because a count
+    of 1 cannot tell `<strong>{{ count }}</strong>` from a hard-coded number, and
+    the freed record because the two sentences are drawn differently on purpose
+    and a corpus with only one of them cannot say so.
+    """
+    for record_id in index.plan:
+        facts = _cascade_facts(index, record_id)
+        if len(facts["deletes"]) >= 2 and facts["frees"]:
+            return record_id
+    pytest.skip(  # pragma: no cover - a fact about the corpus, not about the code
+        "no planned record's deletion takes two records with it and frees a third, "
+        "so the two sentences cannot both be drawn"
+    )
+
+
+def _a_leaf(index: Index) -> str:
+    """A planned record nothing is filed under and nothing waits on."""
+    for record_id in index.plan:
+        if not _cascade_facts(index, record_id)["also"]:
+            return record_id
+    pytest.skip(  # pragma: no cover - a fact about the corpus, not about the code
+        "every planned record's deletion reaches another, so the plain question "
+        "cannot be asked"
+    )
+
+
+def _as_read(said: dict) -> str:
+    """One of `said`'s parts as the panel reads aloud, in one piece.
+
+    `popReach` draws the count in a `<strong>` and each title in a chip of its
+    own — parts and not a finished sentence, because a title is held to one rule,
+    that it is not blank, so comma-joining three of them offers a reader four
+    records and asks them to press Delete on that. What a person reads is still
+    one sentence, which is what this rebuilds: every part with one space between,
+    exactly as `append` leaves them.
+    """
+    return " ".join(
+        [
+            said["lead"],
+            *([str(said["count"])] if said["count"] else []),
+            *([said["mid"]] if said["mid"] else []),
+            *said["names"],
+            *([said["tail"]] if said["tail"] else []),
+        ]
+    )
+
+
+def _after_a_late_child(demo_root: Path, index: Index, parent_id: str) -> dict:
+    """The same record's cascade on a plan that moved while the panel was open.
+
+    Somebody files a task under the pitch somebody else is looking at a delete
+    confirmation for. That is the exact sequence the DELETE route's
+    compare-and-swap on `also` exists for, and this is the answer the route gives
+    the second time it is asked — derived by building the index again with the
+    record in it and running `_cascade_facts` over that, so the new sentence is
+    the plan's own and not a string this file made up.
+    """
+    like = RUNG[index.records[_cascade_facts(index, parent_id)["deletes"][0]].kind]
+    late = f"{like.prefix}-0ff00d"
+    front = [f"id: {late}", f"kind: {like.name}", f"title: {LATE_CHILD}"]
+    if like.statuses:
+        front.append(f"status: {like.statuses[0]}")
+    front.append(f"parent: {parent_id}")
+    records, config, _ = load_repo(demo_root)
+    records.append(
+        parse_text(
+            "---\n" + "\n".join(front) + "\n---\n\nFiled late.\n",
+            f"{like.directory}/{late}.md",
+        )
+    )
+    moved = build_index(records, config, date(2026, 8, 17))
+    return {
+        "id": parent_id,
+        "title": _titles_for(moved, [parent_id])[0],
+        **_cascade_facts(moved, parent_id),
+    }
+
+
+# How the confirmation face is read, and it is neither how an item is read nor
+# how the form is. A panel is no `.popitem` at all — `popControls()` is empty
+# while one is up, which is itself one of the assertions — and every handle here
+# is a `data-kind` slug `pop.py` writes down.
+_ASKING = """
+const partAsked = kind => {
+  const found = POP.querySelector('[data-kind="' + kind + '"]');
+  return found ? found.textContent : '';
+};
+// **Whether a panel is on screen, which is not whether one is in the box.**
+// `popClose` deliberately leaves the children where they are, so a
+// `querySelector('[data-kind="confirm"]')` answers a dismissed panel exactly as
+// it answers a live one — and every `it closed` assertion written against that
+// would pass with the panel still up.
+const askUp = () => popIsOpen() && POP.classList.contains('popasking');
+// The four ways the box says which face it is wearing. `items: 0` is the one
+// worth having: a box that drew a panel over its own menu items is a
+// `role="dialog"` full of `menuitem`s, and nothing else here would notice.
+const panelIs = () => ({up: askUp(), role: POP.getAttribute('role'),
+                        label: POP.getAttribute('aria-label'), items: popControls().length});
+// The consequences as drawn: the sentence somebody reads, the number they are
+// agreeing to, and the titles as SEPARATE elements — which is the half a
+// comma-joined string cannot have.
+const reachLines = () => [...POP.querySelectorAll(
+  '[data-kind="confirm-deletes"], [data-kind="confirm-frees"]')].map(one => ({
+    kind: one.dataset.kind, text: one.textContent, mild: one.classList.contains('popmild'),
+    strong: [...one.querySelectorAll('strong')].map(many => many.textContent),
+    names: [...one.querySelectorAll('.popnamed')].map(chip => chip.textContent)}));
+const whyAsked = () => [...POP.querySelectorAll('[data-kind="confirm-why-line"]')]
+  .map(one => one.textContent);
+const reallyIn = () => POP.querySelector('[data-kind="confirm-delete"]');
+const keepIn = () => POP.querySelector('[data-kind="confirm-keep"]');
+// What the panel would authorise, read off the panel itself rather than off the
+// wire: `also` is the list the DELETE is compare-and-swapped against, and it is
+// `null` until the plan has answered.
+const askedAbout = () => POP_CONFIRM
+  ? {id: POP_CONFIRM.id, title: POP_CONFIRM.title, also: POP_CONFIRM.also,
+     deletes: POP_CONFIRM.deletes}
+  : null;
+const askOn = id => { openOn(id); itemIn('delete').click(); };
+// Everything this page put on the wire, less the one request the shell makes on
+// its own. `readPile` polls `/api/health` on a minute, and a test that asserted
+// over raw `SENT` would be a test that goes red on the day somebody shortens
+// that interval — while what is being asked here is about the DELETE.
+const asked = () => SENT.filter(one => !one.url.includes('/api/health'))
+  .map(one => one.method + ' ' + one.url);
+"""
+
+
+def _at_a_panel(index: Index, where: Path, script: str, patience: int = 4000) -> dict:
+    """One writer's table in Chrome, asked one question about the confirmation."""
+    return measured_in(
+        chrome(),
+        a_writers_table(index),
+        where,
+        1280,
+        _OPENING + _READERS + _served(index) + _WRITING + _ASKING + script,
+        patience=patience,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# What the panel asks, and what it will not offer until the plan has answered
+# --------------------------------------------------------------------------- #
+
+
+_ASKED = """
+if (!DATA.rows[TARGET]) return {error: TARGET + ' is not on this table'};
+// **The answer HELD**, which is the only way to read the panel in the state the
+// design is most specific about: drawn, holding the question, and with nothing
+// pressable on it yet. Against an answer that came back immediately this half
+// would be asking nothing at all.
+let release = null;
+CASCADE = id => new Promise(done => { release = () => done({status: 200, body: REACH[id]}); });
+askOn(TARGET);
+const asking = Object.assign(panelIs(), {
+  heading: partAsked('confirm-heading'), note: partAsked('confirm-note'),
+  reach: reachLines(), why: whyAsked(),
+  really: {disabled: reallyIn().disabled, text: reallyIn().textContent},
+  keep: keepIn().textContent, focused: document.activeElement.dataset.kind,
+  panel: askedAbout(), asked: cascades().map(one => one.url), wire: asked()});
+// Pressed while it is still a question. There is nothing to authorise yet, and
+// this is the press `asking.really.disabled = true` is written for: the box is
+// placed at the pointer that opened it, so the destructive control appears under
+// a hand that has just pressed something.
+reallyIn().click();
+await rest(100);
+const early = {deletions: deletions().length, up: askUp()};
+release();
+await rest(500);
+const answered = Object.assign(panelIs(), {
+  note: partAsked('confirm-note'), reach: reachLines(), why: whyAsked(),
+  enabled: !reallyIn().disabled, panel: askedAbout(),
+  asked: cascades().map(one => one.url), deletions: deletions().length,
+  patched: patches().length, posted: posts().length, base: baseNow(),
+  beats: beatsNow(), row: !!DATA.rows[TARGET]});
+return {asking, early, answered};
+"""
+
+
+def test_delete_asks_the_plan_what_would_go_and_draws_it_before_offering_anything(
+    index: Index, tmp_path: Path
+):
+    """**`Delete…` never asks a bare question**, and this is the whole of what it
+    asks instead.
+
+    The panel opens holding the record's name and nothing else, says it is
+    working out what the deletion would take with it, and asks
+    `GET /api/cascade/{id}`. What comes back is drawn: the sentences a person
+    decides on, with the count in its own element and each title in a chip of its
+    own — and the ids, which nobody reads and which are what the DELETE is
+    compare-and-swapped against. Both halves are asserted against
+    `_cascade_facts` run over this index in Python, because that is what the
+    route answers with; a panel that agreed with a sentence written out in this
+    file would prove only that two files had been edited together.
+
+    **The destructive control is disabled from the moment it is drawn**, and it
+    is pressed here while it is. The record page arranges this structurally — its
+    Delete button is hidden and the panel is drawn somewhere else — and this box
+    has no somewhere else: it is placed at `POP_AT`, the same pointer, and the
+    press that opened the panel was on an item inside the panel's own outline. So
+    the guarantee is earned by the round trip instead, and what this test asks is
+    that the round trip really is in the way: a press before the plan answers
+    sends nothing.
+
+    And the box is wearing one face. `items: 0` is the assertion that says so —
+    a panel drawn over the menu items it replaced would be a `role="dialog"` full
+    of `menuitem`s, announced to a reader as a menu with no items in it.
+    """
+    target = _whose_delete_reaches(index)
+    facts = _reaches(index)[target]
+    got = _at_a_panel(
+        index, tmp_path / "asked.html", f"const TARGET = {target!r};\n" + _ASKED
+    )
+
+    assert not got.get("error"), got
+    asking, early, answered = got["asking"], got["early"], got["answered"]
+
+    assert asking["up"] is True, "`Delete…` drew no confirmation at all"
+    assert asking["role"] == "dialog", (
+        f"the box is a {asking['role']!r} while it is asking a question with two "
+        "buttons on it"
+    )
+    assert asking["label"] == f'Delete "{facts["title"]}"?', asking["label"]
+    assert asking["heading"] == f'Delete "{facts["title"]}"?', asking["heading"]
+    assert asking["items"] == 0, (
+        "the panel was drawn over the menu's own items, so the box is a dialog "
+        "holding a list of menuitems"
+    )
+    assert asking["note"] == "Working out what this would take with it…", asking["note"]
+    assert asking["reach"] == [] and asking["why"] == [], (
+        f"the panel drew consequences before the plan had answered: {asking['reach']}"
+    )
+    assert asking["panel"]["also"] is None, (
+        f"the panel already holds {asking['panel']['also']} to send — a list worked "
+        "out in the browser is a list that cannot see the records this view does not "
+        "draw, and every delete against it would be refused"
+    )
+    assert asking["really"]["disabled"] is True, (
+        "`Delete it` is pressable the instant the panel appears, under a pointer that "
+        "has just pressed the item that opened it"
+    )
+    assert asking["really"]["text"] == "Delete it" and asking["keep"] == "Keep it", asking
+    assert asking["focused"] == "confirm-keep", (
+        f"the keyboard landed on {asking['focused']!r} — it goes on the way out of a "
+        "destructive question, never on the way through it"
+    )
+    assert asking["asked"] == [f"/api/cascade/{target}"], asking["asked"]
+    assert asking["wire"] == [f"GET /api/cascade/{target}"], (
+        f"opening the panel put {asking['wire']} on the wire, and asking what a deletion "
+        "would take with it is the whole of what it may do"
+    )
+    assert early["deletions"] == 0, (
+        "a press on `Delete it` before the plan had answered deleted the record, and "
+        "nobody had been shown what went with it"
+    )
+    assert early["up"] is True, "that press took the panel away"
+
+    assert answered["enabled"] is True, (
+        "the plan answered and `Delete it` is still not pressable, so the panel is a "
+        "question with no way to say yes"
+    )
+    assert answered["note"] == "Commit deletion? Can only be undone with git revert.", (
+        answered["note"]
+    )
+    assert [line["kind"] for line in answered["reach"]] == [
+        f"confirm-{said['kind']}" for said in facts["said"]
+    ], answered["reach"]
+    assert len(answered["reach"]) == 2, (
+        f"the panel drew {len(answered['reach'])} sentences and the plan sent "
+        f"{len(facts['said'])}"
+    )
+    for line, said in zip(answered["reach"], facts["said"], strict=True):
+        assert line["text"] == _as_read(said), (
+            f"the panel reads {line['text']!r} and the plan said {_as_read(said)!r}"
+        )
+        # One element per title, which is the half a sentence cannot carry: a
+        # title is held to one rule, that it is not blank, so three titles joined
+        # by commas — one of which has a comma in it — offer a reader four
+        # records and ask them to press Delete on that.
+        assert line["names"] == said["names"], (
+            f"the panel named {line['names']} and the plan named {said['names']}"
+        )
+        assert line["strong"] == ([str(said["count"])] if said["count"] else []), (
+            f"the count is drawn as {line['strong']} — the number somebody is agreeing "
+            "to is the one part of that sentence that is not prose"
+        )
+        # The quiet line is where nothing is destroyed and a field is edited
+        # instead. Drawing the two the same way teaches people to skim both.
+        assert line["mild"] is (said["kind"] == "frees"), line
+    assert answered["panel"]["also"] == facts["also"], (
+        f"the panel will authorise {answered['panel']['also']} and the plan's answer "
+        f"was {facts['also']}"
+    )
+    assert answered["panel"]["deletes"] == facts["deletes"], answered["panel"]
+    assert answered["asked"] == [f"/api/cascade/{target}"], (
+        f"the panel asked the plan {len(answered['asked'])} times for one question"
+    )
+    assert answered["deletions"] == 0, "drawing the consequences deleted the record"
+    assert answered["patched"] == 0 and answered["posted"] == 0, answered
+    assert answered["base"] == HEAD and answered["beats"] == {"writing": 0, "wrote": []}, (
+        f"opening a question moved the page's commit or its write counters: {answered}"
+    )
+    assert answered["row"] is True, "the record is out of the plan and nobody pressed anything"
+
+
+_A_LEAF = """
+if (!DATA.rows[TARGET]) return {error: TARGET + ' is not on this table'};
+askOn(TARGET);
+await rest(400);
+const asking = Object.assign(panelIs(), {
+  heading: partAsked('confirm-heading'), note: partAsked('confirm-note'),
+  reach: reachLines(), enabled: !reallyIn().disabled, panel: askedAbout(),
+  asked: cascades().map(one => one.url)});
+reallyIn().click();
+await rest(600);
+return {asking, sent: deletions(), said: said(), up: askUp(), open: popIsOpen(),
+        row: !!DATA.rows[TARGET], drawn: menuRows().some(tr => tr.dataset.id === TARGET)};
+"""
+
+
+def test_a_record_with_nothing_under_it_asks_a_plain_question(index: Index, tmp_path: Path):
+    """**Empty must not look like broken**, which is finding F1 pointed at the one
+    panel where the two are a deletion apart.
+
+    A record nothing is filed under and nothing waits on has an empty cascade,
+    and the panel draws exactly that: the question, the git-revert line, and no
+    sentences — because there are none to say. It is a plain question and not a
+    missing one, and the thing that makes it readable as plain rather than as
+    unfinished is that the note has moved on from "Working out what this would
+    take with it…" and the button is live.
+
+    The other half of that pair is the route's 404 for an id the plan has not
+    got, which is why it answers one: a panel that drew an empty cascade for a
+    typo and an empty cascade for a leaf could not say which it was, and the
+    second is a delete somebody is about to authorise.
+
+    And the receipt is the leaf's own. `popDelete` says "with N records that were
+    filed under it" when there were some; here there are none, so the sentence
+    stops after the title rather than reporting a zero.
+    """
+    target = _a_leaf(index)
+    facts = _reaches(index)[target]
+    got = _at_a_panel(index, tmp_path / "leaf.html", f"const TARGET = {target!r};\n" + _A_LEAF)
+
+    assert not got.get("error"), got
+    asking = got["asking"]
+    assert asking["up"] is True, "`Delete…` drew no confirmation for a record with no children"
+    assert asking["heading"] == f'Delete "{facts["title"]}"?', asking["heading"]
+    assert asking["asked"] == [f"/api/cascade/{target}"], (
+        "the panel did not ask the plan at all about a record it could see had no "
+        "children: what this view can see is `index.plan`, and the answer is about "
+        "`index.records`"
+    )
+    assert asking["reach"] == [], (
+        f"the panel drew {asking['reach']} for a record whose deletion reaches nothing"
+    )
+    assert asking["note"] == "Commit deletion? Can only be undone with git revert.", (
+        f"the note still reads {asking['note']!r}, so a plain question is indistinguishable "
+        "from one still waiting for its answer"
+    )
+    assert asking["enabled"] is True, "a leaf's deletion cannot be agreed to"
+    assert asking["panel"]["also"] == [], asking["panel"]
+    assert len(got["sent"]) == 1, got["sent"]
+    assert got["sent"][0]["body"] == {"base_commit": HEAD, "also": []}, got["sent"][0]["body"]
+    assert got["said"] == f"{facts['title']} is deleted", (
+        f"the receipt reads {got['said']!r} — a record that took nothing with it does not "
+        "report a count"
+    )
+    assert got["up"] is False and got["open"] is False, "the panel outlived the deletion"
+    assert got["row"] is False and got["drawn"] is False, (
+        "the record is still in `DATA.rows` or still drawn, so the host never re-read the "
+        "plan after the commit"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Agreeing to it, and the one request that goes out
+# --------------------------------------------------------------------------- #
+
+
+_CONFIRMED = """
+if (!DATA.rows[TARGET]) return {error: TARGET + ' is not on this table'};
+askOn(TARGET);
+await rest(400);
+const panel = askedAbout();
+reallyIn().click();
+const during = {disabled: reallyIn().disabled, deletions: deletions().length, up: askUp()};
+await rest(900);
+return {panel, during, sent: deletions(), patched: patches().length, posted: posts().length,
+        said: said(), up: askUp(), open: popIsOpen(), base: baseNow(), beats: beatsNow(),
+        ours: oursNow(),
+        row: !!DATA.rows[TARGET], drawn: menuRows().some(tr => tr.dataset.id === TARGET),
+        kids: panel.deletes.filter(id => DATA.rows[id]),
+        kidsDrawn: panel.deletes.filter(id => menuRows().some(tr => tr.dataset.id === id)),
+        freed: (REACH[TARGET].frees || []).filter(id => DATA.rows[id])};
+"""
+
+
+def test_confirming_sends_one_delete_and_the_record_goes(index: Index, tmp_path: Path):
+    """**One request, carrying the ids the panel showed and nothing else.**
+
+    The route commits the record and its whole subtree together, for a reason
+    `web.py` writes down: one decision, and a `git log` showing a pitch removed
+    and then four tasks removed says four things that are not true. So a page
+    that sent one DELETE per doomed record would be writing that history — and it
+    would leave the plan in a state a protected branch cannot be talked out of if
+    the third of five failed.
+
+    **The body is asserted whole**, which is the half `popSend`'s `sends` change
+    is for. A deletion sends `{base_commit, also}` — the ids the reader agreed
+    to, compare-and-swapped by the route against its own answer — and no
+    `fields`, because a `fields: {}` on a deletion is this page telling the
+    server something it does not mean.
+
+    And what the deletion did is read off the plan afterwards rather than assumed:
+    the record is gone from `DATA.rows` and out of the tbody, everything filed
+    under it went with it, and **the records that merely depended on it are still
+    there** — they keep their files and lose a dependency, which is the whole of
+    why `cascade_of` answers two lists rather than one.
+
+    The receipt names the reach as well as the record, because by the time it is
+    said the panel that listed it is gone, and "deleted" alone is a receipt for
+    one file about a commit that removed eight.
+    """
+    target = _whose_delete_reaches(index)
+    facts = _reaches(index)[target]
+    got = _at_a_panel(
+        index, tmp_path / "confirmed.html", f"const TARGET = {target!r};\n" + _CONFIRMED
+    )
+
+    assert not got.get("error"), got
+    assert len(got["sent"]) == 1, (
+        f"{len(got['sent'])} DELETEs went out for one press, and the route takes the "
+        f"whole subtree in one commit: {[one['url'] for one in got['sent']]}"
+    )
+    assert got["sent"][0]["url"] == f"/api/record/{target}", got["sent"][0]["url"]
+    assert got["sent"][0]["body"] == {"base_commit": HEAD, "also": facts["also"]}, (
+        got["sent"][0]["body"]
+    )
+    assert "fields" not in got["sent"][0]["body"], (
+        "the deletion sent a `fields` key, which is this page telling the server "
+        "something it does not mean"
+    )
+    assert got["patched"] == 0 and got["posted"] == 0, got
+    assert got["during"]["deletions"] == 1, "the press sent nothing at all"
+    assert got["during"]["disabled"] is True, (
+        "`Delete it` is still pressable while the commit is in the air, and the second "
+        "press would be sent against a record that may already be gone"
+    )
+    assert got["up"] is False and got["open"] is False, (
+        "the box outlived the commit, over a table that has just been redrawn"
+    )
+    assert got["row"] is False and got["drawn"] is False, (
+        f"{target} is still in the plan this page is showing after a commit that removed it"
+    )
+    assert got["kids"] == [] and got["kidsDrawn"] == [], (
+        f"{got['kids']} were filed under it and are still on the table: the host re-read "
+        "the plan and the rows it drew are from before the deletion"
+    )
+    assert got["freed"] == facts["frees"], (
+        f"the records that merely depended on it are gone as well: {facts['frees']} became "
+        f"{got['freed']} — they keep their files and lose a dependency"
+    )
+    gone = len(facts["deletes"])
+    assert got["said"] == (
+        f"{facts['title']} is deleted, with {gone} records that were filed under it"
+    ), got["said"]
+    assert got["base"] == "c0ffee1", (
+        f"`#base` is still {got['base']} after a commit, so the next write from this page "
+        "collides with the commit it just made"
+    )
+    # Silent on both, because a DELETE is invisible to the announce census in
+    # `tests/test_web.py` and a pair here would count a write it cannot see.
+    # `openproj:ours` is what a delete sends instead — the shell's own event for a
+    # commit that is this page's, which stops the stream's news arriving as "The
+    # plan changed" about the record just removed.
+    assert got["beats"] == {"writing": 0, "wrote": []}, got["beats"]
+    assert got["ours"] == ["c0ffee1"], f"the commit was not claimed as ours: {got['ours']}"
+
+
+# --------------------------------------------------------------------------- #
+# Not agreeing to it, which has to be silent on the wire
+# --------------------------------------------------------------------------- #
+
+
+_KEPT = """
+if (!DATA.rows[TARGET]) return {error: TARGET + ' is not on this table'};
+const ways = [];
+const leave = async (how, go) => {
+  // **The record is checked for before each way**, and it is not a nicety: a way
+  // out that deleted it takes the row with it, `openOn` then throws inside this
+  // script, and the harness reports "the page reported nothing" — which is the
+  // one failure message that says nothing about the defect it found.
+  if (!menuRows().some(tr => tr.dataset.id === TARGET)) {
+    ways.push({how: how, gone: true, up: askUp(), open: popIsOpen(), said: said(),
+               deletions: deletions().length});
+    return;
+  }
+  askOn(TARGET);
+  await rest(300);
+  const before = deletions().length;
+  go();
+  await rest(200);
+  ways.push({how: how, gone: false, up: askUp(), open: popIsOpen(), said: said(),
+             deletions: deletions().length - before});
+};
+await leave('keep', () => keepIn().click());
+await leave('escape', () => pressKey('Escape'));
+// The four signals below `Keep it` and Escape, and the panel deliberately does
+// NOT resist them the way the form does: a form holds typed work, this holds a
+// question, and a destructive panel that will not go away when you reach past it
+// is worse than one that closes easily.
+await leave('outside', () => document.body.dispatchEvent(
+  new PointerEvent('pointerdown', {bubbles: true, clientX: 5, clientY: 5})));
+await leave('scroll', () => document.dispatchEvent(new Event('scroll')));
+await leave('filter', () => dispatchEvent(new CustomEvent('openproj:filter')));
+return {ways, wire: asked(), base: baseNow(), beats: beatsNow(),
+        row: !!DATA.rows[TARGET], drawn: menuRows().some(tr => tr.dataset.id === TARGET)};
+"""
+
+
+def test_keeping_it_sends_nothing_at_all(index: Index, tmp_path: Path):
+    """**The wire is asserted silent, and not merely the box shut.**
+
+    A panel that closed and deleted anyway is the failure this test is for, and
+    it is invisible from the DOM: the box is gone either way, the table redraws
+    either way, and on a protected branch the news arrives as a commit somebody
+    else reads. So what is asserted is that no DELETE was sent by any of the five
+    ways out, that the only requests on the wire are the five questions the
+    panels asked, and that the record is still in the plan afterwards.
+
+    **Five ways, because the confirmation does not inherit the form's dismissal
+    exemption.** `popClose` refuses to shut a form, and copying that here would
+    have put an un-dismissable destructive panel on the page — so a press
+    outside, a scroll and a filter close this one exactly as they close a menu.
+    Reaching past a question cancels it, which is the answer anybody reaching
+    past it wanted.
+
+    The two that are decisions say so. `Keep it` and Escape both announce
+    "nothing was deleted" — the same words, because a control and the key that
+    does the same thing may not report it differently, and this app has already
+    had one word mean three things on one screen.
+    """
+    target = _whose_delete_reaches(index)
+    got = _at_a_panel(index, tmp_path / "kept.html", f"const TARGET = {target!r};\n" + _KEPT)
+
+    assert not got.get("error"), got
+    assert [way["how"] for way in got["ways"]] == [
+        "keep",
+        "escape",
+        "outside",
+        "scroll",
+        "filter",
+    ], got["ways"]
+    for way in got["ways"]:
+        assert way["gone"] is False, (
+            f"the record was already out of the plan by the time {way['how']!r} was "
+            "asked, so an earlier way out of this panel deleted it"
+        )
+        assert way["deletions"] == 0, (
+            f"leaving the panel by {way['how']!r} sent a DELETE: the box shuts either "
+            "way, so this is a deletion nobody would learn about until the commit"
+        )
+        assert way["up"] is False and way["open"] is False, (
+            f"the panel survived {way['how']!r}, which is a destructive question that "
+            "will not go away when somebody reaches past it"
+        )
+    for decided in got["ways"][:2]:
+        assert decided["said"] == "nothing was deleted", (
+            f"{decided['how']!r} announced {decided['said']!r} — `Keep it` and Escape do "
+            "the same thing and may not report it in two vocabularies"
+        )
+    assert got["wire"] == [f"GET /api/cascade/{target}"] * len(got["ways"]), (
+        f"the wire carried {got['wire']} — five panels asked what a deletion would take "
+        "with it, and nothing else should have gone out at all"
+    )
+    assert got["row"] is True and got["drawn"] is True, (
+        f"{target} is out of the plan after five people said no to deleting it"
+    )
+    assert got["base"] == HEAD, "`#base` moved on a deletion that never happened"
+    assert got["beats"] == {"writing": 0, "wrote": []}, (
+        f"a cancelled deletion dispatched the shell's write events: {got['beats']}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The plan moved while the panel was open
+# --------------------------------------------------------------------------- #
+
+
+_STALE = """
+if (!DATA.rows[TARGET]) return {error: TARGET + ' is not on this table'};
+// The route's own 409: it refuses a deletion whose `also` is not the list it
+// computes itself, which is somebody filing a record under this one while the
+// panel sat open. A rule's sentence and not the store's compare-and-swap report
+// — two shapes, one reader, and `refusal()` is the only thing that may tell them
+// apart.
+const STALE = 'the plan changed while that was open: deleting ' + REACH[TARGET].title
+  + ' now affects one more record. Nothing was deleted — read it again and decide.';
+ANSWER = () => ({status: 409, body: {detail: STALE}});
+askOn(TARGET);
+await rest(400);
+const before = {reach: reachLines(), also: askedAbout().also.slice()};
+// And the plan really does move: from here the route answers with the cascade of
+// an index that has one more record filed under this one. `MOVED` is
+// `_cascade_facts` run over that index, so the second answer is as much the
+// plan's own as the first was.
+CASCADE = id => ({status: 200, body: id === TARGET ? MOVED : REACH[id]});
+reallyIn().click();
+const during = {disabled: reallyIn().disabled};
+await rest(800);
+const after = {up: askUp(), why: whyAsked(), reach: reachLines(), note: partAsked('confirm-note'),
+               also: askedAbout() ? askedAbout().also.slice() : null,
+               enabled: !reallyIn().disabled, asked: cascades().length,
+               deletions: deletions().length, said: said(), base: baseNow(),
+               focused: document.activeElement.dataset.kind, kinds: popKinds()};
+// The second press, against the list the panel is showing NOW.
+ANSWER = () => ({status: 200,
+                 body: {outcome: 'committed', commit: 'c0ffee2', pushed: true}});
+reallyIn().click();
+await rest(900);
+return {STALE, before, during, after, sent: deletions(), open: popIsOpen(),
+        said: said(), base: baseNow(), beats: beatsNow(), ours: oursNow(),
+        row: !!DATA.rows[TARGET]};
+"""
+
+
+def test_a_refusal_re_asks_the_plan_and_redraws_what_would_go(
+    index: Index, demo_root: Path, tmp_path: Path
+):
+    """**A refused deletion re-asks the cascade rather than offering the same
+    list again.**
+
+    The refusal a delete gets is almost always that the plan moved under the
+    panel — somebody filed a task under this pitch while it sat open — and the
+    route says so by refusing a deletion whose `also` is not the list it computes
+    itself. What the panel is showing at that moment is therefore a claim about a
+    plan that no longer exists, and pressing again against it would be refused by
+    the same rule for the same reason, for ever.
+
+    So the sentences are replaced, the `also` that goes on the wire is replaced
+    with them, and only then is the button pressable again. The redraw is
+    asserted against `_cascade_facts` run over an index that really does have the
+    late record in it, and the new title is asserted to be in the sentence: a
+    panel that merely re-enabled its button would pass every other assertion
+    here.
+
+    **The reason stays.** `popCascade` does not clear the refusal it was sent
+    back by, because that sentence is why the panel changed under somebody, and
+    it has to still be there when it has. The keyboard is put on it for the same
+    reason the form's refusal takes the keyboard.
+
+    And the panel survives at all, which is not free: `popSay` draws a refusal
+    into the menu by replacing the level that is up, and doing that here would
+    have replaced the question with a list of menu items half a tick after the
+    reader pressed Delete it.
+    """
+    target = _whose_delete_reaches(index)
+    facts = _reaches(index)[target]
+    moved = _after_a_late_child(demo_root, index, target)
+    got = _at_a_panel(
+        index,
+        tmp_path / "stale.html",
+        f"const TARGET = {target!r};\nconst MOVED = {json.dumps(moved)};\n" + _STALE,
+        patience=5500,
+    )
+
+    assert not got.get("error"), got
+    assert moved["also"] != facts["also"], (
+        "the plan-moved fixture built the same cascade as the plan itself, so the redraw "
+        "below cannot be told from no redraw at all"
+    )
+    before, after = got["before"], got["after"]
+    assert before["also"] == facts["also"], before["also"]
+    assert got["during"]["disabled"] is True, (
+        "`Delete it` stayed pressable while the deletion was in the air"
+    )
+    assert after["up"] is True, (
+        "the refusal took the panel away and drew the menu back in its place, half a tick "
+        f"after the press: the box is showing {after['kinds']}"
+    )
+    assert after["why"] == [got["STALE"]], (
+        f"the panel says {after['why']} and the server said {got['STALE']!r} — a 409 here "
+        "has two shapes and only `refusal()` reads them in the right order"
+    )
+    assert after["focused"] == "confirm-why", (
+        f"the keyboard is on {after['focused']!r} rather than on the reason the deletion "
+        "did not happen"
+    )
+    assert after["asked"] == 2, (
+        f"the panel asked the plan {after['asked']} times: a refusal is the one moment its "
+        "list is known to be wrong, and it is the moment to ask again"
+    )
+    assert after["deletions"] == 1, (
+        "the refusal was answered by sending the deletion again, against the list the "
+        "server had just refused"
+    )
+    assert after["also"] == moved["also"], (
+        f"the panel would still authorise {after['also']} and the plan now answers "
+        f"{moved['also']}"
+    )
+    assert [line["text"] for line in after["reach"]] == [
+        _as_read(said) for said in moved["said"]
+    ], after["reach"]
+    assert any(LATE_CHILD in line["names"] for line in after["reach"]), (
+        f"the record filed while the panel was open is named nowhere in {after['reach']} — "
+        "the panel re-enabled its button over the list the server refused"
+    )
+    assert after["enabled"] is True, (
+        "the panel drew the new consequences and left no way to agree to them"
+    )
+    assert after["note"] == "Commit deletion? Can only be undone with git revert.", after["note"]
+    assert after["base"] == HEAD, "`#base` moved on a deletion the server refused"
+
+    assert len(got["sent"]) == 2, [one["url"] for one in got["sent"]]
+    assert got["sent"][0]["body"]["also"] == facts["also"], got["sent"][0]["body"]
+    assert got["sent"][1]["body"] == {"base_commit": HEAD, "also": moved["also"]}, (
+        f"the second press sent {got['sent'][1]['body']} — what goes on the wire is the "
+        "list the panel showed, and the panel is showing the plan as it now is"
+    )
+    assert got["open"] is False and got["row"] is False, (
+        "the deletion that landed left the record in the plan this page is showing"
+    )
+    assert got["base"] == "c0ffee2", got["base"]
+    assert got["beats"] == {"writing": 0, "wrote": []}, (
+        f"a deletion dispatched the shell's write pair, which the announce census "
+        f"cannot see a DELETE to balance against: {got['beats']}"
+    )
+    # One `ours`, not two: the refused attempt committed nothing, and this event
+    # carries a sha or it is not sent. That asymmetry is why it is asserted here
+    # rather than only on the happy path.
+    assert got["ours"] == ["c0ffee2"], (
+        f"a refused deletion and a landed one claimed {got['ours']}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Two presses on the destructive control
+# --------------------------------------------------------------------------- #
+
+
+_TWICE_ON_DELETE = """
+if (!DATA.rows[TARGET]) return {error: TARGET + ' is not on this table'};
+// The answer HELD, which is the whole of the window this guard is about: a write
+// here is a commit and a push against a repository on GitHub, so it is seconds,
+// and the panel stays up for all of them with `Delete it` under the pointer.
+let release = null;
+ANSWER = () => new Promise(done => {
+  release = () => done({status: 200,
+                        body: {outcome: 'committed', commit: 'c0ffee1', pushed: true}});
+});
+askOn(TARGET);
+await rest(400);
+reallyIn().click();
+const held = {disabled: reallyIn().disabled, deletions: deletions().length};
+// And again, PAST the attribute. `POP_WRITING` is the rule and `disabled` is
+// only how it is shown — the form's own twice-pressed test goes past it through
+// the submit event, and this panel's second route is a control re-enabled by
+// anything at all, which `popCascade` itself does when a refusal re-asks.
+reallyIn().disabled = false;
+reallyIn().click();
+await rest(250);
+const during = {deletions: deletions().length, why: whyAsked(), up: askUp(),
+                writing: beats.writing};
+if (!release) return {error: 'the first press sent no DELETE, so nothing is in the air'};
+release();
+await rest(900);
+return {held, during, sent: deletions(), said: said(), open: popIsOpen(),
+        row: !!DATA.rows[TARGET], beats: beatsNow(), ours: oursNow()};
+"""
+
+
+def test_two_presses_on_delete_it_with_no_gap_send_one_delete(index: Index, tmp_path: Path):
+    """Two presses 0.9s apart minted two records on the deployed service, which
+    is why `CREATING` exists in `table.py`. This is the same gesture aimed the
+    other way, and a repeat here is not the harmless thing a repeated PATCH is:
+    the second request is a deletion of a record that may already be gone, and
+    its answer is a 404 or a 409 about a plan somebody now has to go and read.
+
+    So `POP_WRITING` refuses it, before the `openproj:writing` event — an early
+    return after that event leaves the shell's count held one too high and the
+    moved-banner never appears again.
+
+    **The second press goes past the disabled attribute on purpose.** `disabled`
+    is how the rule is shown and not the rule, and there is a live path through
+    it: `popCascade` re-enables this very button whenever a refusal re-asks the
+    plan, while the earlier deletion may still be in the air. A panel whose only
+    guard was the attribute would pass a test that only clicked twice.
+
+    And the refusal is drawn into the panel rather than only announced. The
+    reader is looking at the box, and this is the easiest refusal in the whole
+    menu to meet — the control is under the pointer and the box stays up — so it
+    is the last one that should be invisible.
+    """
+    target = _whose_delete_reaches(index)
+    facts = _reaches(index)[target]
+    got = _at_a_panel(
+        index, tmp_path / "twicedelete.html", f"const TARGET = {target!r};\n" + _TWICE_ON_DELETE,
+        patience=5000,
+    )
+
+    assert not got.get("error"), got
+    assert got["held"] == {"disabled": True, "deletions": 1}, got["held"]
+    assert got["during"]["deletions"] == 1, (
+        f"{got['during']['deletions']} deletions went out for two presses, the second of "
+        "them against a record the first may already have removed"
+    )
+    # **Zero, and not one.** A delete announces no `openproj:writing` at all —
+    # the sweep in `tests/test_web.py` counts POST, PATCH and PUT call sites and
+    # asserts the page holds exactly that many pairs, and a DELETE matches none
+    # of the three, so a pair here would announce a write that census cannot see.
+    # The record page's own delete is bracketed by nothing for the same reason.
+    # What a delete owes the shell instead is bought in `popDelete`'s `finally`:
+    # `openproj:ours` for the commit, and `popClose` for a menu opened elsewhere.
+    #
+    # So what this asserts is that the refusal is still free: the second press
+    # must not leave a count raised that nothing will ever lower.
+    assert got["during"]["writing"] == 0, (
+        "a delete dispatched `openproj:writing`, which the announce census in "
+        "`tests/test_web.py` cannot see a DELETE to balance against"
+    )
+    assert got["during"]["why"] == ["A save is already going out. Wait for it to answer."], (
+        f"the second press was refused in silence, or somewhere else: {got['during']['why']}"
+    )
+    assert got["during"]["up"] is True, "the panel went down before the answer arrived"
+    assert len(got["sent"]) == 1, [one["url"] for one in got["sent"]]
+    assert got["said"] == (
+        f"{facts['title']} is deleted, with {len(facts['deletes'])} records that were "
+        "filed under it"
+    ), got["said"]
+    assert got["open"] is False and got["row"] is False, got
+    # Neither beat, on the landed delete either — same reason as the refusal
+    # above. `openproj:ours` is what the shell hears instead, and it is what
+    # stops the stream's own news arriving as "The plan changed" about the
+    # record this page has just removed.
+    assert got["beats"] == {"writing": 0, "wrote": []}, got["beats"]
+    assert got["ours"] == ["c0ffee1"], (
+        f"the commit was not claimed as ours: {got['ours']}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# What a reader is offered instead
+# --------------------------------------------------------------------------- #
+
+
+_NO_DELETE = """
+const row = menuRows()[1];
+rightOn(row, 300, 300);
+return {open: popIsOpen(), kinds: kindsInTheMenu(), asks: typeof popAsk,
+        reads: typeof popCascade, wearing: POP.className,
+        panel: !!POP.querySelector('[data-kind="confirm"]')};
+"""
+
+
+def test_a_reader_is_offered_no_delete_and_no_way_to_ask_for_one(index: Index, tmp_path: Path):
+    """A signed-out reader is offered nothing that deletes — not a refused
+    `Delete…`, not an `Editing is unavailable here`, nothing. The sign-in is in
+    the nav and it is the whole of the news; a refused item teaches why a control
+    will not act, and "not with these credentials" is the one answer that is
+    already on the page.
+
+    **And the machinery is not there either**, which is the half a list of item
+    slugs cannot see. `popAsk` and `popCascade` are in `_POP_WRITE_JS`, which
+    `_pop_js` emits only when it is given an index — so on a reader's page they
+    are not defined at all, and the route they would ask is nowhere in the bytes.
+
+    That last assertion is the one worth keeping when somebody moves a function
+    between the halves of that file. `tests/test_table.py` and
+    `tests/test_render.py` already sweep a reader's page and every rendered file
+    for `/api/record` and `base_commit` as plain substrings, because a rendered
+    file is a thing somebody puts on a share; `/api/cascade/` is the third route
+    this menu knows and it belongs in exactly the same place. **A comment naming
+    it ships in the page's bytes just as surely as the code would** — which has
+    already cost this branch two rounds, once in a stylesheet and once in the
+    menu's own script.
+    """
+    reader = measured_in(
+        chrome(),
+        render_table(index, ROUTES, base_commit=HEAD, may_write=False),
+        tmp_path / "nodelete.html",
+        1200,
+        _OPENING + _NO_DELETE,
+    )
+
+    assert reader["open"] is True, "the reader's page opened no menu, so its list is empty"
+    assert DELETE_ITEM not in reader["kinds"], (
+        f"a signed-out reader is offered `Delete…`: {reader['kinds']}"
+    )
+    assert reader["kinds"][-3:] == READER_ITEMS, (
+        f"the reader's menu ends {reader['kinds'][-3:]} rather than in the three items "
+        "that only look"
+    )
+    assert reader["asks"] == "undefined" and reader["reads"] == "undefined", (
+        f"a reader's page carries popAsk={reader['asks']} and popCascade={reader['reads']}: "
+        "the confirmation's machinery is in the write half, and a page rendered without "
+        "an index has no write half"
+    )
+    assert reader["panel"] is False and "popasking" not in reader["wearing"], reader
+
+    for name, page in {
+        "a signed-out reader's table": render_table(index, ROUTES, base_commit=HEAD),
+        "the static export": render_table(index, STATIC),
+        "the timeline": render_timeline(index, ROUTES),
+    }.items():
+        assert "/api/cascade/" not in page, (
+            f"{name} carries the cascade route in its bytes — and it carries it whether "
+            "the string is code or a comment explaining that this page does not use it"
+        )
+    for name, page in {
+        "a writer's table": a_writers_table(index),
+        "a writer's graph": render_graph(index, ROUTES, base_commit=HEAD, may_write=True),
+    }.items():
+        assert "/api/cascade/" in page, (
+            f"{name} cannot ask what a deletion would take with it, so its `Delete…` has "
+            "nothing to draw and nothing to compare against"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# A second menu, opened while a deletion is still in the air
+# --------------------------------------------------------------------------- #
+
+
+_A_SECOND_MENU_AFTER_A_DELETE = """
+if (!DATA.rows[TARGET]) return {error: TARGET + ' is not on this table'};
+const otherRow = menuRows().find(tr => tr.dataset.id !== TARGET);
+if (!otherRow) return {error: 'the table drew only one row, so there is no second record'};
+const second = {id: otherRow.dataset.id, title: DATA.rows[otherRow.dataset.id].title};
+const STALE = 'the plan changed while that was open. Nothing was deleted — read it '
+  + 'again and decide.';
+
+// The answer HELD, which is the whole of the window this guard is about.
+let release = null;
+const holding = answer => {
+  release = null;
+  ANSWER = () => new Promise(done => { release = () => done(answer); });
+};
+// Dismissed the way a reader dismisses it — a press outside — and then a press
+// on a DIFFERENT row. That is the ordinary way to open a second menu and it is
+// the order a trusted right press produces: pointerdown, then contextmenu.
+const moveToTheOtherRecord = () => {
+  document.body.dispatchEvent(
+    new PointerEvent('pointerdown', {bubbles: true, clientX: 5, clientY: 5}));
+  openOn(second.id);
+  return {open: popIsOpen(), about: popAbout(), kinds: popKinds(),
+          label: POP.getAttribute('aria-label')};
+};
+const pressDeleteOn = async id => { askOn(id); await rest(400); reallyIn().click(); };
+
+// --- a refusal, which DRAWS its sentence and takes the keyboard -------------
+holding({status: 409, body: {detail: STALE}});
+await pressDeleteOn(TARGET);
+await rest(150);
+if (!release) return {error: 'the first press sent no DELETE, so nothing is in the air'};
+const moved = moveToTheOtherRecord();
+release();
+await rest(800);
+const refused = {open: popIsOpen(), about: popAbout(), kinds: popKinds(), up: askUp(),
+                 label: POP.getAttribute('aria-label'),
+                 focused: document.activeElement.dataset.kind,
+                 drawn: popControls().map(wordIn), said: said(),
+                 asked: cascades().length};
+
+// --- and a deletion that LANDS, which closes --------------------------------
+//
+// Read inside the host's own `wrote()`, which is where `popSend` goes
+// immediately after the close it is gated on. The `openproj:wrote` in its
+// `finally` carries a sha, and every open menu dies on one — this second box
+// included, and rightly, because the tbody under it has just been replaced.
+let duringWrote = null;
+const hostWrote = POP_HOST.wrote;
+POP_HOST.wrote = async (answer, id) => {
+  duringWrote = {open: popIsOpen(), about: popAbout()};
+  return hostWrote(answer, id);
+};
+popClose();
+holding({status: 200, body: {outcome: 'committed', commit: 'c0ffee9', pushed: true}});
+await pressDeleteOn(TARGET);
+await rest(150);
+if (!release) return {error: 'the second press sent no DELETE, so nothing is in the air'};
+const movedAgain = moveToTheOtherRecord();
+release();
+await rest(1000);
+return {second, STALE, moved, refused, movedAgain, duringWrote,
+        landed: {said: said(), base: baseNow(), open: popIsOpen(), row: !!DATA.rows[TARGET]},
+        sent: deletions().map(one => one.url), beats: beatsNow()};
+"""
+
+
+def test_an_answer_to_one_menus_delete_does_not_reach_the_menu_opened_after_it(
+    index: Index, tmp_path: Path
+):
+    """`POP_GEN` again, and the answer that arrives here is about a record that
+    may no longer exist.
+
+    A deletion is a commit and a push against a repository on GitHub, so it takes
+    seconds, and the box stays up for every one of them. In that window a reader
+    can dismiss it and right-click a different record — which is not an exotic
+    race but the ordinary way to open a second menu. So both halves are asked, in
+    the shape `test_an_answer_to_one_menus_write_does_not_reach_the_menu_opened_
+    after_it` established for cut 3's writes, because both fail differently here
+    and neither is visible in the other:
+
+    - a REFUSED deletion goes through `popSaid`, and `popSay` draws its sentence
+      as the first item of whatever level is up. Into the second record's menu
+      that is a sentence about deleting something else, drawn over an item list
+      where the last item deletes the record somebody is now looking at.
+    - a LANDED one ends in `popDone()`, which would shut that second menu under
+      the reader's pointer.
+
+    **And the refusal must not re-ask the cascade**, which is the half that is
+    new here. `popReally` re-asks on a refusal because the panel's list is then
+    known to be wrong — but only `if (popAsking(asking))`, and this panel is
+    gone. Without that guard a dismissed panel would fetch the consequences of a
+    deletion nobody is being offered, and draw them into whatever is on screen.
+
+    The live region still carries the refusal either way, because a refusal
+    nobody is told about is a write that looks like it worked — and it is also
+    what proves the answer arrived at all and that the assertions above it are
+    not vacuous.
+    """
+    target = _whose_delete_reaches(index)
+    got = _at_a_panel(
+        index,
+        tmp_path / "seconddelete.html",
+        f"const TARGET = {target!r};\n" + _A_SECOND_MENU_AFTER_A_DELETE,
+        patience=6000,
+    )
+
+    assert not got.get("error"), got
+    assert got["second"]["id"] != target, got
+
+    for which, seen in (("refusal", got["moved"]), ("landed deletion", got["movedAgain"])):
+        assert seen["open"] is True, f"no second menu opened during the {which}"
+        assert seen["about"] == got["second"]["id"], (
+            f"the second menu of the {which} is about {seen['about']} and it was opened "
+            f"on {got['second']['id']}"
+        )
+        assert seen["label"] == f"Actions for {got['second']['title']}", seen
+
+    assert got["refused"]["said"] == got["STALE"], (
+        f"the refusal was not announced at all: the live region says "
+        f"{got['refused']['said']!r}. A refusal nobody is told about is a deletion that "
+        "looks like it worked — and if nothing was said, no answer came back and the "
+        "assertions below are about nothing"
+    )
+    assert got["refused"]["up"] is False, (
+        "the first record's confirmation was drawn back over the second record's menu"
+    )
+    assert "said" not in got["refused"]["kinds"], (
+        "the refused deletion's sentence was drawn into the menu of a record it is not "
+        f"about: {got['refused']['kinds']}"
+    )
+    assert got["STALE"] not in got["refused"]["drawn"], got["refused"]["drawn"]
+    assert got["refused"]["kinds"] == got["moved"]["kinds"], (
+        f"the second menu's items changed under an answer about {target}: "
+        f"{got['moved']['kinds']} became {got['refused']['kinds']}"
+    )
+    assert got["refused"]["focused"] != "said", (
+        "the refused deletion took the keyboard inside the second record's menu"
+    )
+    assert got["refused"]["about"] == got["second"]["id"], got["refused"]
+    assert got["refused"]["open"] is True, "the refusal closed the second record's menu"
+    assert got["refused"]["asked"] == 1, (
+        f"the plan was asked {got['refused']['asked']} times what this deletion would "
+        "take with it: the refusal re-asked for a panel that had already been dismissed"
+    )
+
+    assert got["duringWrote"] is not None, (
+        "the host's `wrote()` never ran, so the landed half of this test never reached "
+        "the moment it is written for"
+    )
+    assert got["duringWrote"]["open"] is True, (
+        "a deletion that landed closed the menu somebody had opened on a different record "
+        "while it was in the air — `popDone()` is gated on `POP_GEN === mine` for this"
+    )
+    assert got["duringWrote"]["about"] == got["second"]["id"], got["duringWrote"]
+    assert got["landed"]["said"].startswith(f"{_reaches(index)[target]['title']} is deleted"), (
+        f"the deletion that landed announced {got['landed']['said']!r}"
+    )
+    assert got["landed"]["row"] is False, "the record the deletion removed is still in the plan"
+    assert got["landed"]["base"] == "c0ffee9", (
+        f"`#base` is still {got['landed']['base']} after a commit"
+    )
+    assert got["landed"]["open"] is False, (
+        "the second menu outlived an `openproj:wrote` carrying a sha, so it is pointing at "
+        "a row in a tbody that has been replaced since it opened"
+    )
+    assert got["sent"] == [f"/api/record/{target}"] * 2, (
+        f"the presses did not both delete {target}: {got['sent']}"
+    )
+    # Silent on both beats, for the reason written out above the sibling
+    # assertion in `test_two_presses_on_delete_it_with_no_gap_send_one_delete`:
+    # a DELETE is invisible to the announce census, so it announces neither.
+    # The guarantee the pair used to carry here — that a menu opened on another
+    # record dies when this write lands — is asserted three lines up as
+    # `landed.open is False`, and it is `popClose` in `popDelete`'s `finally`
+    # that keeps it rather than the event.
+    assert got["beats"] == {"writing": 0, "wrote": []}, got["beats"]

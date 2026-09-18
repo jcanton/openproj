@@ -7,19 +7,23 @@ answer to the question that started it — the box's THIRD face, a form of the
 record's fields with a Save button, opened by `New child ▸ <kind>`, `Edit…` and
 `Assign parent…`, and by a status the gate refuses. `Delete…` is cut 5.
 
-**Three faces, one box, and two of them are here.** `#card` is the reader's hover
-card and lives in `shell.py`; the menu and the form are both `#pop`, and which
-one is up is `POP_FORM` being set. They are not two elements for the reason the
-card is one of its own: the menu and the form share a placement, a dismissal, a
-keyboard and a write door, and the form's whole reason for being a face of this
-box rather than a page is that a refusal keeps it open with everything typed
-still in it.
+**Four faces, one box, and three of them are here.** `#card` is the reader's
+hover card and lives in `shell.py`; the menu, the form and cut 5's delete
+confirmation are all `#pop`, and which one is up is `POP_FORM` or `POP_CONFIRM`
+being set. They are not three elements for the reason the card is one of its own:
+they share a placement, a dismissal, a keyboard and the write doors, and the
+form's whole reason for being a face of this box rather than a page is that a
+refusal keeps it open with everything typed still in it.
 
-**One write door.** Three call sites here and six by cut 5, each of which would
-otherwise carry its own copy of the base commit, the re-entrancy flag, the
-`openproj:writing`/`openproj:wrote` pair and the reading of a refusal. That last
-one is not a tidiness: a 409 from this server has two shapes, and every page that
-decided for itself which key the body holds has got it wrong — see `popWrite`.
+**One door per verb, and everything else shared.** Three doors — `popWrite`,
+`popCreate`, `popDelete` — because a single door with the address and the verb
+passed in as data is a page carrying one `fetch` whose address is not in the
+source a reader sweeps, announcing one write where three can happen. What would
+otherwise be copied three times is `popStart`, `popSettled` and `popLost`: the
+base commit, the re-entrancy flag, the `POP_GEN` snapshot and the reading of a
+refusal. That last one is not a tidiness: a 409 from this server has two shapes,
+and every page that decided for itself which key the body holds has got it wrong
+— see `popSettled`.
 
 **Here and not in `shell.py`.** That file is 4000 lines and ships on all twelve
 pages, including `/help` and `/people`; this menu is wanted by three. A module
@@ -215,7 +219,11 @@ _POP_STYLE = """
    edge of a `position: fixed` element there is no way to scroll to. The menu's
    own 20rem happens to fit the narrowest desktop window anybody opens; a form's
    23rem does not. */
-#pop.popforming {
+/* The confirmation takes the same range for a different reason and gets it from
+   the same rule rather than a second copy of the arithmetic: its lines are
+   prose — a sentence with a record's title inside it — and the menu's 20rem is
+   sized for single words. */
+#pop.popforming, #pop.popasking {
   min-width: min(17rem, calc(100vw - 16px));
   max-width: min(23rem, calc(100vw - 16px));
   padding: 0;
@@ -307,6 +315,72 @@ _POP_STYLE = """
    is how it is shown — `CREATING`'s bargain in `table.py`, where two presses
    0.9s apart minted two records on the deployed service. */
 #pop .popsave:disabled { opacity: .6; cursor: progress; }
+
+/* --- the confirmation: the box's fourth face -------------------------------
+
+   The record page has asked this question since the record page had a delete
+   button, and this is that panel inside a floating box rather than a second
+   look for the same decision. Every rule below is `.confirming`'s own
+   (`styles.py`), re-scoped: the loud line for the records that GO, the quiet one
+   for the records that keep their files and merely lose a dependency, and one
+   chip per title.
+
+   Why the two lines are drawn differently is the whole of that sheet's comment
+   and it is worth repeating where somebody might tidy them into one: nothing is
+   destroyed on the quiet line, a field is edited, and drawing the two the same
+   way teaches people to skim both. */
+#pop .popconfirm {
+  /* `flex: none` for `.popitem`'s reason and `.popform`'s: `#pop` is a flex
+     column with a `max-height`, and a cascade of forty titles taller than 70vh
+     would be resolved by squashing this one child rather than by scrolling it. */
+  flex: none;
+  display: flex; flex-direction: column; gap: .5rem;
+  padding: .6rem .75rem .7rem;
+}
+/* The sentences scroll, and nothing else in this panel does.
+   `#pop` is `max-height: 70vh`, and a cascade of forty titles makes this panel
+   taller than that — at which point the heading, the note and BOTH buttons sit
+   below the fold with `POP.scrollTop` still 0 and nothing on screen saying the
+   box scrolls. The `Keep it` that `popAsk` focused is off screen too, so the
+   panel reads as a destructive question with no way to answer it.
+   Capping this box instead means the panel never outgrows `#pop`: the question,
+   the hint and the two controls are always on screen, and what scrolls is the
+   list of consequences, which is the one part a reader can be trusted to look
+   for. `display: flex` with the same gap `.popconfirm` has, because these `<p>`s
+   were direct children of that flex column on the record page and inherited it
+   there; in a plain block wrapper they would sit flush against each other. */
+#pop .popreaches {
+  display: flex; flex-direction: column; gap: .5rem;
+  max-height: 40vh; overflow-y: auto;
+}
+#pop .popreach { margin: 0; font-size: 13px; font-weight: 600; color: var(--danger); }
+#pop .popreach.popmild { font-weight: 400; color: var(--fg); }
+/* The records those sentences name, one element each, and the separator drawn
+   rather than written. A title is held to one rule, that it is not blank, so
+   there is no character a title cannot contain — comma-joining three titles, one
+   of which has a comma in it, offers a reader four items and asks them to press
+   Delete on that. A tint and a hairline per name cannot be forged from inside
+   one. `font-weight: 400` because `.popreach` is 600 and a name is the data in
+   that sentence rather than more of its emphasis. */
+#pop .popnames { display: inline; }
+#pop .popnamed {
+  display: inline-block; margin: 0 .1rem; padding: 0 .3rem;
+  border: 1px solid var(--line); border-radius: 3px;
+  background: var(--surface-2); font-weight: 400;
+}
+/* The destructive verb, in its own ink and never the accent fill `.popsave`
+   carries: this control is not the one the box wants you to press. `:hover` is
+   written out for the reason `.editbar button.delete:hover` is — the shell's own
+   `button:hover` is what it has to beat, and a control left with no rule at all
+   matches the operating system rather than the page.
+
+   `:disabled` is not a decoration either. It is how this button spends the whole
+   window between the panel opening and the plan answering what would go with
+   it — see `popAsk`. */
+#pop .popreally, #pop .popreally:hover {
+  border-color: var(--danger); color: var(--danger);
+}
+#pop .popreally:disabled { opacity: .6; cursor: default; }
 """
 
 
@@ -460,8 +534,10 @@ function popAbout() { return POP_ID; }
 // `role="menuitemradio"` and `aria-checked`, because on a plain `menuitem`
 // `aria-checked` is ignored. `glyph` is the mark drawn in front of the word.
 //
-// `stays` keeps the box up after the run. Exactly one item has it — `‹ Back`,
-// whose whole job is to leave the box open showing something else.
+// `stays` keeps the box up after the run, and it is carried by every item that
+// REPLACES the box's contents rather than acting: `‹ Back`, the three that open
+// a form, a status choice the gate sends to one, and `Delete…`. It said "exactly
+// one item" for as long as that was true, which was cut 3.
 function popItems(row) {
   const href = POP_RECORD + row.id;
   const items = [];
@@ -471,7 +547,19 @@ function popItems(row) {
   // what this view can do, then the three that only look — which are the ones a
   // reader gets, and the ones that stay at the bottom so their position does not
   // move when somebody signs in.
-  for (const item of popWriteItems(row)) items.push(item);
+  const writes = popWriteItems(row);
+  // **`Delete…` is last on the menu, under even the three that only look**, and
+  // it is lifted out of the write half by its slug rather than returned
+  // separately. The design's table puts it there and the reason is the gesture:
+  // a destructive item sitting between `Take out of "X"` and `Focus subtree` is
+  // one slip of the wrist away from the two harmless items either side of it.
+  //
+  // By the slug and not by position, and through the one function this half is
+  // allowed to call: the read half may reach exactly `popWriteItems` across the
+  // split (see the module comment), so a second crossing named `popDeleteItem`
+  // would be a `ReferenceError` on a reader's page — and in a classic script
+  // that takes the whole block, including the three items a reader does get.
+  for (const item of writes) if (item.kind !== 'delete') items.push(item);
   //
   // This view's own items, spliced in whole. Asked on every open and never
   // stored, which is `attachDrawing`'s rule (`controls.py`) and the reason a
@@ -481,6 +569,7 @@ function popItems(row) {
   items.push({kind: 'open', text: 'Open', run: () => { location.href = href; }});
   items.push({kind: 'open-tab', text: 'Open in new tab', href: href});
   items.push({kind: 'copy-link', text: 'Copy link', run: () => popCopy(href)});
+  for (const item of writes) if (item.kind === 'delete') items.push(item);
   return items;
 }
 
@@ -568,12 +657,13 @@ function popDraw() {
   const items = POP_SAID
     ? [{kind: 'said', text: POP_SAID, why: POP_SAID}, ...level.items]
     : level.items;
-  // Back to the menu face. Both halves, because a `<form>` is not a child a
+  // Back to the menu face. Every part of it, because a `<form>` is not a child a
   // `role="menu"` may have and a list of `menuitem`s is not something a
-  // `role="dialog"` should be announcing — the box wears exactly one of the two
-  // at any moment, and this is the only place the items face is put on.
+  // `role="dialog"` should be announcing — the box wears exactly one of its three
+  // faces at any moment, and this is the only place the items face is put on.
   POP_FORM = null;
-  POP.classList.remove('popforming');
+  POP_CONFIRM = null;
+  POP.classList.remove('popforming', 'popasking');
   POP.setAttribute('role', 'menu');
   // The box is named for the level it is showing, so a reader who arrives inside
   // the status ladder is told which list they are in rather than being told
@@ -682,6 +772,16 @@ function popSay(text) {
     POP_FORM.why.focus();
     return;
   }
+  // And the confirmation keeps what it is asking about, for a sharper version of
+  // the same reason. The refusal a delete gets is usually that the plan moved
+  // under the panel, and the next thing that has to happen is that the panel
+  // asks again — which it cannot do if this call has replaced it with a list of
+  // menu items. `popDraw` below is exactly that replacement.
+  if (POP_CONFIRM) {
+    popConfirmSays([text]);
+    POP_CONFIRM.why.focus();
+    return;
+  }
   POP_SAID = text;
   popDraw();
   // Onto the reason, which is what somebody who has just pressed an item needs
@@ -752,11 +852,12 @@ function popClose() {
   // that was refused a minute ago has no business being the first thing on the
   // next menu anybody opens.
   POP_SAID = '';
-  // And so does the form. It is the box's face rather than a thing the box
-  // holds, so a closed box is showing neither face and the next open builds
+  // And so do the other two faces. Each is the box's face rather than a thing the
+  // box holds, so a closed box is showing none of them and the next open builds
   // whichever one it wants.
   POP_FORM = null;
-  POP.classList.remove('popforming');
+  POP_CONFIRM = null;
+  POP.classList.remove('popforming', 'popasking');
   // The items are deliberately NOT cleared. `.drawmenu` clears its own on close
   // for a reason this box does not have — it had no `[hidden]` rule, so an
   // emptied box was how it stopped being a bar under the button — and clearing
@@ -794,22 +895,29 @@ POP.addEventListener('keydown', event => {
   // arrive in cut 4 do, which is the same question `table.py`'s `#askfor` panel
   // already asks of the suggestion list inside it: one press, one thing done.
   if (event.defaultPrevented) return;
-  // **The form owns every key but one.** ArrowDown in a `<select>` picks the
-  // next option, Home and End move a caret, Space types a space, and the block
-  // below would `preventDefault` all of them for a roving tabindex over a list
-  // that is not on screen. Escape is the exception because it has to be
-  // arbitrated here whichever face is up — see the note at the foot of this
-  // listener for the five meanings it has on the table.
-  if (POP_FORM) {
+  // **The form owns every key but one, and so does the confirmation.** ArrowDown
+  // in a `<select>` picks the next option, Home and End move a caret, Space types
+  // a space, and the block below would `preventDefault` all of them for a roving
+  // tabindex over a list that is not on screen. The confirmation's two buttons
+  // are walked by Tab like any other pair, which is what a `role="dialog"`
+  // promises. Escape is the exception in both, because it has to be arbitrated
+  // here whichever face is up — see the note at the foot of this listener for the
+  // five meanings it has on the table.
+  if (POP_FORM || POP_CONFIRM) {
     if (event.key !== 'Escape') return;
     event.stopPropagation();
     event.preventDefault();
-    // Escape cancels the form and closes the box, rather than popping back to
-    // the menu the form was opened from. A `‹ Back` into a list of items is the
-    // right answer for a submenu, which holds nothing; here it would throw away
+    // Escape cancels and closes the box, rather than popping back to the menu
+    // this face was opened from. A `‹ Back` into a list of items is the right
+    // answer for a submenu, which holds nothing; here it would throw away
     // everything typed to show a menu nobody asked for, and the reader would
     // have pressed one key and lost their work without being asked.
-    announce('nothing was changed');
+    //
+    // Two sentences, because they are two different pieces of news and this app
+    // has already had one word mean three things on one screen. `Cancel` and
+    // `Keep it` say exactly these, which is the point: a control and the key
+    // that does the same thing may not report it differently.
+    announce(POP_FORM ? 'nothing was changed' : 'nothing was deleted');
     popDone();
     return;
   }
@@ -1088,16 +1196,55 @@ let POP_FORM = null;
 function popFormSays(lines) {
   const form = POP_FORM;
   if (!form || !form.why) return;
-  form.why.replaceChildren(...lines.map(line => {
+  popLines(form.why, 'form-why-line', lines);
+}
+
+// One refusal list, filled one way, for the two faces of this box that have one.
+// The form's and the confirmation's are the same element under the same rules —
+// `textContent` and never `innerHTML`, hidden when empty, re-placed afterwards —
+// and two copies of that is how one of them comes to draw a record's title as
+// markup on the day somebody makes the other one faster.
+function popLines(list, slug, lines) {
+  list.replaceChildren(...lines.map(line => {
     const said = document.createElement('li');
-    said.dataset.kind = 'form-why-line';
+    said.dataset.kind = slug;
     // `textContent`, never `innerHTML` — a refusal carries a record's title and
     // whatever the server chose to say about it.
     said.textContent = line;
     return said;
   }));
-  form.why.hidden = !lines.length;
+  list.hidden = !lines.length;
   popPlace();
+}
+
+// --- the confirmation -------------------------------------------------------
+//
+// **The box's FOURTH face**, and `POP_CONFIRM` is declared in this half for the
+// reason `POP_FORM` is: `popClose`, `popSay` and the key handler all ask which
+// face is up, and all three ship on a page that cannot write. What BUILDS this
+// face, and everything it asks the server, is in the other half.
+//
+// The panel that goes with it is the record's own page's, which has asked this
+// question with these words since it had a Delete button. It is never a browser
+// `confirm()`, and the argument is one this repository has already written down
+// twice: a native dialog cannot say which record it is about in the words this
+// page uses, cannot show the server's reason when the delete is refused, and
+// stops every other script until somebody clicks it. To which this box adds the
+// one that decided cut 5 — a `confirm()` cannot list a cascade, and the cascade
+// is the whole of what somebody is agreeing to.
+//
+// **Unlike the form, it does NOT resist dismissal.** A form holds everything
+// somebody typed and the six signals would delete it in silence; this panel
+// holds a question, and a panel that will not go away when you reach past it is
+// a worse thing to put in front of a destructive control than one that closes
+// too easily. Reaching for something else cancels it, which is the answer you
+// wanted.
+let POP_CONFIRM = null;
+
+function popConfirmSays(lines) {
+  const asking = POP_CONFIRM;
+  if (!asking || !asking.why) return;
+  popLines(asking.why, 'confirm-why-line', lines);
 }
 
 function popControl(item) {
@@ -1206,10 +1353,11 @@ function popRan(event, item) {
     const going = item.run();
     if (going && typeof going.then === 'function') return;
   }
-  // And `stays` for the one item whose whole job is to leave the box open and
-  // showing something else: `‹ Back`. It is a plain synchronous `run`, so
-  // without this the mouse path through it CLOSED the menu while the keyboard
-  // path — ArrowLeft and Escape, which call `popBack` directly — popped a level
+  // And `stays` for the items whose job is to leave the box open showing
+  // something else rather than to act — `popItems` says which those are, and it
+  // was only `‹ Back` until the forms and `Delete…` arrived. `‹ Back` is a plain
+  // synchronous `run`, so without this the mouse path through it CLOSED the menu
+  // while the keyboard path — ArrowLeft and Escape, which call `popBack` directly — popped a level
   // correctly. Two ways to do one thing, one of them wrong, and the keyboard
   // probes could not see it.
   if (item.stays) return;
@@ -1258,9 +1406,19 @@ function popWriteItems(row) {
              why: 'This page was rendered without the menu\'s schema.'}];
   // The ORDER is the design's table: what makes a record, what changes this
   // one, where it is filed, then what this view can do, then the three that only
-  // look. `New child ▸` is first because it is the thing that was asked for.
+  // look. `New child ▸` is first because it is the thing that was asked for, and
+  // `Delete…` is last — `popItems` lifts it out by its slug and puts it under
+  // even the three read items, so that the one irreversible thing on this menu
+  // has no neighbour anybody reaches for by accident.
   return [popNewChildItem(row), popEditItem(row), popStatusItem(row),
-          popOwnerItem(row), popParentItem(row), popTakeOutItem(row)];
+          popOwnerItem(row), popParentItem(row), popTakeOutItem(row),
+          // No refusal arm, and that is the record page's own answer rather than
+          // an omission: `may_write` is the only gate on the Delete button there
+          // (`detail.py`), because every record a writer may write is a record
+          // they may take out of the plan. What the delete would take WITH it is
+          // not a reason to withhold the item — it is the question the panel
+          // exists to put, and `popAsk` is where it is asked.
+          {kind: 'delete', text: 'Delete…', stays: true, run: () => popAsk(row)}];
 }
 
 // Whether a field has nothing in it — the four ways one can be unset, in one
@@ -2224,31 +2382,289 @@ function popLanded(id, title) {
   return `Created ${made}`;
 }
 
+// --- deleting -----------------------------------------------------------------
+//
+// **`Delete…` never asks a bare question.** The record page has confirmed a
+// delete with a panel rather than a browser `confirm()` since it had a Delete
+// button, and its own comment says why: a native dialog cannot say which record
+// it is about in the words this page uses, cannot show the server's reason when
+// the delete is refused, and is the one thing on a page that stops every other
+// script until somebody clicks it. Cut 5 adds the reason that decided it here —
+// **a `confirm()` cannot list a cascade**, and the cascade is the whole of what
+// somebody is agreeing to.
+//
+// **And the cascade is asked of the server, which is not a convenience.**
+// `cascade_of` (`index.py`) iterates `index.records`; the host's `all()` on the
+// table is `DATA.rows`, which `table.py` builds from `index.plan`, and the
+// graph's is narrower still. A cascade worked out in here would therefore miss
+// any unplanned issue or note carrying a hand-written `depends_on` — and the
+// delete route refuses a deletion whose `also` list is not the one it computes
+// itself, so every such delete would be refused against a panel that had listed
+// everything it could see. Measured claim, not a worry: that record is
+// `test_deleting_what_a_hand_written_issue_waits_on_edits_the_issue`
+// (`tests/test_issues.py`), and it is in the route's `edited`.
+
+// The sentence under the question, and it is the record page's own — this panel
+// and that one are the same question and may not use two vocabularies for it.
+const POP_REVERT = 'Commit deletion? Can only be undone with git revert.';
+
+// Whether the panel an answer was asked for is still the panel on screen.
+//
+// Identity is the whole test, and `POP_GEN` is not wanted beside it: `popClose`
+// nulls this, `popDraw` nulls it, and each face that can replace it builds an
+// object of its own — so an answer can only ever find the panel that asked for
+// it. `popSaid` takes a generation instead because it is reached from writes
+// that have no panel of their own to compare against.
+function popAsking(asking) { return POP_CONFIRM === asking; }
+
+function popAsk(row) {
+  const asking = {
+    id: row.id,
+    title: popTitle(row),
+    // **What this panel is authorising, and `null` until the plan has said.** It
+    // is the list that goes back on the wire, and the delete route compares it
+    // against its own answer and refuses the deletion if the two differ —
+    // somebody filing a task under this pitch while the panel sat open is the
+    // whole reason it exists. A panel that sent a list it had made up in here
+    // would be refused every time the plan held a record this view cannot see.
+    also: null,
+    deletes: [],
+  };
+  const box = document.createElement('div');
+  box.className = 'popconfirm';
+  box.dataset.kind = 'confirm';
+
+  const heading = document.createElement('p');
+  heading.className = 'popheading';
+  heading.dataset.kind = 'confirm-heading';
+  // `textContent`, never `innerHTML`. This is a record's title.
+  heading.textContent = `Delete "${asking.title}"?`;
+  box.append(heading);
+
+  // Where the consequences go once they are known. Empty until then, and empty
+  // for ever on a record nothing is filed under and nothing waits on — which is
+  // the leaf case the record page draws exactly this way, and it is a plain
+  // question rather than a missing one.
+  asking.reach = document.createElement('div');
+  asking.reach.className = 'popreaches';
+  asking.reach.dataset.kind = 'confirm-reach';
+  box.append(asking.reach);
+
+  asking.note = document.createElement('p');
+  asking.note.className = 'popnote';
+  asking.note.dataset.kind = 'confirm-note';
+  box.append(asking.note);
+
+  asking.why = document.createElement('ul');
+  asking.why.className = 'popwhy';
+  asking.why.dataset.kind = 'confirm-why';
+  asking.why.hidden = true;
+  // Focusable and not tabbable, exactly as the form's is: a refusal is put under
+  // the keyboard when it arrives, and Tab out of it then lands on the buttons.
+  asking.why.tabIndex = -1;
+  box.append(asking.why);
+
+  const acts = document.createElement('div');
+  acts.className = 'popacts';
+  asking.really = popPress('confirm-delete', 'Delete it', 'popreally');
+  // **Disabled from the moment it is drawn**, and this is the repository's
+  // answer to a destructive control appearing under a pointer that has just
+  // pressed something. The record page arranges it structurally — its Delete
+  // button is hidden and the panel is drawn somewhere else, with the keyboard
+  // put on `Keep it` — and this box has no somewhere else: it is placed at
+  // `POP_AT`, the same pointer, and the press that opened this panel was on an
+  // item inside its own outline. So the destructive control cannot be pressed at
+  // the instant the panel appears, because it is not pressable until the plan
+  // has answered what would go with it — a round trip nobody's second click is
+  // inside. That is the same guarantee, earned by the thing this panel was
+  // always going to have to wait for.
+  asking.really.disabled = true;
+  asking.keep = popPress('confirm-keep', 'Keep it', 'popkeep');
+  // The record page's word for the same press, and `askFor`'s shape of sentence:
+  // the control and the key that does the same thing may not report it in
+  // different words.
+  asking.keep.onclick = () => { announce('nothing was deleted'); popDone(); };
+  asking.really.onclick = () => popReally(asking);
+  acts.append(asking.really, asking.keep);
+  box.append(acts);
+
+  POP_FORM = null;
+  POP_CONFIRM = asking;
+  POP.classList.remove('popforming');
+  POP.classList.add('popasking');
+  // `role="dialog"` for `popDrawForm`'s reason: a heading, two paragraphs and a
+  // pair of buttons are not children a `role="menu"` may have, and a reader
+  // arriving inside one would be told they were in a menu with no items in it.
+  POP.setAttribute('role', 'dialog');
+  POP.setAttribute('aria-label', `Delete "${asking.title}"?`);
+  POP.replaceChildren(box);
+  POP.scrollTop = 0;
+  popPlace();
+  // Onto `Keep it`, which is the record page's own arrangement — `asking(true)`
+  // there focuses `button.keep`. The keyboard lands on the way out of a
+  // destructive question, never on the way through it.
+  asking.keep.focus();
+  popCascade(asking);
+}
+
+// What the plan says this delete would take with it, drawn where the question
+// is. Asked on every open and never cached: a panel that redrew a cascade read
+// when some earlier menu was open would be a panel authorising a commit against
+// a plan that has moved, which is `attachDrawing`'s rule pointed at the one
+// gesture here that cannot be undone from the page.
+async function popCascade(asking) {
+  asking.really.disabled = true;
+  asking.note.textContent = 'Working out what this would take with it…';
+  let answer = null;
+  let failed = '';
+  try {
+    const response = await fetch(`/api/cascade/${encodeURIComponent(asking.id)}`);
+    answer = await answerOf(response);
+    // Through `refusal()` like every other reading of a refusal in this file.
+    // This one is a GET and cannot be a compare-and-swap report, and it is read
+    // the same way anyway: a call site that knows which key the body holds is a
+    // call site that will be wrong the day it stops being true, and
+    // `tests/test_writes.py` sweeps for exactly that.
+    if (!response.ok) failed = refusal(answer, response.status);
+  } catch (error) {
+    failed = error.message;
+  }
+  if (!popAsking(asking)) return;
+  if (failed) {
+    asking.note.textContent = '';
+    // **And the old sentences go.** Reached from `popReally` after a 409 whose
+    // re-ask then fails, this arm would otherwise leave the previous cascade
+    // drawn — the very list the server has just said is wrong — under a message
+    // saying the consequences could not be read. The button is disabled either
+    // way, so nothing can be authorised against it; what it would cost is a
+    // reader believing a stale list is still the answer.
+    popReach(asking, []);
+    // **And the button stays disabled.** Offering a delete whose consequences
+    // could not be read would be the bare confirm this panel exists instead of,
+    // and it would be worse than one: the list is what the route compares
+    // against, so a delete pressed here would be refused anyway — after the
+    // reader had agreed to something nobody showed them.
+    popConfirmSays([
+      `What this would take with it could not be read — ${failed}. Nothing was `
+      + 'deleted, and nothing can be until the plan answers. Close this and ask '
+      + "again, or delete it from the record's own page.",
+    ]);
+    return;
+  }
+  asking.also = answer.also || [];
+  asking.deletes = answer.deletes || [];
+  popReach(asking, answer.said || []);
+  asking.note.textContent = POP_REVERT;
+  asking.really.disabled = false;
+  popPlace();
+}
+
+// The consequences, in the words the record page uses and the markup it draws
+// them in — `_cascade_facts` (`detail.py`) answers both panels, so what arrives
+// here is `{kind, lead, count, mid, names, tail}` rather than a finished
+// sentence.
+//
+// **The parts are not a fussiness.** The count is drawn in a `<strong>` because
+// it is the number somebody is agreeing to, and each title gets a chip of its
+// own because a title is held to one rule — that it is not blank — so there is
+// no character a title cannot contain. Three comma-joined titles, one of which
+// has a comma in it, offer a reader four items and ask them to press Delete on
+// that.
+//
+// `append` with a string inserts a text node, so every title on this panel goes
+// in as text. There is no `innerHTML` here and there may not be.
+function popReach(asking, said) {
+  asking.reach.replaceChildren(...said.map(one => {
+    const quiet = one.kind === 'frees';
+    const line = document.createElement('p');
+    line.className = quiet ? 'popreach popmild' : 'popreach';
+    // From the two the server can send and not from the string it sent, so a
+    // slug is a slug this page chose. The quiet line is the one where nothing is
+    // destroyed and a field is edited instead; drawing the two the same way
+    // teaches people to skim both.
+    line.dataset.kind = quiet ? 'confirm-frees' : 'confirm-deletes';
+    line.append(one.lead + ' ');
+    if (one.count) {
+      const many = document.createElement('strong');
+      many.textContent = String(one.count);
+      line.append(many, ' ');
+    }
+    if (one.mid) line.append(one.mid + ' ');
+    const names = document.createElement('span');
+    names.className = 'popnames';
+    (one.names || []).forEach((name, at) => {
+      // One literal space between the chips, so that the paragraph still reads
+      // as a list to `innerText` and to continuous reading. Measured in Chrome
+      // without it on the record page: three titles ran together into one word,
+      // which is what a person copies and what a screen reader says aloud.
+      if (at) names.append(' ');
+      const chip = document.createElement('span');
+      chip.className = 'popnamed';
+      chip.textContent = name;
+      names.append(chip);
+    });
+    line.append(names);
+    if (one.tail) line.append(' ' + one.tail);
+    return line;
+  }));
+}
+
+// The press, and what happens to the panel when the server will not do it.
+//
+// **A refusal re-asks the cascade rather than offering the same list again.**
+// The refusal a delete gets is almost always that the plan moved under the panel
+// — somebody filed a task under this pitch while it sat open — and what the
+// panel is showing is then a claim about a plan that no longer exists. Pressing
+// again against that list would be refused by the same rule for the same reason,
+// for ever. So the sentences are replaced, the `also` that goes on the wire is
+// replaced with it, and the reader reads the consequences as they now are before
+// the button is pressable again.
+//
+// `popSaid` has already drawn the reason into `why` above the sentences, and
+// `popCascade` does not clear it: the refusal is why the panel changed under
+// them, and it has to still be there when it has.
+async function popReally(asking) {
+  // Cannot happen — the button is disabled until this is filled in — and said
+  // rather than assumed, because what it guards is a deletion sent with a list
+  // this panel never showed anybody.
+  if (!asking.also) return;
+  asking.really.disabled = true;
+  popConfirmSays([]);
+  const done = await popDelete(asking);
+  if (!done && popAsking(asking)) popCascade(asking);
+}
+
 // --- the write doors --------------------------------------------------------
 //
-// **Two doors, because there are two writes.** Cut 4 had one, with the address
-// and the verb passed in as data, and what that cost is not duplication saved:
-// the page then carried a single `fetch` whose address is not in the source a
-// reader sweeps, announcing one write where two can happen.
+// **Three doors, because there are three writes.** Cut 4 had one, with the
+// address and the verb passed in as data, and what that cost is not duplication
+// saved: the page then carried a single `fetch` whose address is not in the
+// source a reader sweeps, announcing one write where three can happen.
 // `test_every_write_a_page_makes_is_announced_before_and_after_it` counts a
 // page's write call sites against its `openproj:writing` pairs, and its premise
 // is written in its own comment — every write path is one call site because it
-// is one write. One call site for two writes breaks that premise as surely as
+// is one write. One call site for three writes breaks that premise as surely as
 // the drawing save's two call sites for one write, which it has to special-case.
-// So: one door per verb, each with its own literal address, its own event pair
-// and its own `finally`.
+// So: one door per verb, each with its own literal address, its own body, its
+// own event pair and its own `finally`.
+//
+// The body is built in each door rather than handed to one, and that is the
+// same rule again read once further: the delete sends `{base_commit, also}` and
+// the two saving verbs send `{base_commit, fields, body}`, so a shared door
+// would have taken the body as data too and the page would carry one `fetch`
+// whose payload is as invisible to a reader as its address was.
 //
 // **Everything else is shared and lives in one place**, which is the rule that
 // made it one door in the first place — an invariant written twice will be
-// guarded once. `popStart` is what both do before the request, `popSettled`
-// what both do with an answer, and `popLost` what both do when there is none;
-// between them they hold the re-entrancy flag, the `#base` guard and its
-// advance, the `POP_GEN` snapshot, the one reading of a refusal, and the host's
-// `wrote()`. What is left in each door is the three things that genuinely
-// differ: the address, the verb, and what to do about a lost answer.
+// guarded once. `popStart` is what all three do before the request, `popSettled`
+// what all three do with an answer, and `popLost` what all three do when there
+// is none; between them they hold the re-entrancy flag, the `#base` guard and
+// its advance, the `POP_GEN` snapshot, the one reading of a refusal, and the
+// host's `wrote()`. What is left in each door is the four things that genuinely
+// differ: the address, the verb, the body, and what to do about a lost answer.
 //
-// Both answer a promise for `true` when the commit landed, which is also how
-// `popRan` knows the item owns its own dismissal.
+// All three answer a promise for `true` when the commit landed, which is also
+// how `popRan` knows the item owns its own dismissal.
 
 // Whether one is in the air. See the re-entrancy note in `popStart`, which is
 // where the failure it prevents is written down.
@@ -2394,14 +2810,23 @@ async function popSettled(flight, response, said, about) {
 // Otherwise the write itself never got an answer, and this makes no claim about
 // what reached the server: a fetch rejects when the answer is lost as readily as
 // when the request never left. **What to do about that is the door's to say and
-// not this function's**, because the two verbs have opposite advice — a PATCH
-// repeated is the same write and a POST repeated is a second record. `retry` is
-// where each one says so.
+// not this function's**, because the three verbs have different advice — a PATCH
+// repeated is the same write, a POST repeated is a second record, and a DELETE
+// repeated is a second deletion aimed at a record that may already be gone.
+// `retry` is where each one says so.
+//
+// **A door whose verb is not "save" hands in a function instead of a clause**,
+// and it is the delete. "Saved" and "Not saved" are the wrong verb for a record
+// that is gone, and a door owning both sentences is the same mechanism read to
+// its end rather than a second one parked beside it — the alternative, a fourth
+// parameter naming the other half, is two ways of saying who owns the sentence.
 function popLost(flight, error, retry) {
-  popSaid(flight.gen, flight.landed
-    ? `Saved, but the page could not read the plan back — ${error.message}. `
-      + 'The save went through; reload to see what it changed.'
-    : `Not saved — ${error.message}. ${retry}`);
+  popSaid(flight.gen, typeof retry === 'function'
+    ? retry(error, flight.landed)
+    : (flight.landed
+       ? `Saved, but the page could not read the plan back — ${error.message}. `
+         + 'The save went through; reload to see what it changed.'
+       : `Not saved — ${error.message}. ${retry}`));
   return flight.landed;
 }
 
@@ -2490,6 +2915,101 @@ async function popCreate(fields, title) {
     POP_WRITING = false;
     // See `popWrite`'s: refused or not, the pair has to close.
     dispatchEvent(new CustomEvent('openproj:wrote', {detail: flight.committed}));
+  }
+}
+
+// A record out of the plan, which is the same shape and a third verb.
+//
+// **Out of the PLAN and not out of the repository**: the commit takes the file
+// off the tip and every version of it stays in history, which is the one
+// property that makes a delete button here defensible at all. That is what
+// `POP_REVERT` says over the button, and it is why the sentences below are
+// allowed to be as calm as they are.
+//
+// **The one door with no `openproj:writing`/`openproj:wrote` pair around it**,
+// and that is not an omission. `test_every_write_a_page_makes_is_announced_
+// before_and_after_it` counts a page's write call sites — a `fetch` at a literal
+// address with `method: 'POST'`, `'PATCH'` or `'PUT'` — against the pairs the
+// page dispatches, and a DELETE matches none of those three. A pair here would
+// therefore be an announcement of a write the census cannot see, and the page
+// would claim four announcements for three countable writes: `/table` and
+// `/graph` both fail that assertion by exactly one. The record page's own
+// deletion is bracketed by nothing at all for the same reason, while the rekind
+// immediately above it has its pair.
+//
+// That page can afford it because it leaves: a landed deletion sets
+// `location.href` and the banner has nowhere to appear. This one stands still,
+// so the two things the pair was buying are bought directly in the `finally`
+// below — where the sweep's premise, one countable call site per write, stays
+// true.
+//
+// What is genuinely given up is the third thing: `openproj:writing` also HOLDS
+// somebody else's banner for the length of the flight, and a commit from another
+// tab arriving while this deletion is in the air now draws one immediately. The
+// record page's deletion gives up the same thing, and a banner about a write
+// that really was somebody else's is news rather than noise.
+async function popDelete(asking) {
+  const flight = popStart();
+  if (!flight) return false;
+  const gone = asking.deletes.length;
+  // The receipt names the reach as well as the record, because by the time this
+  // is said the panel that listed it is gone — and "deleted" alone is a receipt
+  // for one file about a commit that removed eight.
+  const said = gone
+    ? `${asking.title} is deleted, with ${gone} record${gone === 1 ? '' : 's'} `
+      + 'that were filed under it'
+    : `${asking.title} is deleted`;
+  try {
+    const response = await fetch(`/api/record/${encodeURIComponent(asking.id)}`, {
+      method: 'DELETE', headers: {'content-type': 'application/json'},
+      // **What this verb puts beside the base commit is `also` and nothing
+      // else**: the ids the panel showed, so that the question the reader
+      // answered is the question the server acts on. No `fields` and no `body`
+      // — a `fields: {}` on a deletion would be this page telling the server
+      // something it does not mean, and it is why each door builds its own body
+      // here rather than being handed one.
+      body: JSON.stringify({base_commit: flight.base.value, also: asking.also}),
+    });
+    return Boolean(await popSettled(flight, response, said, asking.id));
+  } catch (error) {
+    // The one door whose lost answer cannot be described in `popLost`'s own two
+    // sentences, so it passes both of them instead of a retry clause. "Saved"
+    // and "Not saved" are the wrong verb for a record that is gone, and the
+    // second of them is the expensive one: on a protected branch it invites a
+    // second press at a record that may already have been removed, and the
+    // cascade goes with it. Neither sentence claims to know what reached the
+    // server — a fetch rejects when the ANSWER is lost as readily as when the
+    // request never left. The record page's own pair, for the same failure.
+    return popLost(flight, error, (failed, landed) => landed
+      ? `Deleted, but the page could not read the plan back — ${failed.message}. `
+        + 'The deletion went through; reload to see the plan without it.'
+      : `Not deleted — ${failed.message}. Look before pressing Delete it again: `
+        + 'if the first press landed, this record and everything filed under it '
+        + 'are already gone.');
+  } finally {
+    POP_WRITING = false;
+    // What the pair the other two doors dispatch would have done here, said to
+    // the two listeners that would have heard it — and only on a commit, because
+    // a refusal moved nothing and there is no counter left holding anything back.
+    if (flight.committed) {
+      // **The shell's own event for a commit that is ours and owes the in-flight
+      // counter nothing.** Every commit comes back down the stream including this
+      // one, and without this the reader is told "The plan changed" about the
+      // record they have just deleted, on a page that is still in front of them.
+      // `openproj:ours` is what the co-editing room already uses to say exactly
+      // that, and it takes a banner down again if the stream beat us to it —
+      // which is the normal case here, not the unlucky one, because the server
+      // announces a commit before it answers the request that made it.
+      dispatchEvent(new CustomEvent('openproj:ours', {detail: flight.committed}));
+      // And the other half: every open box dies on a commit, because the rows it
+      // was built from have just been replaced by the host's re-read. `popSettled`
+      // has already closed the box that sent this deletion, if that box is still
+      // the one on screen; this is for the one it is not — a menu opened on a
+      // different record while the deletion was in the air, which is an ordinary
+      // thing to do over the seconds a commit and a push take. `popClose` leaves a
+      // half-filled form alone, here as everywhere else.
+      popClose();
+    }
   }
 }
 
