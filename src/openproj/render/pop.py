@@ -2053,7 +2053,14 @@ async function popSave() {
   //
   // A create always moves (from nothing), and the `Status ▸` item that opens this
   // form always moves, so both keep the gate they are there for.
-  const moving = form.mode === 'new' || status !== popRawOf(popStartOf('status'));
+  //
+  // Measured against what the RECORD holds, not against what the form started
+  // with. `popStartOf` answers a pre-filled value first, and the gated-status
+  // item pre-fills exactly the status it is asking for — so comparing with it
+  // said "not moving" on the one path whose entire purpose is to move, and the
+  // form took a `done` with no PRs without a word.
+  const held = form.mode === 'new' ? null : popRawOf(popHeld('status'));
+  const moving = form.mode === 'new' || status !== held;
   const gates = (POP_SCHEMA.required || {})[form.kind] || {};
   for (const name of moving ? form.names : []) {
     if (!(name in values) || !popEmpty(values[name])) continue;
