@@ -1981,6 +1981,15 @@ function popFormRow() {
     if (form.parent) draft.parent = form.parent.id;
   }
   for (const [name, value] of Object.entries(form.values)) draft[name] = value;
+  // **The derived twin moves with the stated date.** `cardFact` (`shell.py`)
+  // draws `row.start ?? row.start_date` — the scheduler's span where there is
+  // one, which is right for a card that is only read and wrong the moment
+  // somebody stages a date: the word under their answer would go on reading the
+  // old span, which is the card confidently wrong about the one thing the reader
+  // just did. The server recomputes the span on the save; until then what was
+  // typed is what the card says.
+  if ('start_date' in form.values) draft.start = form.values.start_date;
+  if ('end_date' in form.values) draft.end = form.values.end_date;
   return draft;
 }
 
@@ -2025,8 +2034,9 @@ function popDrawForm() {
   const acts = document.createElement('div');
   acts.className = 'popacts';
   form.save = popPress('form-save', form.verb, 'popsave');
-  // A real submit, so Enter anywhere in the box commits — which is what every
-  // other box on these pages answers to.
+  // A real submit, so Enter on the button itself presses it and the box answers
+  // one `submit` however it was reached. Enter inside a FIELD does not get here:
+  // it takes that field's answer and closes it — see `popOpenField`.
   form.save.type = 'submit';
   const cancel = popPress('form-cancel', 'Cancel', 'popcancel');
   // `askFor`'s own sentence for the same press, because it is the same news.
@@ -2169,18 +2179,28 @@ function popOpenField(name) {
   if (control.tagName === 'INPUT' && (control.type === 'text' || control.type === 'number'))
     popComplete(control, name, slot);
   slot.classList.add('popediting');
-  // **Nothing closes this control but Escape**, and there is no `blur` listener
-  // at all. A box is asking a question of several fields at once, so opening the
-  // second would blur the first — and while blur committed, that meant pressing
-  // one field to answer it saved the one before it. Now the control stays where
-  // it is, holding what was typed, and `popSave` reads it there.
+  // **No `blur` listener at all**, and two keys close this control. A box is
+  // asking a question of several fields at once, so opening the second would
+  // blur the first — and while blur committed, that meant pressing one field to
+  // answer it saved the one before it. Nothing closes on blur now; the control
+  // stays where it is, holding what was typed, and `popSave` reads it there.
   //
-  // Enter is not intercepted either, which is what makes the comment in
-  // `popDrawForm` true: the control is inside a real `<form>` with a
-  // `type="submit"` button, so Enter anywhere in the box IS the press. It used
-  // to be caught here and turned into a blur, which on a box that commits on the
-  // button meant Enter did nothing whatever.
+  // **Enter takes the answer and closes the field. Escape gives it up.** The two
+  // are a pair and neither of them writes: jcanton, 2026-09-18, on the version
+  // where Enter reached the form's own submit — "can we instead have 'enter' only
+  // close the field being edited, similarly to escape, instead of committing on
+  // the floating editing card?". Save is the only thing that commits, which is
+  // what the button being there says, and Enter in a box you have just typed
+  // into is not a press of it.
   control.onkeydown = event => {
+    if (event.key === 'Enter') {
+      // **It must not reach the form**, which is the whole of this branch: the
+      // control is inside a real `<form>` with a `type="submit"` button, so an
+      // Enter left alone here IS the press.
+      event.preventDefault();
+      popTakeField(name);
+      return;
+    }
     if (event.key !== 'Escape') return;
     // **It must not bubble**: `popClose` is listening for Escape on the way up
     // and would take the whole box down, when what was asked for was to undo one
@@ -2235,6 +2255,46 @@ function popDressChip(chip, name, value) {
 }
 
 // Take the control away again, having either read it or thrown it away.
+// The answer taken and the control closed, which is Enter. **It stages and does
+// not write**: `form.values` is what Save sends, and until Save is pressed the
+// only thing that has happened is that a word on the card now reads what was
+// typed instead of what the record holds.
+//
+// The whole box is drawn again rather than the one slot rewritten, because what
+// that word looks like is `cardHtml`'s answer — a chip with its tint and its
+// mark, a list joined the card's way, a dash where there is nothing — and a
+// second place that renders a value is how two places come to disagree about
+// one. The redraw rebuilds every control from `popFormRow`, so every OTHER open
+// control is staged first or the redraw would rewrite its answer back to the
+// record's.
+function popTakeField(name) {
+  const form = POP_FORM;
+  if (!form.controls.has(name)) return;
+  // **A half-written date must not clear the date that is there.** A native
+  // picker answers `value === ''` for `2026-0` exactly as it does for a box
+  // somebody emptied on purpose — the defect `openEditor` (`table.py`) records
+  // in as many words — and `validity.badInput` is the browser's own word for
+  // that state. Asked of every open control and not only this one, because the
+  // redraw below takes them all: a box left half-written elsewhere would be put
+  // back to the record's value with nothing said. So nothing closes, the box
+  // says which field it is, and the answer stays on screen to be finished.
+  // `&&` guards it because the node driver builds elements that have no
+  // `validity` at all.
+  for (const [other, box] of form.controls) {
+    if (!(box.validity && box.validity.badInput)) continue;
+    popFormSays([`${popLabel(other)} is half-written — finish it, or press Escape in it.`]);
+    box.focus();
+    return;
+  }
+  for (const [other, box] of form.controls) form.values[other] = popReadOf(other, box);
+  form.controls.delete(name);
+  // What is still open stays open, and `popDrawForm` opens exactly this list.
+  form.opens = [...form.controls.keys()];
+  // And the keyboard is `popDrawForm`'s to place: it re-opens what was open, or
+  // hands it to `popFirstSlot` when this was the last control.
+  popDrawForm();
+}
+
 function popShutField(name, slot, was) {
   POP_FORM.controls.delete(name);
   slot.classList.remove('popediting');
@@ -2260,9 +2320,19 @@ function popShutField(name, slot, was) {
 
 // Focus, when nothing is open: the first field this card can edit, so that a box
 // opened from the keyboard has the keyboard in it.
+//
+// **And Save when that does not take, which is most of the time.** `.card-fact`
+// is `display: contents` — it generates no box, and Chrome refuses to focus an
+// element that has none, measured: `focus()` returns with `activeElement` still
+// `<body>`. That is outside `#pop`, where this box's keydown listener is, so
+// Escape reached nothing and Tab started again from the top of the page. Asked
+// of the document rather than assumed, because the title line and the chips are
+// ordinary boxes and do take it.
 function popFirstSlot(box) {
   const first = box.querySelector('.popopens');
   (first || box).focus();
+  if (!POP.contains(document.activeElement) && POP_FORM && POP_FORM.save)
+    POP_FORM.save.focus();
 }
 
 function popPress(kind, text, className) {

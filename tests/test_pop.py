@@ -3701,6 +3701,169 @@ def test_edit_opens_on_the_record_and_one_save_commits_what_was_answered(
     assert got["beats"] == {"writing": 1, "wrote": ["c0ffee1"]}, got["beats"]
 
 
+_ENTER_TAKES = """
+const row = rowWhere(one => one.kind === 'task' && one.title && one.status);
+if (!row) return {error: 'the corpus draws no task'};
+const somebody = POP_SCHEMA.people.find(login => login !== row.owner);
+if (!somebody) return {error: 'the corpus knows only one person'};
+openOn(row.id);
+itemIn('edit').click();
+const title = row.title + ' (typed, then entered)';
+typeInto('title', title);
+typeInto('owner', somebody);
+// Enter, the way a browser delivers it. The return of `dispatchEvent` is the
+// claim that it was answered here: an Enter left alone reaches the `<form>` this
+// control sits in, which has a `type="submit"` button in it.
+const enter = name => !boxIn(name).dispatchEvent(
+  new KeyboardEvent('keydown', {key: 'Enter', bubbles: true, cancelable: true}));
+const stopped = enter('title');
+const taken = {stopped, sent: patches().length, form: formUp(),
+               box: !!boxIn('title'), says: valueIn('title'), open: opensNow(),
+               owner: boxIn('owner') ? boxIn('owner').value : null,
+               where: document.activeElement.dataset.field || ''};
+// The other one, which leaves nothing open — so the keyboard has to land
+// somewhere inside the box or the next Escape reaches nothing.
+enter('owner');
+const both = {sent: patches().length, open: opensNow(), owner: valueIn('owner'),
+              where: document.activeElement.dataset.field
+                || document.activeElement.dataset.kind || '',
+              inside: POP.contains(document.activeElement)};
+// A half-written date, which is the one answer Enter may not take: the picker
+// reports `value === ''` for `2026-0` exactly as it does for a box somebody
+// emptied on purpose. `defineProperty` because `validity` is the browser's and
+// headless Chrome will not be given one any other way.
+openField('start_date');
+const date = boxIn('start_date');
+date.value = '';
+Object.defineProperty(date, 'validity', {value: {badInput: true}, configurable: true});
+enter('start_date');
+const half = {open: opensNow(), why: whyLines(), sent: patches().length,
+              where: document.activeElement.dataset.field || ''};
+// Finished, and then taken.
+Object.defineProperty(date, 'validity', {value: {badInput: false}, configurable: true});
+date.value = '2026-03-02';
+enter('start_date');
+const finished = {open: opensNow(), says: valueIn('start_date'), why: whyLines()};
+pressSave();
+await rest(1000);
+const landed = {sent: patches(), said: said(), open: popIsOpen(),
+                title: DATA.rows[row.id].title, owner: DATA.rows[row.id].owner,
+                start: DATA.rows[row.id].start_date};
+return {id: row.id, was: row, title, somebody, taken, both, half, finished, landed};
+"""
+
+
+def test_enter_takes_the_answer_and_closes_the_field_without_writing(
+    index: Index, tmp_path: Path
+):
+    """jcanton, 2026-09-18, on the version where Enter reached the form's own
+    submit: *"can we instead have 'enter' only close the field being edited,
+    similarly to escape, instead of committing on the floating editing card?"*.
+
+    So Enter and Escape are a pair and neither of them writes. Enter takes what
+    is in the box and puts it on the card as a word; Escape puts the old word
+    back; Save is the only thing that sends anything, which is what the button
+    being there says.
+
+    **Taken is not written.** What Enter stages goes into `form.values`, the card
+    is drawn again from it, and the plan has not been touched — the assertion
+    that says so is the PATCH count, taken after each of the four presses here.
+
+    **The whole box is drawn again rather than the one slot rewritten**, because
+    what a value looks like as a word is `cardHtml`'s answer — a chip with its
+    tint and its mark, a list joined the card's way, a dash where there is
+    nothing — and a second place that renders one is how two places come to
+    disagree. Which is why every OTHER open control is staged first: the redraw
+    rebuilds them from the row, and an answer left in one would have been
+    rewritten to the record's.
+
+    **A half-written date is the one answer Enter may not take.** A native picker
+    answers `value === ''` for `2026-0` exactly as it does for a box somebody
+    emptied on purpose, so taking it would stage a deletion nobody asked for —
+    the defect `openEditor` (`table.py`) records in as many words. Nothing closes,
+    the box says which field it is, and the answer stays on screen to be
+    finished.
+
+    And the keyboard stays inside the box. `#pop` is where this box's keydown
+    listener is, so a keyboard that fell out of it cannot press Escape to leave —
+    and it cannot be given to the word just written, because `.card-fact` is
+    `display: contents` and Chrome will not focus an element with no box.
+    """
+    got = _at_a_form(index, tmp_path / "entertakes.html", _ENTER_TAKES, patience=5000)
+
+    assert not got.get("error"), got
+    assert got["taken"]["stopped"] is True, (
+        "Enter was left to bubble, so it reached the `<form>` this control is inside and "
+        "pressed its submit button — which is the commit this was asked to stop being"
+    )
+    assert got["taken"]["sent"] == 0, "Enter wrote to the plan"
+    assert got["taken"]["form"] is True, "Enter took the whole box down"
+    assert got["taken"]["box"] is False, "Enter left the control open"
+    assert got["taken"]["says"] == got["title"], (
+        f"the card reads {got['taken']['says']!r} after Enter and {got['title']!r} was "
+        "typed — a taken answer that is not on the card is one nobody can check"
+    )
+    assert got["taken"]["open"] == ["owner"], (
+        f"the fields still open are {got['taken']['open']} — Enter closes the one field it "
+        "was pressed in"
+    )
+    assert got["taken"]["owner"] == got["somebody"], (
+        "the redraw rebuilt the other open control from the record, so the answer typed "
+        "into it is gone"
+    )
+    assert got["taken"]["where"] == "owner", (
+        f"the keyboard went to {got['taken']['where']!r} rather than to the control still "
+        "open beside it"
+    )
+    assert got["both"]["sent"] == 0 and got["both"]["open"] == [], got["both"]
+    assert got["both"]["owner"] == got["somebody"], got["both"]["owner"]
+    assert got["both"]["inside"] is True, (
+        f"with nothing open the keyboard is on {got['both']['where']!r}, outside the box. "
+        "It has to stay inside `#pop`, which is where this box's keydown listener is — "
+        "otherwise Escape reaches nothing and Tab starts again from the top of the page"
+    )
+    assert got["both"]["where"] == "title", (
+        f"the keyboard is on {got['both']['where']!r} rather than on the card's first "
+        "field, which is where `popFirstSlot` puts it"
+    )
+    assert got["half"]["open"] == ["start_date"], (
+        "Enter closed a half-written date, which stages a deletion of the date that is "
+        "there — and says nothing about it"
+    )
+    assert got["half"]["sent"] == 0
+    assert len(got["half"]["why"]) == 1 and "half-written" in got["half"]["why"][0], (
+        f"the box said {got['half']['why']} about a date it refused to take"
+    )
+    assert got["half"]["where"] == "start_date", (
+        "the keyboard is not in the box the refusal is about, which is the one place the "
+        "reader has to be to act on it"
+    )
+    assert got["finished"]["open"] == [] and got["finished"]["why"] == [], got["finished"]
+    assert got["finished"]["says"] == "02.03.2026", (
+        f"the card reads {got['finished']['says']!r} over a date somebody has just typed. "
+        "`cardFact` draws `row.start ?? row.start_date` — the scheduler's span first — so "
+        "a staged date has to move the derived twin with it or the card is confidently "
+        "wrong about the one thing the reader just did"
+    )
+    assert len(got["landed"]["sent"]) == 1, (
+        f"three fields taken in one visit went out as {len(got['landed']['sent'])} writes"
+    )
+    assert got["landed"]["sent"][0]["body"]["fields"] == {
+        "title": got["title"],
+        "owner": got["somebody"],
+        "start_date": "2026-03-02",
+    }, (
+        "Save sent something other than the three answers Enter took: "
+        f"{got['landed']['sent'][0]['body']['fields']}"
+    )
+    assert got["landed"]["open"] is False, "the box stayed up after its Save landed"
+    assert (got["landed"]["title"], got["landed"]["owner"], got["landed"]["start"]) == (
+        got["title"],
+        got["somebody"],
+        "2026-03-02",
+    ), got["landed"]
+
+
 # --------------------------------------------------------------------------- #
 # The shape of it, which is the card's
 # --------------------------------------------------------------------------- #
