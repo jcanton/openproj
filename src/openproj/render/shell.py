@@ -16,7 +16,7 @@ from .env import _compiled
 from .hill import hill_geometry
 from .icons import _icon_uri
 from .styles import STATUS_SLOTS, _scheme_css
-from .tokens import HUMAN, KINDS, PRIORITY_GLYPH, STATUS_GLYPH, STATUSES
+from .tokens import HUMAN, KINDS, PRIORITY_GLYPH, STATUS_GLYPH, STATUSES, card_facts
 
 
 class Links(BaseModel):
@@ -1005,22 +1005,62 @@ body:has([data-fills]) { padding-bottom: 2px; }
    nobody can grab — which is exactly what shipped. It does not follow the
    pointer either: it is placed once, where the pointer was when it opened, and
    the gap to it is crossable because leaving the row only starts a timer. */
-#card { position: fixed; z-index: 20; max-width: 26rem;
+#card { position: fixed; z-index: 20; max-width: 34rem;
         background: var(--surface); color: var(--fg); font-size: 12px;
         border: 1px solid var(--line-strong); border-radius: 3px;
         padding: .4rem .55rem; box-shadow: 0 4px 14px rgba(0,0,0,.12); }
 #card[hidden] { display: none; }
-#card .card-title { margin: 0; font-size: 13px; font-weight: 600; }
-#card .card-chips { margin: .25rem 0 .35rem; }
-#card dl { display: grid; grid-template-columns: auto 1fr; gap: 0 .6rem; margin: 0; }
-#card dt { color: var(--muted); font-size: 11px; text-transform: uppercase;
-           letter-spacing: .04em; }
-#card dd { margin: 0; }
-#card .num { font-variant-numeric: tabular-nums; }
+/* **These rules are the hover card's and the right-click box's at once**, and
+   `:is(#card, .popcard)` is how one rule says so. The box a right-click opens to
+   edit a record is drawn by `cardHtml` — the same function, the same markup —
+   and a second copy of this block under `#pop` would be the thing that drifts.
+   `:is()` takes the highest specificity of its arguments, so each of these is
+   (1,1,0) exactly as `#card …` was: nothing in the cascade moves. */
+:is(#card, .popcard) .card-title { margin: 0; font-size: 13px; font-weight: 600; }
+:is(#card, .popcard) .card-chips { margin: .25rem 0 .35rem; }
+/* **Two pairs across and not one**, which is jcanton's, 2026-09-18: "we make the
+   card slightly wider and taller: two columns instead of one with fields below
+   kind/priority/status (with eclipse for too long ones)". The card lists every
+   editable field now rather than the five it used to compress into — twelve of
+   them on a task — and twelve rows down one column is a box taller than the
+   table it is drawn over. Six rows of two is not.
+
+   `minmax(0, 1fr)` on the value tracks and not `1fr`: a track's automatic
+   minimum is its content's min-content size, so a value that cannot wrap —
+   which is every one of them, see the `dd` rule below — would set the track's
+   width and push the card past its own `max-width` instead of being cut. This
+   is the rule that makes the ellipsis possible at all. */
+:is(#card, .popcard) .card-facts {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: .1rem .6rem; margin: 0; align-items: baseline;
+}
+/* The `<div>` grouping a `<dt>` with its `<dd>`, which is a child a `<dl>` is
+   allowed. It is there so the pair can carry the field's name for the box that
+   edits it, and `display: contents` is what keeps the four tracks above being
+   four tracks rather than a row of two boxes. */
+:is(#card, .popcard) .card-fact { display: contents; }
+:is(#card, .popcard) dt { color: var(--muted); font-size: 11px; text-transform: uppercase;
+           letter-spacing: .04em; white-space: nowrap; }
+/* Cut rather than wrapped. A card is a glance: a tag list that wraps to three
+   lines pushes the five facts under it off the bottom of a box that is already
+   as tall as it may be, and the record's own page is one click away for the
+   whole of it. */
+:is(#card, .popcard) dd { margin: 0; overflow: hidden;
+                          text-overflow: ellipsis; white-space: nowrap; }
+/* Nothing, drawn. A row with an empty right-hand side reads as a card that
+   failed to load; a dash reads as a field nobody has filled in — and since the
+   same rows are what the right-click box edits, it is also the row you click to
+   fill it. */
+:is(#card, .popcard) .empty { color: var(--muted); }
+/* A ladder this record has not answered yet. The kind chip's hairline, so the
+   line still reads as three chips and the one with nothing in it is plainly the
+   one with nothing in it. */
+.chip.empty-chip { color: var(--muted); border: 1px solid var(--line); }
+:is(#card, .popcard) .num { font-variant-numeric: tabular-nums; }
 /* `#card .guess` was here, and it dressed the one word this card can no longer
    say: "(assumed)", beside an appetite the tool had invented. There is no
    invented appetite any more, so there is no rule for one. */
-#card .card-why { margin: .35rem 0 0; color: var(--muted); font-style: italic; }
+:is(#card, .popcard) .card-why { margin: .35rem 0 0; color: var(--muted); font-style: italic; }
 /* The shaping document. Capped and scrollable rather than as long as it is: a
    900-word pitch drawn in full covers the table it was opened from, and the card
    is a look rather than a read — the title is still a link to where the document
@@ -1303,10 +1343,11 @@ dt:has(+ dd .hill) { align-self: start; }
    `test_a_nine_hundred_word_document_does_not_cover_the_table` holds it under half
    the window. Beside the word, the hill costs the difference between a line of
    chips and a small drawing rather than a whole row of its own. */
-#card .hill { --ball: 11px; --ghost: 6px; max-width: 6.5rem; }
-#card .card-hill { display: inline-block; vertical-align: middle;
+:is(#card, .popcard) .hill { --ball: 11px; --ghost: 6px; max-width: 6.5rem; }
+:is(#card, .popcard) .card-hill { display: inline-block; vertical-align: middle;
                    margin-left: .35rem; }
-#card .card-chips { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem; }
+:is(#card, .popcard) .card-chips { display: flex; align-items: center;
+                                   flex-wrap: wrap; gap: .25rem; }
 /* The two lines every view writes about itself: the count under the controls of
    what is on screen, and the place a refusal or a receipt is written into. Four
    pages drew `#summary` and three drew `#state`, and the copies had already come
@@ -2123,6 +2164,24 @@ tr.nothing .hint { margin: 0 0 .75rem; }
     things: that one is the script that moves the ball, and this is the payload
     every page that can draw a card carries. -#}
 <script id="hill" type="application/json">{{ hillgeom|tojson }}</script>
+{#- Which named facts a card of each kind lists, and what to call each one. Beside
+    the three above and for the third time the same reason: the card is drawn by
+    three pages and only one of them has a payload that could answer this.
+
+    It is `_editable_for`'s own answer, so the card lists exactly the fields the
+    right-click box edits — see `card_facts` (`tokens.py`) for why that identity
+    is the point and not a coincidence. -#}
+<script id="cardfacts" type="application/json">{{ cardfacts|tojson }}</script>
+{#- What the records on this plan are called, for the one row of a card that
+    holds another record's id. Empty on every page whose own payload already
+    names them — the table's `DATA.rows` is `index.plan` and the graph's nodes
+    are its members — and filled by the timeline, which draws the work that has
+    dates and therefore cannot name the project a task is filed under.
+
+    Without it the same card said `Testing rank reproducibility` on two views and
+    `pitch-0a0001` on the third, which is `in_progress` drawn three ways all over
+    again. -#}
+<script id="cardtitles" type="application/json">{{ cardtitles|tojson }}</script>
 <script>
 // Declared before the content, because the pages' own scripts are inside it and
 // some of them announce while loading — the cycle page's receipt, the detail
@@ -2373,6 +2432,8 @@ const CARD = document.getElementById('card');
 // that can be true of the page and false of the document a test drives.
 const CARD_BODY_URL = {{ links.body|tojson }};
 const CARD_DASH = '<span class="empty">—</span>';
+// The same nothing, as a chip's word rather than as a cell's value.
+const CARD_NOTHING = '—';
 
 // The word a value is drawn as. From the shell's own map and not from a page's
 // payload: the graph has no `DATA` — its payload is cytoscape elements — so a
@@ -2446,39 +2507,101 @@ function hillHtml(status) {
     + ghosts + ball + '</span></span>';
 }
 
+// Which facts a card of each kind lists, and what each is called. Absent on a
+// page with no card, which is why every use of it is guarded.
+const CARD_FACTS = JSON.parse(document.getElementById('cardfacts')?.textContent || 'null');
+
+// And what the plan's records are called, where this page's own payload cannot
+// say. `{}` on the two views whose payload is the plan; the timeline's own, for
+// the parent of a task it does not draw.
+const CARD_TITLES = JSON.parse(document.getElementById('cardtitles')?.textContent || 'null');
+
+// A record's title, where this page can name one. `popTitleOf` asks the host's
+// own `rows(id)`, which is the one question all three views answer; guarded
+// because a page could carry a card and no menu, and an id is a worse answer
+// than a title but is not a wrong one.
+function cardTitleOf(id) {
+  if (CARD_TITLES && CARD_TITLES[id]) return CARD_TITLES[id];
+  return typeof popTitleOf === 'function' ? popTitleOf(id) : id;
+}
+
+// One named fact, as the card shows it: already escaped, and `null` where this
+// row cannot answer at all.
+//
+// **The names are fields and not the card's own vocabulary**, which is the whole
+// of what changed here on 2026-09-18. The card used to list `With` — the
+// assignees minus the owner, deduped, because "ann, ann" is a box nobody trusts
+// the rest of — and `Scheduled`, one row holding two dates. Both read well and
+// neither is a field: the right-click box edits `assignees` and `start_date`,
+// and a card that shows one thing while the box beside it edits another is two
+// boxes however alike they look. jcanton, asking for exactly this: "it should
+// display the editable fields as the edit view, so owner, assignees, reviewer,
+// etc etc".
+function cardFact(row, name) {
+  const value = row[name];
+  if (name === 'person_weeks') {
+    // `row.weeks` is the timeline's rounded copy and `row.size` the table's, and
+    // the two used to be able to disagree: the timeline's was the invented
+    // default for an unsized record and the table's was null for the same one,
+    // so the same card said "0.5 weeks" over one page and nothing over the
+    // other. Both are the stated appetite now, so the coalesce is only about
+    // which page built the row.
+    const size = row.weeks ?? row.size;
+    return size == null ? null
+      : esc(String(size)) + (Number(size) === 1 ? ' week' : ' weeks');
+  }
+  // **The date the row draws, editing the date the file states**, which is the
+  // table's own bargain in its Start and End columns: `_row` (`rows.py`) falls
+  // back to the stated date where the scheduler gave this record no span, and a
+  // cell that edits a field must show what the field holds. The card has room
+  // for the century — it is the one place a date is read rather than scanned.
+  if (name === 'start_date' || name === 'end_date') {
+    const shown = name === 'start_date' ? (row.start ?? row.start_date)
+                                        : (row.end ?? row.end_date);
+    return shown ? `<span class="num">${longDate(shown)}</span>` : null;
+  }
+  // The one field no plan view carries. `_row` ships `blocked_by`, a COUNT of
+  // unfinished blockers, and no `depends_on` at all — so the card says the count
+  // it has, under the name the field goes by, and the box that edits it says the
+  // same thing and will not let you type into it (`popLockedWhy`, `pop.py`).
+  if (name === 'depends_on')
+    return row.blocked_by == null ? null
+      : `<span class="num">${esc(String(row.blocked_by))}</span>`;
+  // A record, by its title. An id is what the field holds and is not what
+  // anybody reads: nobody remembers `pitch-b4102f`.
+  if (name === 'parent') {
+    if (row.off_plan_parent) return esc('filed off this plan');
+    return value ? esc(cardTitleOf(value)) : null;
+  }
+  if (name === 'review_waived') return value ? 'Yes' : null;
+  if (Array.isArray(value)) return value.length ? esc(value.join(', ')) : null;
+  if (value == null || value === '') return null;
+  return esc(String(value));
+}
+
 function cardHtml(row, extra) {
-  // An owner who is also an assignee is one person, not two. The scheduler reads
-  // them that way — `workers_on` dedupes — and a box that says "ann, ann" is a
-  // box nobody trusts the rest of.
-  const others = (row.assignees || []).filter(who => who && who !== row.owner);
-  // `row.weeks` is the timeline's rounded copy and `row.size` the table's, and
-  // the two used to be able to disagree: the timeline's was the invented default
-  // for an unsized record and the table's was null for the same one, so the same
-  // card said "0.5 weeks" over one page and nothing over the other. Both are the
-  // stated appetite now, so the coalesce is only about which page built the row.
-  const size = row.weeks ?? row.size;
-  const facts = [
-    ['Owner', row.owner ? esc(row.owner) : CARD_DASH],
-    ...(others.length ? [['With', esc(others.join(', '))]] : []),
-    ...(row.cycle ? [['Cycle', esc(String(row.cycle))]] : []),
-    ...(size == null ? [] : [['Appetite', esc(String(size))
-      + (Number(size) === 1 ? ' week' : ' weeks')]]),
-    // The count the table's column gave up, with the bar it draws there — the
-    // card is where a number that is read rather than scanned belongs, and it is
-    // beside what the number was counted from.
-    ...(row.progress == null ? [] : [['Progress',
+  // The kind's own lists, and nothing at all when a page carries no card payload
+  // — which is the same guard `HILL` gets three lines above it.
+  const asks = (CARD_FACTS && CARD_FACTS[row.kind]) || {chips: [], facts: []};
+  const facts = asks.facts.map(fact => {
+    const said = cardFact(row, fact.name);
+    // **Drawn either way, with the dash where there is nothing.** The card used
+    // to leave an empty row out, which is right for a box that is only read and
+    // wrong for one you edit in: a field with no value is exactly the field
+    // somebody opens this box to fill, and a row that is not there is a field
+    // that cannot be clicked.
+    return [fact.label, said == null ? CARD_DASH : said, fact.name];
+  });
+  // The count the table's column gave up, with the bar it draws there — the card
+  // is where a number that is read rather than scanned belongs, and it is beside
+  // what the number was counted from. Last, and it is the one row here that is
+  // counted rather than stored, which is why it is not in `CARD_FACTS`.
+  if (row.progress != null)
+    facts.push(['Progress',
       `<span class="num">${esc(row.progress_text)}</span>`
       + `<span class="meter"><span style="width: `
-      + `${Math.round(row.progress * 100)}%"></span></span>`]]),
-    ['Scheduled', row.start && row.end
-      // The card has room for the century, and it is the one place a date is read
-      // rather than scanned: `14.07.2026`, day first like every other date here.
-      ? `<span class="num">${longDate(row.start)}</span> to `
-        + `<span class="num">${longDate(row.end)}</span>`
-      : CARD_DASH],
-    ...((row.tags || []).length ? [['Tags', esc(row.tags.join(', '))]] : []),
-    ...extra,
-  ];
+      + `${Math.round(row.progress * 100)}%"></span></span>`, '']);
+  for (const one of extra) facts.push([one[0], one[1], '']);
   // The class attributes are escaped too, and not only the words beside them.
   // They were not: a status reading `ready" onmouseover=alert(1) x="` came back
   // out of this line as a real event handler that fired on hover, on the one
@@ -2488,30 +2611,45 @@ function cardHtml(row, extra) {
   // and word inside the same chip, so a card and a row say one fact one way. The
   // maps are the control bar's (`_FILTER_JS`), read through `typeof` because a
   // page can carry a card without carrying a filter bar.
-  const chip = (klass, glyph, word) =>
-    `<span class="chip ${klass}">` +
+  //
+  // `data-field` on the two chips that ARE fields, and on the title line above
+  // them. It says nothing on a card, which is only read; it is what the box that
+  // edits a record finds the thing you clicked by, and the card and that box are
+  // the same markup drawn by this one function.
+  const chip = (klass, glyph, word, field) =>
+    `<span class="chip ${klass}"${field ? ` data-field="${field}"` : ''}>` +
     (glyph ? `<span class="chipmark" aria-hidden="true">${esc(glyph)}</span>` : '') +
     `<span class="chipword">${esc(word)}</span></span>`;
+  //
+  // **A chip per ladder this kind READS, filled or not.** It used to be a chip
+  // per value the record happened to hold, which is right for a box that is only
+  // looked at and wrong for one you edit in: a task with no priority yet drew no
+  // priority chip, so there was nothing to click to give it one. A kind that
+  // does not read the ladder at all — a product is not `in_progress` — still
+  // gets no chip, which is `card_facts`' own answer and not a test here.
+  //
+  // The status chip stays and the hill goes under it. On the detail page the
+  // hill replaces the chip because a `<dt>` beside it says STATUS; a card has no
+  // labels on its chip line, so the hill alone would be a picture with no word —
+  // and the two are not the same fact twice here, because the word says which
+  // status and the shape says which side of the hill that is.
+  const ladder = name => {
+    const value = row[name];
+    if (!value) return chip('empty-chip', '', CARD_NOTHING, name);
+    return name === 'status'
+      ? chip(stClass(value), cardMark('status', value), cardWord(value), 'status')
+      : chip(`pri pri-${esc(value)}`, cardMark('priority', value), cardWord(value), 'priority');
+  };
   const marks = [
     chip(`kind-${esc(row.kind)}`, '', cardWord(row.kind)),
-    ...(row.priority
-      ? [chip(`pri pri-${esc(row.priority)}`, cardMark('priority', row.priority),
-              cardWord(row.priority))]
-      : []),
-    // The status chip stays, and the hill goes under it. On the detail page the
-    // hill replaces the chip because a `<dt>` beside it says STATUS; a card has
-    // no labels on its chip line, so the hill alone would be a picture with no
-    // word — and the two are not the same fact twice here, because the word says
-    // which status and the shape says which side of the hill that is.
-    ...(row.status
-      ? [chip(stClass(row.status), cardMark('status', row.status),
-              cardWord(row.status))]
-      : []),
+    ...asks.chips.map(ladder),
   ];
-  return `<p class="card-title">${esc(row.title)}</p>` +
+  return `<p class="card-title" data-field="title">${esc(row.title)}</p>` +
     `<p class="card-chips">${marks.join(' ')}` +
     (row.status ? hillHtml(row.status) : '') + '</p>' +
-    '<dl>' + facts.map(([name, value]) => `<dt>${name}</dt><dd>${value}</dd>`).join('') +
+    '<dl class="card-facts">' + facts.map(([name, value, field]) =>
+      `<div class="card-fact"${field ? ` data-field="${esc(field)}"` : ''}>` +
+      `<dt>${esc(name)}</dt><dd>${value}</dd></div>`).join('') +
     '</dl>' + (row.tip ? `<p class="card-why">${esc(row.tip)}</p>` : '');
 }
 
@@ -3937,6 +4075,7 @@ def _page(
     unreadable: Sequence[Unreadable] = (),
     origin: str | None = None,
     fills: bool = False,
+    cardtitles: dict[str, str] | None = None,
 ) -> str:
     """Autoescaping protects record titles inside the inner templates; the already
     rendered body and stylesheet are marked safe here so the shell does not escape
@@ -3991,6 +4130,11 @@ def _page(
         # The marks that go with those words, for the hover card: one map per
         # ladder, so a card says the rung the same way on all three views.
         cardmarks={"status": STATUS_GLYPH, "priority": PRIORITY_GLYPH},
+        # And which facts a card lists under them, per kind. The same list the
+        # right-click box draws its controls from, because they are one box:
+        # `card_facts` asks `_editable_for` over a blank record of each kind.
+        cardfacts=card_facts(),
+        cardtitles=dict(cardtitles or {}),
         hillgeom=hill_geometry(),
         fills=fills,
         unreadable=list(unreadable),
