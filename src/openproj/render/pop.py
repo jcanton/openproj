@@ -326,7 +326,7 @@ _POP_STYLE = """
 # exist to refuse, because inert-by-a-guard is one edit from not inert.
 #
 # Function declarations hoist within a script block, so the halves concatenate in
-# either order and the write door sits beside the write items rather than below
+# either order and the write doors sit beside the write items rather than below
 # `closing`, where it was first written.
 _POP_JS_READ = r"""
 // --- the right-click menu ---------------------------------------------------
@@ -2040,9 +2040,16 @@ async function popSave() {
   // already `in_progress` without assignees as a problem beside it, and the plan
   // is full of records in exactly that state because that is what a problem list
   // is for. Gating on the standing value instead would refuse every edit to every
-  // one of them — measured on the `test_web` corpus, three of the four tasks
-  // could not be renamed, `task-c00003` answering "Done needs PRs." to a change
-  // of title.
+  // one of them — measured on the `test_web` corpus, where three of the four
+  // tasks could not be renamed and the one sitting at `done` without its PRs
+  // answered "Done needs PRs." to a change of title.
+  //
+  // (No record id is spelled in this comment, and that is not fastidiousness:
+  // this script ships in the page, `test_a_deleted_record_is_gone_from_every_page_that_drew_it`
+  // asks whether a deleted id is still anywhere in `/table`'s bytes, and naming
+  // a fixture record here answered yes. Third time this half of the file has
+  // been caught shipping a comment — a CSS one in cut 2, `base_commit` in cut 4,
+  // and this.)
   //
   // A create always moves (from nothing), and the `Status ▸` item that opens this
   // form always moves, so both keep the gate they are there for.
@@ -2067,12 +2074,13 @@ async function popSave() {
     if (offender) offender.focus();
     return;
   }
-  // Held while the commit is in the air. `POP_WRITING` inside `popSend` is the
-  // rule — a flag is a statement about the page, and Enter, a second listener
-  // and a script all reach that door without going through this button — and
-  // this attribute is how the rule is shown. `createDraft` (`table.py`) makes
-  // the same split in the same words, and it is there because two presses 0.9s
-  // apart minted two records on the deployed service.
+  // Held while the commit is in the air. `POP_WRITING`, taken in `popStart` for
+  // both write doors, is the rule — a flag is a statement about the page, and
+  // Enter, a second listener and a script all reach those doors without going
+  // through this button — and this attribute is how the rule is shown.
+  // `createDraft` (`table.py`) makes the same split in the same words, and it is
+  // there because two presses 0.9s apart minted two records on the deployed
+  // service.
   form.save.disabled = true;
   try {
     await (form.mode === 'new' ? popCreated(values) : popEdited(values));
@@ -2209,23 +2217,34 @@ function popLanded(id, title) {
   return `Created ${made}`;
 }
 
-// --- the write door ---------------------------------------------------------
+// --- the write doors --------------------------------------------------------
 //
-// **One door, and every write this menu makes goes through it.** Three call
-// sites today and six by cut 5; a second copy of the base commit, the
-// re-entrancy flag, the event pair and the refusal reading is the shape this
-// repository has paid for four times over — an invariant written twice will be
-// guarded once.
+// **Two doors, because there are two writes.** Cut 4 had one, with the address
+// and the verb passed in as data, and what that cost is not duplication saved:
+// the page then carried a single `fetch` whose address is not in the source a
+// reader sweeps, announcing one write where two can happen.
+// `test_every_write_a_page_makes_is_announced_before_and_after_it` counts a
+// page's write call sites against its `openproj:writing` pairs, and its premise
+// is written in its own comment — every write path is one call site because it
+// is one write. One call site for two writes breaks that premise as surely as
+// the drawing save's two call sites for one write, which it has to special-case.
+// So: one door per verb, each with its own literal address, its own event pair
+// and its own `finally`.
 //
-// `said` is what the live region gets when the commit lands: a sentence naming
-// the record and what is now true of it, because this box is gone by then and a
-// receipt that says only "saved" is a receipt about nothing.
+// **Everything else is shared and lives in one place**, which is the rule that
+// made it one door in the first place — an invariant written twice will be
+// guarded once. `popStart` is what both do before the request, `popSettled`
+// what both do with an answer, and `popLost` what both do when there is none;
+// between them they hold the re-entrancy flag, the `#base` guard and its
+// advance, the `POP_GEN` snapshot, the one reading of a refusal, and the host's
+// `wrote()`. What is left in each door is the three things that genuinely
+// differ: the address, the verb, and what to do about a lost answer.
 //
-// Answers a promise for `true` when the commit landed, which is also how
+// Both answer a promise for `true` when the commit landed, which is also how
 // `popRan` knows the item owns its own dismissal.
-//
-// Whether one is in the air. See the re-entrancy note at the top of the
-// function, which is where the failure it prevents is written down.
+
+// Whether one is in the air. See the re-entrancy note in `popStart`, which is
+// where the failure it prevents is written down.
 let POP_WRITING = false;
 
 // A refusal, into the box that asked for it — or nowhere, if that box has gone.
@@ -2241,60 +2260,21 @@ function popSaid(gen, text) {
   else announce(text);
 }
 
-
-// A change to a record that exists. Three call sites in cut 3 and the form's
-// diff-only Save in cut 4, all of them through the door below.
-async function popWrite(id, fields, said) {
-  return popSend({
-    where: `/api/record/${encodeURIComponent(id)}`,
-    method: 'PATCH',
-    fields: fields,
-    about: () => id,
-    said: said,
-    // The repeat is safe because it is the SAME write — same value, same base —
-    // and `_merge_frontmatter` skips every key whose stored value already equals
-    // the one being sent, so a write that did land merges with itself and
-    // answers 200.
-    retry: 'Try it again: it sends the same value against the same base, so a '
-         + 'write that did land is not written twice.',
-  });
-}
-
-// A record that does not exist yet, which is the same door and a different verb.
+// **What both doors do before the request, and the two ways they refuse to make
+// one.** Answers the write in flight — the `#base` element and the generation it
+// belongs to — or nothing at all, having already said why.
 //
-// **`POST /api/record` is not idempotent, and that is the whole difference.**
-// `CREATING` exists in `table.py` because two presses 0.9s apart minted two
-// records on the deployed service; the re-entrancy flag below covers the press,
-// and the sentence a lost answer gets cannot be the PATCH one — "try it again"
-// against a create is advice to make a second record.
-async function popCreate(fields, title) {
-  return popSend({
-    where: '/api/record',
-    method: 'POST',
-    fields: fields,
-    about: answer => answer.id,
-    // Nothing said here. The sentence this create needs is "where did it go",
-    // and that has no answer until the host has re-read the plan — so it is said
-    // in `after`, which runs once `wrote()` has.
-    said: '',
-    after: answer => announce(popLanded(answer.id, title)),
-    // `createDraft`'s own advice, for `createDraft`'s own reason. And the
-    // looking must not be a reload: this box is gone by then either way, but a
-    // reload is what takes a second tab's answer away from somebody who is about
-    // to decide whether a record exists.
-    retry: 'Look for it in a second tab before pressing Create again, because a '
-         + 'second press that both landed would make two records.',
-  });
-}
-
-// `how` is `{where, method, fields, said, about, after, retry}`.
-async function popSend(how) {
+// On either refusal `POP_WRITING` has NOT been taken and no `openproj:writing`
+// has been dispatched: the door returns before its `try`, so the `finally` that
+// would clear a flag this write never owned, and announce the end of an event
+// pair that never began, does not run.
+function popStart() {
   // **Two presses 0.9s apart minted two records on the deployed service**, which
   // is why `CREATING` exists in `table.py`. A status item is easier to press
   // twice than that button was — it sits under the pointer, and this box stays
   // up until the answer comes back — and two PATCHes against one base is a page
-  // picking a conflict with itself. Before the event below, or the count the
-  // shell keeps never comes back down.
+  // picking a conflict with itself. Before the event in either door, or the
+  // count the shell keeps never comes back down.
   if (POP_WRITING) {
     // Drawn and not merely announced, which every other refusal in this box
     // already is: `popSay`'s own comment says a refusal only a screen reader
@@ -2302,7 +2282,7 @@ async function popSend(how) {
     // easiest of them to meet — the item is under the pointer and the box stays
     // up — so it is the last one that should be invisible.
     popSay('A save is already going out. Wait for it to answer.');
-    return false;
+    return null;
   }
   // **`#base` is not on every page this module ships on.** It is inside the
   // `editable` branch of the table's template and of the graph's, so a
@@ -2320,127 +2300,189 @@ async function popSend(how) {
   const base = document.getElementById('base');
   if (!base) {
     popSay('This page cannot save. Open the record to edit it.');
-    return false;
+    return null;
   }
   POP_WRITING = true;
+  // `committed` and `landed` travel with the write because each door's `catch`
+  // and `finally` need them and neither can see inside `popSettled`. `landed` is
+  // whether the commit is known to exist: `wrote()` is awaited inside the `try`
+  // and the host's re-read has no `catch` of its own, so a connection dropped
+  // after the commit landed rejects there and arrives in the `catch` with the
+  // write already in git.
+  return {base: base, gen: POP_GEN, committed: null, landed: false};
+}
+
+// **What both doors do with an answer**, from the refusal read to the host's
+// re-read. Answers the server's answer, or `null` when the write was refused.
+//
+// `said` is what the live region gets when the commit lands: a sentence naming
+// the record and what is now true of it, because the box is gone by then and a
+// receipt that says only "saved" is a receipt about nothing. Falsy on a create,
+// whose sentence cannot be said yet — what a create needs to report is where the
+// new record went, and that has no answer until the host has re-read the plan.
+//
+// `about` is the record this write was about: the id in the path for a change,
+// and nothing at all for a create, which has no id until the server mints one,
+// so there the answer supplies it.
+async function popSettled(flight, response, said, about) {
+  const answer = await answerOf(response);
+  // **One reading of a refusal, and it is `refusal()`'s.** A 409 from this
+  // server has two shapes — the store's compare-and-swap report and a rule's
+  // own sentence, raised before anything is written — and every page that
+  // decided for itself which key the body holds has got it wrong. That
+  // function is where the two are read in the right order, and
+  // `tests/test_writes.py` sweeps for any call site that reaches past it.
+  //
+  // No `status === 409` arm, which every other write path in this app has.
+  // Those have one because they draw a conflict somewhere of their own and
+  // merely ANNOUNCE everything else — so a refusal that fell to the `!ok` arm
+  // would stop being drawn. Here both arms end in the same place, `popSay`,
+  // which says it and draws it in the box the reader is looking at. A branch
+  // whose two sides do the same thing is a branch that will drift.
+  if (!response.ok) {
+    popSaid(flight.gen, refusal(answer, response.status));
+    return null;
+  }
+  flight.committed = answer.commit;
+  flight.landed = true;
+  // The page moves forward with the repository, or its next write collides
+  // with the commit it just made.
+  flight.base.value = answer.commit;
+  if (said) announce(said);
+  // **The menu closes on a write that lands, and it closes here** — before the
+  // host redraws, so the keyboard goes back to the element the menu was opened
+  // from while that element is still on the page.
+  //
+  // Closing rather than staying and redrawing, for three reasons that point
+  // the same way: the box is placed against a pointer that is now somewhere
+  // else; the row it was built from is about to be replaced wholesale by
+  // `wrote()`; and the design's own rule is that this box never moves, it only
+  // dies. A menu that survived its own write would have to re-read the row and
+  // re-place itself, which is the flyout's bargain arriving through the back
+  // door.
+  //
+  // A host whose `wrote()` replaces the element focus has just gone back to —
+  // the table's `draw()` does, it rebuilds the whole tbody — owes the keyboard
+  // a home of its own. `rove` is what the table hands focus with, and it
+  // survives that redraw.
+  if (POP_GEN === flight.gen) popDone();
+  // **`wrote` is handed the answer and the id**, which cut 2 declared as
+  // taking nothing because nothing here wrote. A host needs both to keep a
+  // feature it already has: `markSaved` (`table.py`) remembers a commit the
+  // server reported as `pushed: false` and marks that row until a later read
+  // confirms it landed, and a menu write that did not hand the answer back
+  // would take that mark off the one gesture that has no other way to earn it.
+  // Both arguments are optional to a host that ignores them.
+  if (POP_HOST && POP_HOST.wrote) await POP_HOST.wrote(answer, about || answer.id);
+  return answer;
+}
+
+// **What both doors do when the request got no answer at all** — two different
+// failures, and the pair of sentences `saveCell` (`table.py`) already tells
+// apart.
+//
+// `landed`: the commit came back and the re-read after it did not. The write is
+// in git, `#base` has already moved to it, and what is stale is the page.
+//
+// Otherwise the write itself never got an answer, and this makes no claim about
+// what reached the server: a fetch rejects when the answer is lost as readily as
+// when the request never left. **What to do about that is the door's to say and
+// not this function's**, because the two verbs have opposite advice — a PATCH
+// repeated is the same write and a POST repeated is a second record. `retry` is
+// where each one says so.
+function popLost(flight, error, retry) {
+  popSaid(flight.gen, flight.landed
+    ? `Saved, but the page could not read the plan back — ${error.message}. `
+      + 'The save went through; reload to see what it changed.'
+    : `Not saved — ${error.message}. ${retry}`);
+  return flight.landed;
+}
+
+// A change to a record that exists. Three call sites in cut 3 and the form's
+// diff-only Save in cut 4.
+async function popWrite(id, fields, said) {
+  const flight = popStart();
+  if (!flight) return false;
   // The shell's banner has to know a write is in the air before it starts: the
   // server announces a commit to the event stream before it answers the request
   // that made it, so the news of your own save can arrive before you know its
-  // sha.
+  // sha. The create door says the same thing for the same reason.
   dispatchEvent(new Event('openproj:writing'));
-  const mine = POP_GEN;
-  let committed = null;
-  // Whether the commit is known to exist. `wrote()` is awaited inside the `try`
-  // and the host's re-read has no `catch` of its own, so a connection dropped
-  // after the commit landed rejects there and arrives below.
-  let landed = false;
   try {
-    // The id in the path is encoded by the caller, as it is at every other write
-    // site here: a malformed id is a reported blocker and not a refusal, so an
+    // The id in the path is encoded here, as it is at every other write site in
+    // this app: a malformed id is a reported blocker and not a refusal, so an
     // id with a `#` or a `?` in it does reach the page — and raw in a path, the
     // first one truncates it, so the write somebody pressed on one record
     // addresses something else.
     //
-    // `body: null` on both verbs, and it means two different things that want
-    // the same wire value. On a PATCH an empty string would be a REPLACEMENT and
-    // would blank the shaping document attached to the record; on a POST the
-    // route reads `_body_in(payload) or ""`, so a create gets an empty document.
+    // `body: null` and not `''`, because on a PATCH an empty string is a
+    // REPLACEMENT and would blank the shaping document attached to the record.
+    const response = await fetch(`/api/record/${encodeURIComponent(id)}`, {
+      method: 'PATCH', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({base_commit: flight.base.value, fields: fields, body: null}),
+    });
+    return Boolean(await popSettled(flight, response, said, id));
+  } catch (error) {
+    // The repeat is safe because it is the SAME write — same value, same base —
+    // and `_merge_frontmatter` skips every key whose stored value already equals
+    // the one being sent, so a write that did land merges with itself and
+    // answers 200.
+    return popLost(flight, error, 'Try it again: it sends the same value against '
+      + 'the same base, so a write that did land is not written twice.');
+  } finally {
+    POP_WRITING = false;
+    // Announced even when the write was refused, or one refusal leaves every
+    // banner after it held back and the news that the plan moved never appears
+    // again. In a `finally` for that reason, in both doors.
+    dispatchEvent(new CustomEvent('openproj:wrote', {detail: flight.committed}));
+  }
+}
+
+// A record that does not exist yet, which is the same shape and a different verb.
+//
+// **`POST /api/record` is not idempotent, and that is the whole difference.**
+// `CREATING` exists in `table.py` because two presses 0.9s apart minted two
+// records on the deployed service; `POP_WRITING` covers the press, and the
+// sentence a lost answer gets cannot be the PATCH one — "try it again" against a
+// create is advice to make a second record.
+async function popCreate(fields, title) {
+  const flight = popStart();
+  if (!flight) return false;
+  // Before the request, for the reason written in `popWrite`.
+  dispatchEvent(new Event('openproj:writing'));
+  try {
+    // `body: null` here means the opposite end of the same wire value: the route
+    // reads `_body_in(payload) or ""`, so a create gets an empty document.
     //
     // **That is the one thing this form does not do that `+ New row` does.** The
     // draft row posts `TEMPLATES[kind]`, the same kind template `/new` offers,
     // and that map is the table's payload and is in no schema this module has.
     // A record created from the menu therefore opens with a blank document where
     // one created from the row below opens with the kind's headings.
-    const response = await fetch(how.where, {
-      method: how.method, headers: {'content-type': 'application/json'},
-      body: JSON.stringify({base_commit: base.value, fields: how.fields, body: null}),
+    const response = await fetch('/api/record', {
+      method: 'POST', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({base_commit: flight.base.value, fields: fields, body: null}),
     });
-    const answer = await answerOf(response);
-    // **One reading of a refusal, and it is `refusal()`'s.** A 409 from this
-    // server has two shapes — the store's compare-and-swap report and a rule's
-    // own sentence, raised before anything is written — and every page that
-    // decided for itself which key the body holds has got it wrong. That
-    // function is where the two are read in the right order, and
-    // `tests/test_writes.py` sweeps for any call site that reaches past it.
-    //
-    // No `status === 409` arm, which every other write path in this app has.
-    // Those have one because they draw a conflict somewhere of their own and
-    // merely ANNOUNCE everything else — so a refusal that fell to the `!ok` arm
-    // would stop being drawn. Here both arms end in the same place, `popSay`,
-    // which says it and draws it in the box the reader is looking at. A branch
-    // whose two sides do the same thing is a branch that will drift.
-    if (!response.ok) {
-      popSaid(mine, refusal(answer, response.status));
-      return false;
-    }
-    committed = answer.commit;
-    landed = true;
-    // The page moves forward with the repository, or its next write collides
-    // with the commit it just made.
-    base.value = answer.commit;
-    // Falsy on a create, whose sentence cannot be said yet: what a create needs
-    // to report is where the new record went, and that has no answer until the
-    // host has re-read the plan. `after` below is where it lands.
-    if (how.said) announce(how.said);
-    // **The menu closes on a write that lands, and it closes here** — before the
-    // host redraws, so the keyboard goes back to the element the menu was opened
-    // from while that element is still on the page.
-    //
-    // Closing rather than staying and redrawing, for three reasons that point
-    // the same way: the box is placed against a pointer that is now somewhere
-    // else; the row it was built from is about to be replaced wholesale by
-    // `wrote()`; and the design's own rule is that this box never moves, it only
-    // dies. A menu that survived its own write would have to re-read the row and
-    // re-place itself, which is the flyout's bargain arriving through the back
-    // door.
-    //
-    // A host whose `wrote()` replaces the element focus has just gone back to —
-    // the table's `draw()` does, it rebuilds the whole tbody — owes the keyboard
-    // a home of its own. `rove` is what the table hands focus with, and it
-    // survives that redraw.
-    if (POP_GEN === mine) popDone();
-    // **`wrote` is handed the answer and the id**, which cut 2 declared as
-    // taking nothing because nothing here wrote. A host needs both to keep a
-    // feature it already has: `markSaved` (`table.py`) remembers a commit the
-    // server reported as `pushed: false` and marks that row until a later read
-    // confirms it landed, and a menu write that did not hand the answer back
-    // would take that mark off the one gesture that has no other way to earn it.
-    // Both arguments are optional to a host that ignores them.
-    //
-    // `about(answer)` and not a plain `id`, because a create does not have one
-    // until the server mints it: the record this write was about is the id in
-    // the path for a PATCH and `answer.id` for a POST.
-    if (POP_HOST && POP_HOST.wrote) await POP_HOST.wrote(answer, how.about(answer));
+    // Nothing said on the commit itself and no id to name the record by: a
+    // create has neither until the answer arrives, and `popSettled` reads the
+    // minted id off the answer.
+    const answer = await popSettled(flight, response, '', null);
     // After the host has redrawn, which is what makes "it is not on screen" a
     // question with an answer. Inside the `try`, so a throw in here is reported
     // by the same catch as a failed re-read rather than escaping unhandled.
-    if (how.after) how.after(answer);
-    return true;
+    if (answer) announce(popLanded(answer.id, title));
+    return Boolean(answer);
   } catch (error) {
-    // Two different failures reach here and they get two different sentences —
-    // the pair `saveCell` (`table.py`) already tells apart.
-    //
-    // `landed`: the commit came back and the re-read after it did not. The write
-    // is in git, `base.value` has already moved to it, and what is stale is the
-    // page.
-    //
-    // Otherwise the write itself never got an answer, and this makes no claim
-    // about what reached the server: a fetch rejects when the answer is lost as
-    // readily as when the request never left. **What to do about that is the
-    // caller's to say and not this function's**, because the two verbs have
-    // opposite advice — a PATCH repeated is the same write and a POST repeated
-    // is a second record. `retry` is where each one says so.
-    popSaid(mine, landed
-      ? `Saved, but the page could not read the plan back — ${error.message}. `
-        + 'The save went through; reload to see what it changed.'
-      : `Not saved — ${error.message}. ${how.retry}`);
-    return landed;
+    // `createDraft`'s own advice, for `createDraft`'s own reason. And the
+    // looking must not be a reload: this box is gone by then either way, but a
+    // reload is what takes a second tab's answer away from somebody who is about
+    // to decide whether a record exists.
+    return popLost(flight, error, 'Look for it in a second tab before pressing Create '
+      + 'again, because a second press that both landed would make two records.');
   } finally {
     POP_WRITING = false;
-    // Announced even when the write was refused, or one refusal leaves every
-    // banner after it held back and the news that the plan moved never appears
-    // again.
-    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
+    // See `popWrite`'s: refused or not, the pair has to close.
+    dispatchEvent(new CustomEvent('openproj:wrote', {detail: flight.committed}));
   }
 }
 

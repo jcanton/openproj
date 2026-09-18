@@ -3312,12 +3312,14 @@ def parent_refusal(candidate: Record, by_id: dict[str, Record]) -> str | None:
     `created_schema_version` is below the rule's 4. The fixture plan is written
     at `schema_version: 2`, so the create door took a wrong-kind parent too.
 
-    The second is a rule that has never existed anywhere. `_containment_problems`
-    returns before it can be asked about a parent naming nothing, so a dangling
-    parent committed silently on both doors, with no problem drawn afterwards and
-    nothing in `openproj check` — although `cli.py`'s own comment over
+    The second kind is a parent naming nothing, and this function deliberately
+    does NOT refuse it — see the comment in the body, which is where that was
+    decided and reversed. It is worth knowing that it is genuinely unreported:
+    `_containment_problems` returns before it can be asked, so nothing draws it
+    and `openproj check` says nothing, although `cli.py`'s own comment over
     `openproj new` claims "a parent that does not exist" is among the things the
-    validator catches. It is not.
+    validator catches. It is not, and that comment is wrong rather than the
+    behaviour.
 
     **Why the fix is here and not in the validator.** Grandfathering is about the
     corpus and never about the keystroke: a rule blocks only records created
@@ -3343,11 +3345,27 @@ def parent_refusal(candidate: Record, by_id: dict[str, Record]) -> str | None:
     """
     if not candidate.parent:
         return None
-    if candidate.parent not in by_id:
-        return (
-            f"parent: there is no record {candidate.parent!r} in this plan. "
-            "Pick a parent that exists, or leave it out"
-        )
+    # **A parent naming nothing is NOT refused here, and that was tried.**
+    #
+    # The first version of this function refused it, on the argument that a
+    # dangling parent has never had a rule anywhere and committed silently. The
+    # argument was right about the facts and wrong about the conclusion, and
+    # three things in this repository say so with one voice:
+    #
+    # `bet_of` above — "A `parent` naming a file nobody wrote is deliberately
+    # allowed — a plan half-way through an import has them". `task()` in
+    # `test_validate`, which builds one on purpose. And
+    # `test_a_committed_parent_that_names_nothing_leaves_every_page_readable`
+    # (`tests/test_web.py`), which asserts the write returns 200 and says in its
+    # own words: "the requirement is not that the write is refused — it is that
+    # the plan still renders afterwards". That test exists because such a commit
+    # once answered 500 on six routes for everybody; the cure was making the
+    # plan survive it, not forbidding it.
+    #
+    # So the hole this leaves is closed where it should be — the menu's parent
+    # control is a `<select>` over records that exist, so the UI cannot express
+    # one — and a person who means it, through the CLI or a hand-written file,
+    # still gets the plan they asked for.
     for _, _, message, _ in _containment_problems(candidate, by_id):
         return f"parent: {message}"
     return None
