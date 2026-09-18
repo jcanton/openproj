@@ -930,14 +930,38 @@ if (VIEW_LINKED) {
   showView(RESUMING);
   // And back to the line it was on. **After `showView`**, because the editor is
   // laid out by it and `lineCoords` off a box with no size is a column of
-  // zeroes; and on a frame after that, because Ace measures its own rows when it
-  // first paints and a scroll set before that is a scroll it recomputes away.
+  // zeroes.
+  //
+  // **And after the box has measured itself, which is not the next frame.** It
+  // was written as one `requestAnimationFrame` on the reasoning that Ace
+  // measures its rows on its first paint; measured, the map one frame later is
+  // still every line at zero — the page came back at line 1 of 400 with the
+  // whole column reading 0, and a fresh map taken 700ms later read a foot of
+  // 8433px. So the frame is waited FOR rather than counted: the map is rebuilt
+  // each time and the last line's top is the question — a laid-out document has
+  // one below zero and a box with no rows yet does not.
+  //
+  // Rebuilt each time and dropped again afterwards, because the cache is the
+  // second half of the defect: a column of zeroes read once is the column every
+  // later sync scrolls the preview by.
+  //
+  // Bounded, because a document of one empty line is laid out and still has a
+  // foot of zero, and an unbounded wait for it would be a frame loop running for
+  // as long as the page is open.
   if (RESUMING_AT) {
-    requestAnimationFrame(() => {
+    let frames = 0;
+    const land = () => {
       sourcePoints = null;
-      SURFACE.scrollTo(pixelOfLine(sourceMap(), RESUMING_AT));
+      const points = sourceMap();
+      if (points[points.length - 1].top <= 0 && frames++ < 60) {
+        sourcePoints = null;
+        requestAnimationFrame(land);
+        return;
+      }
+      SURFACE.scrollTo(pixelOfLine(points, RESUMING_AT));
       syncFromSource();
-    });
+    };
+    requestAnimationFrame(land);
   }
 } else if (VIEW_ARTICLE.classList.contains('editing')) {
   // A session that existed before this script ran: a restored draft — the one

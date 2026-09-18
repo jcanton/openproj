@@ -1346,9 +1346,12 @@ carried the VIEW across that gap; `openproj:resumed-at` is the other half, writt
 A line number and not a pixel: the page need not come back at the same width, and a resized window, a
 different indent preference or a body the merge rewrote each move the pixel and none of them move the
 line somebody was reading. It is restored after `showView` — `lineCoords` off a box with no size is a
-column of zeroes — and on the frame after that, because Ace measures its own rows when it first
-paints and a scroll set before that is one it recomputes away. And it is spent on the page that reads
-it, like the view beside it: a one-shot that survives would scroll the next record this tab opens
-into its own middle.
+column of zeroes — and then on the first frame where the map is real. "The next frame" was the first
+attempt and it is not enough: measured, the map one frame after `showView` is still every line at
+zero, so the page came back at line 1 of 400 while a map taken 700ms later read a foot of 8433px. The
+frame is therefore waited FOR, up to sixty of them, with the last line's top as the question and the
+cache dropped on every pass — because a column of zeroes read once is the column every later sync
+would scroll the preview by. And the line is spent on the page that reads it, like the view beside
+it: a one-shot that survives would scroll the next record this tab opens into its own middle.
 
 🤖 Written by an agent on behalf of @jcanton

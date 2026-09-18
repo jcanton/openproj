@@ -6220,9 +6220,11 @@ _KEEPS_THE_LINE = r"""
 
 
 _LANDED_WHERE_IT_LEFT = r"""
-  // The restore is a frame after `showView` — Ace measures its own rows on the
-  // first paint and a scroll set before that is one it recomputes away — so this
-  // waits for the page's clock rather than for a number of its own.
+  // The restore waits for the editor to have measured its own rows, which takes
+  // more than the one frame it was first written as: a map read a frame after
+  // `showView` is every line at zero. So this waits long enough for the page's
+  // own loop to find a laid-out box, and the number below is that and nothing
+  // finer.
   await new Promise(r => setTimeout(r, 700));
   const editor = SURFACE.editor;
   return {
