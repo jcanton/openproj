@@ -800,6 +800,156 @@ function popCopiedByHand(url) {
   box.remove();
   return copied;
 }
+
+// --- drawn and run ----------------------------------------------------------
+//
+
+// One part of an item. Three of them and not one `textContent`, so that the two
+// marks can be given a width that does not shrink and hidden from the
+// accessibility tree — a reader who hears both the glyph and the word hears the
+// status twice.
+//
+// `textContent`, never `innerHTML`. This is the JavaScript half of the one
+// escaping boundary, and an item's text carries a record's title.
+function popPart(className, text, decorative) {
+  const part = document.createElement('span');
+  part.className = className;
+  part.textContent = text;
+  if (decorative) part.setAttribute('aria-hidden', 'true');
+  return part;
+}
+// These five are in the READ half although they were written beside the write
+// items, and the reason is that a reader's page draws items and runs them too.
+// `popControl` builds every control there is; `POP_OF` remembers which
+// descriptor each one came from; `popRan` is what a press lands in; `popTitle`
+// and `popTitleOf` name a record in a sentence. Splitting `_POP_JS` in two by
+// its section banners took all five into the write half, and a reader's page
+// then threw on `POP_OF` — a `const`, so not hoisted — which took the whole
+// classic script and therefore the menu with it. CI found it; three review
+// passes had not.
+// What to call a record in a sentence. The same fallback the box's own
+// `aria-label` uses: a record with no title is still a record you can act on.
+const popTitle = row => row.title || row.id;
+
+// And what to call one this menu only has the id of — the parent in `Take out of
+// "X"`. Asked of the HOST, which is the only thing that knows the other rows:
+// `DATA.rows` on the table, the node's own `data()` on the graph.
+function popTitleOf(id) {
+  const row = POP_HOST && POP_HOST.rows(id);
+  return (row && row.title) || id;
+}
+
+function popControl(item) {
+  const control = document.createElement(item.href ? 'a' : 'button');
+  if (item.href) {
+    control.href = item.href;
+    control.target = '_blank';
+    // Implied by `target="_blank"` in every current browser, and written out
+    // anyway: it is one attribute, and the implication is a browser default,
+    // which is the kind of thing that is true until the page is opened in the
+    // one browser where it is not.
+    control.rel = 'noopener';
+  } else {
+    control.type = 'button';
+  }
+  control.className = 'popitem';
+  control.dataset.kind = item.kind;
+  // `menuitemradio` where the item is one of a set of values with a current one
+  // — the status ladder, the owner list — because `aria-checked` on a plain
+  // `menuitem` is ignored, and the check drawn beside it would then be a mark
+  // only a sighted reader gets.
+  control.setAttribute('role', item.checked === undefined ? 'menuitem' : 'menuitemradio');
+  if (item.checked !== undefined) control.setAttribute('aria-checked', String(item.checked));
+  // Drills down in the same box, so the list this opens REPLACES this control:
+  // there is no moment at which it is expanded, and `aria-expanded` would have
+  // to be permanently false. `haspopup` alone is the honest half.
+  if (item.items) control.setAttribute('aria-haspopup', 'menu');
+  if (item.glyph) control.append(popPart('popglyph', item.glyph, true));
+  control.append(popPart('poptext', item.text, false));
+  // One slot behind the word, and the two things that can be in it never
+  // co-occur: `›` means there is a list behind this, `•` means this is the value
+  // the record holds.
+  //
+  // **Both were measured against the vendored face rather than picked.** The
+  // conventional pair is `▸` and `✓`, and each was wrong for its own reason.
+  // `▸` (U+25B8) is not in the inlined Inter subset at all — probed in headless
+  // Chrome, 2026-09-18, by measuring it under `"Inter var"` alone against a
+  // family that does not exist and getting the same width both ways — so it is
+  // a tofu box on a machine with no fallback for it, which is the argument that
+  // already keeps `⠿` off the table's drag handle. `‹` and `›` ARE in the
+  // subset, and they are the pair `‹ Back` is already written with.
+  //
+  // `✓` is in the subset, and it collides: it is `done`'s own status glyph, so a
+  // status ladder would draw one `✓` meaning "this rung is Done" and another
+  // meaning "this is the rung it is on", in the same row. `•` is in the subset,
+  // is in none of the six status marks, and is what a `menuitemradio` is
+  // conventionally drawn with anyway — a filled dot is the radio's mark and a
+  // tick is the checkbox's.
+  const mark = item.items ? '›' : item.checked ? '•' : '';
+  if (mark) control.append(popPart('popmark', mark, true));
+  // Roving tabindex, set properly by `popFocus`. -1 here so a control that has
+  // never been focused is out of the Tab sequence: Tab leaves the menu, and the
+  // arrows are what walks it.
+  control.tabIndex = -1;
+  if (item.why) {
+    control.setAttribute('aria-disabled', 'true');
+    control.dataset.why = item.why;
+  }
+  control.onclick = event => popRan(event, item);
+  POP_OF.set(control, item);
+  return control;
+}
+
+// Which descriptor a drawn control came from, for the keys that act on the item
+// rather than on the element — ArrowRight has to know whether there is a list
+// behind this row. A WeakMap and not a property on the element: every control is
+// thrown away and rebuilt on every draw, and this lets them be collected with
+// them.
+const POP_OF = new WeakMap();
+
+function popRan(event, item) {
+  if (item.why) {
+    // A refused item answers and the menu stays up. `preventDefault` because an
+    // `aria-disabled` link is still a link: `aria-disabled` is a statement to
+    // the accessibility tree and not to the browser, which is exactly why it was
+    // chosen over `disabled`.
+    event.preventDefault();
+    announce(item.why);
+    return;
+  }
+  // A submenu parent replaces the list and the box stays up, so it must not fall
+  // through to the dismissal below the way every other item does.
+  if (item.items) { popDrill(item); return; }
+  // **A `run` that returns a promise owns the dismissal.** Everything else an
+  // item does here is instantaneous — navigate, copy, say something — and the
+  // box goes with it. A write is not: it has to stay up long enough to draw a
+  // refusal in, and a box that closed under an answer which has not arrived
+  // makes a refused write look exactly like one that landed. `popWrite` calls
+  // `popDone` itself when the commit comes back.
+  if (item.run) {
+    const going = item.run();
+    if (going && typeof going.then === 'function') return;
+  }
+  // And `stays` for the one item whose whole job is to leave the box open and
+  // showing something else: `‹ Back`. It is a plain synchronous `run`, so
+  // without this the mouse path through it CLOSED the menu while the keyboard
+  // path — ArrowLeft and Escape, which call `popBack` directly — popped a level
+  // correctly. Two ways to do one thing, one of them wrong, and the keyboard
+  // probes could not see it.
+  if (item.stays) return;
+  // After the run and not before it, which is the opposite of `.drawmenu`'s
+  // `choose()`. `Copy link` selects a scratch textarea and takes it off the page
+  // again, so it ends with focus on `<body>`; giving the keyboard back has to be
+  // the last thing that happens or it is undone a line later.
+  //
+  // For a link item there is no `run` and this hides the box inside the click
+  // that is still being dispatched. The navigation happens anyway — measured in
+  // headless Chrome on 2026-09-18, both with the anchor hidden and with it
+  // detached outright, and the hash changed in both — and the box keeps its
+  // items on close so the anchor is only hidden and not removed.
+  popDone();
+}
+
 """
 
 
@@ -812,16 +962,6 @@ _POP_WRITE_JS = r"""
 // `in_progress` came to be spelled three ways on one screen.
 const popHuman = value => (POP_SCHEMA.human || {})[value] ?? (value ?? '');
 const popLabel = field => (POP_SCHEMA.labels || {})[field] || field;
-// What to call a record in a sentence. The same fallback the box's own
-// `aria-label` uses: a record with no title is still a record you can act on.
-const popTitle = row => row.title || row.id;
-// And what to call one this menu only has the id of — the parent in `Take out of
-// "X"`. Asked of the HOST, which is the only thing that knows the other rows:
-// `DATA.rows` on the table, the node's own `data()` on the graph.
-function popTitleOf(id) {
-  const row = POP_HOST && POP_HOST.rows(id);
-  return (row && row.title) || id;
-}
 
 function popWriteItems(row) {
   if (!POP_HOST.may || !POP_HOST.may()) return [];
@@ -1015,131 +1155,9 @@ function popTakeOutItem(row) {
       `${popTitle(row)} is no longer inside anything`)};
 }
 
-function popControl(item) {
-  const control = document.createElement(item.href ? 'a' : 'button');
-  if (item.href) {
-    control.href = item.href;
-    control.target = '_blank';
-    // Implied by `target="_blank"` in every current browser, and written out
-    // anyway: it is one attribute, and the implication is a browser default,
-    // which is the kind of thing that is true until the page is opened in the
-    // one browser where it is not.
-    control.rel = 'noopener';
-  } else {
-    control.type = 'button';
-  }
-  control.className = 'popitem';
-  control.dataset.kind = item.kind;
-  // `menuitemradio` where the item is one of a set of values with a current one
-  // — the status ladder, the owner list — because `aria-checked` on a plain
-  // `menuitem` is ignored, and the check drawn beside it would then be a mark
-  // only a sighted reader gets.
-  control.setAttribute('role', item.checked === undefined ? 'menuitem' : 'menuitemradio');
-  if (item.checked !== undefined) control.setAttribute('aria-checked', String(item.checked));
-  // Drills down in the same box, so the list this opens REPLACES this control:
-  // there is no moment at which it is expanded, and `aria-expanded` would have
-  // to be permanently false. `haspopup` alone is the honest half.
-  if (item.items) control.setAttribute('aria-haspopup', 'menu');
-  if (item.glyph) control.append(popPart('popglyph', item.glyph, true));
-  control.append(popPart('poptext', item.text, false));
-  // One slot behind the word, and the two things that can be in it never
-  // co-occur: `›` means there is a list behind this, `•` means this is the value
-  // the record holds.
-  //
-  // **Both were measured against the vendored face rather than picked.** The
-  // conventional pair is `▸` and `✓`, and each was wrong for its own reason.
-  // `▸` (U+25B8) is not in the inlined Inter subset at all — probed in headless
-  // Chrome, 2026-09-18, by measuring it under `"Inter var"` alone against a
-  // family that does not exist and getting the same width both ways — so it is
-  // a tofu box on a machine with no fallback for it, which is the argument that
-  // already keeps `⠿` off the table's drag handle. `‹` and `›` ARE in the
-  // subset, and they are the pair `‹ Back` is already written with.
-  //
-  // `✓` is in the subset, and it collides: it is `done`'s own status glyph, so a
-  // status ladder would draw one `✓` meaning "this rung is Done" and another
-  // meaning "this is the rung it is on", in the same row. `•` is in the subset,
-  // is in none of the six status marks, and is what a `menuitemradio` is
-  // conventionally drawn with anyway — a filled dot is the radio's mark and a
-  // tick is the checkbox's.
-  const mark = item.items ? '›' : item.checked ? '•' : '';
-  if (mark) control.append(popPart('popmark', mark, true));
-  // Roving tabindex, set properly by `popFocus`. -1 here so a control that has
-  // never been focused is out of the Tab sequence: Tab leaves the menu, and the
-  // arrows are what walks it.
-  control.tabIndex = -1;
-  if (item.why) {
-    control.setAttribute('aria-disabled', 'true');
-    control.dataset.why = item.why;
-  }
-  control.onclick = event => popRan(event, item);
-  POP_OF.set(control, item);
-  return control;
-}
 
-// One part of an item. Three of them and not one `textContent`, so that the two
-// marks can be given a width that does not shrink and hidden from the
-// accessibility tree — a reader who hears both the glyph and the word hears the
-// status twice.
-//
-// `textContent`, never `innerHTML`. This is the JavaScript half of the one
-// escaping boundary, and an item's text carries a record's title.
-function popPart(className, text, decorative) {
-  const part = document.createElement('span');
-  part.className = className;
-  part.textContent = text;
-  if (decorative) part.setAttribute('aria-hidden', 'true');
-  return part;
-}
 
-// Which descriptor a drawn control came from, for the keys that act on the item
-// rather than on the element — ArrowRight has to know whether there is a list
-// behind this row. A WeakMap and not a property on the element: every control is
-// thrown away and rebuilt on every draw, and this lets them be collected with
-// them.
-const POP_OF = new WeakMap();
 
-function popRan(event, item) {
-  if (item.why) {
-    // A refused item answers and the menu stays up. `preventDefault` because an
-    // `aria-disabled` link is still a link: `aria-disabled` is a statement to
-    // the accessibility tree and not to the browser, which is exactly why it was
-    // chosen over `disabled`.
-    event.preventDefault();
-    announce(item.why);
-    return;
-  }
-  // A submenu parent replaces the list and the box stays up, so it must not fall
-  // through to the dismissal below the way every other item does.
-  if (item.items) { popDrill(item); return; }
-  // **A `run` that returns a promise owns the dismissal.** Everything else an
-  // item does here is instantaneous — navigate, copy, say something — and the
-  // box goes with it. A write is not: it has to stay up long enough to draw a
-  // refusal in, and a box that closed under an answer which has not arrived
-  // makes a refused write look exactly like one that landed. `popWrite` calls
-  // `popDone` itself when the commit comes back.
-  if (item.run) {
-    const going = item.run();
-    if (going && typeof going.then === 'function') return;
-  }
-  // And `stays` for the one item whose whole job is to leave the box open and
-  // showing something else: `‹ Back`. It is a plain synchronous `run`, so
-  // without this the mouse path through it CLOSED the menu while the keyboard
-  // path — ArrowLeft and Escape, which call `popBack` directly — popped a level
-  // correctly. Two ways to do one thing, one of them wrong, and the keyboard
-  // probes could not see it.
-  if (item.stays) return;
-  // After the run and not before it, which is the opposite of `.drawmenu`'s
-  // `choose()`. `Copy link` selects a scratch textarea and takes it off the page
-  // again, so it ends with focus on `<body>`; giving the keyboard back has to be
-  // the last thing that happens or it is undone a line later.
-  //
-  // For a link item there is no `run` and this hides the box inside the click
-  // that is still being dispatched. The navigation happens anyway — measured in
-  // headless Chrome on 2026-09-18, both with the anchor hidden and with it
-  // detached outright, and the hash changed in both — and the box keeps its
-  // items on close so the anchor is only hidden and not removed.
-  popDone();
-}
 
 // --- the write door ---------------------------------------------------------
 //
