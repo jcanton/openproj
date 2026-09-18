@@ -52,6 +52,7 @@ from .model import (
     load_repo,
     mint_id,
     opening_fields,
+    parent_refusal,
     parse_text,
     patch_text,
     unknown_fields,
@@ -354,14 +355,43 @@ def _new(args) -> int:
     except ValueError as error:
         print(f"blocker: {record_id}: that would not read back as a record: {error}")
         return 1
+    # **The fifth door onto `parent_refusal` (`model.py`), and the one that was
+    # left open.** The four HTTP doors ask it; this one did not, so
+    # `openproj new --set parent=<a task>` filed a task under a task and said
+    # nothing until somebody read a problem list later.
+    #
+    # What it answers is the WRONG-KIND parent, and it answers it
+    # UNGRANDFATHERED. That rule carries `schema_version` 4, so on a plan whose
+    # config is below 4 `validate_all` below would demote it to a warning and
+    # write the file anyway — which is right for a corpus already in git and
+    # wrong for a value somebody is typing at this second. A door is not the
+    # corpus; the same split `_reject_a_start_date_this_write_puts_in_the_past`
+    # (`web.py`) makes.
+    #
+    # It does NOT answer a parent naming nothing, and that is deliberate rather
+    # than missing — `parent_refusal`'s own body says why, and `bet_of` says a
+    # plan half-way through an import has them. So `openproj new` will still
+    # write one, exactly as a hand-written file may hold one.
+    #
+    # `records` and not the plan: an issue and a note are records something can
+    # be filed under, which is the same map the HTTP doors hand it.
+    by_id = {record.id: record for record in records}
+    if (blocked := parent_refusal(candidate, by_id)) is not None:
+        print(f"blocker: {record_id}: {blocked}")
+        print("nothing written")
+        return 1
     problems = sorted(
         (
             problem
-            # The neighbours matter: a parent that does not exist, an id already
-            # claimed and a dependency cycle are all facts about the plan rather
-            # than about this file. Files already in the repository that will not
-            # parse are not this record's problem and do not stop it — `check` is
-            # what lists those.
+            # The neighbours matter: an id already claimed and a dependency
+            # cycle are facts about the plan rather than about this file. A
+            # parent of the wrong kind is one too, but it has already been
+            # refused above and ungrandfathered, so what reaches here is the
+            # grandfathered reading of the same rule and it can only agree.
+            # A parent that does not exist at all is refused by neither, on
+            # purpose. Files already in the repository that will not parse are
+            # not this record's problem and do not stop it — `check` is what
+            # lists those.
             for problem in validate_all([*records, candidate], config)
             if problem.record_id == record_id
         ),

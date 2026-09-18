@@ -1026,7 +1026,7 @@ _DETAIL = """
       is always showing a way to delete the thing you are reading is a page that
       is always slightly threatening you. A record that does not exist yet cannot
       be deleted, and `cascade_of` was never asked about it. -#}
-  <div class="confirming" data-also="{{ (e.deletes + e.frees)|join(" ") }}" hidden>
+  <div class="confirming" data-also="{{ e.also|join(" ") }}" hidden>
     <p class="asking">Delete <strong>{{ e.title }}</strong>
       (<code>{{ e.id }}</code>)?<br>
       <span class="hint">Commit deletion? Can only be undone with
@@ -1054,21 +1054,22 @@ _DETAIL = """
         that the paragraph's own text still reads as a list. Measured in Chrome
         without it, `innerText` ran three titles together into one word, which is
         what a person copies and what continuous reading says aloud. -#}
-    {% if e.deletes %}
-    <p class="reach">This also deletes
-      <strong>{{ e.deletes|length }}</strong> record{{
-        "" if e.deletes|length == 1 else "s" }} filed under it:
-      <span class="names">{% for name in e.deletes_named %}{% if not loop.first %} {% endif %}<span
-        class="name">{{ name }}</span>{% endfor %}</span></p>
-    {% endif %}
-    {% if e.frees %}
-    <p class="reach mild">It also stops
-      <span class="names">{% for name in e.frees_named %}{% if not loop.first %} {% endif %}<span
-        class="name">{{ name }}</span>{% endfor %}</span>
-      depending on it. {{ "That record keeps" if e.frees|length == 1
-        else "Those records keep" }} {{ "its" if e.frees|length == 1 else "their"
-        }} file.</p>
-    {% endif %}
+    {#- The words themselves are `_cascade_facts`', not this template's, and that
+        is cut 5's one change to this panel: `GET /api/cascade/{id}` answers the
+        right-click menu's `Delete…` with the same sentences, and two panels
+        deriving the same consequences independently is two panels that can
+        disagree about the commit one of them is authorising.
+
+        What stays here is the MARKUP, and both halves of it are load-bearing —
+        see `_cascade_facts` for why the count and the names are handed over
+        beside the words rather than folded into them. -#}
+    {% for reach in e.reach %}
+    <p class="reach{% if reach.kind == "frees" %} mild{% endif %}">{{ reach.lead }}
+      {% if reach.count %}<strong>{{ reach.count }}</strong> {% endif %}{{ reach.mid }}
+      <span class="names">{% for name in reach.names %}{% if not loop.first %} {% endif %}<span
+        class="name">{{ name }}</span>{% endfor %}</span>{% if reach.tail
+        %} {{ reach.tail }}{% endif %}</p>
+    {% endfor %}
     <p class="why" role="alert" hidden></p>
     <span class="acts">
       <button type="button" class="really">Delete it</button>
@@ -3631,6 +3632,74 @@ def _titles_for(index: Index, ids: list[str]) -> list[str]:
     ]
 
 
+def _cascade_facts(index: Index, record_id: str) -> dict:
+    """What deleting this record takes with it, and the words that say so.
+
+    **Two panels ask this now, and that is the whole reason it exists.** The
+    record page's `.confirming` has drawn these two sentences since the delete
+    button did; the right-click menu's `Delete…` reaches the same answer through
+    `GET /api/cascade/{id}` (`web.py`). `cascade_of` (`index.py`) was already the
+    one derivation of the CONSEQUENCES — a second panel deriving them
+    independently is a panel that can be wrong about the commit it is
+    authorising — but the SENTENCES were a template, and the sentences are the
+    half a reader actually decides on.
+
+    **`also` is ids and `said` is titles, and they are not two spellings of one
+    list.** `also` is the compare-and-swap the DELETE route refuses the deletion
+    against, in the order that route compares it in (`sorted(doomed + edited)`),
+    and nobody reads it. The titles are what somebody about to delete three
+    records is checking, because `task-0f1002` answers a question nobody asked.
+
+    **The count and the names are handed over beside the words rather than folded
+    into them.** The panel draws the number in `<strong>` and each title in its
+    own `.name` chip, and the second of those is not decoration: a title is held
+    to one rule, that it is not blank, so there is no character a title cannot
+    contain — comma-joining three titles, one of which has a comma in it, offers
+    a reader four items and asks them to press Delete on that. A sentence handed
+    over as one finished string can keep neither, and the menu's own panel draws
+    the same chips from the same parts.
+    """
+    doomed, edited = cascade_of(index, record_id)
+    said = []
+    if doomed:
+        said.append(
+            {
+                "kind": "deletes",
+                "lead": "This also deletes",
+                "count": len(doomed),
+                "mid": f"record{'' if len(doomed) == 1 else 's'} filed under it:",
+                "names": _titles_for(index, doomed),
+                "tail": "",
+            }
+        )
+    if edited:
+        said.append(
+            {
+                "kind": "frees",
+                "lead": "It also stops",
+                # No count. The loud line's number is the thing being agreed to;
+                # this line is a field being edited on records that keep their
+                # files, and drawing the two the same way teaches people to skim
+                # both — which is the argument `.reach.mild` is already written
+                # from in `styles.py`.
+                "count": None,
+                "mid": "",
+                "names": _titles_for(index, edited),
+                "tail": (
+                    "depending on it. That record keeps its file."
+                    if len(edited) == 1
+                    else "depending on it. Those records keep their file."
+                ),
+            }
+        )
+    return {
+        "also": [*doomed, *edited],
+        "deletes": doomed,
+        "frees": edited,
+        "said": said,
+    }
+
+
 def render_detail(
     index: Index,
     links: Links = STATIC,
@@ -3668,10 +3737,8 @@ def render_detail(
                 "body": Markup(""),
                 "rows": _new_rows(),
                 "raw_body": "",
-                "deletes": [],
-                "frees": [],
-                "deletes_named": [],
-                "frees_named": [],
+                "also": [],
+                "reach": [],
                 # Explicit rather than riding Jinja's default Undefined
                 # stringifying to "": the "never on the creating article" rule
                 # below must survive a move to StrictUndefined, not hold by
@@ -3691,18 +3758,15 @@ def render_detail(
             row["rows"] = _fact_rows(index, record, links, signed_in)
             row["raw_body"] = record.body
             # What deleting it would take with it, drawn into the confirmation
-            # before anybody presses anything. From `cascade_of`, which is what
-            # the route itself asks — a panel that listed the consequences from
-            # a second derivation of them would be a panel that can be wrong
-            # about the commit it is authorising.
-            row["deletes"], row["frees"] = cascade_of(index, row["id"])
-            # Two lists over the same records: the ids go back to the server as
-            # `data-also`, the titles are what the sentences say. Derived here
-            # from the same `cascade_of` answer rather than looked up in the
-            # template, so the names and the compare-and-swap cannot come from
-            # two different readings of the plan.
-            row["deletes_named"] = _titles_for(index, row["deletes"])
-            row["frees_named"] = _titles_for(index, row["frees"])
+            # before anybody presses anything — the ids that go back to the
+            # server as `data-also`, and the sentences that name the same
+            # records by title. Both out of `_cascade_facts`, which is also what
+            # `GET /api/cascade/{id}` answers the menu's own panel with: a panel
+            # that listed the consequences from a second derivation of them
+            # would be a panel that can be wrong about the commit it is
+            # authorising.
+            facts = _cascade_facts(index, row["id"])
+            row["also"], row["reach"] = facts["also"], facts["said"]
             # The promote panel, where the record is. It lived on the two
             # deleted inbox pages; a kind that is not promotable gets an empty
             # Markup, and the static export gets one for everything because
