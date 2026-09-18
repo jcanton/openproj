@@ -2029,6 +2029,18 @@ function popWireFields(box) {
     part.setAttribute('aria-label', popLabel(name) + ': ' + popSaidOf(name));
     part.onclick = () => popOpenField(name);
     part.onkeydown = event => {
+      // **Only this element's own keys, and that is the whole of this line.**
+      // The control this opens is a CHILD of the element the listener is on, so
+      // every key typed into the box bubbles up to here — and a space in a title
+      // arrived as "the row was pressed", was swallowed by the `preventDefault`
+      // below, and never reached the box. jcanton, 2026-09-18: "when editing the
+      // new card I can't add space characters in the fields (tried title and
+      // assignees)".
+      //
+      // `event.target` and not a check for an open control: a `<select>` inside
+      // this element answers its own space and arrows too, and this handler has
+      // no business with any of them.
+      if (event.target !== part) return;
       if (event.key !== 'Enter' && event.key !== ' ') return;
       // The grid's own Escape and the menu's own keys are somebody else's; these
       // two are this element's, and a space that scrolls the page under an open
