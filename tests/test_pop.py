@@ -3497,6 +3497,8 @@ def test_two_presses_on_save_with_no_gap_create_one_record(index: Index, tmp_pat
 _EDITING = """
 const row = rowWhere(one => one.kind === 'task' && one.status && one.title);
 if (!row) return {error: 'the corpus draws no task'};
+const somebody = POP_SCHEMA.people.find(login => login !== row.owner);
+if (!somebody) return {error: 'the corpus knows only one person'};
 openOn(row.id);
 const item = itemIn('edit');
 const word = wordIn(item);
@@ -3504,7 +3506,9 @@ item.click();
 const opened = {up: formIsUp(), heading: headingIn(), fields: fieldsInForm(),
                 schema: POP_SCHEMA.fields[row.kind],
                 opens: opensInForm(), locked: lockedInForm(),
-                save: !!saveIn(), boxes: POP.querySelectorAll('input, select').length,
+                save: saveIn() ? saveIn().textContent : '',
+                cancel: cancelIn() ? cancelIn().textContent : '',
+                boxes: POP.querySelectorAll('input, select').length,
                 says: {}, held: {}, names: {}};
 for (const name of fieldsInForm()) {
   opened.says[name] = valueIn(name);
@@ -3520,44 +3524,61 @@ for (const name of opensInForm()) {
   giveUp(name);
 }
 const quiet = {sent: patches().length, form: formUp(), boxes: POP.querySelectorAll('input').length};
-// Opened, closed with nothing typed. Not a write: a cell somebody looked at is
-// not news, and a PATCH naming a field that did not move is a line in this
-// record's history that is not true.
-openField('title');
-boxIn('title').blur();
-await rest(300);
-const untouched = {sent: patches().length, form: formUp(), title: valueIn('title')};
+// Two fields answered in one visit, and nothing sent while they are answered.
+// This is the whole of what the button buys: the card that wrote on blur sent a
+// PATCH per field and wrote a commit per field with it.
 const title = row.title + ' (edited from the menu)';
-answer('title', title);
+typeInto('title', title);
+typeInto('owner', somebody);
+const staged = {sent: patches().length, open: opensNow(), title: valueIn('title')};
+pressSave();
 await rest(1000);
-return {id: row.id, was: row, title, word, opened, quiet, untouched,
-        sent: patches(), posted: posts().length, said: said(), open: popIsOpen(),
-        form: formUp(), base: baseNow(), now: DATA.rows[row.id].title, beats: beatsNow()};
+const landed = {sent: patches(), posted: posts().length, said: said(), open: popIsOpen(),
+                form: formUp(), base: baseNow(),
+                title: DATA.rows[row.id].title, owner: DATA.rows[row.id].owner};
+// And the other way out. Nothing typed into a box that is cancelled reaches the
+// plan, which is what the word promises.
+openOn(row.id);
+itemIn('edit').click();
+typeInto('title', 'typed into a box that was cancelled');
+cancelIn().click();
+await rest(300);
+const cancelled = {sent: patches().length, open: popIsOpen(), said: said(),
+                   title: DATA.rows[row.id].title};
+return {id: row.id, was: row, title, somebody, word, opened, quiet, staged, landed,
+        cancelled, beats: beatsNow()};
 """
 
 
-def test_edit_opens_on_the_record_and_writes_one_field_as_it_is_answered(
+def test_edit_opens_on_the_record_and_one_save_commits_what_was_answered(
     index: Index, tmp_path: Path
 ):
     """**`Edit…` opens the hover card, and every value on it is a word until you
-    press it.** Then that one word is a box, blur saves it as its own PATCH, and
-    Escape puts the word back — which is `openEditor`'s bargain in the table to
-    the letter, chosen by jcanton on 2026-09-18 for exactly that reason: "it
-    could be like the table where you have to click one field to enter edit mode
-    for that field?".
+    press it.** Then that one word is a box, Escape puts the word back, and
+    **Save is what writes** — all of what was answered, in one commit.
 
-    So there is **no Save button and no box** on a card nobody has clicked. That
-    is the assertion this whole test turns on: a box with fifteen controls in it
-    is the form this replaced, and the way to tell the two apart from the DOM is
-    to count the controls before anything is pressed.
+    It used to write each field as it was answered, which is `openEditor`'s
+    bargain in the table and is what jcanton asked for on 2026-09-18: "it could
+    be like the table where you have to click one field to enter edit mode for
+    that field?". Later the same day, having met the other box — the one a gated
+    status opens, which has always held its answers and had a Save — he asked for
+    one bargain rather than two: *"this card has the save/cancel buttons at the
+    bottom, while the card that shows up when selecting the edit menu doesn't and
+    commits on each field change. I'd like them to be consistent, and I think I'd
+    prefer them both to have the save/cancel buttons and save only when clicking
+    save, not on every edit as I asked before."*
 
-    **One PATCH per field, and it names that field only.** The reason is the
-    commit message rather than the commit: `_merge_frontmatter` would skip a key
-    whose stored value already equals the one being sent, so a whole-card PATCH
-    would commit exactly the same thing — but the message NAMES the fields, and a
-    line saying fifteen fields were written when one was is a line in somebody's
-    history that is not true. `git log --follow` on a record is one of the two
-    ways this plan is read.
+    So there is **no box on a card nobody has clicked** — that is the assertion
+    that tells this apart from the form it replaced, and the way to make it from
+    the DOM is to count the controls before anything is pressed — and there IS a
+    Save and a Cancel under it, which is the half that changed.
+
+    **One PATCH for the visit, naming only what moved.** `_merge_frontmatter`
+    would skip a key whose stored value already equals the one being sent, so a
+    whole-card payload would commit the same thing — but the commit MESSAGE names
+    the fields, and a line saying fifteen fields were written when two were is a
+    line in somebody's history that is not true. `git log --follow` on a record is
+    one of the two ways this plan is read.
 
     Every field is opened and read back here, which makes the round trip a claim
     rather than an accident: a list joined with the wrong separator, a number that
@@ -3573,10 +3594,6 @@ def test_edit_opens_on_the_record_and_writes_one_field_as_it_is_answered(
     typed REPLACES them. The rule asks `name in row` rather than carrying a list
     of field names, so the same code locks a row on one host and opens it on the
     other.
-
-    **The box does not close on its own write.** Every other write in this module
-    dismisses the menu, and the reason it dismisses is that a menu is a list of
-    things to do next; a card you are editing in is the thing you are doing.
     """
     got = _at_a_form(index, tmp_path / "editing.html", _EDITING, patience=4500)
 
@@ -3594,8 +3611,9 @@ def test_edit_opens_on_the_record_and_writes_one_field_as_it_is_answered(
         f"the card opened with {got['opened']['boxes']} controls already on it — a card is "
         "words, and a box of controls is the form this replaced"
     )
-    assert got["opened"]["save"] is False, (
-        "a live card has a Save button, so it is not writing each field as it is answered"
+    assert (got["opened"]["save"], got["opened"]["cancel"]) == ("Save", "Cancel"), (
+        f"the box offers {got['opened']['save']!r} and {got['opened']['cancel']!r} — both "
+        "cards carry the same pair, which is what was asked for"
     )
     assert got["opened"]["fields"] == _the_cards_order(got["opened"]["schema"]), (
         f"the card drew {got['opened']['fields']} and this kind's editable fields, in the "
@@ -3637,29 +3655,49 @@ def test_edit_opens_on_the_record_and_writes_one_field_as_it_is_answered(
     )
     assert got["quiet"]["boxes"] == 0, "Escape left the control where the value should be"
     assert got["quiet"]["form"] is True, "Escape on a field took the whole box down"
-    assert got["untouched"]["sent"] == 0, (
-        "a field opened and closed with nothing typed went out as a PATCH, which commits a "
-        "message naming a field that did not move"
+    assert got["staged"]["sent"] == 0, (
+        "a field answered went out as a PATCH before Save was pressed, which is the "
+        "bargain this box gave up"
     )
-    assert got["untouched"]["title"] == was["title"], got["untouched"]
-    assert len(got["sent"]) == 1, got["sent"]
-    assert got["posted"] == 0, "editing a record that exists went out as a create"
-    assert got["sent"][0]["url"] == f"/api/record/{got['id']}", got["sent"][0]
-    assert got["sent"][0]["body"] == {
+    assert sorted(got["staged"]["open"]) == ["owner", "title"], (
+        f"the second field was answered and the first closed: {got['staged']['open']}. A "
+        "box that shuts a control when the next one opens loses the answer in it"
+    )
+    assert got["staged"]["title"] == got["title"], got["staged"]["title"]
+    assert len(got["landed"]["sent"]) == 1, (
+        f"two fields answered in one visit went out as {len(got['landed']['sent'])} "
+        "writes, which is as many commits"
+    )
+    assert got["landed"]["posted"] == 0, "editing a record that exists went out as a create"
+    assert got["landed"]["sent"][0]["url"] == f"/api/record/{got['id']}", got["landed"]["sent"][0]
+    assert got["landed"]["sent"][0]["body"] == {
         "base_commit": HEAD,
-        "fields": {"title": got["title"]},
+        "fields": {"title": got["title"], "owner": got["somebody"]},
         "body": None,
     }, (
-        "the write sent more than the one field that was answered — which commits a "
-        f"message naming every one of them: {got['sent'][0]['body']}"
+        "the write sent something other than the two fields that were answered — every "
+        f"other field on the card is in the commit message: {got['landed']['sent'][0]['body']}"
     )
-    assert got["said"] == f"{was['title']}: {LABELS['title']} saved", got["said"]
-    assert got["form"] is True and got["open"] is True, (
-        "the card closed on its own write, and a card you are editing in is the thing you "
-        "are doing rather than a list of things to do next"
+    assert got["landed"]["said"] == (
+        f"{was['title']}: {LABELS['title']} and {LABELS['owner']} saved"
+    ), got["landed"]["said"]
+    assert got["landed"]["open"] is False and got["landed"]["form"] is False, (
+        "the box stayed up after its Save landed — one press is the whole gesture, and "
+        "the row it was drawn from has just been replaced"
     )
-    assert got["base"] == "c0ffee1"
-    assert got["now"] == got["title"], "the row still reads the old title after its own write"
+    assert got["landed"]["base"] == "c0ffee1"
+    assert (got["landed"]["title"], got["landed"]["owner"]) == (got["title"], got["somebody"]), (
+        "the row still reads the old values after its own write"
+    )
+    assert got["cancelled"]["sent"] == 1, (
+        "Cancel wrote what was typed into the box, which is the whole of what the word "
+        "promises not to do"
+    )
+    assert got["cancelled"]["open"] is False, "Cancel left the box up"
+    assert got["cancelled"]["said"] == "nothing was changed", got["cancelled"]["said"]
+    assert got["cancelled"]["title"] == got["title"], (
+        "a cancelled box changed the record it was opened on"
+    )
     assert got["beats"] == {"writing": 1, "wrote": ["c0ffee1"]}, got["beats"]
 
 
@@ -3808,9 +3846,9 @@ def test_the_box_a_right_click_opens_is_the_hover_card_itself(index: Index, tmp_
     assert seen["words"] == card["words"], (
         f"the box says {seen['words']} and the card says {card['words']}"
     )
-    assert seen["extra"] == ["popheading", "popwhy"], (
-        f"the box's own children are {seen['extra']} — a live card has no Save button, "
-        "because each field is written as it is answered"
+    assert seen["extra"] == ["popheading", "popwhy", "popacts"], (
+        f"the box's own children are {seen['extra']} — the heading, the refusal list "
+        "and the Save/Cancel pair, which every box on these pages now carries"
     )
     assert seen["boxes"] == 0, (
         f"the box opened with {seen['boxes']} controls already on it — a card is words, "
@@ -4024,11 +4062,14 @@ ANSWER = () => ({status: 409, body: {detail: RULE}});
 openOn(row.id);
 itemIn('edit').click();
 const typed = row.title + ' — typed and not yet saved';
-answer('title', typed);
+typeInto('title', typed);
+// Nothing went out on the typing: this box holds what is in it until Save.
+const quiet = patches().length;
+pressSave();
 await rest(900);
-const refused = {form: formUp(), up: formIsUp(), why: whyLines(),
+const refused = {quiet, form: formUp(), up: formIsUp(), why: whyLines(),
                  title: valueIn('title'), open: !!boxIn('title'),
-                 focused: document.activeElement.dataset.field,
+                 focused: document.activeElement.dataset.kind || '',
                  sent: patches().length,
                  base: baseNow(), beats: beatsNow(), now: DATA.rows[row.id].title};
 // **The five signals that take a MENU away, every one of which would be a silent
@@ -4052,17 +4093,23 @@ const survived = {form: formUp(), title: valueIn('title'),
 // drawn once.
 ANSWER = () => ({status: 200,
                  body: {outcome: 'committed', commit: 'c0ffee2', pushed: true}});
-boxIn('title').blur();
+pressSave();
 await rest(1000);
 const landed = {sent: patches(), said: said(), open: popIsOpen(), form: formUp(),
-                base: baseNow(), title: valueIn('title')};
-// And the way a box is left on purpose.
-answer('owner', somebody);
-await rest(600);
+                base: baseNow(), now: DATA.rows[row.id].title};
+// And the two ways a box is left on purpose, which are two decisions and two
+// keys: Escape in a control undoes that field, and Escape again leaves the box.
+openOn(row.id);
+itemIn('edit').click();
+typeInto('owner', somebody);
+pressKey('Escape');
+const undone = {form: formUp(), box: !!boxIn('owner'), owner: valueIn('owner'),
+                where: document.activeElement.dataset.kind || ''};
 pressKey('Escape');
 const escaped = {open: popIsOpen(), form: formUp(), said: said(),
                  sent: patches().length};
-return {id: row.id, was: row.title, typed, somebody, RULE, refused, survived, landed, escaped};
+return {id: row.id, was: row.title, typed, somebody, RULE,
+        wasOwner: row.owner, refused, survived, landed, undone, escaped};
 """
 
 
@@ -4074,11 +4121,11 @@ def test_a_refusal_keeps_the_box_open_with_the_answer_still_in_it(
 
     A refusal keeps the box open with the reader's answer in it: `popSay`
     branches on `POP_FORM` and puts the sentence into the box's own list without
-    rebuilding anything, and `popTook` puts the refused answer back into the
-    control it came out of. A card that swallowed both would leave somebody
+    rebuilding anything, and nothing touches the controls, so what was typed is
+    still where it was typed. A card that swallowed both would leave somebody
     looking at the old value with no idea why their new one did not take.
 
-    Blurring it again is what proves it — what goes out the second time is what
+    Pressing Save again is what proves it — what goes out the second time is what
     is on screen, and a box that had redrawn itself from the row would send the
     row's.
 
@@ -4102,6 +4149,10 @@ def test_a_refusal_keeps_the_box_open_with_the_answer_still_in_it(
     got = _at_a_form(index, tmp_path / "refusedform.html", _REFUSED_FORM, patience=6000)
 
     assert not got.get("error"), got
+    assert got["refused"]["quiet"] == 0, (
+        "the title was written as it was typed — this box holds what is in it and Save "
+        "is the only thing that commits"
+    )
     assert got["refused"]["form"] is True, (
         "the refusal closed the box, so the answer is gone and the reason went with it"
     )
@@ -4119,9 +4170,11 @@ def test_a_refusal_keeps_the_box_open_with_the_answer_still_in_it(
         f"the title box holds {got['refused']['title']!r} after a refusal and "
         f"{got['typed']!r} was typed into it"
     )
-    assert got["refused"]["focused"] == "title", (
-        f"the keyboard is on {got['refused']['focused']!r} rather than back in the box "
-        "whose answer was refused"
+    assert got["refused"]["focused"] == "form-why", (
+        f"the keyboard is on {got['refused']['focused']!r} rather than on the sentence "
+        "that has just appeared. A refusal is put under the keyboard when it arrives — "
+        "the same move `popSay` makes in the menu — and Tab out of it lands on Save, "
+        "which is the next thing in the document"
     )
     assert got["refused"]["sent"] == 1 and got["refused"]["base"] == HEAD
     assert got["refused"]["now"] == got["was"], "the row changed under a write that was refused"
@@ -4150,22 +4203,35 @@ def test_a_refusal_keeps_the_box_open_with_the_answer_still_in_it(
         f"from the row under the refusal — {got['landed']['sent'][1]['body']}"
     )
     assert got["landed"]["said"] == f"{got['was']}: {LABELS['title']} saved", got["landed"]["said"]
-    assert got["landed"]["open"] is True and got["landed"]["form"] is True, (
-        "the card closed on the write that landed, and a card you are editing in is the "
-        "thing you are doing"
+    assert got["landed"]["open"] is False and got["landed"]["form"] is False, (
+        "the box stayed up after its Save landed. One press is the whole gesture now, and "
+        "the row it was drawn from has just been replaced"
     )
-    assert got["landed"]["title"] == got["typed"], (
-        f"the card still says {got['landed']['title']!r} after writing {got['typed']!r}"
+    assert got["landed"]["now"] == got["typed"], (
+        f"the row reads {got['landed']['now']!r} after a Save of {got['typed']!r}"
     )
     assert got["landed"]["base"] == "c0ffee2"
+    assert got["undone"]["where"] == "form-save", (
+        f"after Escape gave up on a field the keyboard is on {got['undone']['where']!r}. "
+        "It has to stay inside the box: this box's keydown listener is on `#pop`, so a "
+        "keyboard that fell out of it cannot press Escape again to leave"
+    )
+    assert got["undone"]["form"] is True, (
+        "Escape in a control took the whole box down, when what was asked for was to undo "
+        "one field"
+    )
+    assert got["undone"]["box"] is False and got["undone"]["owner"] != got["somebody"], (
+        f"Escape left the owner reading {got['undone']['owner']!r}, which is what was "
+        "typed rather than what the record holds"
+    )
     assert got["escaped"]["open"] is False and got["escaped"]["form"] is False, (
         "Escape did not take the card away, and it is the close that is a decision rather "
         "than somebody looking at the page"
     )
     assert got["escaped"]["said"] == "nothing was changed", got["escaped"]["said"]
-    assert got["escaped"]["sent"] == 3, (
-        f"{got['escaped']['sent']} writes went out for three answers: the refused title, "
-        "the one that landed, and the owner"
+    assert got["escaped"]["sent"] == 2, (
+        "leaving the box by Escape wrote what was typed into it, which is the whole of "
+        "what Cancel and Escape promise not to do"
     )
 
 
@@ -4209,17 +4275,22 @@ opened.kinds = opened.options.filter(one => one.value)
 const next = opened.options.map(one => one.value)
   .find(one => one && one !== row.parent);
 if (!next) return {error: 'the corpus offers no second legal parent to move to'};
-answer('parent', next);
+typeInto('parent', next);
+// Nothing yet: what is typed into this box is held in it, and Save is what
+// commits. The count is taken before the press so that "one PATCH" below is a
+// claim about the press and not about the pair.
+const quiet = patches().length;
+pressSave();
 await rest(1000);
-const landed = {sent: patches(), said: said(), open: popIsOpen(),
+const landed = {quiet, sent: patches(), said: said(), open: popIsOpen(),
                 now: DATA.rows[row.id].parent, posted: posts().length};
 // And the host that cannot list its records at all, which is the timeline and
 // the static export. The item refuses with a sentence rather than opening a card
 // over a picker with nothing in it.
 //
-// `popDone()` first, because the card is still up: a live write leaves it open,
-// and `popClose` refuses to take a box with a form in it down. A right press
-// that arrived now would find the card and not rebuild the menu.
+// `popDone()` first, and defensively: a write that lands closes the box, but
+// `popClose` refuses to take a box with a form in it down, so a run that somehow
+// still had one up would find the card here rather than rebuild the menu.
 popDone();
 POP_HOST.all = undefined;
 openOn(row.id);
@@ -4312,8 +4383,9 @@ def test_assign_parent_offers_a_select_of_the_records_that_may_hold_this_one(
         f"the card opened with {got['opened']['boxes']} controls on it — `Change parent…` "
         "opens the one field somebody came to change and leaves the rest words"
     )
-    assert got["opened"]["save"] is False, (
-        "the card grew a Save button, so the parent is not written the moment it is picked"
+    assert got["opened"]["save"] is True, (
+        "the card has no Save, and where a record is filed is written when Save is "
+        "pressed like everything else on this box"
     )
     assert got["opened"]["disabled"] is False, "the picker that is the whole point is locked"
     assert got["opened"]["value"] == got["was"], (
@@ -4341,13 +4413,18 @@ def test_assign_parent_offers_a_select_of_the_records_that_may_hold_this_one(
     assert got["wrongKind"] not in offered, (
         f"{got['wrongKind']} is of a kind that may not hold this record and is in the list"
     )
+    assert got["landed"]["quiet"] == 0, (
+        "picking a parent wrote it before Save was pressed, which is the bargain this "
+        "box gave up: jcanton asked for save/cancel on both cards and a save only on the "
+        "press"
+    )
     assert len(got["landed"]["sent"]) == 1 and got["landed"]["posted"] == 0, got["landed"]
     assert got["landed"]["sent"][0]["body"]["fields"] == {"parent": got["next"]}, (
         f"moving a record sent {got['landed']['sent'][0]['body']['fields']}"
     )
-    assert got["landed"]["open"] is True, (
-        "the card closed on its own write, and a card you are editing in is the thing you "
-        "are doing rather than a list of things to do next"
+    assert got["landed"]["open"] is False, (
+        "the box stayed up after its Save landed — one press is the whole gesture, and "
+        "the row under it has just been redrawn"
     )
     assert got["landed"]["now"] == got["next"], "the row is still filed where it was"
     assert got["landed"]["said"] == f'{got["title"]} is now inside "{got["nextTitle"]}"', (
