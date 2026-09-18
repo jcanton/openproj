@@ -117,11 +117,17 @@ jobs:
   # more. The lists had not gone stale in the sense of being slightly wrong; the
   # scheme they belong to had stopped being able to express the answer.
   #
-  # Percentages and not seconds, deliberately. The table under this
-  # (`.test_durations`) was recorded on a laptop and this runner is a different
-  # machine; what transfers between them is each test's SHARE of the suite, which
-  # is what a split is decided by. Absolute seconds below are that laptop's, and
-  # are marked.
+  # **The table under this (`.test_durations`) is THIS hardware's, since
+  # 2026-09-18.** It was a laptop's until then, and the paragraph below about the
+  # spread says what that cost; the `measure` job at the foot of this file finally
+  # ran end to end and replaced it, which is the thing that paragraph said was
+  # owed. 2265 tests, 844s serial.
+  #
+  # Percentages rather than seconds is still how to read what follows, because the
+  # simulation numbers below were computed against the laptop's table and have not
+  # been re-run. What transfers between the two is each test's SHARE of the suite,
+  # which is what a split is decided by. Absolute seconds below are the laptop's,
+  # and are marked.
   #
   # `pytest-split` takes the recorded durations and cuts the collected list into
   # N chunks of roughly equal time. Simulated over the real numbers, the worst
@@ -149,9 +155,12 @@ jobs:
   # laptop in aggregate but 0.56-0.99x per test. Rescaling the table by that
   # aggregate was tried and simulated WORSE — 67s of spread — because only the 25
   # slowest per leg have real numbers and a flat factor mis-scales the rest. A
-  # coherent table from one machine beats a mixed one, so the laptop's stands
-  # until a full serial run on this hardware replaces it. That is what the
-  # `measure` job below is for.
+  # coherent table from one machine beats a mixed one, so the laptop's stood
+  # until a full serial run on this hardware could replace it. **That has now
+  # happened** — 2026-09-18, run 35337889584 — so the mis-scaling described in
+  # this paragraph is history rather than a live cost, and the next re-cut of the
+  # eight legs has a table taken on the machine the legs run on. The spread it
+  # produces has not been re-simulated; the first push after it is the measurement.
   #
   # **`duration_based_chunks`, which is the default, and not `least_duration`.**
   # The greedy one bin-packs and hits the ideal exactly at every N — it is 2s
