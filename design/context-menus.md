@@ -334,4 +334,32 @@ it is not the one anybody reaches for: it forbids reading a `detail` key off any
 new refusal reader in `pop.py` spelled `said.detail || said.conflict` looks perfectly reasonable and
 will not pass.
 
+## Two asks the day the card shipped, 2026-09-18
+
+**Everything that completes on a record's page completes in the card.** jcanton: *"autocomplete
+doesn't work in the forms inside our new editable card. can you enable all as in the /detail?"*. Two
+halves were wrong and the second is the one anybody would notice. `popComplete` was called behind
+`type === 'text'`, and a list field's type is `list` — so `assignees`, `reviewers`, `tags`,
+`depends_on` and `prs`, five of the seven fields anybody completes, carried no datalist at all. And
+the schema deliberately shipped only the `people` and `records` sources, on the argument that a field
+pointing at a list nobody serves completes nothing; so the fields that did reach `popComplete` had
+nothing to offer either.
+
+Both are the same decision seen twice: the call is now made of every box that is typed into — asked
+of the CONTROL, because a `<select>` has its own options and a date box has a picker — and `tags`,
+`prs` and `cycles` ship beside `people` in a `lists` key, in the `{value, label}` shape the record
+page's own completion already reads them in. `records` stays out: `parent` and `depends_on` complete
+off `popAllRows()`, the host's own rows, and a second copy of every record in the plan is the one key
+that would double this payload.
+
+**Priority, directly under Status.** jcanton: *"in the right-click menu add priority just below
+status please, I didn't notice we didn't have it there"*. It is the status item's twin, and both
+differences are the ladder's rather than the menu's: `PRIORITIES` is one list for every kind, so
+there is nothing per-rung to look up, and what varies is whether the kind reads the field at all —
+`priority` is in `_WORK_FIELDS`, so a product holds none and the item is drawn refused rather than
+left out. There is no gate: no status demands a priority, so there is no form to open and the item is
+three lines where the status item is sixty. The mark in front of each word is `cardMark('priority',
+…)` off the shell's own map — the same blocks the chips and the graph's nodes draw — and not a second
+copy in the schema.
+
 🤖 Written by an agent on behalf of @jcanton

@@ -1460,7 +1460,7 @@ function popWriteItems(row) {
   // even the three read items, so that the one irreversible thing on this menu
   // has no neighbour anybody reaches for by accident.
   return [popNewChildItem(row), popEditItem(row), popStatusItem(row),
-          popOwnerItem(row), popParentItem(row), popTakeOutItem(row),
+          popPriorityItem(row), popOwnerItem(row), popParentItem(row), popTakeOutItem(row),
           // No refusal arm, and that is the record page's own answer rather than
           // an omission: `may_write` is the only gate on the Delete button there
           // (`detail.py`), because every record a writer may write is a record
@@ -1594,6 +1594,50 @@ function popStatusChoice(row, status) {
   }
   item.run = () => popWrite(row.id, {status: status},
     `${popTitle(row)} is now ${popHuman(status)}`);
+  return item;
+}
+
+// **Priority, directly below the status and built like it.** jcanton, 2026-09-18:
+// "in the right-click menu add priority just below status please, I didn't
+// notice we didn't have it there".
+//
+// Two differences from `popStatusItem`, and both are the ladder's rather than
+// this menu's. The vocabulary is ONE list for every kind — `PRIORITIES`, not a
+// per-rung tuple — so there is nothing to look up per row; and what varies is
+// whether the kind reads the field at all, which is the `unread_fields` question
+// the Owner item already asks (`priority` is in `_WORK_FIELDS`, so a product
+// holds none).
+//
+// **And no gate.** `required_at` names no status that demands a priority, so
+// there is no `popMissing` arm here and no form to open: every rung of this
+// ladder is writable on every record that reads the field, which is the whole
+// reason this item is three lines where the status item is sixty.
+function popPriorityItem(row) {
+  if (((POP_SCHEMA.unread || {})[row.kind] || []).includes('priority'))
+    return {kind: 'priority', text: 'Priority', why: `A ${row.kind} holds no priority.`};
+  return {kind: 'priority', text: 'Priority',
+          items: () => (POP_SCHEMA.priorities || []).map(one => popPriorityChoice(row, one))};
+}
+
+function popPriorityChoice(row, priority) {
+  const item = {kind: 'priority-' + priority, text: popHuman(priority),
+                // The rising block, which is what the chips and the graph's
+                // nodes draw — `cardMark` off the shell's own map, so the menu
+                // cannot disagree with the card it opens over. The status item
+                // reads its glyph out of the schema because a status glyph was
+                // shipped there before the card existed; this one has no reason
+                // to add a second copy.
+                glyph: typeof cardMark === 'function' ? cardMark('priority', priority) : '',
+                checked: (row.priority || null) === priority};
+  // Already there writes nothing, for the reason the status choice says: the
+  // server would take it, and "set it to what it is" is not a line anybody meant
+  // to put in the history.
+  if (item.checked) {
+    item.run = () => announce(`${popTitle(row)} is already ${popHuman(priority)} priority`);
+    return item;
+  }
+  item.run = () => popWrite(row.id, {priority: priority},
+    `${popTitle(row)} is now ${popHuman(priority)} priority`);
   return item;
 }
 
@@ -2088,7 +2132,20 @@ function popOpenField(name) {
   // No `<label>` to point at: the card names a field with a `<dt>` that is not
   // this control's label, and the title line and the chips name nothing at all.
   control.setAttribute('aria-label', popLabel(name));
-  if (type === 'text') popComplete(control, name, slot);
+  // Every box that is typed into, and not only the ones whose type is the word
+  // `text`. A list field's type is `list` and its control is a text box all the
+  // same, and gating on the word left `assignees`, `reviewers`, `tags`,
+  // `depends_on` and `prs` — five of the seven fields anybody completes —
+  // completing nothing at all. jcanton, 2026-09-18: "autocomplete doesn't work
+  // in the forms inside our new editable card. can you enable all as in the
+  // /detail?".
+  //
+  // Asked of the CONTROL and not of the schema: a `<select>` has its own options
+  // and a date box has a picker, and both would be handed a list they cannot
+  // show. `cycle` is a number box and Chrome completes one from a datalist like
+  // any other input.
+  if (control.tagName === 'INPUT' && (control.type === 'text' || control.type === 'number'))
+    popComplete(control, name, slot);
   form.controls.set(name, control);
   const was = slot.innerHTML;
   slot.replaceChildren(control);
@@ -2473,14 +2530,22 @@ function popParentOptions() {
 function popComplete(input, name, field) {
   const source = (POP_SCHEMA.suggests || {})[name];
   if (!source) return;
-  const options = source === 'people'
+  const options =
     // The same people the table's own suggestion list offers. A second reading
     // of "who is on this plan" disagrees with the box beside it the first time
     // somebody joins.
-    ? (POP_SCHEMA.people || []).map(login => ({value: login, label: ''}))
+    source === 'people'
+      ? (POP_SCHEMA.people || []).map(login => ({value: login, label: ''}))
     // And the same rows the parent picker is built from, unfiltered by kind:
-    // `depends_on` is an edge and an edge may point anywhere on the plan.
-    : popAllRows().map(row => ({value: row.id, label: popTitle(row)}));
+    // `depends_on` is an edge and an edge may point anywhere on the plan. Off
+    // the host rather than out of the schema, because the host already has them
+    // and shipping the plan twice is what would make this payload expensive.
+    : source === 'records'
+      ? popAllRows().map(row => ({value: row.id, label: popTitle(row)}))
+    // Tags, pull requests and cycles, as the server read them out of the corpus.
+    // Already `{value, label}` — a cycle's label is the window it covers, which
+    // is the whole reason a number is pickable at all.
+      : ((POP_SCHEMA.lists || {})[source] || []);
   if (!options.length) return;
   const list = document.createElement('datalist');
   list.id = 'pop-list-' + (++POP_FIELD_N);
@@ -3520,15 +3585,16 @@ def _pop_schema(index: Index | None) -> dict | None:
         "types": {
             name: ("select" if name in _AS_SELECT else kind) for name, kind in EDITABLE.items()
         },
-        # Where a select's options come from when they are not a fixed list:
-        # `parent` and `depends_on` from the host's own rows, the person fields
-        # from `people` below. Filtered to the two lists this page can actually
-        # fill — `tags`, `prs` and `cycles` are in `SUGGESTS` and are not shipped
-        # here, and a field pointing at a list nobody serves is a control that
-        # silently completes nothing.
-        "suggests": {
-            field: source for field, source in SUGGESTS.items() if source in ("people", "records")
-        },
+        # Where a field's completion comes from: `parent` and `depends_on` from
+        # the host's own rows, and everything else from one of the lists below.
+        #
+        # It shipped filtered to `people` and `records` when the box this menu
+        # opened was a form of its own; jcanton asked for the rest once that form
+        # became the card — 2026-09-18, "autocomplete doesn't work in the forms
+        # inside our new editable card. can you enable all as in the /detail?" —
+        # and a field pointing at a list nobody serves is the control that
+        # silently completes nothing, so the lists come with it.
+        "suggests": dict(SUGGESTS),
         # The one select whose options are neither per kind nor per plan.
         "priorities": list(PRIORITIES),
         # The status a record of this kind is created in, off the model's own
@@ -3544,6 +3610,19 @@ def _pop_schema(index: Index | None) -> dict | None:
         # Values only: the menu writes a login, and the `{value, label}` shape is
         # for a control that completes as you type.
         "people": [person["value"] for person in _suggestions(index)["people"]],
+        # And the three lists that are neither a person nor a record, from the
+        # same function, in the same `{value, label}` shape the detail form's own
+        # completion reads them in: a tag is a bare word, a pull request carries
+        # the `org/repo#` half nobody remembers, and a cycle NUMBER means nothing
+        # without the window beside it.
+        #
+        # **`records` is deliberately not here.** `parent` and `depends_on`
+        # complete off `popAllRows()`, which is the host's own rows — the same
+        # list the parent picker is built from — and a second copy of every
+        # record in the plan is the one key that would double this payload.
+        "lists": {
+            source: _suggestions(index)[source] for source in ("tags", "prs", "cycles")
+        },
     }
 
 
