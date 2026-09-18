@@ -1,16 +1,19 @@
 """The right-click menu, in the three views that draw it.
 
-`design/context-menus.md` is the argument; this covers its first three cuts —
-the box, the host contract and the reader's three items, and then the three
-one-field writes that turned the menu from something you read into something
-that changes the plan.
+`design/context-menus.md` is the argument; this covers its first four cuts — the
+box, the host contract and the reader's three items, then the three one-field
+writes that turned the menu from something you read into something that changes
+the plan, and then the form that answers the question the whole design started
+from.
 
 The judgement jcanton makes on cut 2 is menu-versus-hover, so the questions that
 mattered most there are not about the items at all. They are about the two
 floating boxes getting out of each other's way, and about what a key means when
 two things on the page both want it. Cut 3's are about what went on the wire:
 which record, how many times, against which base, and what the box does with an
-answer it did not want.
+answer it did not want. Cut 4's are about a box somebody has typed into — what
+it opens holding, what it sends, what it refuses to send, and the five signals
+that take a menu away and must leave a half-filled form exactly where it is.
 
 Nearly all of these are asked of Chrome; `chrome()` skips when there is none,
 because a suite that is green for want of a binary is green for the wrong
@@ -26,11 +29,13 @@ menu that was never going to appear and the assertion passes either way.
 
 **The server the write tests answer to is a stub at `fetch`** — see `_WRITING`.
 What is being asked is what the page SENT and what it did with what came back,
-and a `file://` page has nowhere to send it. The stub answers both routes one
-menu write touches and keeps them consistent with each other, which is not a
-detail: a re-read that handed back the rows from before the write would let a
-host that never re-read anything pass, and one that said `unpushed: 0` about a
-commit it had just called unpushed clears the row mark it had just earned.
+and a `file://` page has nowhere to send it. The stub answers every route a menu
+write touches — two until cut 4 added the create — and keeps them consistent
+with each other, which is not a detail: a re-read that handed back the rows from
+before the write would let a host that never re-read anything pass, and one that
+said `unpushed: 0` about a commit it had just called unpushed clears the row
+mark it had just earned. A create is the one that most needs it: what the
+receipt says depends on whether the host can find the record afterwards.
 """
 
 from __future__ import annotations
@@ -57,7 +62,7 @@ from openproj.render import (
     render_table,
     render_timeline,
 )
-from openproj.render.tokens import HUMAN, STATUS_GLYPH
+from openproj.render.tokens import HUMAN, LABELS, STATUS_GLYPH
 
 HEAD = "0123456789abcdef0123456789abcdef01234567"
 
@@ -263,12 +268,18 @@ const rest = ms => new Promise(done => setTimeout(done, ms));
 #
 # Last on purpose, so their position does not move when somebody signs in.
 READER_ITEMS = ["open", "open-tab", "copy-link"]
-# And the three that write, first, which is the other end of that same ordering.
+# And the six that write, first, which is the other end of that same ordering.
 # Between them is the slot each view splices its own items into —
 # `focus-subtree` on the table and the graph, `add-dependency` on the graph, and
 # nothing at all on the timeline, which registers no `extras` because it cannot
 # write. Those slugs are the HOST's and are deliberately not written down here.
-WRITE_ITEMS = ["status", "owner", "take-out"]
+#
+# The ORDER is the design's table read down: what makes a record, what changes
+# this one, where it is filed, then what this view can do. Cut 4 put three in
+# front of cut 3's three rather than after them, which is why every assertion
+# below slices `len(WRITE_ITEMS)` rather than a literal — a seventh item is one
+# edit here and none anywhere else.
+WRITE_ITEMS = ["new-child", "edit", "status", "owner", "parent", "take-out"]
 
 
 # Read before the press: which row is going to be pressed, which two rows are its
@@ -363,7 +374,7 @@ def test_a_right_press_opens_the_menu_at_the_pointer_for_the_row_under_it(
     assert got["label"] == f"Actions for {got['title']}", (
         f"the box names itself {got['label']!r}, which is not the record that was pressed"
     )
-    assert got["kinds"][:3] == WRITE_ITEMS, got["kinds"]
+    assert got["kinds"][: len(WRITE_ITEMS)] == WRITE_ITEMS, got["kinds"]
     assert got["kinds"][-3:] == READER_ITEMS, got["kinds"]
     # Beside the pointer, which is `placeFloat`'s 14px on both axes. A row in the
     # middle of the window is neither near enough to a gutter to be flipped nor
@@ -807,7 +818,8 @@ return {
   label: POP.getAttribute('aria-label'),
   roles: [...POP.children].map(item => item.getAttribute('role')),
   tags: [...POP.children].map(item => item.tagName),
-  refused: [...POP.children].filter(item => item.hasAttribute('aria-disabled')).length,
+  refused: [...POP.children].filter(item => item.hasAttribute('aria-disabled'))
+    .map(item => ({kind: item.dataset.kind, why: item.dataset.why || ''})),
   tab: {href: tab.getAttribute('href'), target: tab.target, rel: tab.rel},
 };
 """
@@ -865,9 +877,9 @@ def test_a_reader_is_offered_what_only_looks_and_a_writer_the_whole_list(
             f"the {who} was offered {seen['kinds']}, which does not end in the three "
             "items that only look"
         )
-        assert seen["refused"] == 0, (
+        assert seen["refused"] == [], (
             f"the {who} was offered a refused item on a row that is inside something, "
-            f"holds records and has a ladder: {seen['kinds']}"
+            f"holds records and has a ladder: {seen['refused']}"
         )
         assert seen["role"] == "menu"
         assert seen["roles"] == ["menuitem"] * len(seen["kinds"]), seen["roles"]
@@ -886,7 +898,7 @@ def test_a_reader_is_offered_what_only_looks_and_a_writer_the_whole_list(
         assert seen["tabs"] == [0, *[-1] * (len(seen["kinds"]) - 1)], seen["tabs"]
         assert seen["focused"] == seen["kinds"][0]
 
-    assert got["writer"]["kinds"][:3] == WRITE_ITEMS, got["writer"]["kinds"]
+    assert got["writer"]["kinds"][: len(WRITE_ITEMS)] == WRITE_ITEMS, got["writer"]["kinds"]
     for writes in (*WRITE_ITEMS, "no-schema"):
         assert writes not in got["reader"]["kinds"], (
             f"a signed-out reader is offered {writes!r}: {got['reader']['kinds']}"
@@ -958,7 +970,7 @@ def test_a_right_press_on_a_graph_node_opens_the_menu_for_that_node(index: Index
         f"the menu is about {got['about']} and the press was on {got['id']}"
     )
     assert got["label"] == f"Actions for {got['title']}"
-    assert got["kinds"][:3] == WRITE_ITEMS, got["kinds"]
+    assert got["kinds"][: len(WRITE_ITEMS)] == WRITE_ITEMS, got["kinds"]
     assert got["kinds"][-3:] == READER_ITEMS, got["kinds"]
     assert abs(got["left"] - (420 + GUTTER)) <= 2 and abs(got["top"] - (300 + GUTTER)) <= 2, (
         f"the box opened at ({got['left']}, {got['top']}) for a press at (420, 300) — "
@@ -1425,8 +1437,9 @@ const said = () =>
 #
 # **Stubbed and not served**, because what these tests ask is what the page put
 # on the wire and what it did with what came back — and a `file://` page has
-# nowhere to send it. Both routes one menu write touches are answered: the PATCH
-# itself, and the `/api/table.json` re-read the table's `wrote()` does behind it.
+# nowhere to send it. All three routes a menu write touches are answered: the
+# PATCH itself, cut 4's POST, and the `/api/table.json` re-read the table's
+# `wrote()` does behind both.
 _WRITING = """
 // Said here rather than met as `Cannot read properties of null` four lines into
 // whichever question asked first. A table whose `_pop_js(links, index)` lost its
@@ -1441,6 +1454,33 @@ const SENT = [];
 // re-read anything would pass every assertion below, because the rows it went on
 // showing would be the rows this stub kept handing back.
 const WRITTEN = {};
+// And what it has MINTED, which the re-read then answers with beside the plan's
+// own rows. Without it the host cannot find a record the create route has just
+// made, so `popLanded` answers `reload to see it` about every create — the third
+// of its three sentences, drawn for the wrong reason, and the receipt the form
+// is judged by in two tests below.
+const MADE = {};
+let MINTED = 0;
+// The id the server would answer with, spelled the way this plan spells one. The
+// prefix is READ off a record of that kind rather than written down: `PREFIX` is
+// the model's map and a project's ids begin `proj-`, not `project-`, so a
+// harness that guessed would mint an id no page can resolve.
+const nextId = kind => {
+  const like = Object.values(DATA.rows).find(one => one.kind === kind);
+  return (like ? like.id.split('-')[0] : kind) + '-' + String(++MINTED).padStart(6, 'a');
+};
+// The row the next re-read carries for it: a real row of the same kind with the
+// sent fields written over it. Built from the payload alone it would be missing
+// the thirty keys `_row` carries and `draw()` reads, which surfaces as a
+// TypeError inside the page rather than as an answer about the menu — and
+// `search`/`name` are replaced rather than inherited so the row is not findable
+// under the title of whichever record stood in for its shape.
+const recordMade = (id, fields) => {
+  const like = Object.values(DATA.rows).find(one => one.kind === fields.kind);
+  const named = String(fields.title || '').toLowerCase();
+  MADE[id] = Object.assign({}, like, fields,
+    {id: id, off_plan_parent: false, search: named, name: named});
+};
 let COMMITS = 0;
 // How many of the commits this stub has answered with are only on this
 // instance. The re-read has to report the same thing the write did or the two
@@ -1452,8 +1492,15 @@ let UNPUSHED = 0;
 // A fresh sha per write, so `base_commit` can be asserted to MOVE: the page that
 // does not advance `#base` collides with the commit it just made, and one that
 // advances it to a constant cannot be told from one that does.
-let ANSWER = () => ({status: 200,
-                     body: {outcome: 'committed', commit: 'c0ffee' + (++COMMITS), pushed: true}});
+//
+// Two verbs and two answers, because the create route's is not the save route's:
+// it is a 201 and it carries the `id` the server minted, which is the whole of
+// what `popCreate` has to go on — `about(answer)` and the receipt both read it.
+let ANSWER = seen => seen.method === 'POST'
+  ? {status: 201, body: {id: nextId(seen.body.fields.kind), outcome: 'committed',
+                         commit: 'c0ffee' + (++COMMITS), pushed: true}}
+  : {status: 200,
+     body: {outcome: 'committed', commit: 'c0ffee' + (++COMMITS), pushed: true}};
 window.fetch = async (url, options) => {
   const asked = options || {};
   const seen = {url: String(url), method: asked.method || 'GET',
@@ -1463,9 +1510,25 @@ window.fetch = async (url, options) => {
     const rows = {};
     for (const [id, row] of Object.entries(DATA.rows))
       rows[id] = Object.assign({}, row, WRITTEN[id] || {});
+    // The records this stub has minted, as the real route would be answering
+    // with by now. After the plan's own rows, so a create followed by a save on
+    // the new record reads back as one row and not two.
+    for (const [id, row] of Object.entries(MADE))
+      rows[id] = Object.assign({}, row, WRITTEN[id] || {});
     return new Response(
       JSON.stringify({rows: rows, problems: [], parked: [], unpushed: UNPUSHED}),
       {status: 200, headers: {'content-type': 'application/json'}});
+  }
+  // The create door, which has no id in its path because the record does not
+  // exist yet — that is what the answer's `id` is for.
+  if (seen.method === 'POST') {
+    const made = await ANSWER(seen);
+    if (made.status === 201) {
+      recordMade(made.body.id, seen.body.fields);
+      if (made.body.pushed === false) UNPUSHED += 1;
+    }
+    return new Response(JSON.stringify(made.body),
+                        {status: made.status, headers: {'content-type': 'application/json'}});
   }
   const about = decodeURIComponent((seen.url.split('/api/record/')[1] || ''));
   const answer = await ANSWER(seen);
@@ -1477,6 +1540,7 @@ window.fetch = async (url, options) => {
                       {status: answer.status, headers: {'content-type': 'application/json'}});
 };
 const patches = () => SENT.filter(one => one.method === 'PATCH');
+const posts = () => SENT.filter(one => one.method === 'POST');
 
 // The pair the shell counts against each other. One `openproj:wrote` for every
 // `openproj:writing` — including on a refusal, or one held-back event stops the
@@ -1618,91 +1682,17 @@ def test_the_status_submenu_is_this_kinds_ladder_and_picking_one_writes_it(
     )
 
 
-_THE_GATE = """
-const row = rowWhere(one => one.kind === 'task' && one.status !== 'done'
-                            && !holds(one, 'prs') && !holds(one, 'end_date'));
-if (!row) return {error: 'the corpus holds no task short of the gate at done'};
-openOn(row.id);
-itemIn('status').click();
-const before = popKinds();
-const gated = itemIn('status-done');
-const seen = {disabled: gated.getAttribute('aria-disabled'), why: gated.dataset.why || '',
-              role: gated.getAttribute('role'), word: wordIn(gated)};
-gated.click();
-await rest(400);
-return {id: row.id, title: row.title, seen, before,
-        // The table's OWN answer to the same question, asked of the same row
-        // through the machinery `askFor` is built on.
-        missing: missingFor(row, 'done'),
-        labels: missingFor(row, 'done').map(field => FIELD_LABELS[field] || field),
-        word: human('done'),
-        sent: patches().length, open: popIsOpen(), kinds: popKinds(), said: said(),
-        base: baseNow(), beats: beatsNow()};
-"""
-
-
-def test_a_gated_status_is_refused_in_the_gates_own_words_and_writes_nothing(
-    index: Index, tmp_path: Path
-):
-    """**The one most likely to be got wrong quietly**, so both halves are
-    asserted: the item is refused, AND no request was made.
-
-    An item that is drawn `aria-disabled` and sends its PATCH anyway looks
-    exactly right in a screenshot and in the DOM; what it does is let the server
-    answer 422 for a rule the page had already worked out. So `patches()` is
-    asked as well, and so is `#base`, and so is the event pair — a write that
-    went out and was refused leaves all three moved.
-
-    The sentence is asserted against the TABLE's own machinery rather than
-    against a literal: `missingFor`, `FIELD_LABELS` and `human` are the page's,
-    and the claim is that the menu names the same fields in the same words. A
-    second wording for one rule is how a control and the server come to describe
-    the same refusal two ways, which is the failure `HUMAN` was written for.
-
-    One deliberate difference is not asserted as equality and is why the labels
-    are checked by containment: `missingFor` drops any field the table cannot
-    edit, because the panel it feeds has to offer a box per field it names, and
-    the menu offers no boxes at all — so a field the table could not write is
-    still a reason the server would refuse and the menu still names it.
-    """
-    got = _at_the_table(index, tmp_path / "gate.html", _THE_GATE)
-
-    assert not got.get("error"), got
-    assert got["missing"], (
-        "the table's own gate finds nothing missing at `done` on this row, so the "
-        "menu has nothing to refuse and this test is about nothing"
-    )
-    assert got["seen"]["disabled"] == "true", (
-        "a status the record cannot be given is offered as though it could be"
-    )
-    assert got["seen"]["role"] == "menuitemradio", got["seen"]
-    assert got["seen"]["word"] == HUMAN["done"]
-    for label in got["labels"]:
-        assert label in got["seen"]["why"], (
-            f"the refusal does not name {label!r}, which the table's own gate says "
-            f"is missing: {got['seen']['why']!r}"
-        )
-    assert got["seen"]["why"].startswith(f"{got['word']} needs "), got["seen"]["why"]
-    assert got["title"] in got["seen"]["why"], (
-        f"the refusal does not name the record it is about: {got['seen']['why']!r}"
-    )
-    assert "own page" in got["seen"]["why"], (
-        "the refusal says what is missing and not where to put it — an error says "
-        f"how to fix it: {got['seen']['why']!r}"
-    )
-    assert got["sent"] == 0, (
-        "the refused item sent a PATCH anyway, so the page knew the gate would "
-        "refuse it and asked the server to say so"
-    )
-    assert got["beats"] == {"writing": 0, "wrote": []}, got["beats"]
-    assert got["base"] == HEAD, "`#base` moved on a write that never happened"
-    assert got["open"] is True, "a refused item dismissed the menu"
-    assert got["kinds"] == got["before"], (
-        f"the ladder changed under a refusal: {got['before']} became {got['kinds']}"
-    )
-    assert got["said"] == got["seen"]["why"], (
-        f"pressing the refused item announced {got['said']!r} rather than its reason"
-    )
+# **Cut 3's gated-status refusal is gone from here on purpose.** It drew every
+# status whose `required_at` names a field the record has not got as a refusal,
+# because there was no form to open; cut 4 opens one on exactly those fields with
+# the new status already in its box, and
+# `test_a_gated_status_opens_the_form_on_what_it_needs_and_saves_both` below is
+# that same question asked of the behaviour that replaced it. What survives of
+# the old branch is a missing field the form has no box for, and it is
+# unreachable in this corpus: every field `required_at` names for every kind is
+# in `POP_SCHEMA.fields` for that kind, measured 2026-09-18, so there is no row
+# to press. `popNeeds` keeps its test in the assertion that the two maps still
+# agree, at the top of the cut-4 section.
 
 
 # --------------------------------------------------------------------------- #
@@ -2504,7 +2494,7 @@ def test_the_graphs_own_item_puts_the_canvas_into_connecting_mode_at_that_node(
         f"a signed-out reader is offered {_ADD_EDGE!r}: `extras` is spliced in outside "
         "the `may()` gate, so a host that does not ask gets no gate at all"
     )
-    for refused in ("status", "owner", "take-out", "no-schema"):
+    for refused in (*WRITE_ITEMS, "no-schema"):
         assert refused not in reader["kinds"], (
             f"the reader's graph draws {refused!r}: {reader['kinds']}"
         )
@@ -2665,4 +2655,1337 @@ def test_a_menu_write_leaves_the_row_marked_and_the_keyboard_somewhere(
     assert got["focus"]["row"] == got["id"], (
         f"the keyboard landed on a {got['focus']['tag']} in row {got['focus']['row']}, "
         f"and the write was on {got['id']}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Cut 4: the form, which is the answer to the question that started the design
+#
+# jcanton, 2026-09-18: *"I'd like to be able to right-click a record in table and
+# graph view and have the option of creating a child record"*, and then *"can we
+# make new-child stay on the same page? ... in both pages a new popup opens: the
+# same as the floating menu but with editable fields (with parent pre-filled) and
+# a save button that commits the new record?"* — and, of `Edit…`, that it should
+# open that same editable card.
+#
+# The form is a THIRD FACE of `#pop`, not a third box, so half of what has to be
+# asked here is about the box rather than about the fields: which face is up,
+# what the box announces itself as while each one is, and — the one rule cut 2
+# wrote that cut 4 changes — what does NOT take a half-filled form away.
+# --------------------------------------------------------------------------- #
+
+
+# How the form face is read. It is deliberately not how an item is read: a form
+# is no `.popitem` at all, `popControls()` is empty while one is up, and every
+# handle below is a `data-kind` slug or the `data-field` on a row — both of which
+# `pop.py` documents. The visible words are copy and are asserted only where the
+# copy is the claim.
+_FORMS = """
+const formIn = () => POP.querySelector('[data-kind="form"]');
+const headingIn = () => {
+  const said = POP.querySelector('[data-kind="form-heading"]');
+  return said ? said.textContent : '';
+};
+const fieldIn = name => POP.querySelector('.popfield[data-field="' + name + '"]');
+// The CONTROL and not the row it sits in. Both carry `data-field`, which is the
+// module's own choice and a sensible one — the row is what a reader of the DOM
+// finds a field by and the control is what carries the value — so a bare
+// `[data-field=…]` answers the wrapper, and every `.value` read off it is
+// `undefined` rather than wrong in a way anything notices.
+const boxIn = name => {
+  const field = fieldIn(name);
+  return field ? field.querySelector('input, select') : null;
+};
+const fieldsInForm = () => [...POP.querySelectorAll('.popfield')].map(one => one.dataset.field);
+// The field's NAME, without the mark the label also carries. A `<label>` holding
+// `Appetite` and an `aria-hidden` ` *` reads `Appetite *` as text, and the two are
+// separate facts with separate readers — `markIn` below is the mark's.
+const nameIn = name => [...fieldIn(name).querySelector('.popname').childNodes]
+  .filter(one => one.nodeType === 3).map(one => one.textContent).join('');
+const markIn = name => fieldIn(name).querySelector('.popreq').textContent;
+const noteIn = name => {
+  const said = fieldIn(name).querySelector('[data-kind="form-note"]');
+  return said ? said.textContent : '';
+};
+const optionsIn = name =>
+  [...boxIn(name).options].map(one => ({value: one.value, text: one.textContent}));
+const whyLines = () =>
+  [...POP.querySelectorAll('[data-kind="form-why-line"]')].map(one => one.textContent);
+const saveIn = () => POP.querySelector('[data-kind="form-save"]');
+const cancelIn = () => POP.querySelector('[data-kind="form-cancel"]');
+// **Whether a form is on screen, which is not the same question as whether one
+// is in the box.** `popClose` deliberately leaves the children where they are —
+// `.drawmenu` cleared its own on close because it had no `[hidden]` rule, and
+// this box has one — so `POP.querySelector('[data-kind="form"]')` answers a
+// dismissed form exactly as it answers a live one, and every `the form closed`
+// assertion written against it would pass with the form still up.
+const formUp = () => popIsOpen() && POP.classList.contains('popforming');
+// Which face the box is wearing, in the four ways it says so. `items: 0` is the
+// one worth having: a box that drew a form and left its menu items underneath is
+// a `role="dialog"` full of `menuitem`s, and nothing else here would notice.
+const formIsUp = () => ({up: formUp(), role: POP.getAttribute('role'),
+                         items: popControls().length, form: !!formIn()});
+// Typed the way a person types: the value, and then the two events a control
+// fires. `change` is the one the form listens to — it re-marks the required
+// fields and re-places the box — so a test that assigned `.value` alone would be
+// asking about a form nobody had touched.
+const typeInto = (name, value) => {
+  const box = boxIn(name);
+  if (box.type === 'checkbox') box.checked = !!value;
+  else box.value = value;
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  box.dispatchEvent(new Event('change', {bubbles: true}));
+  return box;
+};
+// The press, and not a call to `popSave()`. The button is `type="submit"` inside
+// a real `<form>`, so what is being asked is that the browser's own submit
+// reaches the handler — which is also the whole of the keyboard's path through
+// this box, since Enter in any field submits and nothing else here would say so.
+const pressSave = () => saveIn().click();
+// A record and a status it cannot be given as it stands, SEARCHED rather than
+// named: which rung this corpus can ask that about is a fact about `seed/`,
+// which is the demo and is free to be rewritten. `popMissing` is the module's
+// own reading of `required_at`, which is itself derived by running the gate over
+// a blank record — so what comes back is the rule and not a copy of it.
+const shortOf = least => {
+  for (const status of POP_SCHEMA.statuses.task) {
+    const row = rowWhere(one => one.kind === 'task' && one.status !== status
+                                && popMissing(one, status).length >= least);
+    if (row) return {row: row, gate: status, missing: popMissing(row, status)};
+  }
+  return null;
+};
+"""
+
+
+def _at_a_form(
+    index: Index, where: Path, script: str, patience: int = 3500, tall: int = 900
+) -> dict:
+    """One writer's table in Chrome, asked one question about the form.
+
+    `tall` is a parameter for the reason `measured_in` has one: `placeFloat`
+    flips a box against the bottom gutter, so where a form ends up is a fact
+    about the window and one window is the one thing that cannot show it.
+    """
+    return measured_in(
+        chrome(),
+        a_writers_table(index),
+        where,
+        1280,
+        _OPENING + _READERS + _WRITING + _FORMS + script,
+        height=tall,
+        patience=patience,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# `New child ▸`, which is the item that was asked for
+# --------------------------------------------------------------------------- #
+
+
+_CHILD_KINDS = """
+const seen = {};
+// Every rung a plan view draws, asked for its own list. Which kinds those are
+// comes off the payload rather than out of a list here, and what each may hold
+// comes off `POP_SCHEMA.child_kinds` — the model's own `CHILD_KINDS`. The claim
+// is that the MENU offers what the ladder says, not that either agrees with a
+// list somebody typed into a test.
+const drawn = [...new Set(Object.values(DATA.rows).map(one => one.kind))];
+for (const kind of drawn) {
+  const row = rowWhere(one => one.kind === kind);
+  openOn(row.id);
+  const item = itemIn('new-child');
+  const at = {word: wordIn(item), mark: partIn(item, 'popmark'),
+              haspopup: item.getAttribute('aria-haspopup'),
+              disabled: item.getAttribute('aria-disabled'), why: item.dataset.why || ''};
+  item.click();
+  at.said = said();
+  // One level down, or still at the top: a refused item answers and the box
+  // stays exactly where it was, which is a different thing from drilling into an
+  // empty list and is the difference this reads.
+  at.depth = POP_STACK.length;
+  at.label = POP.getAttribute('aria-label');
+  at.inside = popControls().map(one => ({kind: one.dataset.kind, word: wordIn(one)}));
+  seen[kind] = at;
+  popClose();
+}
+// And the two rungs no plan view draws a row for. `issue` and `note` are
+// `planned: false`, so there is no row to press on any of the three hosts and
+// the item builder itself is the only place the question can be put — which is
+// worth doing, because "nothing is filed inside one" is exactly the answer a
+// menu that inverted `parent_kinds` in the browser would get wrong for them.
+const unplanned = {};
+for (const kind of Object.keys(POP_SCHEMA.child_kinds).filter(one => !drawn.includes(one)))
+  unplanned[kind] = popNewChildItem({id: kind + '-000001', kind: kind, title: 'Off the plan'});
+return {seen, unplanned, drawn, child: POP_SCHEMA.child_kinds,
+        sent: patches().length + posts().length};
+"""
+
+
+def test_new_child_offers_exactly_the_kinds_that_rung_may_hold(index: Index, tmp_path: Path):
+    """One entry per kind this record may hold, and a sentence where there are
+    none.
+
+    The list is `CHILD_KINDS` — the model's own map, read downwards — and not an
+    inversion of `parent_kinds` done in the browser. A third spelling of the
+    ladder in the one language nothing here tests it in is the drift the whole
+    schema exists to stop, and the two maps are already held to being exact
+    inverses in `test_the_ladder_reads_the_same_in_both_directions`.
+
+    **A rung that holds nothing is refused and not left out**, and the sentence
+    is about the LADDER rather than about this record: nothing is ever filed
+    inside a task, so "this one has no children yet" would imply a fix that does
+    not exist. That is `moveTip`'s distinction (`table.py`) for the drag gesture,
+    made again for the same records.
+
+    A task is the one a plan view can be pressed on. An issue and a note hold
+    nothing either and are `planned: false`, so no host draws a row for one — the
+    item builder is asked directly, which is the only place that question exists.
+    """
+    got = _at_a_form(index, tmp_path / "children.html", _CHILD_KINDS)
+
+    assert not got.get("error"), got
+    assert len(got["drawn"]) >= 3, (
+        f"the table draws only {got['drawn']}, so this asks about one branch of the ladder"
+    )
+    holding = [kind for kind in got["drawn"] if got["child"][kind]]
+    empty = [kind for kind in got["drawn"] if not got["child"][kind]]
+    assert holding and empty, (
+        f"every rung on this table {'holds' if holding else 'holds nothing'}, so only one "
+        f"branch of this test is reachable: {got['child']}"
+    )
+    for kind in holding:
+        at = got["seen"][kind]
+        assert at["word"] == "New child", at
+        assert at["haspopup"] == "menu", (
+            f"a {kind}'s New child is not announced as opening a list: {at}"
+        )
+        assert at["mark"] == "›", f"a {kind}'s New child draws {at['mark']!r} behind the word"
+        assert at["disabled"] is None, f"a {kind} may hold {got['child'][kind]} and was refused"
+        assert at["depth"] == 2, f"pressing New child on a {kind} did not drill: {at}"
+        assert at["label"] == "New child", at["label"]
+        assert [one["kind"] for one in at["inside"]] == [
+            "back",
+            *[f"new-child-{child}" for child in got["child"][kind]],
+        ], at["inside"]
+        assert [one["word"] for one in at["inside"][1:]] == [
+            HUMAN[child] for child in got["child"][kind]
+        ], (
+            f"a {kind}'s children are drawn {[one['word'] for one in at['inside'][1:]]} — the "
+            "words are `HUMAN`'s, or this menu has a vocabulary of its own"
+        )
+    for kind in empty:
+        at = got["seen"][kind]
+        assert at["disabled"] == "true", f"a {kind} holds nothing and its New child acts: {at}"
+        assert at["why"] == f"Nothing is filed inside a {kind}.", at["why"]
+        assert at["said"] == at["why"], (
+            f"pressing a {kind}'s refused New child announced {at['said']!r}"
+        )
+        assert at["depth"] == 1, (
+            f"a refused New child drilled into an empty list on a {kind}: {at}"
+        )
+    for kind, item in got["unplanned"].items():
+        assert got["child"][kind] == [], (
+            f"{kind} holds {got['child'][kind]} and no view draws a row for one, so this "
+            "half of the test is asking about the wrong rungs"
+        )
+        assert item["why"] == f"Nothing is filed inside a {kind}.", item
+    assert got["sent"] == 0, "opening the New child list wrote to the plan"
+
+
+_NEW_CHILD_FORM = """
+const parent = rowWhere(one => (POP_SCHEMA.child_kinds[one.kind] || []).length);
+if (!parent) return {error: 'no row on this table may hold anything'};
+const kind = POP_SCHEMA.child_kinds[parent.kind][0];
+openOn(parent.id);
+itemIn('new-child').click();
+itemIn('new-child-' + kind).click();
+const box = boxIn('parent');
+const filled = box.value;
+// Pushed at, with the id of a record that really could hold this kind. The
+// option is not in the list, so the box cannot be told to hold it — which is a
+// stronger reading of "locked" than `disabled` on its own, and the strongest one
+// is in the test below, where the POST is read after the control has been forced.
+const other = Object.values(DATA.rows).find(one => one.id !== parent.id
+  && (POP_SCHEMA.parent_kinds[kind] || []).includes(one.kind));
+box.value = other ? other.id : 'nothing-000000';
+const tampered = box.value;
+box.dispatchEvent(new Event('change', {bubbles: true}));
+const first = document.activeElement;
+return {parent: {id: parent.id, title: parent.title, kind: parent.kind}, kind,
+        other: other ? other.id : null, filled, tampered,
+        up: formIsUp(), heading: headingIn(), label: POP.getAttribute('aria-label'),
+        fields: fieldsInForm(), schema: POP_SCHEMA.fields[kind],
+        parentBox: {tag: box.tagName, value: box.value, disabled: box.disabled,
+                    options: optionsIn('parent')},
+        note: noteIn('parent'),
+        status: boxIn('status').value, opens: POP_SCHEMA.opens[kind],
+        verb: saveIn().textContent, cancel: cancelIn().textContent,
+        focused: {field: first.dataset.field, tag: first.tagName},
+        why: whyLines(), hidden: POP.querySelector('[data-kind="form-why"]').hidden,
+        sent: patches().length + posts().length};
+"""
+
+
+def test_new_child_opens_the_form_with_the_parent_filled_and_locked(index: Index, tmp_path: Path):
+    """The box's third face: `role="dialog"`, a form of this kind's fields, and
+    not one `.popitem` left underneath it.
+
+    **The parent is filled and locked, and the lock is drawn rather than
+    hidden.** It is not a choice — it is the record the menu was opened on, and
+    offering it again is the gesture said twice — so the control is there,
+    disabled, holding one option, with the sentence under it saying why. A
+    control that disappears teaches nothing about why, which is the same rule
+    that draws a refused item instead of leaving it out.
+
+    Three things beside it are asserted because each is a lie the form could tell
+    instead. The fields are `POP_SCHEMA.fields[kind]` — per kind, off
+    `_editable_for`, so the form cannot offer a box the validator then complains
+    about. The status box opens holding `opens_at(kind)` rather than empty, which
+    is both a required field answered and the form not lying about what Create
+    will write. And the keyboard lands in Title — never the locked picker and
+    never `<body>` — because a title is the one thing the record cannot be
+    created without.
+    """
+    got = _at_a_form(index, tmp_path / "newchild.html", _NEW_CHILD_FORM)
+
+    assert not got.get("error"), got
+    assert got["up"] == {"up": True, "role": "dialog", "items": 0, "form": True}, got["up"]
+    wanted = f'New {HUMAN[got["kind"]].lower()} in "{got["parent"]["title"]}"'
+    assert got["heading"] == wanted, got["heading"]
+    assert got["label"] == wanted, (
+        f"the box announces itself as {got['label']!r} while it is a form — a reader "
+        "arriving inside it is told which menu they are in"
+    )
+    assert got["fields"] == got["schema"], (
+        f"the form drew {got['fields']} and this kind's editable fields are {got['schema']}"
+    )
+    assert got["parentBox"]["tag"] == "SELECT", (
+        f"the parent is a {got['parentBox']['tag']}, and a box you can type an id into is "
+        "the one control that can express a record that does not exist"
+    )
+    assert got["filled"] == got["parent"]["id"], (
+        f"the picker opened holding {got['filled']!r} and the menu was opened on "
+        f"{got['parent']['id']!r} — `New child` means this record and no other"
+    )
+    assert got["parentBox"]["disabled"] is True, "the parent of a new child can be changed"
+    assert got["parentBox"]["options"] == [
+        {"value": got["parent"]["id"], "text": got["parent"]["title"]}
+    ], (
+        f"the locked picker offers {got['parentBox']['options']} — one option and no "
+        "`— nothing —`, because an unfiled new child is not what New child means"
+    )
+    assert got["other"], "the corpus holds no second record of a kind that could hold this one"
+    assert got["tampered"] != got["other"], (
+        "the locked picker took the id of a record it does not offer: a `<select>` told to "
+        "hold a value with no option for it is the one state this control must not reach"
+    )
+    assert got["note"] == (
+        f'Filed under "{got["parent"]["title"]}", which is what New child means.'
+    ), got["note"]
+    assert got["status"] == got["opens"], (
+        f"the status box opens holding {got['status']!r} and this kind opens at "
+        f"{got['opens']!r} — an empty one is a required field the reader has to fill "
+        "before they have said anything, and a form lying about what Create writes"
+    )
+    assert got["verb"] == f"Create {HUMAN[got['kind']].lower()}", got["verb"]
+    assert got["cancel"] == "Cancel"
+    assert got["focused"] == {"field": "title", "tag": "INPUT"}, (
+        f"the keyboard landed on {got['focused']}, and the one field a record cannot be "
+        "created without is Title"
+    )
+    assert got["why"] == [] and got["hidden"] is True, (
+        "the refusal list is drawn over a form nobody has pressed Save on yet"
+    )
+    assert got["sent"] == 0, "opening a form wrote to the plan"
+
+
+_CREATING = """
+const parent = rowWhere(one => (POP_SCHEMA.child_kinds[one.kind] || []).length);
+if (!parent) return {error: 'no row on this table may hold anything'};
+const kind = POP_SCHEMA.child_kinds[parent.kind][0];
+const title = 'A child made from the menu';
+openOn(parent.id);
+itemIn('new-child').click();
+itemIn('new-child-' + kind).click();
+typeInto('title', title);
+// **The locked picker forced open and pointed somewhere else**, which is what
+// makes the assertion on the POST below a claim about the lock rather than about
+// a box nobody touched. `popCreated` reads the ROW the menu was opened on and
+// never this control, and that is the whole of what `New child` means.
+const stray = Object.values(DATA.rows).find(one => one.id !== parent.id
+  && (POP_SCHEMA.parent_kinds[kind] || []).includes(one.kind));
+if (!stray) return {error: 'the corpus holds no second record that could hold this kind'};
+const picker = boxIn('parent');
+picker.disabled = false;
+picker.append(new Option(stray.title, stray.id));
+picker.value = stray.id;
+pressSave();
+const during = {disabled: saveIn().disabled, said: said(), posts: posts().length};
+await rest(1000);
+const id = Object.keys(MADE)[0] || null;
+return {parent: {id: parent.id, title: parent.title}, kind, title, stray: stray.id, id,
+        opens: POP_SCHEMA.opens[kind], during,
+        sent: posts(), patched: patches().length,
+        said: said(), closed: !popIsOpen(), form: formUp(),
+        row: id ? DATA.rows[id] : null,
+        drawn: id ? menuRows().some(tr => tr.dataset.id === id) : false,
+        made: Object.keys(MADE).length, base: baseNow(), beats: beatsNow()};
+"""
+
+
+def test_saving_the_form_creates_the_record_under_the_record_it_was_opened_on(
+    index: Index, tmp_path: Path
+):
+    """One POST, and every key in it accounted for.
+
+    **Empty is not a value on a create**, which is why the body is asserted whole
+    rather than by containment: `opening_fields` (`model.py`) is what decides what
+    a new record starts life with, and a form that sent `owner: null` for every
+    box nobody filled would write an empty key into the file for each of them, in
+    a corpus whose whole premise is that the file is the document. So the payload
+    is the kind, the title somebody typed, the status the box was opened holding,
+    and the parent — and nothing else, out of fifteen controls.
+
+    **The parent is the row the menu was opened on**, and this test forces the
+    control to say otherwise before pressing Save: the picker is re-enabled, given
+    an option for a different record and set to it. A form that read its own
+    control would file the record under the stray, and it is the one defect here
+    that no reading of the DOM can see afterwards.
+
+    The rest is the receipt. `popLanded` names the title AND the id — the id was
+    minted a moment ago and nobody has seen it, the title is the half the person
+    who typed it recognises — and with nothing filtered the record is on screen,
+    so the sentence makes no claim about where it went. The half that says
+    otherwise is `test_a_child_created_under_a_filter_says_where_it_went`.
+    """
+    got = _at_a_form(index, tmp_path / "creating.html", _CREATING)
+
+    assert not got.get("error"), got
+    assert len(got["sent"]) == 1, got["sent"]
+    assert got["patched"] == 0, "a create went out as a PATCH as well"
+    assert got["sent"][0]["url"] == "/api/record", got["sent"][0]
+    assert got["sent"][0]["body"] == {
+        "base_commit": HEAD,
+        "fields": {
+            "kind": got["kind"],
+            "title": got["title"],
+            "status": got["opens"],
+            "parent": got["parent"]["id"],
+        },
+        "body": None,
+    }, got["sent"][0]["body"]
+    assert got["sent"][0]["body"]["fields"]["parent"] != got["stray"], (
+        "the record was filed under the record the forced control named rather than "
+        "under the one the menu was opened on"
+    )
+    assert got["during"]["posts"] == 1, "the press sent no create at all"
+    assert got["during"]["disabled"] is True, (
+        "Save is still pressable while the commit is in the air, which is how two "
+        "presses 0.9s apart minted two records on the deployed service"
+    )
+    assert "Creating" in got["during"]["said"], (
+        f"nothing was said while the commit was in the air: {got['during']['said']!r} — two "
+        "seconds of a box that looks untouched is what taught somebody to press Create twice"
+    )
+    assert got["made"] == 1 and got["id"], got
+    assert got["form"] is False and got["closed"] is True, (
+        "the form outlived the commit that landed, over a table that has just been redrawn"
+    )
+    assert got["row"], "the host never found the record it had just made"
+    assert got["row"]["title"] == got["title"], got["row"]
+    assert got["row"]["parent"] == got["parent"]["id"], got["row"]
+    assert got["row"]["kind"] == got["kind"], got["row"]
+    assert got["drawn"] is True, (
+        "the new record is in `DATA.rows` and not in the tbody: `wrote()` re-read the "
+        "plan and nothing drew from it"
+    )
+    assert got["said"] == f"Created {got['title']} ({got['id']})", got["said"]
+    assert got["base"] == "c0ffee1", (
+        f"`#base` is still {got['base']} after a create, so the next write from this page "
+        "collides with the commit it just made"
+    )
+    assert got["beats"] == {"writing": 1, "wrote": ["c0ffee1"]}, got["beats"]
+
+
+_TWICE_ON_SAVE = """
+const parent = rowWhere(one => (POP_SCHEMA.child_kinds[one.kind] || []).length);
+if (!parent) return {error: 'no row on this table may hold anything'};
+const kind = POP_SCHEMA.child_kinds[parent.kind][0];
+// The answer HELD, which is the whole of the state this guard is about: a write
+// here is a commit and a push against a repository on GitHub, so it is seconds,
+// and the form stays up for all of them with Save under the pointer.
+let release = null;
+ANSWER = seen => new Promise(done => {
+  release = () => done({status: 201, body: {id: nextId(seen.body.fields.kind),
+    outcome: 'committed', commit: 'c0ffee1', pushed: true}});
+});
+openOn(parent.id);
+itemIn('new-child').click();
+itemIn('new-child-' + kind).click();
+typeInto('title', 'Pressed twice');
+pressSave();
+const held = {disabled: saveIn().disabled, posts: posts().length};
+// Twice more, by both routes. The button is how a pointer repeats it; the submit
+// is Enter's path and the one that reaches `popSave` PAST a disabled button —
+// which is why the rule is a flag and the attribute is only how it is shown.
+pressSave();
+formIn().dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+await rest(250);
+const during = {posts: posts().length, why: whyLines(), form: formUp(),
+                open: popIsOpen(), title: boxIn('title').value, writing: beats.writing};
+if (!release) return {error: 'the first press sent no create, so nothing is in the air'};
+release();
+await rest(1000);
+return {parent: parent.id, kind, held, during, posts: posts(),
+        made: Object.keys(MADE), said: said(), closed: !popIsOpen(), beats: beatsNow()};
+"""
+
+
+def test_two_presses_on_save_with_no_gap_create_one_record(index: Index, tmp_path: Path):
+    """**`POST /api/record` is not idempotent, and that is the whole difference
+    from every other write this menu makes.**
+
+    `CREATING` exists in `table.py` because two presses 0.9s apart minted two
+    records on the deployed service. A PATCH repeated is the same write — same
+    value, same base, and `_merge_frontmatter` skips a key whose stored value
+    already equals the one being sent — so the advice after a lost answer is "try
+    it again". A create repeated is a second record, and the advice has to be to
+    go and look first.
+
+    So the second press is refused, and it is refused by both routes: the button
+    is disabled while the commit is in the air, and `POP_WRITING` catches
+    everything that does not go through the button. The submit dispatched here is
+    Enter's path, which is exactly that — a form whose only guard was the
+    attribute would pass the first assertion and mint a second record from the
+    keyboard.
+
+    And the refusal is DRAWN, into the form's own list, rather than only
+    announced: the reader is looking at the box, and a refusal only a screen
+    reader hears is a Save that looks like it did nothing at all.
+
+    The answer is held rather than raced. Against an answer that came back
+    immediately this would be asking nothing, because the guard is only ever true
+    while a write is in the air.
+    """
+    got = _at_a_form(index, tmp_path / "twicesave.html", _TWICE_ON_SAVE, patience=4500)
+
+    assert not got.get("error"), got
+    assert got["held"] == {"disabled": True, "posts": 1}, got["held"]
+    assert got["during"]["posts"] == 1, (
+        f"{got['during']['posts']} creates went out for three presses of one Save"
+    )
+    assert got["during"]["writing"] == 1, (
+        "a refused press dispatched `openproj:writing` before it was refused, so the "
+        "shell's count is held one too high for the rest of the page's life"
+    )
+    assert got["during"]["why"] == ["A save is already going out. Wait for it to answer."], (
+        f"the second press was refused in silence, or somewhere else: {got['during']['why']}"
+    )
+    assert got["during"]["form"] is True, "the box went down before the answer arrived"
+    assert got["during"]["title"] == "Pressed twice", (
+        "the refusal rebuilt the form and lost what was typed into it"
+    )
+    assert len(got["posts"]) == 1, got["posts"]
+    assert len(got["made"]) == 1, (
+        f"the plan holds {len(got['made'])} new records after one person pressed Create: "
+        f"{got['made']}"
+    )
+    assert got["closed"] is True
+    assert got["said"].startswith("Created "), got["said"]
+    assert got["beats"] == {"writing": 1, "wrote": ["c0ffee1"]}, got["beats"]
+
+
+# --------------------------------------------------------------------------- #
+# `Edit…`, which is the same face opened on a record that exists
+# --------------------------------------------------------------------------- #
+
+
+_EDITING = """
+const row = rowWhere(one => one.kind === 'task' && one.status && one.title);
+if (!row) return {error: 'the corpus draws no task'};
+openOn(row.id);
+const item = itemIn('edit');
+const word = wordIn(item);
+item.click();
+const opened = {up: formIsUp(), heading: headingIn(), fields: fieldsInForm(),
+                schema: POP_SCHEMA.fields[row.kind], held: {}, locked: {}, names: {}};
+for (const name of fieldsInForm()) {
+  const box = boxIn(name);
+  opened.held[name] = box.type === 'checkbox' ? box.checked : box.value;
+  opened.locked[name] = box.disabled;
+  opened.names[name] = nameIn(name);
+}
+opened.note = noteIn('depends_on');
+// Nothing touched. A Save here has nothing to send, and it has to say so in the
+// box rather than by closing it: a form that quietly dismissed itself is
+// indistinguishable from one that wrote something.
+pressSave();
+await rest(400);
+const quiet = {why: whyLines(), sent: patches().length, form: formUp(),
+               focused: document.activeElement.dataset.kind};
+const title = row.title + ' (edited from the menu)';
+typeInto('title', title);
+pressSave();
+await rest(1000);
+return {id: row.id, was: row, title, word, opened, quiet,
+        sent: patches(), posted: posts().length, said: said(), closed: !popIsOpen(),
+        base: baseNow(), now: DATA.rows[row.id].title, beats: beatsNow()};
+"""
+
+
+def test_edit_opens_on_the_record_and_saves_only_what_changed(index: Index, tmp_path: Path):
+    """Every field `_editable_for` offers this kind, holding what the record
+    holds — and a Save that sends the difference and nothing else.
+
+    **Diff-only, and the reason is the commit message rather than the commit.**
+    `_merge_frontmatter` would skip a key whose stored value already equals the
+    one being sent, so a whole-form PATCH would commit exactly the same thing —
+    but the message NAMES the fields, and a line saying fifteen fields were
+    written when one was is a line in somebody's history that is not true.
+    `git log --follow` on a record is one of the two ways this plan is read.
+
+    That also makes the round trip a claim rather than an accident: every control
+    here is drawn from the row, read back, and compared, so a value this form
+    renders one way and reads another shows up as a field in the payload that
+    nobody touched. A list joined with the wrong separator, a number that came
+    back a string, a date box that reports something other than what it was
+    given — each of them is a silent rewrite of a field the reader never looked
+    at, and each fails on the length of `fields` below.
+
+    **`depends_on` is drawn disabled with a sentence, and that is the single most
+    useful thing the per-kind schema produced.** `_row` (`rows.py`) ships
+    `blocked_by` — a COUNT — and no `depends_on` at all, while the graph's node
+    data carries the list, because `_elements` adds it. A form that drew the box
+    unconditionally would show an empty list over a record with three
+    dependencies on this view, and anything typed there REPLACES them. The form
+    asks `name in row` rather than carrying a list of field names, so the same
+    code writes a box on one host and a sentence on the other.
+    """
+    got = _at_a_form(index, tmp_path / "editing.html", _EDITING, patience=4500)
+
+    assert not got.get("error"), got
+    was = got["was"]
+    assert got["word"] == "Edit…", got["word"]
+    assert got["opened"]["up"] == {
+        "up": True,
+        "role": "dialog",
+        "items": 0,
+        "form": True,
+    }, got["opened"]["up"]
+    assert got["opened"]["heading"] == f'Edit "{was["title"]}"', got["opened"]["heading"]
+    assert got["opened"]["fields"] == got["opened"]["schema"], (
+        f"the form drew {got['opened']['fields']} and this kind's editable fields are "
+        f"{got['opened']['schema']}"
+    )
+    held = got["opened"]["held"]
+    # Spelled out per type rather than run through the module's own `popRawOf`,
+    # which would be the test agreeing with the code it is asking about.
+    assert held["title"] == was["title"], held["title"]
+    assert held["status"] == was["status"], held
+    assert held["priority"] == (was["priority"] or ""), held
+    assert held["owner"] == (was["owner"] or ""), held
+    assert held["assignees"] == ", ".join(was["assignees"] or []), held
+    assert held["review_waived"] is bool(was["review_waived"]), held
+    assert held["start_date"] == (was["start_date"] or ""), held
+    assert got["opened"]["names"]["person_weeks"] == LABELS["person_weeks"], (
+        "the form names a field by its own key rather than by the one word the whole "
+        f"app calls it: {got['opened']['names']['person_weeks']!r}"
+    )
+    assert got["opened"]["locked"]["title"] is False, "the title of a record cannot be edited"
+    assert got["opened"]["locked"]["depends_on"] is True, (
+        "the table carries `blocked_by`, a count, and no `depends_on` — so this box is "
+        "drawn empty over a record that has dependencies, and a Save deletes them"
+    )
+    assert got["opened"]["note"] == (
+        "This view does not carry it — edit it on the record's own page."
+    ), got["opened"]["note"]
+    assert got["quiet"]["why"] == ["Nothing has changed."], got["quiet"]["why"]
+    assert got["quiet"]["sent"] == 0, "a Save with nothing changed went out as a PATCH"
+    assert got["quiet"]["form"] is True, (
+        "a Save with nothing to send closed the form, which is what a Save that wrote "
+        "something looks like"
+    )
+    assert got["quiet"]["focused"] == "form-why", got["quiet"]
+    assert len(got["sent"]) == 1, got["sent"]
+    assert got["posted"] == 0, "editing a record that exists went out as a create"
+    assert got["sent"][0]["url"] == f"/api/record/{got['id']}", got["sent"][0]
+    assert got["sent"][0]["body"] == {
+        "base_commit": HEAD,
+        "fields": {"title": got["title"]},
+        "body": None,
+    }, (
+        "the Save sent more than the one field that changed — which commits a message "
+        f"naming every one of them: {got['sent'][0]['body']}"
+    )
+    assert got["said"] == f"{was['title']}: {LABELS['title']} saved", got["said"]
+    assert got["closed"] is True and got["base"] == "c0ffee1"
+    assert got["now"] == got["title"], "the row still reads the old title after its own write"
+    assert got["beats"] == {"writing": 1, "wrote": ["c0ffee1"]}, got["beats"]
+
+
+# --------------------------------------------------------------------------- #
+# A refusal, which is the whole reason the form is a face of this box
+# --------------------------------------------------------------------------- #
+
+
+_REFUSED_FORM = """
+const row = rowWhere(one => one.kind === 'task' && one.status && one.title);
+if (!row) return {error: 'the corpus draws no task'};
+const somebody = POP_SCHEMA.people.find(login => login !== row.owner);
+if (!somebody) return {error: 'the corpus knows only one person'};
+// A RULE's own sentence, raised as an HTTPException(409) before anything is
+// written. Not one of the thirteen is a concurrent write, which is why the box
+// has to stay up: this is news somebody can act on.
+const RULE = 'a task may not be filed under a task, and this one is';
+ANSWER = () => ({status: 409, body: {detail: RULE}});
+openOn(row.id);
+itemIn('edit').click();
+const typed = row.title + ' — typed and not yet saved';
+typeInto('title', typed);
+typeInto('owner', somebody);
+pressSave();
+await rest(900);
+const refused = {form: formUp(), up: formIsUp(), why: whyLines(),
+                 title: boxIn('title').value, owner: boxIn('owner').value,
+                 focused: document.activeElement.dataset.kind,
+                 disabled: saveIn().disabled, sent: patches().length,
+                 base: baseNow(), beats: beatsNow(), now: DATA.rows[row.id].title};
+// **The five signals that take a MENU away, every one of which would be a silent
+// deletion of what somebody has typed.** Each is sent the way the page produces
+// it, and the scroll is dispatched on `.table-scroll` and does not bubble —
+// which is the point, since that is the box the rows scroll inside.
+document.body.dispatchEvent(
+  new PointerEvent('pointerdown', {bubbles: true, clientX: 5, clientY: 5}));
+document.querySelector('.table-scroll').dispatchEvent(new Event('scroll'));
+dispatchEvent(new CustomEvent('openproj:filter'));
+dispatchEvent(new CustomEvent('openproj:wrote', {detail: 'c0ffeeff'}));
+// And a right press on a DIFFERENT row, which is the one signal that would not
+// merely hide the box: it is a `replaceChildren` over every control in it.
+const elsewhere = menuRows().find(tr => tr.dataset.id !== row.id);
+const stray = rightOn(elsewhere, 420, 420);
+const survived = {form: formUp(), title: boxIn('title').value, owner: boxIn('owner').value,
+                  open: popIsOpen(), about: popAbout(), prevented: stray.defaultPrevented,
+                  why: whyLines()};
+// Pressed again, and this time it lands. What goes out is what is still in the
+// boxes, which is what proves the values were KEPT rather than merely drawn.
+ANSWER = () => ({status: 200,
+                 body: {outcome: 'committed', commit: 'c0ffee2', pushed: true}});
+pressSave();
+await rest(1000);
+const landed = {sent: patches(), said: said(), closed: !popIsOpen(), base: baseNow()};
+// And the two ways a form is left on purpose, which are the only two that work.
+openOn(row.id);
+itemIn('edit').click();
+typeInto('title', 'thrown away on purpose');
+pressKey('Escape');
+const escaped = {open: popIsOpen(), form: formUp(), said: said(),
+                 sent: patches().length};
+return {id: row.id, was: row.title, typed, somebody, RULE, refused, survived, landed, escaped};
+"""
+
+
+def test_a_refusal_keeps_the_form_open_with_everything_typed_still_in_it(
+    index: Index, tmp_path: Path
+):
+    """**This is why the form is a face of `#pop` and not a page**, and it is the
+    one rule cut 2 wrote down that cut 4 changes.
+
+    A refusal keeps the form open with the reader's values in it: `popSay`
+    branches on `POP_FORM` and puts the sentence into the form's own list without
+    rebuilding anything, so the controls are the same elements holding the same
+    typing. The second Save is what proves it — the values that go out are the
+    ones that were on screen, and a form that redrew itself from the row would
+    send the row's.
+
+    And the box is **not dismissed by somebody looking at the page**. Every one
+    of the six signals that kill a menu means "the reader is reaching for
+    something else", which for a list of words is a reason to get out of the way
+    and for a half-filled form is a silent deletion: a click on the row behind
+    it, a scroll of the table under it, a filter, a write landing elsewhere, and
+    the work is gone with nothing said. Three of the last four audit rounds
+    shipped a defect of exactly that shape. `popClose` returns early while
+    `POP_FORM` is set unless `POP_SHUTTING`, which only `popDone` sets — so
+    Escape, Cancel and a commit that landed are the three ways out, and they are
+    all decisions.
+
+    A right press elsewhere is the sixth and the only one that is not a hide:
+    `popMenu` answers `true` without touching the form, so the view still calls
+    `preventDefault` and the browser's own menu does not open over the top of it.
+    That is the contract change — "whether this module answered the press" rather
+    than "whether a menu was opened", which is what the call site was always
+    really asking.
+    """
+    got = _at_a_form(index, tmp_path / "refusedform.html", _REFUSED_FORM, patience=6000)
+
+    assert not got.get("error"), got
+    assert got["refused"]["form"] is True, (
+        "the refusal closed the form, so everything typed into it is gone and the "
+        "reason went with it"
+    )
+    assert got["refused"]["up"]["up"] is True and got["refused"]["up"]["role"] == "dialog"
+    assert got["refused"]["why"] == [got["RULE"]], (
+        f"the form says {got['refused']['why']} and the server said {got['RULE']!r} — a "
+        "rule's own sentence read as the store's conflict report sends the reader to "
+        "reload against a plan nobody touched"
+    )
+    assert got["refused"]["title"] == got["typed"], (
+        f"the title box holds {got['refused']['title']!r} after a refusal and "
+        f"{got['typed']!r} was typed into it"
+    )
+    assert got["refused"]["owner"] == got["somebody"], got["refused"]
+    assert got["refused"]["focused"] == "form-why", (
+        f"the keyboard is on {got['refused']['focused']!r} rather than on the reason the "
+        "Save did not happen"
+    )
+    assert got["refused"]["disabled"] is False, (
+        "Save is still disabled after a refusal, so the one thing to do about it cannot "
+        "be done"
+    )
+    assert got["refused"]["sent"] == 1 and got["refused"]["base"] == HEAD
+    assert got["refused"]["now"] == got["was"], "the row changed under a write that was refused"
+    assert got["refused"]["beats"] == {"writing": 1, "wrote": [None]}, (
+        f"the event pair does not balance over a refusal: {got['refused']['beats']}"
+    )
+    assert got["survived"]["form"] is True, (
+        "a press outside, a scroll, a filter, a write landing elsewhere or a right press "
+        "on another row took a half-filled form away"
+    )
+    assert got["survived"]["title"] == got["typed"], got["survived"]
+    assert got["survived"]["owner"] == got["somebody"], got["survived"]
+    assert got["survived"]["why"] == [got["RULE"]], (
+        "the reason went off the screen while the boxes it is about stayed"
+    )
+    assert got["survived"]["about"] == got["id"], (
+        f"the box is now about {got['survived']['about']}, so the right press rebuilt it "
+        "over the form"
+    )
+    assert got["survived"]["prevented"] is True, (
+        "the view did not call `preventDefault` on a press this module answered, so the "
+        "browser's own menu opens on top of a half-filled form"
+    )
+    assert len(got["landed"]["sent"]) == 2, got["landed"]["sent"]
+    assert got["landed"]["sent"][1]["body"]["fields"] == {
+        "title": got["typed"],
+        "owner": got["somebody"],
+    }, (
+        "the second Save sent something other than what was in the boxes: the form was "
+        f"rebuilt from the row under the refusal — {got['landed']['sent'][1]['body']}"
+    )
+    assert got["landed"]["said"] == (
+        f"{got['was']}: {LABELS['title']} and {LABELS['owner']} saved"
+    ), got["landed"]["said"]
+    assert got["landed"]["closed"] is True and got["landed"]["base"] == "c0ffee2"
+    assert got["escaped"]["open"] is False and got["escaped"]["form"] is False, (
+        "Escape did not take the form away, and it is one of the three closes that are "
+        "decisions rather than somebody looking at the page"
+    )
+    assert got["escaped"]["said"] == "nothing was changed", got["escaped"]["said"]
+    assert got["escaped"]["sent"] == 2, "Escape out of a form wrote to the plan"
+
+
+# --------------------------------------------------------------------------- #
+# `Assign parent…`, which is the one field the answer to is another record
+# --------------------------------------------------------------------------- #
+
+
+_THE_PICKER = """
+const row = rowWhere(one => one.kind === 'task' && one.parent && !one.off_plan_parent);
+if (!row) return {error: 'the corpus draws no task filed under something'};
+const allowed = POP_SCHEMA.parent_kinds[row.kind] || [];
+// What the picker OUGHT to hold, worked out from the payload this page was
+// rendered with rather than from the module being asked about: every row of a
+// kind that may hold this one, except this one.
+const legal = Object.values(DATA.rows)
+  .filter(one => one.id !== row.id && allowed.includes(one.kind))
+  .map(one => one.id);
+// And a record of a kind that may NOT hold it, which has to be on the plan or
+// the assertion that it is absent is about nothing.
+const wrongKind = Object.values(DATA.rows).find(one => !allowed.includes(one.kind)
+                                                       && one.id !== row.id);
+openOn(row.id);
+const item = itemIn('parent');
+const word = wordIn(item);
+item.click();
+const box = boxIn('parent');
+const opened = {up: formIsUp(), heading: headingIn(), fields: fieldsInForm(),
+                tag: box.tagName, disabled: box.disabled, value: box.value,
+                inputs: POP.querySelectorAll('.popform input').length,
+                options: optionsIn('parent')};
+opened.kinds = opened.options.filter(one => one.value)
+  .map(one => (DATA.rows[one.value] || {}).kind || null);
+const next = opened.options.map(one => one.value)
+  .find(one => one && one !== row.parent);
+if (!next) return {error: 'the corpus offers no second legal parent to move to'};
+typeInto('parent', next);
+pressSave();
+await rest(1000);
+const landed = {sent: patches(), said: said(), closed: !popIsOpen(),
+                now: DATA.rows[row.id].parent, posted: posts().length};
+// And the host that cannot list its records at all, which is the timeline and
+// the static export. The item refuses with a sentence rather than opening a form
+// over a picker with nothing in it.
+POP_HOST.all = undefined;
+openOn(row.id);
+const blind = {disabled: itemIn('parent').getAttribute('aria-disabled'),
+               why: itemIn('parent').dataset.why || '', word: wordIn(itemIn('parent'))};
+return {id: row.id, title: row.title, was: row.parent, word, allowed, legal, next,
+        nextTitle: DATA.rows[next] ? DATA.rows[next].title : null,
+        wrongKind: wrongKind ? wrongKind.id : null, opened, landed, blind,
+        hosted: {all: typeof HOST_ALL === 'function', shows: typeof HOST_SHOWS === 'function'}};
+"""
+
+# **The two calls cut 4 adds to the host contract**, read as the page left them
+# and then filled in where it left them empty.
+#
+# `all()` and `shows(id)` are optional to `popServes` like `extras` and `wrote`,
+# and `table.py` is not the file that added them, so they may or may not be on the
+# page. What each one costs when a host leaves it out is never silence — the
+# parent items refuse with a sentence and the create's receipt stops claiming to
+# know where the record went — and both of those are branches worth having tested
+# on their own. But the picker's CONTENTS are `pop.py`'s and would otherwise be
+# untestable on any of the three views until somebody else's one line landed.
+#
+# So the host's own answer is read first, and asserted on its own at the end of
+# each test that needs it; the fallback below is the line `pop.py`'s contract note
+# gives the table, installed only where the page has not installed it. A wired
+# page is asked through its own wiring and this is a no-op.
+_HOST_CALLS = """
+const HOST_ALL = POP_HOST.all;
+const HOST_SHOWS = POP_HOST.shows;
+POP_HOST.all = POP_HOST.all || (() => Object.values(DATA.rows));
+POP_HOST.shows = POP_HOST.shows || (id => menuRows().some(tr => tr.dataset.id === id));
+"""
+
+# The one line each of the two writing views needs, quoted from `pop.py`'s own
+# host-contract note, so a failure here says what to add rather than what is
+# missing.
+_WIRING = {
+    "all": "all: () => Object.values(DATA.rows)",
+    "shows": 'shows: id => !!tbody.querySelector(`tr[data-id="${id}"]`)',
+}
+
+
+def test_assign_parent_offers_a_select_of_the_records_that_may_hold_this_one(
+    index: Index, tmp_path: Path
+):
+    """**A `<select>` of records that exist, and never a box to type an id
+    into.**
+
+    That control is the only thing that ever stood in front of two holes in the
+    server, both measured through the API before cut 4 closed them:
+    `_containment_problems` returned early on a parent it could not resolve, so a
+    dangling one committed in silence and `openproj check` never mentioned it;
+    and PATCH ran `loop_made` and no `validate_all` at all, so a wrong-kind
+    parent committed and was reported afterwards. Both doors refuse now, and this
+    control is still the right one — a refusal is a worse answer than a list that
+    could not express the mistake in the first place.
+
+    So three things are asserted about what is in it, and each is one of those
+    mistakes made unsayable: no record of a kind that may not hold this one, not
+    the record itself, and nothing at all that is not an id the payload carries.
+    The loop is the one case a reader cannot have meant; every other loop is
+    still the server's to find, which is why this is not a second copy of
+    `loop_made`.
+
+    **And the last assertion is about the HOST rather than the menu.** `rows(id)`
+    answers about one record and a parent picker is a question about all of them,
+    so cut 4 adds `all()` to the contract. Without it the item refuses with a
+    sentence — which is right for the timeline and for a rendered file, and is
+    asserted here as its own branch — and wrong for the two views that can write,
+    where it means `Assign parent…` never opens at all.
+    """
+    got = _at_a_form(index, tmp_path / "picker.html", _HOST_CALLS + _THE_PICKER, patience=5000)
+
+    assert not got.get("error"), got
+    assert got["word"] == "Change parent…", (
+        f"a record that is filed under something offers {got['word']!r}"
+    )
+    assert got["opened"]["up"]["role"] == "dialog", got["opened"]["up"]
+    assert got["opened"]["heading"] == f'Where "{got["title"]}" is filed', got["opened"]["heading"]
+    assert got["opened"]["fields"] == ["parent"], (
+        f"`Assign parent…` drew {got['opened']['fields']} — it is `only: ['parent']`, and "
+        "every other box in it is a field somebody did not come here to change"
+    )
+    assert got["opened"]["tag"] == "SELECT", (
+        f"the parent control is a {got['opened']['tag']}: a box you can type into is the "
+        "one control that can name a record that does not exist"
+    )
+    assert got["opened"]["inputs"] == 0, (
+        "this form carries a text box, which is the shape that put a dangling parent "
+        "into the plan in silence"
+    )
+    assert got["opened"]["disabled"] is False, "the picker that is the whole point is locked"
+    assert got["opened"]["value"] == got["was"], (
+        f"the picker opens holding {got['opened']['value']!r} and the record is filed "
+        f"under {got['was']!r}"
+    )
+    assert got["opened"]["options"][0] == {"value": "", "text": "— nothing —"}, (
+        f"the first option is {got['opened']['options'][0]} — a parent that is not locked "
+        "may be cleared, and that is a state the field can really be in"
+    )
+    offered = [one["value"] for one in got["opened"]["options"] if one["value"]]
+    assert sorted(offered) == sorted(got["legal"]), (
+        f"the picker offers {sorted(offered)} and the records that may hold a "
+        f"{got['allowed']} are {sorted(got['legal'])}"
+    )
+    assert got["id"] not in offered, (
+        "the picker offers the record itself, which is a loop and the one case a reader "
+        "cannot have meant"
+    )
+    assert set(got["opened"]["kinds"]) <= set(got["allowed"]), (
+        f"the picker offers records of kinds {sorted(set(got['opened']['kinds']))} and this "
+        f"kind may only be filed under {got['allowed']}"
+    )
+    assert got["wrongKind"], "every row on this table is of a kind that could hold a task"
+    assert got["wrongKind"] not in offered, (
+        f"{got['wrongKind']} is of a kind that may not hold this record and is in the list"
+    )
+    assert len(got["landed"]["sent"]) == 1 and got["landed"]["posted"] == 0, got["landed"]
+    assert got["landed"]["sent"][0]["body"]["fields"] == {"parent": got["next"]}, (
+        f"moving a record sent {got['landed']['sent'][0]['body']['fields']}"
+    )
+    assert got["landed"]["now"] == got["next"], "the row is still filed where it was"
+    assert got["landed"]["said"] == f'{got["title"]} is now inside "{got["nextTitle"]}"', (
+        f"the receipt reads {got['landed']['said']!r} — `Take out of \"X\"` says the same "
+        "change the same way, and two sentences for one change is how one word came to be "
+        "spelled three ways on one screen"
+    )
+    assert got["blind"]["disabled"] == "true", (
+        "a view that cannot list its records opened a form over a picker with nothing in it"
+    )
+    assert got["blind"]["why"] == (
+        "This view cannot list the records here, so there is nothing to pick from — "
+        "where a record is filed is edited on its own page."
+    ), got["blind"]["why"]
+    assert got["hosted"]["all"] is True, (
+        "the table registers no `all()`, so `Assign parent…` is refused on every row and "
+        "`Edit…` draws its parent control dead. The one line it needs is "
+        f"`{_WIRING['all']}`, beside `rows:` in its own `popServes({{…}})`"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The status gate, which cut 3 refused and cut 4 answers
+# --------------------------------------------------------------------------- #
+
+
+_THE_GATE = """
+const found = shortOf(2);
+if (!found) return {error: 'the corpus holds no task short of two fields at any status'};
+const row = found.row, gate = found.gate, missing = found.missing;
+openOn(row.id);
+itemIn('status').click();
+const item = itemIn('status-' + gate);
+const seen = {disabled: item.getAttribute('aria-disabled'), why: item.dataset.why || '',
+              word: wordIn(item), role: item.getAttribute('role')};
+item.click();
+const opened = {up: formIsUp(), heading: headingIn(), fields: fieldsInForm(),
+                status: boxIn('status').value, required: {}, marks: {}};
+for (const name of fieldsInForm()) {
+  opened.required[name] = boxIn(name).getAttribute('aria-required');
+  opened.marks[name] = markIn(name);
+}
+// Saved with the boxes still empty. The gate is asked HERE, before anything goes
+// out, and of the boxes this form drew and no others.
+pressSave();
+await rest(400);
+const early = {why: whyLines(), sent: patches().length, form: formUp(),
+               focused: document.activeElement.dataset.field};
+// One answer per box, chosen by what the field IS rather than by its name: a
+// number, a date, a login where the schema says the options are people, an id
+// where it says records, and a plain word otherwise.
+const answers = {};
+for (const name of missing) {
+  const type = POP_SCHEMA.types[name];
+  const source = POP_SCHEMA.suggests[name];
+  answers[name] = type === 'number' ? '2' : type === 'date' ? '2026-09-01'
+                  : source === 'people' ? POP_SCHEMA.people[0]
+                  : source === 'records' ? row.parent
+                  : 'kilnlab/kiln4py#1';
+  typeInto(name, answers[name]);
+}
+pressSave();
+await rest(1000);
+return {id: row.id, title: row.title, was: row.status, gate, missing, answers, seen, opened,
+        early, types: POP_SCHEMA.types, sent: patches(), said: said(),
+        closed: !popIsOpen(), now: DATA.rows[row.id].status, beats: beatsNow()};
+"""
+
+
+def test_a_gated_status_opens_the_form_on_what_it_needs_and_saves_both(
+    index: Index, tmp_path: Path
+):
+    """**The gate is answered rather than fought, and this is where cut 3's
+    behaviour changed.**
+
+    Cut 3 drew a status whose `required_at` names fields the record has not got
+    as a refusal, because there was no form to open. Cut 4 opens one on exactly
+    those fields with the new status already in its box, and one Save commits the
+    status and the answers together — which is what `askFor` (`table.py`) does
+    today, and the reason the gate is worth having at all. Two commits would
+    leave the plan holding, for the length of the first one, a record the
+    validator refuses.
+
+    So the first assertion is that the item is NOT refused any more, and the last
+    is that ONE PATCH carried both halves. Between them is the thing that makes
+    the form answerable: the status in the box decides which fields are marked,
+    `popMarkRequired` runs on every change rather than on the status control
+    alone, and the mark is paired with `aria-required` so it is not half a fact.
+
+    And the gate is asked before the write, of the drawn boxes only. A form of
+    one field cannot answer for a status it is not changing, and a refusal naming
+    a field the payload does not carry is the failure
+    `_reject_a_start_date_this_write_puts_in_the_past` was rewritten to stop
+    making — on the server, about exactly this shape of question.
+    """
+    got = _at_a_form(index, tmp_path / "gateform.html", _THE_GATE, patience=5000)
+
+    assert not got.get("error"), got
+    assert len(got["missing"]) >= 2, (
+        f"only {got['missing']} is missing at {got['gate']}, so the plural half of this "
+        "is about nothing"
+    )
+    assert got["seen"]["disabled"] is None, (
+        f"a status the record is short of is still drawn refused: {got['seen']} — cut 4 "
+        "opens a form on what it needs, and the sentence survives only for a field the "
+        "form has no box for"
+    )
+    assert got["seen"]["why"] == "", got["seen"]
+    assert got["seen"]["word"] == HUMAN[got["gate"]], got["seen"]
+    assert got["opened"]["up"]["role"] == "dialog", (
+        "picking a gated status wrote instead of opening a form, or did nothing at all"
+    )
+    assert got["opened"]["heading"] == (
+        f"{HUMAN[got['gate']]} needs {'this' if len(got['missing']) == 1 else 'these'}"
+    ), got["opened"]["heading"]
+    assert got["opened"]["fields"] == ["status", *got["missing"]], (
+        f"the form drew {got['opened']['fields']} and the gate names {got['missing']} — the "
+        "status first, which is the order the sentence over the boxes reads in"
+    )
+    assert got["opened"]["status"] == got["gate"], (
+        f"the status box holds {got['opened']['status']!r}: the rung that was picked is "
+        "not in it, so one Save cannot commit the status and the answers together"
+    )
+    for name in got["missing"]:
+        assert got["opened"]["required"][name] == "true", (
+            f"{name} is what {got['gate']} demands and the control does not say so"
+        )
+        assert got["opened"]["marks"][name] == " *", (
+            f"{name} carries no mark, so the sighted half of that fact is missing"
+        )
+    assert got["early"]["why"] == [
+        f"{HUMAN[got['gate']]} needs {LABELS[name]}." for name in got["missing"]
+    ], got["early"]["why"]
+    assert got["early"]["sent"] == 0, (
+        "the form sent a PATCH it had already worked out would be refused, and let the "
+        "server say so"
+    )
+    assert got["early"]["form"] is True
+    assert got["early"]["focused"] == got["missing"][0], (
+        f"the keyboard is on {got['early']['focused']!r} rather than on the first box the "
+        "refusal is about"
+    )
+    wanted = {"status": got["gate"]}
+    for name, typed in got["answers"].items():
+        kind = got["types"][name]
+        wanted[name] = [typed] if kind == "list" else float(typed) if kind == "number" else typed
+    assert len(got["sent"]) == 1, (
+        f"the status and the fields it demands went out as {len(got['sent'])} commits, and "
+        "the plan holds a record the validator refuses for the length of the first"
+    )
+    assert got["sent"][0]["body"]["fields"] == wanted, got["sent"][0]["body"]["fields"]
+    named = [LABELS[name] for name in ("status", *got["missing"])]
+    assert got["said"] == (
+        f"{got['title']}: {', '.join(named[:-1])} and {named[-1]} saved"
+    ), (
+        f"the receipt reads {got['said']!r} and this one Save wrote the status and "
+        f"{got['missing']} with it"
+    )
+    assert got["now"] == got["gate"], "the row did not move to the status that was picked"
+    assert got["closed"] is True
+    assert got["beats"] == {"writing": 1, "wrote": ["c0ffee1"]}, got["beats"]
+
+
+# --------------------------------------------------------------------------- #
+# Where the new record went, when the answer is "nowhere you can see"
+# --------------------------------------------------------------------------- #
+
+
+_UNDER_A_FILTER = """
+// A parent whose own status is not the one its children open at, so a filter set
+// to it draws the parent and cannot draw the child.
+const parent = rowWhere(one => (POP_SCHEMA.child_kinds[one.kind] || []).length && one.status
+  && one.status !== POP_SCHEMA.opens[POP_SCHEMA.child_kinds[one.kind][0]]);
+if (!parent) return {error: 'no row on this table holds a kind that opens at another status'};
+const kind = POP_SCHEMA.child_kinds[parent.kind][0];
+// Set through the page's own control rather than by poking `params`: what is
+// being asked is what happens under the filter this view really has, and
+// `update` is what every facet on the bar calls.
+update('status', parent.status);
+await rest(400);
+const filtered = {shown: menuRows().length, all: Object.keys(DATA.rows).length,
+                  drawn: menuRows().some(tr => tr.dataset.id === parent.id)};
+openOn(parent.id);
+itemIn('new-child').click();
+itemIn('new-child-' + kind).click();
+const title = 'A child the filter will not draw';
+typeInto('title', title);
+const opens = boxIn('status').value;
+pressSave();
+await rest(1200);
+const id = Object.keys(MADE)[0] || null;
+return {parent: {id: parent.id, title: parent.title, status: parent.status}, kind, title,
+        opens, id, filtered, said: said(), sent: posts().length,
+        known: id ? !!DATA.rows[id] : false,
+        drawn: id ? menuRows().some(tr => tr.dataset.id === id) : true,
+        hosted: {all: typeof HOST_ALL === 'function', shows: typeof HOST_SHOWS === 'function'}};
+"""
+
+
+def test_a_child_created_under_a_filter_says_where_it_went(index: Index, tmp_path: Path):
+    """**A record created under a filter the child does not match lands nowhere
+    visible, and the only feedback anybody gets is this sentence.**
+
+    `refreshRows()` replaces `DATA.rows` and `draw()` re-applies `matches()`, so
+    a new child that does not answer the filter is not drawn at all. The draft
+    row has the same hole today and it has never been felt, because the draft row
+    is visible while it is being typed. This form is not, and it closes on
+    success — so the receipt has to say where the record went, and say so when
+    the answer is "nowhere you can currently see".
+
+    The three sentences `popLanded` has are one per state, and the difference
+    between them is a question only the host can answer: whether that id is on
+    screen RIGHT NOW, filter and window included. Without `shows` the receipt
+    still names the record and makes no claim about visibility, which is honest
+    and is not what the design asks for — so the last assertion is about the
+    table's own wiring.
+    """
+    got = _at_a_form(
+        index, tmp_path / "underfilter.html", _HOST_CALLS + _UNDER_A_FILTER, patience=5500
+    )
+
+    assert not got.get("error"), got
+    assert got["opens"] != got["parent"]["status"], (
+        f"a new {got['kind']} opens at {got['opens']!r} and the filter is set to "
+        f"{got['parent']['status']!r} — the same rung, so the child is drawn and this is "
+        "about nothing"
+    )
+    assert got["filtered"]["drawn"] is True, "the record the menu is opened on is filtered out"
+    assert got["filtered"]["shown"] < got["filtered"]["all"], (
+        f"the filter left all {got['filtered']['all']} rows on screen, so nothing is hidden"
+    )
+    assert got["sent"] == 1 and got["id"], got
+    assert got["known"] is True, (
+        "the host never found the record it had just made, so the receipt below is the "
+        "`reload to see it` branch and says nothing about the filter"
+    )
+    assert got["drawn"] is False, (
+        "the new child is on screen after all, so the sentence under test is not the one "
+        "this state produces"
+    )
+    assert got["said"] == (
+        f"Created {got['title']} ({got['id']}) — it is not on screen, because the filter "
+        "this view has set does not match it"
+    ), got["said"]
+    assert got["hosted"]["shows"] is True, (
+        "the table registers no `shows()`, so a create made under a filter says only that "
+        "the record exists and leaves somebody looking for a row that is not there. The "
+        f"one line it needs is `{_WIRING['shows']}`, beside `rows:` in its own "
+        "`popServes({…})`"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The one thing in this box that moves
+# --------------------------------------------------------------------------- #
+
+
+_REPLACING = """
+const found = shortOf(2);
+if (!found) return {error: 'the corpus holds no task short of two fields at any status'};
+const row = found.row, gate = found.gate, missing = found.missing;
+const tr = menuRows().find(one => one.dataset.id === row.id);
+// **Opened at the FOOT of the window, which is the only place this question
+// exists.** `placeFloat` flips a box that would cross the bottom gutter, so a
+// form drawn in the middle of the window has room to grow into and nothing to
+// prove; one drawn near the bottom is already flipped above the pointer, and
+// every line the refusal adds pushes its own Save button down past the edge of a
+// `position: fixed` element there is no way to scroll to.
+rightOn(tr, 300, innerHeight - 24);
+itemIn('status').click();
+itemIn('status-' + gate).click();
+const first = POP.getBoundingClientRect();
+const before = {top: first.top, bottom: first.bottom, height: first.height};
+pressSave();
+await rest(400);
+const grown = POP.getBoundingClientRect();
+const button = saveIn().getBoundingClientRect();
+return {id: row.id, gate, missing, before,
+        after: {top: grown.top, bottom: grown.bottom, height: grown.height},
+        save: {top: button.top, bottom: button.bottom},
+        why: whyLines(), window: innerHeight, cap: innerHeight * 0.7,
+        sent: patches().length};
+"""
+
+
+def test_the_form_re_places_itself_when_a_refusal_grows_it(index: Index, tmp_path: Path):
+    """**The form is the exception to "the menu never moves once placed; it only
+    dies", and the reason is concrete rather than aesthetic.**
+
+    A menu's content is fixed the moment it is drawn. A form's is not: a refusal
+    list growing under a box already near the foot of the window pushes its own
+    Save button off the bottom, and a `position: fixed` element is the one thing
+    on a page that cannot be scrolled back into view. So `popFormSays` ends in
+    `popPlace()`, which places against `POP_AT` — the pointer the box was opened
+    at — and flips or clamps exactly as the first placement would have.
+
+    What the design's rule is really about stays true, and is asserted elsewhere:
+    nothing that moves the page UNDER this box re-places it. A scroll, a resize,
+    a pan and a filter still kill a menu, and still leave a form alone.
+
+    The arithmetic is asserted in both directions, because only the pair says
+    anything. `before.top + after.height` is where the bottom of the box WOULD
+    have been had it stayed where it was — asserted to be off the window, or the
+    refusal did not grow it enough for this to be asking anything — and
+    `after.bottom` is where it actually is.
+
+    Asked at a 600px window rather than the 900 everything else here uses: the
+    box caps at `70vh` and scrolls, so a window tall enough makes this form fit
+    with its refusals and there is nothing to move.
+    """
+    got = _at_a_form(index, tmp_path / "replacing.html", _REPLACING, patience=4000, tall=600)
+
+    assert not got.get("error"), got
+    assert got["why"] == [
+        f"{HUMAN[got['gate']]} needs {LABELS[name]}." for name in got["missing"]
+    ], got["why"]
+    assert len(got["why"]) >= 2, got["why"]
+    assert got["sent"] == 0, "the refusal that grew the box also went out as a PATCH"
+    assert got["before"]["height"] < got["cap"] - 1, (
+        f"the form was already at its {got['cap']:.0f}px cap before the refusal "
+        f"({got['before']['height']:.0f}px), so it could not grow and nothing here moved"
+    )
+    assert got["after"]["height"] > got["before"]["height"], (
+        f"the refusal list did not grow the box: {got['before']['height']:.0f}px before "
+        f"and {got['after']['height']:.0f}px after"
+    )
+    assert got["before"]["top"] + got["after"]["height"] > got["window"] - 8, (
+        f"a box left at y={got['before']['top']:.0f} would still have ended at "
+        f"{got['before']['top'] + got['after']['height']:.0f} in a {got['window']}px "
+        "window, which is on screen — so this test cannot tell a box that re-placed "
+        "itself from one that did not"
+    )
+    assert got["after"]["bottom"] <= got["window"] - 7, (
+        f"the box now ends at {got['after']['bottom']:.0f} in a {got['window']}px window: "
+        "it grew where it stood, and a `position: fixed` element is the one thing on the "
+        "page there is no way to scroll to"
+    )
+    assert got["after"]["top"] < got["before"]["top"], (
+        "the box did not move, so it is only on screen by luck of how much the refusal "
+        "happened to add"
+    )
+    assert 0 <= got["save"]["top"] and got["save"]["bottom"] <= got["window"], (
+        f"Save is at {got['save']}, off a {got['window']}px window — which is the whole "
+        "of what the re-placement is for"
     )

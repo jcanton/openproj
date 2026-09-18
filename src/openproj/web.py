@@ -99,6 +99,7 @@ from .model import (
     mint_id,
     named,
     opening_fields,
+    parent_refusal,
     parse_cycle_text,
     parse_person_text,
     parse_text,
@@ -1253,6 +1254,32 @@ def _reject_dates_this_write_cannot_mean(
                 f"{name}: {getattr(candidate, name)} is {away:.0f} weeks outside every cycle "
                 "this plan has dated, so it would count towards none of them. Check the year.",
             )
+
+
+def _reject_a_parent_this_write_cannot_mean(
+    fields: dict, candidate: Record, by_id: dict[str, Record]
+) -> None:
+    """A parent that is nothing, or that may not hold this — before it is a file.
+
+    `parent_refusal` (`model.py`) is the rule and its docstring is the argument;
+    this is the door. The cut-4 menu puts a `<select>` built from the host's own
+    rows in front of both cases, and a UI guard is not a server guard: `openproj
+    new --set parent=…`, a hand-written file and a tab left open across a delete
+    all reach the same write.
+
+    **Only when this write names the parent.** Asking the candidate alone would
+    refuse every save that merely passed over a record whose parent had gone
+    stale — a rename on a task whose pitch somebody deleted this morning would
+    answer 422 naming a field the payload does not carry, which is the exact
+    failure `_reject_a_start_date_this_write_puts_in_the_past` was rewritten to
+    stop making. What is standing in a record is `validate_all`'s to report; what
+    somebody just typed is this door's to refuse.
+    """
+    if "parent" not in fields:
+        return
+    refusal = parent_refusal(candidate, by_id)
+    if refusal:
+        raise HTTPException(422, refusal)
 
 
 def _reject_undeclared_fields(fields: dict, known: tuple[str, ...], what: str) -> None:
@@ -2985,6 +3012,12 @@ def create_app(
         loop = loop_made(candidate, index_now()[1].records.values())
         if loop:
             raise HTTPException(409, loop)
+        # And where it sits, asked of the same population for the same reason.
+        # This route runs no `validate_all` at all, so until now the containment
+        # rule — version 4, and years older than this menu — was simply never put
+        # to a save: a task filed under a task committed 200 and the plan woke up
+        # with a warning about it.
+        _reject_a_parent_this_write_cannot_mean(fields, candidate, index_now()[1].records)
         # The record as it stands, read out of the same population `loop_made` is
         # asked about above rather than parsed a second time out of `original`:
         # the rule needs to know whether this write is what put the date in the
@@ -3414,6 +3447,11 @@ def create_app(
             _reject_a_start_date_this_write_puts_in_the_past(
                 fields, candidate, index.records.get(candidate.id), today or date.today()
             )
+            # `after` and not `index.records`: the batch lands as one commit, so a
+            # parent that is itself one of the ids in this selection resolves, and
+            # judging against the stored plan would refuse a reparent that is
+            # perfectly legal the moment the whole batch is applied.
+            _reject_a_parent_this_write_cannot_mean(fields, candidate, after)
             # Per candidate for the same reason, over the plan's calendar as it
             # stands at the commit this batch is a delta against. The read is
             # memoised across the loop by `calendar` below: one payload of fields
@@ -3986,13 +4024,24 @@ def create_app(
             fields, candidate, None, today or date.today()
         )
         _reject_dates_this_write_cannot_mean(fields, candidate, lambda: config)
+        # A file already in the plan that will not parse is not this record's
+        # problem and must not stop it being created: the validator only needs the
+        # neighbours it can read, and the banner is what says the rest are
+        # missing. Read once, for the parent guard and the validator both.
+        neighbours = _records_at(store, commit)[0]
+        # And where it is being filed, which `validate_all` below cannot be left
+        # to answer. It filters to blockers, and the containment rule is version 4
+        # — so on a plan whose `config/defaults.yaml` says anything under that,
+        # every record this route mints is grandfathered past it and a wrong-kind
+        # parent is created with a 201. Measured on the `test_web` corpus, which
+        # is written at `schema_version: 2`. The dangling case is not in the
+        # validator at all; see `parent_refusal`.
+        _reject_a_parent_this_write_cannot_mean(
+            fields, candidate, {record.id: record for record in neighbours}
+        )
         problems = [
             p
-            # A file already in the plan that will not parse is not this record's
-            # problem and must not stop it being created: the validator only
-            # needs the neighbours it can read, and the banner is what says the
-            # rest are missing.
-            for p in validate_all([*_records_at(store, commit)[0], candidate], config)
+            for p in validate_all([*neighbours, candidate], config)
             if p.record_id == record_id and p.severity == "blocker"
         ]
         if problems:
@@ -4369,6 +4418,13 @@ def create_app(
             _reject_dates_this_write_cannot_mean(
                 fields, candidate, lambda: _config_at(store, room.base)[0]
             )
+            # And the same again for where the record is filed. The record page's
+            # edit form offers a `parent` box — `_editable_for` puts one on every
+            # kind that may have one — so with a socket up this is the door that
+            # parent reaches, and leaving it out would make the primary editing
+            # surface the one surface with no containment rule on it. A flush the
+            # timer sent carries `{}` and falls through, exactly as above.
+            _reject_a_parent_this_write_cannot_mean(fields, candidate, index_now()[1].records)
 
             message = f"{room.record_id}: {_named(fields, RECORD_FIELDS) or 'body'}"
             if others:
