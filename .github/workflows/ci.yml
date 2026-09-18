@@ -375,7 +375,24 @@ jobs:
       # `--clean-durations` is safe here and nowhere else: this run is the whole
       # suite, so a test missing from it is a test that no longer exists.
       - run: uv run pytest -q --store-durations --clean-durations
+      # `if: always()`, and it is what makes this job able to do its one job.
+      #
+      # `test_the_durations_table_still_knows_what_the_suite_is_made_of` reads
+      # `.test_durations` off the disk DURING the run, while `--store-durations`
+      # writes it at session finish. So a suite that has gained a whole new test
+      # file fails that assertion here exactly as it fails on the eight legs —
+      # and this is the job whose entire purpose is to cure that. Without this
+      # line the step goes red, the upload never runs, and the measurement that
+      # was correctly taken is thrown away: the one situation `measure` exists
+      # for is the one situation it could not answer. Measured 2026-09-18, on
+      # the run that was supposed to admit `tests/test_pop.py`.
+      #
+      # The artifact is trustworthy despite the red: the table is written in
+      # `pytest_sessionfinish`, which runs whatever the outcome, and
+      # `--clean-durations` drops what did not run rather than what did not
+      # pass. A test that fails is still a test that was timed.
       - uses: actions/upload-artifact@v5
+        if: always()
         with:
           name: test-durations
           path: .test_durations
