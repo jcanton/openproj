@@ -198,6 +198,18 @@ and a primary verb plus Cancel. It is **fields only** — the body stays on the 
 Ace, co-editing seats and a draft receipt, and a markdown editor in a floating box would be competing
 with the page that does it properly.
 
+**The form is the hover card's shape, and that is the correction jcanton made on seeing the first
+one** (2026-09-18): *"can the `edit` box be the same as the floating card box, just with
+clickable/editable fields? instead of a new tall, column box"*. The first cut drew a label above
+every control, which for a task is fifteen stacked pairs — past `max-height: 70vh` on a 900px window,
+so four of the fifteen fields were below a scrollbar, over the table the box was opened from. So the
+form takes `#card`'s own `max-width: 26rem` and `#card dl`'s own two columns: the name on the left,
+the control on the right, every name lined up. `.popfield` is `display: contents` so that the label
+and the control are the grid's children rather than the field's — a grid per field would align each
+field's two parts and nothing across fields, and the column is the whole of the card's look. The one
+control that had read the other way round, a checkbox with its word to the right of it, now reads
+like every other field, because in two columns there is nothing left for that exception to fix.
+
 **The parent control is a `<select>` built from the host's own rows, never free text.** That picker is
 the only thing standing in front of two holes in the server: `_containment_problems` returns early on
 an unresolvable parent (`model.py`), so a dangling parent commits silently; and PATCH calls

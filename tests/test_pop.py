@@ -3438,6 +3438,110 @@ def test_edit_opens_on_the_record_and_saves_only_what_changed(index: Index, tmp_
 
 
 # --------------------------------------------------------------------------- #
+# The shape of it, which is the card's
+# --------------------------------------------------------------------------- #
+
+
+_THE_CARDS_SHAPE = """
+const row = rowWhere(one => one.kind === 'task' && one.title);
+if (!row) return {error: 'the corpus draws no task'};
+openOn(row.id);
+itemIn('edit').click();
+const shape = {
+  // The two caps, read off the two live boxes rather than compared against a
+  // number written here. `26rem` in two stylesheets is one claim only while
+  // somebody keeps them equal by hand.
+  form: getComputedStyle(POP).maxWidth,
+  card: getComputedStyle(document.getElementById('card')).maxWidth,
+  fields: [],
+};
+let stacked = 0, top = Infinity, foot = -Infinity;
+for (const name of fieldsInForm()) {
+  const control = boxIn(name);
+  const label = fieldIn(name).querySelector('.popname').getBoundingClientRect();
+  const box = control.getBoundingClientRect();
+  shape.fields.push({
+    name: name, type: control.type,
+    left: Math.round(label.left), right: Math.round(label.right),
+    box: Math.round(box.left),
+    // Overlapping on the vertical axis is what "on one row" means, and it is
+    // the whole question: a label stacked over its control shares no pixel of
+    // it, whatever the two boxes happen to measure.
+    together: Math.min(label.bottom, box.bottom) - Math.max(label.top, box.top) > 0,
+  });
+  // What the same fields would reach if each name still took its own line.
+  stacked += label.height + box.height;
+  top = Math.min(top, label.top, box.top);
+  foot = Math.max(foot, label.bottom, box.bottom);
+}
+shape.span = Math.round(foot - top);
+shape.stacked = Math.round(stacked);
+return {id: row.id, kind: row.kind, shape: shape};
+"""
+
+
+def test_the_form_is_the_cards_shape_and_not_a_column_of_stacked_fields(
+    index: Index, tmp_path: Path
+):
+    """**The box a right-click opens to edit a record is the box a hover opened
+    to read one, with the right-hand column typed into.**
+
+    jcanton, 2026-09-18, on the first form drawn: *"can the `edit` box be the
+    same as the floating card box, just with clickable/editable fields? instead
+    of a new tall, column box"*. The first cut drew a label above every control,
+    which for a task is fifteen pairs — a box about twice the height of the card
+    the same gesture used to show, over the table it was opened from.
+
+    So three claims, and each of them is the card's:
+
+    - the same width cap, read off `#card` and `#pop` at the same moment rather
+      than asserted against `26rem` written twice;
+    - every name in one column, which is what `#card dl`'s `auto 1fr` does and
+      what a grid per field would not — a field's own two parts would line up
+      and nothing would line up across fields;
+    - every name on the same row as the control it names, including the
+      checkbox, which was the one field drawn the other way round when a field
+      was a stacked pair.
+
+    The height is asserted as a comparison and not a number: what the same
+    fields would reach with every name on its own line, against what they
+    reach now. A pixel count here would be a fact about this laptop's font.
+    """
+    got = _at_a_form(index, tmp_path / "shape.html", _THE_CARDS_SHAPE)
+
+    assert not got.get("error"), got
+    shape = got["shape"]
+    fields = shape["fields"]
+    # Not a claim about a form with two boxes in it: the rung under test is the
+    # one with the most fields, and the corpus is free to change but not to stop
+    # drawing a task.
+    assert len(fields) >= 5, f"a {got['kind']} drew only {len(fields)} fields"
+    assert shape["form"] == shape["card"], (
+        f"the form is capped at {shape['form']} and the card it stands in for at {shape['card']}"
+    )
+
+    stacked = [one for one in fields if not one["together"]]
+    assert not stacked, f"drawn with the name above the control: {[one['name'] for one in stacked]}"
+
+    lefts = {one["left"] for one in fields}
+    assert len(lefts) == 1, (
+        f"the names do not line up in one column: {[(one['name'], one['left']) for one in fields]}"
+    )
+    over = [one for one in fields if one["right"] > one["box"]]
+    assert not over, f"a name overlaps the control beside it: {[one['name'] for one in over]}"
+
+    # The checkbox is named because it is the one that had to change to get here.
+    assert any(one["type"] == "checkbox" for one in fields), (
+        f"this kind draws no checkbox, so the field that was the exception is untested: {fields}"
+    )
+
+    assert shape["span"] < shape["stacked"], (
+        f"the fields reach {shape['span']}px and would reach {shape['stacked']}px stacked — "
+        "the two columns are buying nothing"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # A refusal, which is the whole reason the form is a face of this box
 # --------------------------------------------------------------------------- #
 

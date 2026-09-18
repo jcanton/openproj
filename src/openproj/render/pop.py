@@ -218,33 +218,59 @@ _POP_STYLE = """
    `min-width: 17rem` is a box 272px wide in a 260px window, hanging off the far
    edge of a `position: fixed` element there is no way to scroll to. The menu's
    own 20rem happens to fit the narrowest desktop window anybody opens; a form's
-   23rem does not. */
+   26rem does not. */
+/* **26rem is `#card`'s own `max-width`, and the two are the same number on
+   purpose.** jcanton, 2026-09-18, on the first form drawn: "can the `edit` box
+   be the same as the floating card box, just with clickable/editable fields?
+   instead of a new tall, column box". The form stands where the card stood and
+   says the same facts, so it is the card's width and the card's two columns,
+   and the whole of what changed is that the right-hand one can be typed in. */
 /* The confirmation takes the same range for a different reason and gets it from
    the same rule rather than a second copy of the arithmetic: its lines are
    prose — a sentence with a record's title inside it — and the menu's 20rem is
    sized for single words. */
 #pop.popforming, #pop.popasking {
   min-width: min(17rem, calc(100vw - 16px));
-  max-width: min(23rem, calc(100vw - 16px));
+  max-width: min(26rem, calc(100vw - 16px));
   padding: 0;
 }
+/* The card's grid and not a column of stacked fields. `#card dl` (`shell.py`) is
+   `grid-template-columns: auto 1fr`, the name in the left column and the value
+   in the right, and this is that shape with a control in the right column. What
+   it replaces was a label above every box: a task's fifteen fields drew about
+   twice the height, which is a form taller than the window it opens over and
+   nothing like the card the same right-click used to show.
+
+   `minmax(0, 1fr)` and not `1fr`: a grid track's automatic minimum is its
+   content's min-content size, and the controls below are `width: 100%` — a
+   `<select>` holding a long owner name, or a `depends_on` box holding three
+   record ids, would push the track past the box rather than shrink inside it. */
 #pop .popform {
   /* `flex: none` for the reason `.popitem` has it, and the failure is the same
      one: `#pop` is a flex column with a `max-height`, so a form taller than 70vh
      would be resolved by squashing the one child rather than by scrolling. A
      task's form is fifteen controls and reaches that on any laptop. */
   flex: none;
-  display: flex; flex-direction: column; gap: .5rem;
-  padding: .6rem .75rem .7rem;
+  display: grid; grid-template-columns: auto minmax(0, 1fr);
+  align-items: center; gap: .3rem .6rem;
+  padding: .5rem .6rem .6rem;
 }
-#pop .popheading { margin: 0; font-size: 13px; font-weight: 600; }
-#pop .popfield { display: flex; flex-direction: column; gap: .15rem; }
-/* The one control whose name reads to the right of it rather than above it: a
-   checkbox is a mark beside a statement, and a label stacked over a 13px box
-   leaves the box floating under a word it does not touch. */
-#pop .popfield.popbool { flex-direction: row; align-items: center; gap: .45rem; }
-#pop .popname { color: var(--muted); font-size: 12px; }
-#pop .popfield.popbool .popname { color: inherit; font-size: 13px; }
+/* The three parts of a form that are not a field, each across both columns. */
+#pop .popheading, #pop .popwhy, #pop .popacts { grid-column: 1 / -1; }
+#pop .popheading { margin: 0 0 .1rem; font-size: 13px; font-weight: 600; }
+/* **`display: contents`, so that the label and the control are the grid's own
+   children rather than the field's.** It is what makes every name line up in
+   one column: a grid per field would align that field's two parts and nothing
+   across fields, and the column IS the card's look. `[data-field]` stays on the
+   box and the tests still find it — `display: contents` takes a box out of the
+   layout, not out of the document. */
+#pop .popfield { display: contents; }
+/* The card's `dt`, to the letter: the same colour, size, case and tracking. A
+   checkbox's name is drawn the same way and sits in the same column as every
+   other name — it was the one label that read to the right of its control, and
+   in two columns there is nothing left for that exception to fix. */
+#pop .popname { color: var(--muted); font-size: 11px; text-transform: uppercase;
+                letter-spacing: .04em; }
 /* The mark on a field the chosen status will make the server refuse the record
    without. `--sev-blocker` and not `--warn`: it is the same news the table's own
    blocker marks carry, which is that a save will be refused rather than
@@ -283,7 +309,9 @@ _POP_STYLE = """
 #pop .popform input:disabled, #pop .popform select:disabled {
   color: var(--muted); cursor: default; opacity: 1;
 }
-#pop .popnote { margin: 0; color: var(--muted); font-size: 12px; }
+/* `grid-column: 2` and not both columns: the sentence belongs to the control
+   above it, so it starts where that control starts. */
+#pop .popnote { grid-column: 2; margin: 0; color: var(--muted); font-size: 12px; }
 /* What the server, or the gate, said about this save. A list because a create
    is refused with a `problems` array and three blockers read as three lines
    rather than one long one — `refusalLines` (`table.py`) makes the same split.
@@ -298,7 +326,8 @@ _POP_STYLE = """
   color: var(--sev-blocker); background: var(--sev-blocker-soft);
 }
 #pop .popwhy:focus-visible { outline-offset: -2px; }
-#pop .popacts { display: flex; gap: .4rem; justify-content: flex-end; }
+#pop .popacts { display: flex; gap: .4rem; justify-content: flex-end;
+                margin-top: .25rem; }
 /* The verb. `.button.primary` in the shell is for an `<a class="button">`, and
    this is a real `<button>`, so the fill is written here — two declarations,
    against vendoring a class that would have to be kept in step with a sheet
@@ -1860,7 +1889,7 @@ function popField(name) {
   const form = POP_FORM;
   const type = (POP_SCHEMA.types || {})[name] || 'text';
   const field = document.createElement('div');
-  field.className = type === 'bool' ? 'popfield popbool' : 'popfield';
+  field.className = 'popfield';
   field.dataset.field = name;
   const id = 'pop-f-' + (++POP_FIELD_N);
   const label = document.createElement('label');
@@ -1880,10 +1909,11 @@ function popField(name) {
   control.id = id;
   control.dataset.field = name;
   form.controls.set(name, control);
-  // A checkbox reads left to right — the mark, then the statement it marks —
-  // and every other control reads top to bottom.
-  if (type === 'bool') field.append(control, label);
-  else field.append(label, control);
+  // One order for every kind of control, because the form is two columns and
+  // the name is always the left one. This was `control, label` for a checkbox
+  // back when a field was a stacked pair and a mark under its own word read as
+  // a box floating under nothing.
+  field.append(label, control);
   const locked = popLockedWhy(name);
   if (locked) {
     control.disabled = true;
