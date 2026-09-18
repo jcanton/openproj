@@ -305,8 +305,9 @@ WRITERS_TAIL = [*READER_ITEMS, DELETE_ITEM]
 # this one, where it is filed, then what this view can do. Cut 4 put three in
 # front of cut 3's three rather than after them, which is why every assertion
 # below slices `len(WRITE_ITEMS)` rather than a literal — a seventh item is one
-# edit here and none anywhere else.
-WRITE_ITEMS = ["new-child", "edit", "status", "owner", "parent", "take-out"]
+# edit here and none anywhere else. `priority` is the seventh, added 2026-09-18
+# where jcanton asked for it: "just below status".
+WRITE_ITEMS = ["new-child", "edit", "status", "priority", "owner", "parent", "take-out"]
 
 
 # Read before the press: which row is going to be pressed, which two rows are its
@@ -3906,7 +3907,11 @@ if (!row) return {error: 'the corpus draws no task'};
 openOn(row.id);
 itemIn('edit').click();
 const seen = {};
-for (const name of fieldsInForm()) {
+// The fields that OPEN, which is not every field the card draws: this host
+// carries a `blocked_by` count and no `depends_on`, and a box drawn empty over a
+// value this view has not got would delete it — so that one is locked, with a
+// sentence, and locked is the right answer rather than a gap in this test.
+for (const name of opensInForm()) {
   if (!POP_SCHEMA.suggests[name]) continue;
   const box = openField(name);
   if (!box) { seen[name] = {error: 'the field would not open'}; continue; }
@@ -3914,17 +3919,24 @@ for (const name of fieldsInForm()) {
   seen[name] = {
     source: POP_SCHEMA.suggests[name],
     tag: box.tagName,
-    // A datalist attached to the box, with something in it: an empty one is a
-    // control that completes nothing, which is what was reported.
-    listed: list ? [...list.options].map(one => one.value) : null,
+    // A datalist attached to the box AND STILL IN THE DOCUMENT, with something
+    // in it: an empty one, or one `replaceChildren` has thrown away, is a
+    // control that completes nothing — which is what was reported.
+    inPage: !!(list && list.isConnected),
+    // `parent` is a `<select>` of the records that may hold this one, and its
+    // own options are its completion. Every other completing field is typed
+    // into.
+    listed: box.tagName === 'SELECT'
+      ? [...box.options].map(one => one.value)
+      : (list ? [...list.options].map(one => one.value) : null),
   };
   giveUp(name);
 }
 // And the list fields carry the text already typed through, or a datalist —
 // which matches on the WHOLE value — offers nothing the moment there are two
 // names in the box.
-const many = fieldsInForm().find(name => POP_SCHEMA.suggests[name]
-  && POP_SCHEMA.types[name] === 'list');
+const many = opensInForm().find(name => POP_SCHEMA.suggests[name]
+  && POP_SCHEMA.types[name] === 'list' && POP_SCHEMA.types[name] !== 'select');
 let carried = null;
 if (many) {
   const box = openField(many);
@@ -3977,6 +3989,13 @@ def test_every_field_that_completes_on_the_record_page_completes_in_the_card(
             f"{name} completes from {one.get('source')} and its box carries "
             f"{one['listed']!r} — a control that completes nothing"
         )
+        # The list has to be ON the page. It was appended to the slot and then
+        # thrown away by the `replaceChildren` that puts the control there, so
+        # every box pointed `list=` at a detached element — a `list` attribute
+        # that is present and completes nothing, which is what a test asking only
+        # for the attribute would have called a pass.
+        if one["tag"] != "SELECT":
+            assert one["inPage"], f"{name}'s list is not in the document"
     assert set(got["lists"]) == {"tags", "prs", "cycles"}, (
         f"the three lists that are neither a person nor a record ship as {got['lists']}"
     )

@@ -2144,11 +2144,18 @@ function popOpenField(name) {
   // and a date box has a picker, and both would be handed a list they cannot
   // show. `cycle` is a number box and Chrome completes one from a datalist like
   // any other input.
-  if (control.tagName === 'INPUT' && (control.type === 'text' || control.type === 'number'))
-    popComplete(control, name, slot);
   form.controls.set(name, control);
   const was = slot.innerHTML;
   slot.replaceChildren(control);
+  // **After the slot is emptied, and that ordering is the other half of the
+  // defect.** `popComplete` parks its `<datalist>` in this slot beside the box,
+  // and called before the line above it parked one that `replaceChildren` then
+  // threw away — leaving every box pointing `list=` at an element no longer in
+  // the document, which is a box that completes nothing. Owner completed nothing
+  // either, and that is the half of jcanton's report that a missing `list`
+  // attribute would not have explained.
+  if (control.tagName === 'INPUT' && (control.type === 'text' || control.type === 'number'))
+    popComplete(control, name, slot);
   slot.classList.add('popediting');
   let given = false;
   // Blur saves and Escape discards, which is the table's rule and not a new one:
