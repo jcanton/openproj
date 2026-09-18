@@ -15,7 +15,7 @@ from ..vendor import _font_uri
 from .env import _compiled
 from .hill import hill_geometry
 from .icons import _icon_uri
-from .styles import STATUS_SLOTS, _scheme_css
+from .styles import STATUS_SLOTS, _code_css, _scheme_css
 from .tokens import HUMAN, KINDS, PRIORITY_GLYPH, STATUS_GLYPH, STATUSES, card_facts
 
 
@@ -1089,6 +1089,28 @@ body:has([data-fills]) { padding-bottom: 2px; }
 #card .card-body p, #card .card-body ul, #card .card-body ol { margin: .2rem 0; }
 #card .card-body pre { overflow-x: auto; }
 #card .card-body img { max-width: 100%; }
+/* The highlighter's colours, here rather than in `_DETAIL_STYLE` where they were.
+   jcanton, 2026-09-18: "the little hover card body doesn't colour code blocks
+   syntax (while the /detail page in preview and side-by-side does), can this be
+   added?".
+
+   The spans were never missing. `/api/card/<id>` renders the body through the
+   same function the record page uses, Pygments and all, so the card has been
+   drawing `<span class="hl-k">` since it drew documents at all — it was the
+   RULES that were somewhere else. `_DETAIL_STYLE` carries them and the table,
+   the graph and the timeline do not load it, on the argument that those pages
+   have no fence on them. The card is the thing that made that argument false:
+   any row on any of the three opens a shaping document, and a shaping document
+   about code has fences in it.
+
+   So the sheet moves here, where every page can reach it, and `_DETAIL_STYLE`
+   no longer carries it — one copy rather than two, and the pages that draw a
+   body in the page itself get it from the same place the card does. The
+   `--code-*` tokens it reads are already in this file's three colour blocks,
+   which is why this is a move and not a port.
+
+   `_code_css` generates it from Pygments' own token table — see `styles.py`. */
+{{ highlighting }}
 /* The bottom border, made draggable, because 8em is one reader's answer and not
    everybody's: a shaping document read on a big screen is worth more lines than
    the cap the table has to stay usable under. Absolutely positioned rather than
@@ -4183,6 +4205,9 @@ def _page(
         # stylesheet on the same commit.
         families=FAMILIES,
         schemes=Markup(_scheme_css()),
+        # The `.hl-*` rules, on every page because the hover card draws a
+        # document on every page — see the block this fills in the sheet above.
+        highlighting=Markup(_code_css()),
         status_slots=STATUS_SLOTS,
         # Only the server has an event stream to listen to. A static page opening a
         # connection to nothing would retry forever in the console.

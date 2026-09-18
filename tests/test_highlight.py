@@ -21,10 +21,24 @@ the reason is that taking them put 95 of 144 combinations below AA.
 
 from __future__ import annotations
 
+import json
 import re
+from datetime import date
 from html import unescape
+from pathlib import Path
 
-from openproj.render import ROUTES
+import pytest
+from browser import chrome, measured_in
+
+# `one_pitch` and `HEAD` from the card's own file, because the page under test
+# here is the card's: a record with a document on it, and the commit the table
+# is rendered at. Two spellings of "a pitch with a body" is how the two files
+# end up asking about different rows.
+from test_card import HEAD, one_pitch
+
+from openproj.index import Index, build_index
+from openproj.model import load_repo
+from openproj.render import ROUTES, render_graph, render_table, render_timeline
 from openproj.render.markdown import _lexer_for, _markdown
 from openproj.render.styles import _CODE_COLOURS, _code_css
 
@@ -152,3 +166,101 @@ def test_an_unknown_language_is_asked_for_once():
         assert _lexer_for("python") is not None
     info = _lexer_for.cache_info()
     assert info.misses == 2, info
+
+
+# --------------------------------------------------------------------------- #
+# Where the rules are, which is every page — because the hover card is
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def index(demo_root: Path) -> Index:
+    records, config, _ = load_repo(demo_root)
+    return build_index(records, config, date(2026, 8, 17))
+
+
+def test_every_page_carries_the_highlighters_rules_exactly_once(index: Index):
+    """jcanton, 2026-09-18: *"the little hover card body doesn't colour code
+    blocks syntax (while the /detail page in preview and side-by-side does), can
+    this be added?"*.
+
+    Nothing was wrong with the markup. `/api/card/<id>` renders a record's body
+    through the same function the record page uses, so the card has been drawing
+    `<span class="hl-k">` for as long as it has drawn documents at all. The
+    RULES were in `_DETAIL_STYLE`, which the table, the graph and the timeline do
+    not load — a deliberate saving, made when the argument "those pages have no
+    fence on them" was still true. The card is what made it false: every row on
+    all three opens a shaping document, and a shaping document about code has
+    fences in it.
+
+    So the sheet is the shell's now. **Exactly once** is the other half: leaving
+    the old copy in `_DETAIL_STYLE` would have been the cheap fix and would put
+    eighty rules twice into the record page, the cycle pages, the deck and Help.
+    """
+    sheet = _code_css()
+    pages = {
+        "table": render_table(index, ROUTES, base_commit=HEAD, may_write=True),
+        "graph": render_graph(index, ROUTES, base_commit=HEAD, may_write=True),
+        "timeline": render_timeline(index, ROUTES),
+    }
+    for name, page in pages.items():
+        assert page.count(sheet) == 1, (
+            f"the {name} draws hover cards and carries the highlighter's rules "
+            f"{page.count(sheet)} times"
+        )
+
+
+# The card's document, answered by the page itself: a `file://` page reaches no
+# server, and what is being asked is what the card DOES with a fence rather than
+# whether one arrives. `test_card.py` opens a card the same way and says why.
+_A_FENCE_IN_A_CARD = """
+<script>
+window.fetch = async () => ({ok: true, json: async () => ({html: %s})});
+showCard(DATA.rows[%s], 100, 100);
+</script>
+"""
+
+_WHAT_COLOUR_THE_KEYWORD_IS = """
+const body = CARD.querySelector('.card-body');
+// `hl-kn` and not `hl-k`: Pygments draws `import` as Keyword.Namespace, which
+// takes its own short name. Both walk up to the `keyword` role in
+// `_CODE_COLOURS` — the branch is what is coloured, not the leaf — so the class
+// a fence actually carries is the one to ask about.
+const word = body ? body.querySelector('.hl-kn') : null;
+return {
+  drawn: !!word,
+  word: word ? word.textContent : '',
+  ink: getComputedStyle(body).color,
+  colour: word ? getComputedStyle(word).color : '',
+};
+"""
+
+
+def test_a_fence_in_a_card_is_coloured_on_a_page_that_draws_no_fence_itself(
+    index: Index, tmp_path: Path
+):
+    """The claim a substring cannot make. A page can carry every rule in the sheet
+    and still draw the keyword in the body ink — an `@media` block nobody matches,
+    a `--code-keyword` that resolves to nothing, a selector one specificity step
+    under `.card-body pre`. This asks Chrome what colour the word actually is.
+
+    On the table, which has no fence of its own anywhere on it. That is the page
+    the rules were missing from, and asking it of the record page would be asking
+    the one page that always had them.
+    """
+    record_id = one_pitch(index)
+    drawn = str(_markdown("```python\nimport kiln4py\n```\n", ROUTES))
+    page = render_table(index, ROUTES, base_commit=HEAD, may_write=True).replace(
+        "</body>", _A_FENCE_IN_A_CARD % (json.dumps(drawn), json.dumps(record_id)) + "</body>"
+    )
+    got = measured_in(
+        chrome(), page, tmp_path / "cardfence.html", 1200, _WHAT_COLOUR_THE_KEYWORD_IS,
+        height=800,
+    )
+
+    assert got["drawn"], "the card drew no highlighted span at all"
+    assert got["word"] == "import", got["word"]
+    assert got["colour"] and got["colour"] != got["ink"], (
+        f"the keyword is drawn in the body's own ink ({got['ink']}), so the rules "
+        "reached the page and nothing painted them"
+    )

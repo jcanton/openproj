@@ -2153,14 +2153,23 @@ def lead_text(body: str) -> str:
     return "\n".join(out).strip("\n")
 
 
-# The heading a record's progress is counted under, matched lowercased and at any
-# depth for the reason `sections` and `_by_section` match that way: the template
-# is flat and whether somebody wrote `##` or `###` is not a fact about the plan.
-PROGRESS_HEADING = "progress"
+# The headings a record's progress is counted under, matched lowercased and at
+# any depth for the reason `sections` and `_by_section` match that way: the
+# template is flat and whether somebody wrote `##` or `###` is not a fact about
+# the plan.
+#
+# **Two headings and not one.** `## Progress` is the task template's own list;
+# `## Solution` is where a pitch writes the work it is proposing, and jcanton
+# keeps ticked boxes there — "make progress count boxes under ## Progress as
+# well as ## Solution; nothing more for now, no fallback to the body",
+# 2026-09-18. A set rather than a second constant beside the first, because the
+# only thing either name does is answer this one question, and a list of one
+# thing is how the second spelling gets forgotten.
+PROGRESS_HEADINGS = frozenset({"progress", "solution"})
 
 
 def _progress_scoped(body: str) -> Iterator[tuple[str, bool, bool]]:
-    """Every line, with whether it is inside code and inside `## Progress`.
+    """Every line, with whether it is inside code and inside a counted heading.
 
     **Its SUBTREE and not the text `sections` would key under it.** `sections` is
     flat and stops at the next heading of any depth, so a `### Still to do` under
@@ -2172,13 +2181,18 @@ def _progress_scoped(body: str) -> Iterator[tuple[str, bool, bool]]:
     The heading line itself is outside: nothing on it is a point, and leaving it
     in would make `without_checklist` a function that can delete a heading
     without meaning to.
+
+    A second counted heading opens a new scope rather than closing into nothing —
+    `## Solution` followed by `## Progress` is two sections, both counted — which
+    is what the order of the two branches below says: the name is asked before
+    the depth.
     """
     depth = 0
     for line, in_code in _outside_code(body):
         heading = None if in_code else _HEADING.match(line)
         if heading:
             level = len(heading.group(1))
-            if heading.group(2).strip().lower() == PROGRESS_HEADING:
+            if heading.group(2).strip().lower() in PROGRESS_HEADINGS:
                 depth = level
                 yield line, in_code, False
                 continue
@@ -2188,24 +2202,28 @@ def _progress_scoped(body: str) -> Iterator[tuple[str, bool, bool]]:
 
 
 def checklist_items(body: str) -> list[tuple[bool, str]]:
-    """Every task-list item under `## Progress`, as (ticked, what it says).
+    """Every task-list item under `## Progress` or `## Solution`, as (ticked, what
+    it says).
 
-    **Under that heading and nowhere else**, which is a change and was asked for:
-    jcanton, 2026-09-18 — "the auto progress measurment computed by parsing the
-    body and looking for checkmarks should only collect checkmarks within the ##
-    Progress section, not the entire body (which is what currently happens)". It
-    counted the whole body before, on the argument that real notes also keep
-    boxes under `## Solution`; what that argument missed is that a rabbit hole
-    listed as `- [ ] not this` and a scope cut ticked under `## For later` are not
-    work anybody is doing, and they moved the number on the table.
+    **Under those headings and nowhere else**, which is a change and was asked
+    for: jcanton, 2026-09-18 — "the auto progress measurment computed by parsing
+    the body and looking for checkmarks should only collect checkmarks within the
+    ## Progress section, not the entire body (which is what currently happens)",
+    and then, when the cost of the strict reading was put to him, "make progress
+    count boxes under ## Progress as well as ## Solution". It counted the whole
+    body before: a rabbit hole listed as `- [ ] not this` and a scope cut ticked
+    under `## For later` are not work anybody is doing, and they moved the number
+    on the table. A pitch's `## Solution` is the other place the real corpus keeps
+    a list that IS the work.
 
-    `docs/quickstart.md` already said this is what the heading means — "`##
+    `docs/quickstart.md` already said this is what `## Progress` means — "`##
     Progress` on a task is its checklist" — so the reading and the promise agree
     now rather than nearly agreeing.
 
-    **No heading, no items.** Not a fallback to the whole body: a record with a
-    box in its prose and no Progress section is a record nobody is measuring, and
-    guessing otherwise is the behaviour this change is here to remove.
+    **Neither heading, no items.** Not a fallback to the whole body: a record with
+    a box in its prose and no section either name is a record nobody is
+    measuring, and guessing otherwise is the behaviour this change is here to
+    remove.
 
     Sub-items are items, and they arrive flat — `checklist` counts them that way,
     which is what somebody reading "7/12" means by it, and a list drawn with a
@@ -2227,7 +2245,7 @@ def checklist_items(body: str) -> list[tuple[bool, str]]:
 
 
 def checklist(body: str) -> tuple[int, int]:
-    """Ticked and total task-list items under the body's `## Progress`.
+    """Ticked and total task-list items under the body's counted headings.
 
     Counted from `checklist_items` rather than by a second walk of the same
     lines. The deck draws those points beside this number: two parses of one

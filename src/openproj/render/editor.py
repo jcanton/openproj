@@ -165,6 +165,45 @@ function vimYanksToTheClipboard() {
   };
 }
 
+// **`:w` presses Save.** jcanton, 2026-09-18: "can we have :w in the editor on
+// vim keys work as a [save] click?".
+//
+// Ace ships the command already and it does nothing: `defineEx("write", "w",
+// ...)` in `keybinding-vim.js` logs ":write is not implemented" to a console
+// nobody has open. So somebody who types `:w` out of thirty years of habit gets
+// silence and an unsaved document, which is the worst of the three things that
+// could happen — worse than no command at all, because the muscle memory reports
+// success.
+//
+// Defined over Ace's, rather than mapped: `defineEx` replaces by name, so `:w`,
+// `:wr`, `:writ` and `:write` all arrive here, which is what vim does and what a
+// mapping of the two letters would not.
+//
+// **The BUTTON and not the save function**, and that is the whole shape of this.
+// `#save` is the one name every page with an editor on it agrees about — the
+// record page, the create form and the slide editor each build their own saver
+// and hang it off that id — so pressing it is the one gesture that means "save
+// this" on all three, and a `:w` that called one page's function would be a
+// command that works on one page. Its disabled state is that page's answer to
+// "is there anything to save", already computed, and the guards below read it
+// rather than asking again.
+//
+// Said out loud in both refusals, because the alternative is the silence this
+// was written to remove. `announce` is the shell's live region.
+function vimWritesThroughSave() {
+  const vim = ace.require('ace/keyboard/vim');
+  const Vim = vim && vim.CodeMirror && vim.CodeMirror.Vim;
+  if (!Vim || !Vim.defineEx) return;
+  Vim.defineEx('write', 'w', () => {
+    const save = document.getElementById('save');
+    // A page with an editor and no Save is the room's own document being written
+    // by somebody else's socket, and a static export has no button at all.
+    if (!save || save.hidden) { announce('there is no Save on this page'); return; }
+    if (save.disabled) { announce('nothing to save'); return; }
+    save.click();
+  });
+}
+
 // Everything between this banner and the one that closes it is the only code on
 // these pages that knows the document may be being written in Ace. It builds the
 // same ten members `textareaSurface` does, so `applyMark`, `indentLines`,
@@ -328,7 +367,11 @@ function aceSurface(area, seeded) {
   const KEPT = typeof EDITOR === 'undefined' ? {keymap: 'default'} : EDITOR;
   if (KEPT.keymap !== 'default') {
     editor.setKeyboardHandler(KEPT.keymap === 'vim' ? 'ace/keyboard/vim' : null);
-    if (KEPT.keymap === 'vim') { vimWalksTheScreen(); vimYanksToTheClipboard(); }
+    if (KEPT.keymap === 'vim') {
+      vimWalksTheScreen();
+      vimYanksToTheClipboard();
+      vimWritesThroughSave();
+    }
   }
 
   // **Ace measures its container when it is told to and never on its own.**

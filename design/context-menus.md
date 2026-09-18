@@ -225,22 +225,34 @@ Two facts on the card are not fields and are not editable: **kind**, because cha
 moves it between ladders and is the detail page's own panel, and **Progress**, because it is counted
 rather than stored.
 
-**Two ways of committing, and the split is not a preference.**
+**One way of committing: the box holds what is typed into it and Save sends it.** There were two.
 
-| | when | how |
-|---|---|---|
-| live | `Edit…`, `Change parent…` — a record that exists | blur saves that one field as its own PATCH, Escape discards. `openEditor`'s bargain in the table, to the letter. |
-| staged | `New child ▸`, and a status that demands fields the record has not got | the controls stay open, and one button sends them together. |
+`Edit…` and `Change parent…` used to write each field as it was answered — blur saved, Escape
+discarded, one PATCH and one commit per field, `openEditor`'s bargain in the table to the letter and
+what was asked for on 2026-09-18. The other two doors could never do that: `POST /api/record` takes
+the whole record, and a `done` with no PRs is refused by the gate whichever of the two arrives
+first, so `New child ▸` and a gated status have always held their answers behind a button.
 
-Neither of the staged cases can be written a field at a time: `POST /api/record` takes the whole
-record, and a `done` with no PRs is refused by the gate whichever of the two arrives first. A staged
-box is the same card with its controls open and a button under it.
+Two doors on one box is what made the difference visible, and later the same day jcanton asked for
+one: *"this card has the save/cancel buttons at the bottom, while the card that shows up when
+selecting the edit menu doesn't and commits on each field change. I'd like them to be consistent,
+and I think I'd prefer them both to have the save/cancel buttons and save only when clicking save,
+not on every edit as I asked before."* So every box is the staged one now, and the only difference
+left between them is the word on the button — `Save`, or `Create task`.
 
-**A live write leaves the box open.** Every other write in this module closes the menu, and
-`popSettled` says why: a menu is a list of things to do next, placed against a pointer that has since
-moved. A card you are editing in is the thing you are doing, so `popWrite(…, stays)` re-reads the row
-the host has just replaced and redraws. A refusal keeps the box AND puts the refused answer back in
-the control it came out of — a refusal that also threw the answer away is one nobody can act on.
+What went with the live door, and where each thing lives now:
+
+| gone | where it is now |
+|---|---|
+| the per-field PATCH, whose message named the one field that moved | `popEdited` sends a diff, so the message still names only what changed — one commit for the several fields one press answered |
+| the status gate reached on blur, which turned a live box into a staged one asking for what the new status needs | `popSave` asks the same rule in the same box, with those fields already on it |
+| `popWrite(…, stays)` and the redraw that followed it | nothing: a write that lands closes the box, which is the rule every other write here already followed |
+
+A refusal keeps the box open with the answers still in the controls, and puts the sentence in the
+box's own list — a refusal that also threw the answer away is one nobody can act on. Escape in a
+control gives up that field and returns the keyboard to Save; Escape again leaves the box. (Save and
+not the word it just put back: `.card-fact` is `display: contents`, generates no box, and Chrome
+will not focus an element that has none.)
 
 **The three fields on the card's face carry no visible name**, which was asked for by name:
 *"without adding any extra descriptions (e.g. for kind, priority, status that don't have a label)"*.
