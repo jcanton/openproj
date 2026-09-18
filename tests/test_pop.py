@@ -4520,6 +4520,7 @@ const during = {disabled: reallyIn().disabled, deletions: deletions().length, up
 await rest(900);
 return {panel, during, sent: deletions(), patched: patches().length, posted: posts().length,
         said: said(), up: askUp(), open: popIsOpen(), base: baseNow(), beats: beatsNow(),
+        ours: oursNow(),
         row: !!DATA.rows[TARGET], drawn: menuRows().some(tr => tr.dataset.id === TARGET),
         kids: panel.deletes.filter(id => DATA.rows[id]),
         kidsDrawn: panel.deletes.filter(id => menuRows().some(tr => tr.dataset.id === id)),
@@ -4600,7 +4601,13 @@ def test_confirming_sends_one_delete_and_the_record_goes(index: Index, tmp_path:
         f"`#base` is still {got['base']} after a commit, so the next write from this page "
         "collides with the commit it just made"
     )
-    assert got["beats"] == {"writing": 1, "wrote": ["c0ffee1"]}, got["beats"]
+    # Silent on both, because a DELETE is invisible to the announce census in
+    # `tests/test_web.py` and a pair here would count a write it cannot see.
+    # `openproj:ours` is what a delete sends instead — the shell's own event for a
+    # commit that is this page's, which stops the stream's news arriving as "The
+    # plan changed" about the record just removed.
+    assert got["beats"] == {"writing": 0, "wrote": []}, got["beats"]
+    assert got["ours"] == ["c0ffee1"], f"the commit was not claimed as ours: {got['ours']}"
 
 
 # --------------------------------------------------------------------------- #
@@ -4745,7 +4752,8 @@ ANSWER = () => ({status: 200,
 reallyIn().click();
 await rest(900);
 return {STALE, before, during, after, sent: deletions(), open: popIsOpen(),
-        said: said(), base: baseNow(), beats: beatsNow(), row: !!DATA.rows[TARGET]};
+        said: said(), base: baseNow(), beats: beatsNow(), ours: oursNow(),
+        row: !!DATA.rows[TARGET]};
 """
 
 
@@ -4846,9 +4854,15 @@ def test_a_refusal_re_asks_the_plan_and_redraws_what_would_go(
         "the deletion that landed left the record in the plan this page is showing"
     )
     assert got["base"] == "c0ffee2", got["base"]
-    assert got["beats"] == {"writing": 2, "wrote": [None, "c0ffee2"]}, (
-        f"the event pair does not balance over a refused deletion and a landed one: "
-        f"{got['beats']}"
+    assert got["beats"] == {"writing": 0, "wrote": []}, (
+        f"a deletion dispatched the shell's write pair, which the announce census "
+        f"cannot see a DELETE to balance against: {got['beats']}"
+    )
+    # One `ours`, not two: the refused attempt committed nothing, and this event
+    # carries a sha or it is not sent. That asymmetry is why it is asserted here
+    # rather than only on the happy path.
+    assert got["ours"] == ["c0ffee2"], (
+        f"a refused deletion and a landed one claimed {got['ours']}"
     )
 
 
