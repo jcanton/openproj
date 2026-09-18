@@ -179,8 +179,29 @@ _POP_STYLE = """
 # scripts sharing one global scope, and a function in a later block is not
 # hoisted into an earlier one, so a `popServes(...)` call in a view's script
 # needs this block to have run.
-_POP_JS = r"""
-<script>
+# The menu, in two halves, and **the split is what keeps a write off a page that
+# cannot make one.**
+#
+# `tests/test_table.py` asserts that the static export and a signed-out reader's
+# table carry no `/api/record` and no `base_commit` anywhere in their bytes, and
+# `tests/test_render.py` asks the same of every rendered file. Those are not
+# tidiness: a rendered file is a thing somebody puts on a share, and a reader's
+# page is served to anyone. Cut 2's menu passed them by having nothing to say;
+# cut 3 gave the box a PATCH, and the first render of it put the whole write door
+# into both. The strings were inert — every path into them is behind
+# `POP_HOST.may()` — and that is exactly the argument those tests exist to
+# refuse, because inert-by-a-guard is one edit away from not inert.
+#
+# So the write half is a separate string, emitted only when the caller passes an
+# index, and a reader's page gets `_POP_NO_WRITE_JS` instead: one function, the
+# same name, answering with no items. `popMenuItems` calls `popWriteItems(row)`
+# unconditionally and does not know which build it is in.
+#
+# Function declarations hoist within a script block, so the two halves may be
+# concatenated in either order. `// --- the write door ---` sat below `closing`
+# when it was written and is moved up here to make the write half contiguous;
+# nothing about the order was load-bearing.
+_POP_JS_READ = r"""
 // --- the right-click menu ---------------------------------------------------
 //
 // The box is built here and appended to the body rather than emitted into each
@@ -327,343 +348,6 @@ function popItems(row) {
   items.push({kind: 'open-tab', text: 'Open in new tab', href: href});
   items.push({kind: 'copy-link', text: 'Copy link', run: () => popCopy(href)});
   return items;
-}
-
-// --- the write half ---------------------------------------------------------
-//
-// The reader's word for a stored identifier, and a field's label. Both out of
-// the schema and never written down here: `HUMAN` and `LABELS` (`tokens.py`) are
-// one map each for the whole app, because five pages inventing their own is how
-// `in_progress` came to be spelled three ways on one screen.
-const popHuman = value => (POP_SCHEMA.human || {})[value] ?? (value ?? '');
-const popLabel = field => (POP_SCHEMA.labels || {})[field] || field;
-// What to call a record in a sentence. The same fallback the box's own
-// `aria-label` uses: a record with no title is still a record you can act on.
-const popTitle = row => row.title || row.id;
-// And what to call one this menu only has the id of — the parent in `Take out of
-// "X"`. Asked of the HOST, which is the only thing that knows the other rows:
-// `DATA.rows` on the table, the node's own `data()` on the graph.
-function popTitleOf(id) {
-  const row = POP_HOST && POP_HOST.rows(id);
-  return (row && row.title) || id;
-}
-
-function popWriteItems(row) {
-  if (!POP_HOST.may || !POP_HOST.may()) return [];
-  // A host whose reader may write, on a page rendered without a schema, is a
-  // wiring mistake and not a reader-only page: `_pop_js` takes the index and
-  // this view did not give it one. Said out loud and in the box, for the reason
-  // `popMenu` calls `cardYields` with no `typeof` guard — the alternative is a
-  // menu that quietly has no write half on the one view somebody has just wired,
-  // which looks exactly like a menu that is working.
-  if (!POP_SCHEMA)
-    return [{kind: 'no-schema', text: 'Editing is unavailable here',
-             why: 'This page was rendered without the menu\'s schema.'}];
-  return [popStatusItem(row), popOwnerItem(row), popTakeOutItem(row)];
-}
-
-// Whether this row has a value for that field at all — `holds` (`table.py`),
-// which is where the four ways a field can be unset are enumerated. An
-// `assignees: []` that read as a value would be a row silently exempted from a
-// gate.
-function popHolds(row, field) {
-  const value = row[field];
-  return !(value === null || value === undefined || value === ''
-    || (Array.isArray(value) && value.length === 0));
-}
-
-// What this status will make the server refuse the row without, and the row has
-// not got. The same map `missingFor` (`table.py`) asks — `required_at()`, which
-// is derived by running the gate over a blank record rather than written beside
-// it, so it cannot drift from the rule it mirrors.
-//
-// **One of that function's filters is deliberately not here.** `missingFor`
-// drops any field the table cannot edit, because the panel it feeds has to offer
-// a box for every field it names. This menu offers no boxes at all — cut 3 has
-// no form — so a field it could not write is still a reason the write would be
-// refused, and dropping it would draw the item as available and let the server
-// answer for it.
-function popMissing(row, status) {
-  const gates = (POP_SCHEMA.required || {})[row.kind] || {};
-  return Object.keys(gates)
-    .filter(field => gates[field].includes(status))
-    // `review_waived` is honoured for the reason `missingFor` honours it: it is
-    // the escape hatch from the reviewer rule, and asking for reviewers on a row
-    // that has waived them is a nag rather than a question.
-    .filter(field => !(field === 'reviewers' && row.review_waived))
-    .filter(field => !popHolds(row, field));
-}
-
-// The gate's refusal, in the app's own words.
-//
-// **What is shared with `askFor` (`table.py`) is everything that can drift, and
-// not the sentence itself.** The fields come from `required_at()` through
-// `popMissing`, which is the rule rather than a copy of it; the names come from
-// `LABELS` and `human`, which is what every other control here calls them; and
-// the opening clause is `askFor`'s. The rest is this box's own wording, because
-// `askFor` is a heading over a box per field and this is a refusal with no boxes
-// at all — it has to say where to go instead. Do not go looking for a shared
-// string; look at the three inputs, which are where a drift would come from.
-//
-// **In cut 4 this item stops being refused at all**: the design has it open the
-// form with `only:` the missing fields and the new status pre-filled, and save
-// both in one commit, which is exactly what `askFor` does today. Until there is
-// a form to open, the honest thing is to name what is missing and where to put
-// it — an error says what went wrong and how to fix it.
-function popNeeds(row, status, fields) {
-  const named = fields.map(popLabel).join(' and ');
-  return `${popHuman(status)} needs ${named}, and ${popTitle(row)} has not got `
-    + `${fields.length === 1 ? 'it' : 'them'}. Add `
-    + `${fields.length === 1 ? 'it' : 'them'} on the record's own page.`;
-}
-
-function popStatusItem(row) {
-  const ladder = (POP_SCHEMA.statuses || {})[row.kind] || [];
-  // `statuses: ()` on the ladder is how a rung says it reads no status at all —
-  // jcanton, 2026-08-20: a codebase is not `in_progress` — and it is the same
-  // fact `_row` empties the cell by. Drawn refused rather than left out, because
-  // a control that disappears teaches nothing about why.
-  if (!ladder.length)
-    return {kind: 'status', text: 'Status', why: `A ${row.kind} has no status.`};
-  return {kind: 'status', text: 'Status',
-          items: () => ladder.map(status => popStatusChoice(row, status))};
-}
-
-function popStatusChoice(row, status) {
-  const item = {kind: 'status-' + status, text: popHuman(status),
-                glyph: (POP_SCHEMA.glyphs || {})[status] || '',
-                checked: row.status === status};
-  // The status it already has writes nothing. The server would take it — every
-  // write path here relies on `_merge_frontmatter` skipping a key whose stored
-  // value equals the one being sent — but a commit is a line in somebody's
-  // history, and "set it to what it is" is not a thing anybody meant to do.
-  if (item.checked) {
-    item.run = () => announce(`${popTitle(row)} is already ${popHuman(status)}`);
-    return item;
-  }
-  // **The gate is honoured, not fought.** A status whose `required_at` names
-  // fields this record does not hold cannot be written, so the item says so
-  // rather than sending a PATCH the server will refuse.
-  const missing = popMissing(row, status);
-  if (missing.length) {
-    item.why = popNeeds(row, status, missing);
-    return item;
-  }
-  item.run = () => popWrite(row.id, {status: status},
-    `${popTitle(row)} is now ${popHuman(status)}`);
-  return item;
-}
-
-// The one value in the owner list that is not a person.
-const POP_NOBODY = '— nobody —';
-
-function popOwnerItem(row) {
-  // `owner` is one of the nine fields a container does not read
-  // (`unread_fields`), which is why `_row` withholds the value and why the
-  // table's status cell drew an empty box that still committed. Refused here
-  // before anything is sent, the way the graph refuses its edge gestures at tap
-  // time.
-  if (((POP_SCHEMA.unread || {})[row.kind] || []).includes('owner'))
-    return {kind: 'owner', text: 'Owner', why: `A ${row.kind} holds no owner.`};
-  return {kind: 'owner', text: 'Owner', items: () => {
-    // The same people the table's own suggestion list offers — `_suggestions`
-    // (`controls.py`), read off every record in the corpus. A second list would
-    // be a second answer to "who is on this plan", and the first thing it would
-    // do is disagree with the box next to it.
-    const items = (POP_SCHEMA.people || []).map(login => popOwnerChoice(row, login, login));
-    // Last, and spelled as a value rather than as a verb: the list is a set of
-    // answers to "who owns this" and "nobody" is one of them, not a command.
-    items.push(popOwnerChoice(row, null, POP_NOBODY));
-    return items;
-  }};
-}
-
-function popOwnerChoice(row, login, text) {
-  // `null` and not `''`: `patch_text` round-trips a value, so `owner: ''` is a
-  // field that is present and empty while `owner:` with nothing after it is the
-  // shape every other unset field in this corpus already has.
-  const item = {kind: login === null ? 'owner-nobody' : 'owner-' + login, text: text,
-                checked: (row.owner || null) === login};
-  if (item.checked) {
-    item.run = () => announce(login
-      ? `${popTitle(row)} is already owned by ${login}`
-      : `${popTitle(row)} already has no owner`);
-    return item;
-  }
-  item.run = () => popWrite(row.id, {owner: login}, login
-    ? `${popTitle(row)} is now owned by ${login}`
-    : `${popTitle(row)} has no owner`);
-  return item;
-}
-
-// **Three sentences, not two.**
-//
-// `_row` (`rows.py`) nulls a parent that is not in `index.plan` and sets
-// `off_plan_parent` beside it, because an inbox id may not reach these pages'
-// bytes. So `row.parent` being empty means one of two completely different
-// things: nothing holds this record, or something does and this view cannot draw
-// it. Telling the second one it is inside nothing is the bug
-// `tests/test_exclusion.py` was written for seen from the other side — and
-// acting on it would overwrite a line the page never showed anybody, which the
-// server cannot tell from the record page legitimately refiling it.
-//
-// The wording of the third is `moveTip`'s (`table.py`), which says the same
-// thing about the same records for the drag gesture.
-function popTakeOutItem(row) {
-  if (row.off_plan_parent)
-    return {kind: 'take-out', text: 'Take out',
-            why: `${popTitle(row)} is filed under something this view cannot show `
-                 + '— where it belongs is edited on its own page.'};
-  if (!row.parent)
-    return {kind: 'take-out', text: 'Take out',
-            // Two sentences under one branch, because "not inside anything" and
-            // "cannot be inside anything" are different news: the first is a
-            // state somebody can change and the second is the ladder. `moveTip`
-            // (`table.py`) already draws them apart for the drag gesture, off
-            // this same map, and an error that implies a fix which does not
-            // exist is the copy failure this repository names in as many words.
-            //
-            // Which kind that is comes off `PARENT_KINDS` and is not written
-            // here: it was `project` until a `product` was added above it, and a
-            // rule that names the top rung is a rule that is wrong the day the
-            // ladder grows.
-            why: ((POP_SCHEMA.parent_kinds || {})[row.kind] || []).length
-                 ? `${popTitle(row)} is not inside anything.`
-                 : `A ${row.kind} belongs to nothing, so there is nothing to take it out of.`};
-  return {kind: 'take-out', text: `Take out of "${popTitleOf(row.parent)}"`,
-    // `{parent: null}`, which is what `reparent(child, null)` (`table.py`) has
-    // sent for this same gesture since it was a drag. Two spellings of "no
-    // parent" would not even be the same write: `patch_text` round-trips, so
-    // `parent: ''` writes an empty string into the file where `null` writes the
-    // key with nothing after it.
-    run: () => popWrite(row.id, {parent: null},
-      `${popTitle(row)} is no longer inside anything`)};
-}
-
-function popControl(item) {
-  const control = document.createElement(item.href ? 'a' : 'button');
-  if (item.href) {
-    control.href = item.href;
-    control.target = '_blank';
-    // Implied by `target="_blank"` in every current browser, and written out
-    // anyway: it is one attribute, and the implication is a browser default,
-    // which is the kind of thing that is true until the page is opened in the
-    // one browser where it is not.
-    control.rel = 'noopener';
-  } else {
-    control.type = 'button';
-  }
-  control.className = 'popitem';
-  control.dataset.kind = item.kind;
-  // `menuitemradio` where the item is one of a set of values with a current one
-  // — the status ladder, the owner list — because `aria-checked` on a plain
-  // `menuitem` is ignored, and the check drawn beside it would then be a mark
-  // only a sighted reader gets.
-  control.setAttribute('role', item.checked === undefined ? 'menuitem' : 'menuitemradio');
-  if (item.checked !== undefined) control.setAttribute('aria-checked', String(item.checked));
-  // Drills down in the same box, so the list this opens REPLACES this control:
-  // there is no moment at which it is expanded, and `aria-expanded` would have
-  // to be permanently false. `haspopup` alone is the honest half.
-  if (item.items) control.setAttribute('aria-haspopup', 'menu');
-  if (item.glyph) control.append(popPart('popglyph', item.glyph, true));
-  control.append(popPart('poptext', item.text, false));
-  // One slot behind the word, and the two things that can be in it never
-  // co-occur: `›` means there is a list behind this, `•` means this is the value
-  // the record holds.
-  //
-  // **Both were measured against the vendored face rather than picked.** The
-  // conventional pair is `▸` and `✓`, and each was wrong for its own reason.
-  // `▸` (U+25B8) is not in the inlined Inter subset at all — probed in headless
-  // Chrome, 2026-09-18, by measuring it under `"Inter var"` alone against a
-  // family that does not exist and getting the same width both ways — so it is
-  // a tofu box on a machine with no fallback for it, which is the argument that
-  // already keeps `⠿` off the table's drag handle. `‹` and `›` ARE in the
-  // subset, and they are the pair `‹ Back` is already written with.
-  //
-  // `✓` is in the subset, and it collides: it is `done`'s own status glyph, so a
-  // status ladder would draw one `✓` meaning "this rung is Done" and another
-  // meaning "this is the rung it is on", in the same row. `•` is in the subset,
-  // is in none of the six status marks, and is what a `menuitemradio` is
-  // conventionally drawn with anyway — a filled dot is the radio's mark and a
-  // tick is the checkbox's.
-  const mark = item.items ? '›' : item.checked ? '•' : '';
-  if (mark) control.append(popPart('popmark', mark, true));
-  // Roving tabindex, set properly by `popFocus`. -1 here so a control that has
-  // never been focused is out of the Tab sequence: Tab leaves the menu, and the
-  // arrows are what walks it.
-  control.tabIndex = -1;
-  if (item.why) {
-    control.setAttribute('aria-disabled', 'true');
-    control.dataset.why = item.why;
-  }
-  control.onclick = event => popRan(event, item);
-  POP_OF.set(control, item);
-  return control;
-}
-
-// One part of an item. Three of them and not one `textContent`, so that the two
-// marks can be given a width that does not shrink and hidden from the
-// accessibility tree — a reader who hears both the glyph and the word hears the
-// status twice.
-//
-// `textContent`, never `innerHTML`. This is the JavaScript half of the one
-// escaping boundary, and an item's text carries a record's title.
-function popPart(className, text, decorative) {
-  const part = document.createElement('span');
-  part.className = className;
-  part.textContent = text;
-  if (decorative) part.setAttribute('aria-hidden', 'true');
-  return part;
-}
-
-// Which descriptor a drawn control came from, for the keys that act on the item
-// rather than on the element — ArrowRight has to know whether there is a list
-// behind this row. A WeakMap and not a property on the element: every control is
-// thrown away and rebuilt on every draw, and this lets them be collected with
-// them.
-const POP_OF = new WeakMap();
-
-function popRan(event, item) {
-  if (item.why) {
-    // A refused item answers and the menu stays up. `preventDefault` because an
-    // `aria-disabled` link is still a link: `aria-disabled` is a statement to
-    // the accessibility tree and not to the browser, which is exactly why it was
-    // chosen over `disabled`.
-    event.preventDefault();
-    announce(item.why);
-    return;
-  }
-  // A submenu parent replaces the list and the box stays up, so it must not fall
-  // through to the dismissal below the way every other item does.
-  if (item.items) { popDrill(item); return; }
-  // **A `run` that returns a promise owns the dismissal.** Everything else an
-  // item does here is instantaneous — navigate, copy, say something — and the
-  // box goes with it. A write is not: it has to stay up long enough to draw a
-  // refusal in, and a box that closed under an answer which has not arrived
-  // makes a refused write look exactly like one that landed. `popWrite` calls
-  // `popDone` itself when the commit comes back.
-  if (item.run) {
-    const going = item.run();
-    if (going && typeof going.then === 'function') return;
-  }
-  // And `stays` for the one item whose whole job is to leave the box open and
-  // showing something else: `‹ Back`. It is a plain synchronous `run`, so
-  // without this the mouse path through it CLOSED the menu while the keyboard
-  // path — ArrowLeft and Escape, which call `popBack` directly — popped a level
-  // correctly. Two ways to do one thing, one of them wrong, and the keyboard
-  // probes could not see it.
-  if (item.stays) return;
-  // After the run and not before it, which is the opposite of `.drawmenu`'s
-  // `choose()`. `Copy link` selects a scratch textarea and takes it off the page
-  // again, so it ends with focus on `<body>`; giving the keyboard back has to be
-  // the last thing that happens or it is undone a line later.
-  //
-  // For a link item there is no `run` and this hides the box inside the click
-  // that is still being dispatched. The navigation happens anyway — measured in
-  // headless Chrome on 2026-09-18, both with the anchor hidden and with it
-  // detached outright, and the hash changed in both — and the box keeps its
-  // items on close so the anchor is only hidden and not removed.
-  popDone();
 }
 
 // --- opening ----------------------------------------------------------------
@@ -1059,6 +743,404 @@ addEventListener('openproj:wrote', event => { if (event.detail) popClose(); });
 // and would answer it by rebuilding this box under the press.
 POP.addEventListener('contextmenu', event => { event.stopPropagation(); });
 
+// --- copy link --------------------------------------------------------------
+
+// The absolute URL and not the relative one the page links by: what goes on the
+// clipboard is pasted somewhere else, and `detail.html#pop-art` is not a link
+// anywhere else.
+//
+// **The hand-made copy first, and the Clipboard API as the fallback.** That is
+// the wrong way round by age and the right way round by what each one answers,
+// and the reason is a measurement on the case this has to work in. On a
+// `file://` page in headless Chrome, 2026-09-18: `isSecureContext` is TRUE and
+// `navigator.clipboard.writeText` exists, so a feature test passes — and the
+// promise it returns then neither resolved nor rejected within 300ms, because
+// there is no clipboard to write to and no prompt to ask with. A `.catch()`
+// fallback never runs, and "announce either way" quietly becomes announce
+// neither way. `execCommand('copy')` is deprecated, is implemented everywhere,
+// and answers `true` or `false` in the same tick, which is the whole of what
+// this needs.
+function popCopy(href) {
+  const url = new URL(href, location.href).href;
+  // Said once, by whichever path answers first, and said either way. A refusal
+  // carries the link so that hearing it is still worth something: the reader
+  // asked for this URL, and a live region that says only "could not copy" has
+  // taken the answer away as well as the clipboard.
+  let spoken = false;
+  const say = copied => {
+    if (spoken) return;
+    spoken = true;
+    announce(copied ? 'Link copied: ' + url : 'Could not copy. The link is ' + url);
+  };
+  if (popCopiedByHand(url)) { say(true); return; }
+  if (!navigator.clipboard || !navigator.clipboard.writeText) { say(false); return; }
+  navigator.clipboard.writeText(url).then(() => say(true), () => say(false));
+  // **A promise that never settles is not a hypothetical here**, which is the
+  // measurement above: on a `file://` page in headless Chrome that `writeText`
+  // neither resolved nor rejected, so without this line the item was pressed and
+  // nothing at all was announced — checked by driving this menu, 2026-09-18.
+  // 600ms because a granted clipboard write resolves in microseconds and a
+  // refusal that arrives a second after the press is a refusal about nothing.
+  setTimeout(() => say(false), 600);
+}
+
+function popCopiedByHand(url) {
+  const box = document.createElement('textarea');
+  box.value = url;
+  // `readonly` so a soft keyboard does not come up, and off the side of the
+  // window rather than `hidden` or `display: none`: an unrendered box has no
+  // selection, and `execCommand('copy')` copies the selection and nothing else.
+  box.setAttribute('readonly', '');
+  box.style.position = 'fixed';
+  box.style.top = '-1000px';
+  document.body.append(box);
+  box.select();
+  let copied = false;
+  try { copied = document.execCommand('copy'); } catch (error) { copied = false; }
+  box.remove();
+  return copied;
+}
+"""
+
+
+_POP_WRITE_JS = r"""
+// --- the write half ---------------------------------------------------------
+//
+// The reader's word for a stored identifier, and a field's label. Both out of
+// the schema and never written down here: `HUMAN` and `LABELS` (`tokens.py`) are
+// one map each for the whole app, because five pages inventing their own is how
+// `in_progress` came to be spelled three ways on one screen.
+const popHuman = value => (POP_SCHEMA.human || {})[value] ?? (value ?? '');
+const popLabel = field => (POP_SCHEMA.labels || {})[field] || field;
+// What to call a record in a sentence. The same fallback the box's own
+// `aria-label` uses: a record with no title is still a record you can act on.
+const popTitle = row => row.title || row.id;
+// And what to call one this menu only has the id of — the parent in `Take out of
+// "X"`. Asked of the HOST, which is the only thing that knows the other rows:
+// `DATA.rows` on the table, the node's own `data()` on the graph.
+function popTitleOf(id) {
+  const row = POP_HOST && POP_HOST.rows(id);
+  return (row && row.title) || id;
+}
+
+function popWriteItems(row) {
+  if (!POP_HOST.may || !POP_HOST.may()) return [];
+  // A host whose reader may write, on a page rendered without a schema, is a
+  // wiring mistake and not a reader-only page: `_pop_js` takes the index and
+  // this view did not give it one. Said out loud and in the box, for the reason
+  // `popMenu` calls `cardYields` with no `typeof` guard — the alternative is a
+  // menu that quietly has no write half on the one view somebody has just wired,
+  // which looks exactly like a menu that is working.
+  if (!POP_SCHEMA)
+    return [{kind: 'no-schema', text: 'Editing is unavailable here',
+             why: 'This page was rendered without the menu\'s schema.'}];
+  return [popStatusItem(row), popOwnerItem(row), popTakeOutItem(row)];
+}
+
+// Whether this row has a value for that field at all — `holds` (`table.py`),
+// which is where the four ways a field can be unset are enumerated. An
+// `assignees: []` that read as a value would be a row silently exempted from a
+// gate.
+function popHolds(row, field) {
+  const value = row[field];
+  return !(value === null || value === undefined || value === ''
+    || (Array.isArray(value) && value.length === 0));
+}
+
+// What this status will make the server refuse the row without, and the row has
+// not got. The same map `missingFor` (`table.py`) asks — `required_at()`, which
+// is derived by running the gate over a blank record rather than written beside
+// it, so it cannot drift from the rule it mirrors.
+//
+// **One of that function's filters is deliberately not here.** `missingFor`
+// drops any field the table cannot edit, because the panel it feeds has to offer
+// a box for every field it names. This menu offers no boxes at all — cut 3 has
+// no form — so a field it could not write is still a reason the write would be
+// refused, and dropping it would draw the item as available and let the server
+// answer for it.
+function popMissing(row, status) {
+  const gates = (POP_SCHEMA.required || {})[row.kind] || {};
+  return Object.keys(gates)
+    .filter(field => gates[field].includes(status))
+    // `review_waived` is honoured for the reason `missingFor` honours it: it is
+    // the escape hatch from the reviewer rule, and asking for reviewers on a row
+    // that has waived them is a nag rather than a question.
+    .filter(field => !(field === 'reviewers' && row.review_waived))
+    .filter(field => !popHolds(row, field));
+}
+
+// The gate's refusal, in the app's own words.
+//
+// **What is shared with `askFor` (`table.py`) is everything that can drift, and
+// not the sentence itself.** The fields come from `required_at()` through
+// `popMissing`, which is the rule rather than a copy of it; the names come from
+// `LABELS` and `human`, which is what every other control here calls them; and
+// the opening clause is `askFor`'s. The rest is this box's own wording, because
+// `askFor` is a heading over a box per field and this is a refusal with no boxes
+// at all — it has to say where to go instead. Do not go looking for a shared
+// string; look at the three inputs, which are where a drift would come from.
+//
+// **In cut 4 this item stops being refused at all**: the design has it open the
+// form with `only:` the missing fields and the new status pre-filled, and save
+// both in one commit, which is exactly what `askFor` does today. Until there is
+// a form to open, the honest thing is to name what is missing and where to put
+// it — an error says what went wrong and how to fix it.
+function popNeeds(row, status, fields) {
+  const named = fields.map(popLabel).join(' and ');
+  return `${popHuman(status)} needs ${named}, and ${popTitle(row)} has not got `
+    + `${fields.length === 1 ? 'it' : 'them'}. Add `
+    + `${fields.length === 1 ? 'it' : 'them'} on the record's own page.`;
+}
+
+function popStatusItem(row) {
+  const ladder = (POP_SCHEMA.statuses || {})[row.kind] || [];
+  // `statuses: ()` on the ladder is how a rung says it reads no status at all —
+  // jcanton, 2026-08-20: a codebase is not `in_progress` — and it is the same
+  // fact `_row` empties the cell by. Drawn refused rather than left out, because
+  // a control that disappears teaches nothing about why.
+  if (!ladder.length)
+    return {kind: 'status', text: 'Status', why: `A ${row.kind} has no status.`};
+  return {kind: 'status', text: 'Status',
+          items: () => ladder.map(status => popStatusChoice(row, status))};
+}
+
+function popStatusChoice(row, status) {
+  const item = {kind: 'status-' + status, text: popHuman(status),
+                glyph: (POP_SCHEMA.glyphs || {})[status] || '',
+                checked: row.status === status};
+  // The status it already has writes nothing. The server would take it — every
+  // write path here relies on `_merge_frontmatter` skipping a key whose stored
+  // value equals the one being sent — but a commit is a line in somebody's
+  // history, and "set it to what it is" is not a thing anybody meant to do.
+  if (item.checked) {
+    item.run = () => announce(`${popTitle(row)} is already ${popHuman(status)}`);
+    return item;
+  }
+  // **The gate is honoured, not fought.** A status whose `required_at` names
+  // fields this record does not hold cannot be written, so the item says so
+  // rather than sending a PATCH the server will refuse.
+  const missing = popMissing(row, status);
+  if (missing.length) {
+    item.why = popNeeds(row, status, missing);
+    return item;
+  }
+  item.run = () => popWrite(row.id, {status: status},
+    `${popTitle(row)} is now ${popHuman(status)}`);
+  return item;
+}
+
+// The one value in the owner list that is not a person.
+const POP_NOBODY = '— nobody —';
+
+function popOwnerItem(row) {
+  // `owner` is one of the nine fields a container does not read
+  // (`unread_fields`), which is why `_row` withholds the value and why the
+  // table's status cell drew an empty box that still committed. Refused here
+  // before anything is sent, the way the graph refuses its edge gestures at tap
+  // time.
+  if (((POP_SCHEMA.unread || {})[row.kind] || []).includes('owner'))
+    return {kind: 'owner', text: 'Owner', why: `A ${row.kind} holds no owner.`};
+  return {kind: 'owner', text: 'Owner', items: () => {
+    // The same people the table's own suggestion list offers — `_suggestions`
+    // (`controls.py`), read off every record in the corpus. A second list would
+    // be a second answer to "who is on this plan", and the first thing it would
+    // do is disagree with the box next to it.
+    const items = (POP_SCHEMA.people || []).map(login => popOwnerChoice(row, login, login));
+    // Last, and spelled as a value rather than as a verb: the list is a set of
+    // answers to "who owns this" and "nobody" is one of them, not a command.
+    items.push(popOwnerChoice(row, null, POP_NOBODY));
+    return items;
+  }};
+}
+
+function popOwnerChoice(row, login, text) {
+  // `null` and not `''`: `patch_text` round-trips a value, so `owner: ''` is a
+  // field that is present and empty while `owner:` with nothing after it is the
+  // shape every other unset field in this corpus already has.
+  const item = {kind: login === null ? 'owner-nobody' : 'owner-' + login, text: text,
+                checked: (row.owner || null) === login};
+  if (item.checked) {
+    item.run = () => announce(login
+      ? `${popTitle(row)} is already owned by ${login}`
+      : `${popTitle(row)} already has no owner`);
+    return item;
+  }
+  item.run = () => popWrite(row.id, {owner: login}, login
+    ? `${popTitle(row)} is now owned by ${login}`
+    : `${popTitle(row)} has no owner`);
+  return item;
+}
+
+// **Three sentences, not two.**
+//
+// `_row` (`rows.py`) nulls a parent that is not in `index.plan` and sets
+// `off_plan_parent` beside it, because an inbox id may not reach these pages'
+// bytes. So `row.parent` being empty means one of two completely different
+// things: nothing holds this record, or something does and this view cannot draw
+// it. Telling the second one it is inside nothing is the bug
+// `tests/test_exclusion.py` was written for seen from the other side — and
+// acting on it would overwrite a line the page never showed anybody, which the
+// server cannot tell from the record page legitimately refiling it.
+//
+// The wording of the third is `moveTip`'s (`table.py`), which says the same
+// thing about the same records for the drag gesture.
+function popTakeOutItem(row) {
+  if (row.off_plan_parent)
+    return {kind: 'take-out', text: 'Take out',
+            why: `${popTitle(row)} is filed under something this view cannot show `
+                 + '— where it belongs is edited on its own page.'};
+  if (!row.parent)
+    return {kind: 'take-out', text: 'Take out',
+            // Two sentences under one branch, because "not inside anything" and
+            // "cannot be inside anything" are different news: the first is a
+            // state somebody can change and the second is the ladder. `moveTip`
+            // (`table.py`) already draws them apart for the drag gesture, off
+            // this same map, and an error that implies a fix which does not
+            // exist is the copy failure this repository names in as many words.
+            //
+            // Which kind that is comes off `PARENT_KINDS` and is not written
+            // here: it was `project` until a `product` was added above it, and a
+            // rule that names the top rung is a rule that is wrong the day the
+            // ladder grows.
+            why: ((POP_SCHEMA.parent_kinds || {})[row.kind] || []).length
+                 ? `${popTitle(row)} is not inside anything.`
+                 : `A ${row.kind} belongs to nothing, so there is nothing to take it out of.`};
+  return {kind: 'take-out', text: `Take out of "${popTitleOf(row.parent)}"`,
+    // `{parent: null}`, which is what `reparent(child, null)` (`table.py`) has
+    // sent for this same gesture since it was a drag. Two spellings of "no
+    // parent" would not even be the same write: `patch_text` round-trips, so
+    // `parent: ''` writes an empty string into the file where `null` writes the
+    // key with nothing after it.
+    run: () => popWrite(row.id, {parent: null},
+      `${popTitle(row)} is no longer inside anything`)};
+}
+
+function popControl(item) {
+  const control = document.createElement(item.href ? 'a' : 'button');
+  if (item.href) {
+    control.href = item.href;
+    control.target = '_blank';
+    // Implied by `target="_blank"` in every current browser, and written out
+    // anyway: it is one attribute, and the implication is a browser default,
+    // which is the kind of thing that is true until the page is opened in the
+    // one browser where it is not.
+    control.rel = 'noopener';
+  } else {
+    control.type = 'button';
+  }
+  control.className = 'popitem';
+  control.dataset.kind = item.kind;
+  // `menuitemradio` where the item is one of a set of values with a current one
+  // — the status ladder, the owner list — because `aria-checked` on a plain
+  // `menuitem` is ignored, and the check drawn beside it would then be a mark
+  // only a sighted reader gets.
+  control.setAttribute('role', item.checked === undefined ? 'menuitem' : 'menuitemradio');
+  if (item.checked !== undefined) control.setAttribute('aria-checked', String(item.checked));
+  // Drills down in the same box, so the list this opens REPLACES this control:
+  // there is no moment at which it is expanded, and `aria-expanded` would have
+  // to be permanently false. `haspopup` alone is the honest half.
+  if (item.items) control.setAttribute('aria-haspopup', 'menu');
+  if (item.glyph) control.append(popPart('popglyph', item.glyph, true));
+  control.append(popPart('poptext', item.text, false));
+  // One slot behind the word, and the two things that can be in it never
+  // co-occur: `›` means there is a list behind this, `•` means this is the value
+  // the record holds.
+  //
+  // **Both were measured against the vendored face rather than picked.** The
+  // conventional pair is `▸` and `✓`, and each was wrong for its own reason.
+  // `▸` (U+25B8) is not in the inlined Inter subset at all — probed in headless
+  // Chrome, 2026-09-18, by measuring it under `"Inter var"` alone against a
+  // family that does not exist and getting the same width both ways — so it is
+  // a tofu box on a machine with no fallback for it, which is the argument that
+  // already keeps `⠿` off the table's drag handle. `‹` and `›` ARE in the
+  // subset, and they are the pair `‹ Back` is already written with.
+  //
+  // `✓` is in the subset, and it collides: it is `done`'s own status glyph, so a
+  // status ladder would draw one `✓` meaning "this rung is Done" and another
+  // meaning "this is the rung it is on", in the same row. `•` is in the subset,
+  // is in none of the six status marks, and is what a `menuitemradio` is
+  // conventionally drawn with anyway — a filled dot is the radio's mark and a
+  // tick is the checkbox's.
+  const mark = item.items ? '›' : item.checked ? '•' : '';
+  if (mark) control.append(popPart('popmark', mark, true));
+  // Roving tabindex, set properly by `popFocus`. -1 here so a control that has
+  // never been focused is out of the Tab sequence: Tab leaves the menu, and the
+  // arrows are what walks it.
+  control.tabIndex = -1;
+  if (item.why) {
+    control.setAttribute('aria-disabled', 'true');
+    control.dataset.why = item.why;
+  }
+  control.onclick = event => popRan(event, item);
+  POP_OF.set(control, item);
+  return control;
+}
+
+// One part of an item. Three of them and not one `textContent`, so that the two
+// marks can be given a width that does not shrink and hidden from the
+// accessibility tree — a reader who hears both the glyph and the word hears the
+// status twice.
+//
+// `textContent`, never `innerHTML`. This is the JavaScript half of the one
+// escaping boundary, and an item's text carries a record's title.
+function popPart(className, text, decorative) {
+  const part = document.createElement('span');
+  part.className = className;
+  part.textContent = text;
+  if (decorative) part.setAttribute('aria-hidden', 'true');
+  return part;
+}
+
+// Which descriptor a drawn control came from, for the keys that act on the item
+// rather than on the element — ArrowRight has to know whether there is a list
+// behind this row. A WeakMap and not a property on the element: every control is
+// thrown away and rebuilt on every draw, and this lets them be collected with
+// them.
+const POP_OF = new WeakMap();
+
+function popRan(event, item) {
+  if (item.why) {
+    // A refused item answers and the menu stays up. `preventDefault` because an
+    // `aria-disabled` link is still a link: `aria-disabled` is a statement to
+    // the accessibility tree and not to the browser, which is exactly why it was
+    // chosen over `disabled`.
+    event.preventDefault();
+    announce(item.why);
+    return;
+  }
+  // A submenu parent replaces the list and the box stays up, so it must not fall
+  // through to the dismissal below the way every other item does.
+  if (item.items) { popDrill(item); return; }
+  // **A `run` that returns a promise owns the dismissal.** Everything else an
+  // item does here is instantaneous — navigate, copy, say something — and the
+  // box goes with it. A write is not: it has to stay up long enough to draw a
+  // refusal in, and a box that closed under an answer which has not arrived
+  // makes a refused write look exactly like one that landed. `popWrite` calls
+  // `popDone` itself when the commit comes back.
+  if (item.run) {
+    const going = item.run();
+    if (going && typeof going.then === 'function') return;
+  }
+  // And `stays` for the one item whose whole job is to leave the box open and
+  // showing something else: `‹ Back`. It is a plain synchronous `run`, so
+  // without this the mouse path through it CLOSED the menu while the keyboard
+  // path — ArrowLeft and Escape, which call `popBack` directly — popped a level
+  // correctly. Two ways to do one thing, one of them wrong, and the keyboard
+  // probes could not see it.
+  if (item.stays) return;
+  // After the run and not before it, which is the opposite of `.drawmenu`'s
+  // `choose()`. `Copy link` selects a scratch textarea and takes it off the page
+  // again, so it ends with focus on `<body>`; giving the keyboard back has to be
+  // the last thing that happens or it is undone a line later.
+  //
+  // For a link item there is no `run` and this hides the box inside the click
+  // that is still being dispatched. The navigation happens anyway — measured in
+  // headless Chrome on 2026-09-18, both with the anchor hidden and with it
+  // detached outright, and the hash changed in both — and the box keeps its
+  // items on close so the anchor is only hidden and not removed.
+  popDone();
+}
+
 // --- the write door ---------------------------------------------------------
 //
 // **One door, and every write this menu makes goes through it.** Three call
@@ -1229,64 +1311,27 @@ async function popWrite(id, fields, said) {
   }
 }
 
-// --- copy link --------------------------------------------------------------
+"""
 
-// The absolute URL and not the relative one the page links by: what goes on the
-// clipboard is pasted somewhere else, and `detail.html#pop-art` is not a link
-// anywhere else.
-//
-// **The hand-made copy first, and the Clipboard API as the fallback.** That is
-// the wrong way round by age and the right way round by what each one answers,
-// and the reason is a measurement on the case this has to work in. On a
-// `file://` page in headless Chrome, 2026-09-18: `isSecureContext` is TRUE and
-// `navigator.clipboard.writeText` exists, so a feature test passes — and the
-// promise it returns then neither resolved nor rejected within 300ms, because
-// there is no clipboard to write to and no prompt to ask with. A `.catch()`
-// fallback never runs, and "announce either way" quietly becomes announce
-// neither way. `execCommand('copy')` is deprecated, is implemented everywhere,
-// and answers `true` or `false` in the same tick, which is the whole of what
-// this needs.
-function popCopy(href) {
-  const url = new URL(href, location.href).href;
-  // Said once, by whichever path answers first, and said either way. A refusal
-  // carries the link so that hearing it is still worth something: the reader
-  // asked for this URL, and a live region that says only "could not copy" has
-  // taken the answer away as well as the clipboard.
-  let spoken = false;
-  const say = copied => {
-    if (spoken) return;
-    spoken = true;
-    announce(copied ? 'Link copied: ' + url : 'Could not copy. The link is ' + url);
-  };
-  if (popCopiedByHand(url)) { say(true); return; }
-  if (!navigator.clipboard || !navigator.clipboard.writeText) { say(false); return; }
-  navigator.clipboard.writeText(url).then(() => say(true), () => say(false));
-  // **A promise that never settles is not a hypothetical here**, which is the
-  // measurement above: on a `file://` page in headless Chrome that `writeText`
-  // neither resolved nor rejected, so without this line the item was pressed and
-  // nothing at all was announced — checked by driving this menu, 2026-09-18.
-  // 600ms because a granted clipboard write resolves in microseconds and a
-  // refusal that arrives a second after the press is a refusal about nothing.
-  setTimeout(() => say(false), 600);
-}
 
-function popCopiedByHand(url) {
-  const box = document.createElement('textarea');
-  box.value = url;
-  // `readonly` so a soft keyboard does not come up, and off the side of the
-  // window rather than `hidden` or `display: none`: an unrendered box has no
-  // selection, and `execCommand('copy')` copies the selection and nothing else.
-  box.setAttribute('readonly', '');
-  box.style.position = 'fixed';
-  box.style.top = '-1000px';
-  document.body.append(box);
-  box.select();
-  let copied = false;
-  try { copied = document.execCommand('copy'); } catch (error) { copied = false; }
-  box.remove();
-  return copied;
+# What a page that cannot write gets in the write half's place. Not nothing: the
+# call site is unconditional, and a missing `popWriteItems` is a ReferenceError
+# that takes the whole classic script — and therefore the reader's three items —
+# with it.
+_POP_NO_WRITE_JS = r"""
+// The write half is not on this page. `_pop_js` was called without an index,
+// which is what a static export and a signed-out reader's page get, and what the
+// timeline gets on every render because its route has no `may_write` and its
+// module has not one `fetch`. A host on such a page whose `may()` answers truthily
+// is a wiring mistake, and `popMenuItems` says so in the box rather than drawing a
+// reader's menu to somebody who may write — which is the one failure that would
+// look exactly like the feature working.
+function popWriteItems(row) {
+  if (POP_HOST.may && POP_HOST.may())
+    return [{kind: 'no-schema', text: 'Editing is unavailable here',
+             why: 'This page was rendered without the menu\'s write half.'}];
+  return [];
 }
-</script>
 """
 
 
@@ -1353,11 +1398,23 @@ def _pop_js(links: Links, index: Index | None = None) -> Markup:
     literal text that silently does nothing — which is how one rule in
     `_GRAPH_STYLE` first shipped as a no-op.
 
-    **A view whose `popServes({may})` can answer truthily has to pass `index`.**
-    Left out, the write half has nothing to build itself from and the menu says
-    so in the box rather than quietly drawing a reader's menu to somebody who may
-    write — which is the one failure that would look exactly like the feature
-    working. The default is for the export and for a view that is reader-only by
-    construction, which is the timeline.
+    **A view whose `popServes({may})` can answer truthily has to pass `index`**,
+    and that argument decides more than the schema: without it the write half of
+    the script is not emitted at all. A page built this way carries no
+    `/api/record` and no `base_commit` in its bytes, which is what
+    `test_the_static_export_offers_no_editing_at_all` and its two siblings ask —
+    of a rendered file, which is a thing somebody puts on a share, and of a
+    signed-out reader's page, which is served to anyone.
+
+    Left out where it was wanted, the menu says so in the box rather than quietly
+    drawing a reader's menu to somebody who may write, which is the one failure
+    that would look exactly like the feature working. The default is for the
+    export and for a view that is reader-only by construction, which is the
+    timeline.
     """
-    return _fragment(_POP_JS, record=links.record, schema=_pop_schema(index))
+    half = _POP_WRITE_JS if index is not None else _POP_NO_WRITE_JS
+    return _fragment(
+        "<script>" + _POP_JS_READ + half + "</script>",
+        record=links.record,
+        schema=_pop_schema(index),
+    )
