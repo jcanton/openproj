@@ -9,6 +9,7 @@ from ..model import KINDS as KIND_LADDER
 from ..vendor import _library
 from .controls import _FILTER_JS, _facets_html, _summary_html
 from .env import _compiled
+from .pop import _POP_STYLE, _pop_js
 from .rows import _row
 from .shell import STATIC, Links, _page, _titles
 from .tokens import PRIORITIES, PRIORITY_GLYPH, PRIORITY_LEVEL, STATUS_GLYPH, STATUSES
@@ -202,6 +203,11 @@ _GRAPH = """
     Its sibling `cytoscape-edgehandles` was audited and refused in the same pass:
     it wants two lodash modules as globals to replace a gesture that works. -#}
 {{ filters }}
+{#- The right-click menu, ABOVE this page's own script and not below it. Both are
+    classic scripts sharing one global scope and a function in a later block is
+    not hoisted into an earlier one, so the `popServes(...)` call further down
+    needs this block to have already run. -#}
+{{ pop }}
 <script>
 
 // A payload that did not survive the trip is a third kind of empty, and an empty
@@ -720,8 +726,13 @@ async function relayout() {
 // and the commit bar are all written out before this script tag.
 fitRoom();
 
+// Named rather than looked up inline, because the right-click menu wants this
+// same element: cytoscape's own `contextmenu` binding is on the container it was
+// handed, and the shift-through listener has to be on that element and no other.
+const CYBOX = document.getElementById('cy');
+
 const cy = cytoscape({
-  container: document.getElementById('cy'),
+  container: CYBOX,
   elements: ELEMENTS || [],
   // Filtering re-fits what is left to the window, and two boxes fitted to a
   // 1400px canvas came out at nearly 3x — the same graph reading as a different
@@ -1207,7 +1218,132 @@ cy.on('mouseout', 'node', evt => {
 // A node dragged out from under a card, and a canvas panned or zoomed under one:
 // the pointer never leaves the node, so `mouseout` does not fire and the card
 // stays describing a node that is no longer there.
-cy.on('drag pan zoom', () => { onLabelOf = null; hideCardNow(); });
+//
+// The menu goes with them, and in the SAME handler rather than a second
+// `cy.on('drag pan zoom', popClose)` beside it: one signal, one listener, or the
+// next person to add a box here adds a third. `#pop` is `position: fixed` and
+// never moves once placed — see `pop.py` — so a pan leaves it pointing at ground
+// the node has left, and `relayout()` ends in `cy.fit()`, which moves everything
+// at once. `popClose` takes no arguments and moves no focus, which is what makes
+// it safe to call from a handler cytoscape also passes its own event object to.
+cy.on('drag pan zoom', () => { onLabelOf = null; hideCardNow(); popClose(); });
+
+// --- the right-click menu, on a node --------------------------------------
+//
+// `cxttap` and nothing else. The first shape of this offered `taphold` as well,
+// on the grounds that cytoscape already fires it — jcanton, 2026-09-18: **"make
+// all desktop only then, no touch longpresses, better."** There is a second
+// reason not to reach for it, worth writing down because the feature is gone and
+// the trap is not: cytoscape's mousedown branches `if (3 == t.which) {
+// cxttapstart } else if (1 == t.which) { … tapholdTimeout = setTimeout(…, 500) }`
+// — **the taphold timer is armed by the LEFT button.** On a canvas whose primary
+// gesture is dragging a node, an unguarded `taphold` opens a menu every time
+// somebody presses a node and thinks for half a second before moving it.
+//
+// **Viewport coordinates, off `originalEvent`.** Cytoscape offers a tap three
+// answers and two of them are wrong for this box: `evt.position` is model
+// coordinates, which pan and zoom out from under the reader, and
+// `evt.renderedPosition` is relative to the canvas, which sits below a nav, a
+// filter row and — when there is a server — a commit bar. `#pop` is `position:
+// fixed`, so it wants the viewport. That is the same question `queueCard` above
+// answers and the same way it answers it, three handlers up: one answer to it on
+// this page rather than two that agree today.
+//
+// No `preventDefault` at this call site, unlike the table's and the timeline's.
+// `cxttap` is cytoscape's own event and has no default to prevent, and the
+// browser's menu over this canvas was already suppressed before we arrived —
+// `registerBinding(container, "contextmenu", e => e.preventDefault())`, read out
+// of `static/cytoscape.min.js` rather than taken on trust.
+//
+// The whole order, from a trusted right press through CDP on this page,
+// 2026-09-18: `mousedown` (`which` 3) → `cxttapstart` → `contextmenu` →
+// `mouseup` → `cxttap`. So this box opens last, after `pop.py`'s capture-phase
+// `pointerdown` — earlier still — has closed whichever menu was up. A second
+// right-click on a second node therefore shuts the first menu and opens the
+// second, in that order, and there is no window in which one press closes the
+// box it has just opened. Driven, and it does: menu on node A, press node B,
+// `popAbout()` answers B.
+cy.on('cxttap', 'node', evt => {
+  // Shift falls through to the browser's own menu, and this is half of that
+  // promise: the capture listener below stops cytoscape from eating the native
+  // menu, and this line stops ours from opening on top of it. A press on a node
+  // is the one place that reaches both.
+  if (evt.originalEvent.shiftKey) return;
+  // Not while an edge is being drawn — `dbltap`'s guard, for `dbltap`'s reason.
+  // `Open` navigates, and a canvas holding drawn-but-unsaved edges loses them
+  // without a word; the pointer is also mid-gesture, picking a blocker and then
+  // what waits for it, and a box opening under it covers the node being aimed
+  // at. The hover card declines here for the second half of that already.
+  if (connecting) return;
+  // No label-band restriction, although a compound is hit over its whole area
+  // here exactly as it is for the card. What the card is giving back there is
+  // TRANSIT: reading a project's tasks means dragging the pointer through its
+  // acreage, and a box that opens on the way is in front of the thing being
+  // read. A right-click is never transit — it lands where it was aimed — and the
+  // empty ground inside a box is the box's own.
+  popMenu(evt.originalEvent.clientX, evt.originalEvent.clientY, evt.target.id());
+});
+
+// **Shift+right-click reaches the browser on this page too**, and this is the
+// only view where that needed anything. Cytoscape binds `contextmenu` on the
+// container in the BUBBLE phase — `registerBinding` passes its fourth argument
+// through as the capture flag and that call site has no fourth argument, so the
+// options are `{capture: false}`; both facts read out of the vendored file on
+// 2026-09-18 rather than assumed. A capture-phase listener on the same element
+// therefore runs first, and stopping the bubble there means the `preventDefault`
+// never happens and the native menu opens.
+//
+// `stopPropagation` and not `stopImmediatePropagation`: the listener that must
+// not run is on this same element in a LATER phase, so stopping the bubble is
+// enough, and stopping it immediately would be a claim about listener order
+// within the capture phase that nothing here needs to make.
+//
+// Driven with two witnesses rather than asserted, because "the native menu
+// opened" is the one thing a page cannot see — a headless browser's own menu is
+// not in the DOM. So the claim is put as what the PAGE did to the event. Two
+// extra listeners on this same element, one in capture after this one and one in
+// bubble after cytoscape's, trusted right presses through CDP, 2026-09-18:
+// shift held, the capture witness sees `shiftKey: true, defaultPrevented:
+// false` and the bubble witness never runs at all — the event reaches the end of
+// its life with its default intact. Without shift, the capture witness sees
+// `defaultPrevented: false` and the bubble witness sees `true`, which is
+// cytoscape eating the menu exactly as it has since before any of this.
+CYBOX.addEventListener('contextmenu', event => {
+  if (event.shiftKey) event.stopPropagation();
+}, true);
+
+// Asked and answered, so nobody asks it twice: `#nothing` is `position:
+// absolute; inset: 0` with an opaque background and it eats every pointer event
+// while it is up — and it does not matter here. It is only up when `keep.size`
+// is 0, so there is no node under it to open a menu about; and it is a SIBLING
+// of `#cy` inside `.canvas`, not a child, so a press on it reaches neither this
+// listener nor cytoscape's, and a reader right-clicking an empty canvas gets the
+// browser's own menu. Which is the right answer for a box whose whole content is
+// a sentence and a Clear filters button.
+
+// The host contract — registered once, and this page then knows nothing else
+// about the menu. `pop.py` has the whole of it.
+popServes({
+  // This page has no `EDITABLE` and is deliberately not given one. `editable`
+  // decides exactly one thing here — whether `#commitbar` is drawn — and
+  // `if (CONNECT)` below is already how this script asks whether there is a
+  // server it may write to; the rendered export ships the same JavaScript with
+  // no bar to reach. A second spelling of one server flag is the drift this file
+  // has paid for before: three hand-written status maps beside the ladder, all
+  // three answering `undefined` the day it gained a rung.
+  //
+  // Not called in cut 2 — nothing in the reader's menu writes.
+  may: () => !!CONNECT,
+  // **A node's `data()` IS the row.** `_elements` builds it from the same
+  // `rows.py:_row` the table is drawn from, so this page has no `DATA` to look
+  // anything up in — the first version of the hover card read `DATA.rows` here
+  // and drew nothing at all, on the one view it was added for.
+  //
+  // An id this canvas does not hold gives an empty collection, whose `data()` is
+  // `undefined` and not a throw — checked against the vendored build,
+  // 2026-09-18 — which is the falsy `popMenu` asks for before it opens anything.
+  rows: id => cy.getElementById(id).data(),
+});
 
 if (CONNECT) {
   CONNECT.onclick = () => {
@@ -1601,6 +1737,11 @@ def render_graph(
             summary=_summary_html(index, len(index.plan)),
         ),
         filters=_FILTER_JS,
+        # A function and not a constant, because the one server-decided value in
+        # that script is where a record's page lives — `/detail/` here and
+        # `detail.html#` in an export — and `Open` has to land exactly where this
+        # canvas's own `dbltap` lands.
+        pop=_pop_js(links),
         statuses=STATUSES,
         priorities=PRIORITIES,
         glyphs=STATUS_GLYPH,
@@ -1616,4 +1757,11 @@ def render_graph(
         cytoscape=_library("cytoscape.min.js"),
         elk=_library("elk.bundled.js"),
     )
-    return _page("openproj — graph", body, _graph_css(), links, "graph", index.unreadable)
+    # Concatenated here rather than shared, because there is no sheet to share it
+    # in: `.drawmenu` lives in `_DETAIL_STYLE`, which this page does not load, and
+    # the only stylesheet all three of the menu's hosts already carry is the
+    # shell's, which ships on all twelve pages for a thing three of them draw.
+    # Exactly what `table.py` already does with `_SUGGEST_STYLE`.
+    return _page(
+        "openproj — graph", body, _graph_css() + _POP_STYLE, links, "graph", index.unreadable
+    )

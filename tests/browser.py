@@ -344,6 +344,7 @@ def pressed_in(
     then: str,
     button: str = "left",
     settle: float = 1.5,
+    flags: tuple[str, ...] = (),
 ) -> tuple[object, list[str]]:
     """Put the page in a state, press a point on it the way a mouse does, and ask
     what happened.
@@ -375,11 +376,21 @@ def pressed_in(
     suppressed the browser's own menu, because in that harness there was never a
     menu to suppress and the handler passes either way. The right-click menu's
     tests have to ask exactly that, and a real press is the only way to put it.
+
+    **`flags` is the same knob `measured_in` and `_devtools` already have, and it
+    is here because this helper opens a window and `measured_in` takes a size.**
+    Without one Chrome uses its own default — 756x469 on this machine — and a
+    test asserting *where a floating box landed beside the pointer* is then
+    asserting it in a window small enough that `placeFloat` flips the box to the
+    other side of the pointer instead. That failure is not a near miss: the
+    assertion is `left == x + 14` and a flipped box is at `x - width - 14`. So a
+    placement question passes `--window-size=…` here for the same reason it would
+    pass a width to `measured_in`, rather than fitting by luck.
     """
     import time
 
     assert button in PRESSES, f"`button` must be one of {sorted(PRESSES)}; it was {button!r}"
-    with _devtools(browser, url, profile) as (call, said):
+    with _devtools(browser, url, profile, flags) as (call, said):
         # The page has to have drawn before anything can be pressed on it, and
         # `--dump-dom`'s network-idle wait is not available here (see
         # `in_a_live_page`). A short fixed wait is honest about what it is.

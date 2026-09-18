@@ -2470,6 +2470,76 @@ def test_a_status_is_a_chip_and_the_id_cell_holds_only_the_id(page: str):
     assert '<span class="facetname">Kind' in page, "and kind is still asked for in the facet bar"
 
 
+# A pointer arriving over a title cell, and what is on screen 900ms later.
+#
+# Uncaught errors are collected because the failure this is written for is one,
+# and because it is invisible from the outside: a listener that throws is
+# reported to the console and `dispatchEvent` returns from it as though nothing
+# happened, so the hover looks like it landed. What is left is a card that never
+# comes — which is indistinguishable from hover intent still counting.
+_HOVERED_ON_AN_EXPORT = """
+const threw = [];
+addEventListener('error', event => threw.push(String(event.message)));
+const cell = document.querySelector('td[data-col="title"]');
+const row = cell.closest('tr[data-id]');
+const box = cell.getBoundingClientRect();
+cell.dispatchEvent(new PointerEvent('pointerover',
+  {bubbles: true, clientX: box.left + 5, clientY: box.top + 5}));
+// Past `CARD_DELAY`, which is the hover intent the card is queued behind: a card
+// that has not appeared 900ms after the pointer arrived is not coming.
+await new Promise(done => setTimeout(done, 900));
+return {threw, hidden: CARD.hidden,
+        drawn: (CARD.querySelector('.card-title') || {}).textContent || '',
+        hovered: DATA.rows[row.dataset.id].title};
+"""
+
+
+def test_hovering_a_title_on_a_rendered_file_draws_the_card(demo_page: str, tmp_path: Path):
+    """The export's card, asked for the way a reader asks for it: by moving a
+    pointer onto a title.
+
+    It had been dead on every rendered table. `let MOVING = null` was declared
+    inside the `editable` branch while the `pointerover` listener that reads it
+    sits outside, so the export — `render_table(index)`, which is what `export.py`
+    writes — threw `ReferenceError: MOVING is not defined` inside the listener on
+    every hover and never reached `queueCard`. That is the page with no server to
+    ask for a document, which makes the card the only thing on it that says what a
+    row is about.
+
+    `tests/test_card.py` has a test of the same page called
+    `test_a_rendered_file_draws_a_card_with_no_server_to_ask`, and it passed
+    throughout. It calls `showCard(DATA.rows[id], …)` directly in the node shim —
+    so it asks what the card DRAWS when it is opened, and nothing in this file or
+    that one ever asked what OPENS it. The listener is the only code that reads
+    `MOVING`, and no test entered it.
+
+    So the gesture is the test: a real `pointerover` at a real cell's real
+    coordinates, in Chrome, with the console read back. A shim has no layout to
+    dispatch at and reports nothing a listener throws.
+    """
+    # This is the export and not the served page, which is the whole subject: a
+    # served page declares `MOVING` and has always drawn its card.
+    assert "data-body-url" not in demo_page, "this fixture is not the no-server render"
+
+    got = measured_in(
+        chrome(),
+        demo_page,
+        tmp_path / "exportcard.html",
+        1200,
+        _HOVERED_ON_AN_EXPORT,
+        # Over the 900ms the script itself waits. Under it the harness reads the
+        # placeholder and the test reports nothing at all, which looks exactly
+        # like the card never coming up — the failure it is written for.
+        patience=2000,
+    )
+
+    assert got["threw"] == [], f"the hover threw: {got['threw']}"
+    assert got["hidden"] is False, "no card was drawn by hovering a title on a rendered file"
+    assert got["drawn"] == got["hovered"], (
+        f"the card is titled {got['drawn']!r} over a row titled {got['hovered']!r}"
+    )
+
+
 def test_no_kind_is_given_a_rule_of_its_own(page: str):
     """One rule per kind and every one of them the same rule, so none can drift.
     What it resolves to on each chip is
