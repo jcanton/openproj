@@ -3173,6 +3173,107 @@ def test_the_preview_shows_the_same_two_syntaxes_the_page_will(seed_index: Index
     assert ("s", "Dropped") in [(e.tag, e.text) for e in drawn]
 
 
+_MATHS = """A step of $\\Delta t$ and a wave.
+
+$$\\frac{\\partial u}{\\partial t} = \\nu \\nabla^2 u$$
+
+It cost $5 and $7, and the machine has $HOME set.
+
+Half an equation, $\\frac{1}{$, is a thing people type.
+
+And $\\text{<script>alert(1)</script>}$ is a thing somebody pushes.
+"""
+
+
+def test_an_equation_is_drawn_as_mathml_by_the_server(seed_index: Index):
+    """jcanton, 2026-09-18: "do we have latex math support in the md preview? if
+    not we should introduce it so we can type equations in $\\Delta t$ form".
+
+    **MathML and not a typesetter**, chosen with him on the trade: KaTeX is
+    ~270KB of script and ~1.1MB of woff2 vendored into `static/` on every page
+    that can show a document, against a browser feature every current engine has.
+    So the whole of the renderer is `_mathml`, the export and the printed deck get
+    equations with nothing to fetch, and swapping in KaTeX later is that one
+    function.
+
+    Asked of the preview, which is the surface he asked about and is the same
+    `_MD` the page renders through — a preview that disagrees with the page about
+    what an equation is, is worse than none.
+    """
+    drawn = elements(preview_html(_MATHS))
+    maths = [e for e in drawn if e.tag == "math"]
+
+    # The first two; the third is the `\\text{}` one the injection test is about.
+    assert [e.attrs.get("display") for e in maths][:2] == ["inline", "block"], (
+        f"the two equations rendered as {[e.attrs.get('display') for e in maths]} — `$…$` is "
+        "inline and `$$…$$` is a line of its own"
+    )
+    # The characters, which is the whole of what makes this readable rather than
+    # a transcription: `\Delta` is Δ and `\partial` is ∂ in the rendered page.
+    assert "Δ" in preview_html(_MATHS) and "∂" in preview_html(_MATHS)
+    assert "\\Delta" not in preview_html(_MATHS), "the source reached the page as itself"
+
+
+def test_a_dollar_in_a_sentence_is_not_an_equation(seed_index: Index):
+    """**`allow_space` and `allow_digits` are the difference between maths and a
+    currency bug**, and both default to on in the plugin.
+
+    With them, "it cost $5 and $7" renders as the equation `5 and` — measured
+    here on 2026-09-18, before either was turned off. A `$` before a digit is
+    money far more often than it is an equation, and `$ x $` with the spaces is
+    not how anybody writes one. This is the reason dollar maths is not in
+    commonmark, and it is the only reason it is safe to enable here.
+    """
+    served = preview_html(_MATHS)
+    text = " ".join(e.text for e in elements(served) if e.tag == "p")
+
+    assert "$5 and $7" in text, f"a price became an equation: {text!r}"
+    assert "$HOME" in text, "a shell variable became an equation"
+
+
+def test_half_an_equation_costs_that_equation_and_nothing_else(seed_index: Index):
+    """`readable`'s rule (`model.py`) said about one line of a document instead of
+    one file of a plan.
+
+    `\\frac{1}{` is what a formula looks like for as long as it takes to type the
+    rest of it, and the preview redraws on the way. `latex2mathml` raises on it,
+    and a preview that answered 500 to a keystroke would be the editor going
+    blank while somebody was still writing — so the source is drawn instead, in
+    the class the stylesheet dims, which says both things a reader needs: that
+    this was meant to be an equation, and what was written.
+    """
+    drawn = elements(preview_html(_MATHS))
+    failed = [e for e in drawn if "mathfail" in e.attrs.get("class", "")]
+
+    assert [e.text for e in failed] == ["\\frac{1}{"], (
+        f"a formula that will not parse drew {[e.text for e in failed]}"
+    )
+    # And the document around it is still there, which is the actual claim.
+    assert [e.tag for e in drawn if e.tag == "math"], "one bad formula took the good ones with it"
+
+
+def test_the_contents_of_text_cannot_carry_markup(seed_index: Index):
+    """**`latex2mathml` passes `\\text{…}` through untouched**, so
+    `$\\text{<script>alert(1)</script>}$` comes back from it as a live script tag
+    — and a plan is a repository anybody with write access can push to.
+
+    So the converter's output is read as XML and rebuilt from an allowlist of
+    MathML elements and attributes. Rebuilt and not pruned: "delete what is not
+    allowed" is the shape that misses the thing nobody thought of, which is
+    exactly how this got through in the first place.
+    """
+    served = preview_html(_MATHS)
+
+    assert "<script" not in served, "a script tag reached the page through an equation"
+    assert "alert(1)" in served, (
+        "the text was dropped rather than made safe, which hides the injection instead of "
+        "defusing it — and takes the reader's own `\\text{}` with it"
+    )
+    assert not [e for e in elements(served) if e.tag == "script" or "onerror" in e.attrs], (
+        "an equation drew a script element or an event handler"
+    )
+
+
 _LINKED = """A pitch worth reading: [Port the transport](pitch-000001).
 
 And [the docs](https://example.com/a), [a sibling](./notes.md), [an anchor](#top),

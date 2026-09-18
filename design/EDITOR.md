@@ -1290,4 +1290,65 @@ taking effect without a reload: the label says the width, the next Tab demonstra
 it, and a banner across the top of the page for two characters in a status strip is
 the wallpaper this repository keeps taking down.
 
+## Maths, and the two ends of a scroll, 2026-09-18
+
+**`$\Delta t$` renders, and the renderer is the server.** jcanton: *"do we have latex math support
+in the md preview? if not we should introduce it so we can type equations in $\Delta t$ form"*. The
+plan is a physicist's and a pitch about a solver that cannot write a timestep is a pitch written
+somewhere else.
+
+Two engines were on the table and he took both in order: MathML now, KaTeX if the glyphs disappoint.
+So `mdit-py-plugins`' `dollarmath` finds the maths and `latex2mathml` — pure Python, no wheel with a
+compiler in it — draws it, at render time, on the server. Nothing is fetched: KaTeX would have been
+~270KB of script and ~1.1MB of woff2 vendored into `static/` and inlined into every page that can
+show a document, which is the weight this repository keeps refusing. The trade is the typeface —
+the browser's glyphs rather than TeX's — and swapping in KaTeX later is one function,
+`markdown.py:_mathml`, and nothing else.
+
+Three things that had to be got right, and each was a defect first:
+
+- **`latex2mathml`'s output is not safe to put in a page.** `$\text{<script>alert(1)</script>}$`
+  comes back with a live script tag in it: the converter passes the contents of `\text{…}` through
+  untouched. A plan is a repository anybody with write access can push to, so the output is parsed as
+  XML and *rebuilt* from `_MATHML_TAGS` and `_MATHML_ATTRS` — rebuilt and not pruned, because
+  "delete what is not allowed" is the shape that misses the thing nobody thought of, which is exactly
+  how the script tag got through.
+- **`$5 and $7` is money.** `dollarmath_plugin` defaults `allow_space` and `allow_digits` to True,
+  and a plan full of appetites and costs would have turned half its prose into equations. Both off.
+- **`$$…$$` written inline is not a block.** The block renderer emits a `<div>` and a `<div>` inside
+  a `<p>` is a parse error the browser fixes by closing the paragraph. Inline double dollars get
+  their own renderer and a `<span class="mathblock">`.
+
+**The preview now reaches the end when the editor does.** jcanton, the day after `scrollPastEnd`
+went in: *"scrolling doesn't move the preview correctly in side-by-side mode (the preview remains at
+the bottom)"*. The source side scrolls a screenful past its last line and the rendered side has no
+such notion, so the line-for-line map spent that whole screenful on no preview scroll at all: the
+last line reached the top of the editor with its paragraph still jammed against the foot of the
+preview.
+
+The pane is therefore given the same room below its document — `SURFACE.pastEnd()`, the surface's own
+arithmetic rather than a constant copied out of Ace — and both maps are extended through it with two
+synthetic points, so the empty space on one side maps to the empty space on the other. The room is an
+empty `.previewtail` child and **not** padding on the pane, and that was measured twice over: padding
+is inside `clientHeight`, so the measurement fed back into itself and an 888px pane reported 1715 on
+the second pass; and padding grows the pane's own box, which overflowed the split. A child adds to
+`scrollHeight` and to nothing else. It is refitted from `showView`, `askPreview`, `resize`,
+`openproj:room` and both sync functions — the last two because `editor.resize()` fires no window
+`resize` event, so an Ace that relaid itself would otherwise keep a tail sized for the old box.
+
+**And Save comes back to the line it left.** jcanton: *"clicking save on editing a record resets the
+scroll to the top line of the editor box"*. Save reloads — the read view under the box, the history
+and the base are all the server's rendering of the commit the page loaded at — and a reload is a new
+document with a new editor in it, scrolled where a new editor starts. `openproj:resumed` already
+carried the VIEW across that gap; `openproj:resumed-at` is the other half, written by the same
+`keepView()` that every save path already calls.
+
+A line number and not a pixel: the page need not come back at the same width, and a resized window, a
+different indent preference or a body the merge rewrote each move the pixel and none of them move the
+line somebody was reading. It is restored after `showView` — `lineCoords` off a box with no size is a
+column of zeroes — and on the frame after that, because Ace measures its own rows when it first
+paints and a scroll set before that is one it recomputes away. And it is spent on the page that reads
+it, like the view beside it: a one-shot that survives would scroll the next record this tab opens
+into its own middle.
+
 🤖 Written by an agent on behalf of @jcanton

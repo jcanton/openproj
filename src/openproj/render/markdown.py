@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import base64
 import re
+import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterable, Sequence
 from functools import lru_cache
+from html import escape
 
+from latex2mathml.converter import convert as _latex_to_mathml
 from markdown_it import MarkdownIt
 from markdown_it.renderer import RendererHTML
 from markdown_it.rules_core import StateCore
 from markdown_it.token import Token
 from markupsafe import Markup
 from mdit_py_plugins.attrs import attrs_plugin
+from mdit_py_plugins.dollarmath import dollarmath_plugin
 from mdit_py_plugins.tasklists import tasklists_plugin
 from pygments import highlight
 from pygments.lexer import Lexer
@@ -119,6 +123,117 @@ def _highlighted(code: str, language: str, attrs: str) -> str:
     return highlight(code, lexer, CODE_FORMATTER) if lexer is not None else ""
 
 
+# --- maths -------------------------------------------------------------------
+#
+# `$\Delta t$` and `$$ … $$`, drawn as MathML by the server. jcanton asked for it
+# on 2026-09-18: "do we have latex math support in the md preview? if not we
+# should introduce it so we can type equations in $\Delta t$ form" — the plan is
+# a physicist's, and a pitch about a solver that cannot write a timestep is a
+# pitch written somewhere else.
+#
+# **MathML and not a JavaScript typesetter**, chosen with him: KaTeX is ~270KB of
+# script and ~1.1MB of woff2, vendored into `static/` on every page that can show
+# a document, and `AGENTS.md` says what this repository thinks of carrying that.
+# MathML is drawn by the browser — Chrome 109, Firefox and Safari all do — so the
+# static export and the printed deck get the equations with nothing to fetch, and
+# the whole of the renderer is the one function below. The trade is the glyphs:
+# they are the browser's rather than TeX's, which is legible and is not
+# Computer Modern. Swapping in KaTeX later is this function and nothing else.
+#
+# **Every element and attribute of the output is checked before it reaches a
+# page, and that is not belt-and-braces.** `latex2mathml` passes the contents of
+# `\text{…}` through untouched: `$\text{<script>alert(1)</script>}$` comes back
+# as a live script tag, and a plan is a repository anybody with write access can
+# push to. So the converter's output is read as XML and rebuilt from an
+# allowlist — the same posture as `_ATTR_SAFE` above, and for the same reason.
+_MATHML_TAGS = frozenset(
+    """math mrow mi mn mo ms mtext mspace mfrac msqrt mroot mstyle merror
+    mpadded mphantom mfenced menclose msub msup msubsup munder mover munderover
+    mmultiscripts mprescripts none mtable mtr mtd mlabeledtr maction
+    msline semantics annotation""".split()
+)
+
+# What a MathML element may carry. `display` and `displaystyle` are the two that
+# change anything here — inline against its own line — and the rest are the
+# presentation attributes `latex2mathml` emits. No `href`, no `style`, and
+# nothing beginning `on`.
+_MATHML_ATTRS = frozenset(
+    """display displaystyle mathvariant mathsize mathcolor mathbackground
+    stretchy fence separator largeop movablelimits accent accentunder
+    lspace rspace width height depth linethickness numalign denomalign
+    open close separators notation columnalign rowalign columnspacing
+    rowspacing columnlines rowlines frame framespacing align rowspan columnspan
+    scriptlevel scriptsizemultiplier symmetric form xmlns""".split()
+)
+
+
+def _mathml_safe(node: ET.Element) -> ET.Element:
+    """One element, rebuilt from the allowlist, and its children after it.
+
+    Rebuilt rather than pruned in place, because "delete what is not allowed" is
+    the shape that misses the thing nobody thought of — which is the whole of how
+    `\text{<script>…}` got through in the first place.
+    """
+    tag = node.tag.rsplit("}", 1)[-1]
+    kept = ET.Element(tag if tag in _MATHML_TAGS else "mtext")
+    for name, value in node.attrib.items():
+        bare = name.rsplit("}", 1)[-1]
+        if bare in _MATHML_ATTRS:
+            kept.set(bare, value)
+    kept.text = node.text
+    kept.tail = node.tail
+    for child in node:
+        kept.append(_mathml_safe(child))
+    return kept
+
+
+def _mathml(latex: str, block: bool) -> str:
+    """The equation, or the source it was written as.
+
+    **A formula that will not parse costs that formula and nothing else**, which
+    is `readable`'s rule (`model.py`) said about one line of a document instead of
+    one file of a plan. `latex2mathml` raises on `\frac{1}{` — half an equation
+    is a thing people type — and a preview that answered 500 to a keystroke would
+    be the editor going blank while somebody was still writing.
+    """
+    try:
+        drawn = _latex_to_mathml(latex, display="block" if block else "inline")
+        safe = _mathml_safe(ET.fromstring(drawn))
+        safe.set("xmlns", "http://www.w3.org/1998/Math/MathML")
+        return ET.tostring(safe, encoding="unicode")
+    except Exception:  # noqa: BLE001 - the input is prose and every failure is the same one
+        # The source, escaped, in the class the stylesheet dims. It says both
+        # things a reader needs: that this was meant to be an equation, and what
+        # was written.
+        kind = "mathfail mathblock" if block else "mathfail"
+        return f'<span class="{kind}">{escape(latex)}</span>'
+
+
+def _math_inline(
+    self: RendererHTML, tokens: Sequence[Token], idx: int, options: object, env: dict
+) -> str:
+    return _mathml(tokens[idx].content, False)
+
+
+def _math_block(
+    self: RendererHTML, tokens: Sequence[Token], idx: int, options: object, env: dict
+) -> str:
+    return f'<div class="mathblock">{_mathml(tokens[idx].content, True)}</div>'
+
+
+def _math_double(
+    self: RendererHTML, tokens: Sequence[Token], idx: int, options: object, env: dict
+) -> str:
+    """`$$…$$` written inside a sentence, which is display maths in an inline slot.
+
+    A `<span>` and not the `<div>` the block rule draws: this token is a child of
+    a paragraph's inline run, and a `<div>` inside a `<p>` is markup a browser
+    closes the paragraph around — the equation lands outside the sentence it was
+    written in and the words after it become a paragraph of their own.
+    """
+    return f'<span class="mathblock">{_mathml(tokens[idx].content, True)}</span>'
+
+
 _MD = (
     MarkdownIt("commonmark", {"html": False, "highlight": _highlighted})
     .enable(["table", "strikethrough"])
@@ -144,6 +259,29 @@ _MD = (
     # these three are the library's, and the one that is ours is the one that
     # cannot be changed by a version bump.
     .use(attrs_plugin, after=("image",), allowed=_ATTR_KEEP)
+    # `$…$` and `$$…$$`, which is the spelling jcanton asked for and the one
+    # HackMD and GitHub both take. `double_inline` so that `$$E = mc^2$$` written
+    # in the middle of a sentence is an equation rather than four literal dollars
+    # — the same argument `strikethrough` and the task lists were enabled on:
+    # people were already typing it.
+    #
+    # **`allow_space=False` and `allow_digits=False`, and they are the difference
+    # between maths and a currency bug.** Both default to True in the plugin, and
+    # with them on, "it cost $5 and $7" renders as the equation `5 and`: measured
+    # here on 2026-09-18, before either was turned off. `$` before a digit is
+    # money far more often than it is an equation, and `$ x $` with the spaces is
+    # not how anybody writes one.
+    #
+    # `allow_labels` off for a smaller reason: `$$…$$ (label)` is a MyST
+    # extension for cross-referencing equations, nothing here resolves such a
+    # reference, and a label silently swallowed is worse than a line of text.
+    .use(
+        dollarmath_plugin,
+        double_inline=True,
+        allow_space=False,
+        allow_digits=False,
+        allow_labels=False,
+    )
 )
 
 
@@ -536,6 +674,12 @@ _MD.core.ruler.push("openproj_heading_ids", _heading_ids)
 _MD.add_render_rule("image", _image)
 _MD.add_render_rule("link_open", _link)
 _MD.add_render_rule("fence", _fence)
+# The two the maths plugin adds. Registered here with the other three rather than
+# passed to `dollarmath_plugin` as its `renderer=`, because that hook takes the
+# LaTeX and not the token — and `math_block` needs to know it is a block.
+_MD.add_render_rule("math_inline", _math_inline)
+_MD.add_render_rule("math_inline_double", _math_double)
+_MD.add_render_rule("math_block", _math_block)
 
 
 def _markdown(text: str, links: Links, assets: dict[str, str] | None = None) -> Markup:

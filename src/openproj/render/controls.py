@@ -950,6 +950,11 @@ function textareaSurface(area) {
     // its offset arrives as `changeScrollTop` on the session, so the two sides
     // agree on the number and on nothing else.
     scrolled: () => area.scrollTop,
+    // A `<textarea>` stops at its last line and this surface does not change
+    // that — `design/EDITOR.md` says why the plain box was left alone. The split
+    // view asks every surface the same question and gets the honest answer.
+    pastEnd: () => 0,
+    lineHeight: () => lineTops(area, 'x\nx')[1] || 0,
     scrollTo(top) { area.scrollTop = top; },
     onScroll(listener) { area.addEventListener('scroll', listener); },
 

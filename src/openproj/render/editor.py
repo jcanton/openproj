@@ -807,6 +807,24 @@ function aceSurface(area, seeded) {
     scrollTo(top) { session.setScrollTop(top); },
     onScroll(listener) { session.on('changeScrollTop', listener); },
 
+    // **How far this surface scrolls past its last line**, which is
+    // `scrollPastEnd: 1` said in pixels: the renderer's own
+    // `(scrollerHeight - lineHeight) * $scrollPastEnd`.
+    //
+    // It is on the surface because the pane beside it has to match. The split
+    // view scrolls the two together by interpolating between line tops, and a
+    // source side that can scroll a screenful further than the rendered side
+    // pins the preview at its own foot for the whole of that screenful — the
+    // last line reaches the top of the editor and is still jammed against the
+    // bottom of the preview. jcanton reported exactly that on 2026-09-18, the
+    // day after this option went in.
+    pastEnd() {
+      const renderer = editor.renderer;
+      const box = renderer.$size ? renderer.$size.scrollerHeight : 0;
+      return Math.max(0, (box - renderer.lineHeight) * (editor.getOption('scrollPastEnd') || 0));
+    },
+    lineHeight: () => editor.renderer.lineHeight,
+
     apply(run) {
       const before = applying;
       applying = true;

@@ -1670,6 +1670,29 @@ textarea.body-field { resize: none; }
    a stylesheet of their own, and it went with the stylesheet. */
 .doc blockquote { margin: 0 0 1rem; padding-left: .8rem; color: var(--muted);
                   border-left: 2px solid var(--line-strong); }
+/* --- maths -----------------------------------------------------------------
+
+   Drawn by the browser: `$…$` and `$$…$$` become MathML on the server, so there
+   is no typesetter to load and nothing here sizes glyphs. What these rules do is
+   give display maths its own line and say what a formula that would not parse
+   looks like. */
+/* `$$…$$`, centred on a line of its own. The `<span>` is what `$$…$$` written
+   mid-sentence produces — a `<div>` inside a `<p>` is markup a browser closes
+   the paragraph around — so it is told to behave like the block it is. */
+.doc .mathblock { display: block; margin: 0 0 1rem; text-align: center;
+                  overflow-x: auto; }
+/* A long equation scrolls rather than pushing the column wider. The same bargain
+   `.doc pre` takes, and for the same reason: one box that is too wide is better
+   than a page that is. */
+.doc .mathblock math { display: inline-block; min-width: 0; }
+/* Half an equation, which is a thing somebody typing one has on the screen most
+   of the time. The source, in the code face, dimmed — it says both things a
+   reader needs: that this was meant to be maths, and what was written. Not red:
+   a preview redrawn on every keystroke would spend most of its life shouting at
+   somebody who is halfway through a formula. */
+.doc .mathfail { font-family: var(--font-mono); font-size: .95em; color: var(--muted); }
+.doc .mathfail.mathblock { display: block; text-align: center; }
+
 /* No margin of its own: this row holds one live region that is empty whenever
    nobody else is in the document, which is most of the time, and a margin around
    nothing is a gap above the toolbar that nothing explains. */

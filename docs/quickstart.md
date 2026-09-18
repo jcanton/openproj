@@ -131,6 +131,11 @@ Write prose; nothing validates it. Two headings are read rather than judged:
 - `## For later` on a pitch is scope cut to fit the appetite. It is the only record the plan keeps of
   a bet that was trimmed, and it was invisible until it had a name.
 
+Equations are LaTeX between dollars: `$\Delta t$` inline, `$$ … $$` on its own line. They are drawn
+by the browser as MathML — nothing is fetched, so they survive a static export and a printed deck.
+A dollar with a space or a digit after it is a dollar (`$5 and $7` is money), and an equation that
+does not parse is left as the text you typed, marked, rather than swallowed.
+
 ## The statuses
 
 Six, in the order work moves through them. What each one additionally requires is checked when you

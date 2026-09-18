@@ -256,6 +256,9 @@ function showView(mode) {
   // there is a splitter to have and `applySplit` can simply look.
   applySplit();
   sourcePoints = null;
+  // The room under the preview is this view's: it exists in the split and
+  // nowhere else, and the box it is measured against has just changed size.
+  fitPreviewTail();
   refreshPreview(true);
 }
 
@@ -535,6 +538,9 @@ async function askPreview() {
   // amount of saving fixes that — there is nowhere to put it back to.
   VIEW_PANE.innerHTML = html;
   previewPoints = null;
+  // After the content, because the room is padding on the same box and a
+  // `scrollHeight` measured before it is the old document's.
+  fitPreviewTail();
 }
 
 // --- the two panes, scrolled together ---------------------------------------
@@ -549,8 +555,67 @@ async function askPreview() {
 let sourcePoints = null;
 let previewPoints = null;
 
+// **How far each side may scroll past its last line**, in pixels, and it is the
+// source side's number for both. Ace keeps a screenful less a line below the
+// document (`scrollPastEnd: 1`, `editor.py`) so that the last line can reach the
+// top of the box; the rendered side has no such notion and stops with its last
+// block against its own foot. Left alone, that is a screenful of source scroll
+// mapped onto no preview scroll at all — the preview pinned at the bottom while
+// the editor goes on moving, which is what jcanton reported on 2026-09-18.
+//
+// So the pane is given the same room as padding, and both maps are extended
+// through it. The empty space on one side maps to the empty space on the other,
+// which is the only honest thing it can map to: there is no document down there.
+function pastEnd() {
+  return SURFACE.pastEnd ? SURFACE.pastEnd() : 0;
+}
+
+// The room, made in the pane as an empty block after the document rather than as
+// padding on the pane itself.
+//
+// **Padding was the first answer and it was wrong**: the pane is sized by the
+// layout and `padding-bottom` is outside that size, so 433px of room turned a
+// 455px box into an 888px one that overflowed the split it is half of — and
+// `clientHeight`, which INCLUDES padding, then reported the new number back to
+// the function that had just set it, so each measurement grew by its own answer.
+// A child adds to `scrollHeight` and to nothing else, which is exactly the one
+// thing wanted here.
+function fitPreviewTail() {
+  const room = VIEW !== 'both' ? 0 : pastEnd();
+  let tail = VIEW_PANE.querySelector(':scope > .previewtail');
+  if (!room) {
+    if (tail) { tail.remove(); previewPoints = null; }
+    return;
+  }
+  if (!tail) {
+    tail = document.createElement('div');
+    tail.className = 'previewtail';
+    // Not a paragraph, not content, and nothing a screen reader should find: it
+    // is the same empty viewport Ace makes below its last line, and the gutter
+    // there numbers none of it either.
+    tail.setAttribute('aria-hidden', 'true');
+    VIEW_PANE.append(tail);
+  }
+  const want = room + 'px';
+  if (tail.style.height === want) return;
+  tail.style.height = want;
+  previewPoints = null;
+}
+
 function sourceMap() {
-  if (!sourcePoints) sourcePoints = SURFACE.lineCoords().map((top, at) => ({line: at + 1, top}));
+  if (!sourcePoints) {
+    const tops = SURFACE.lineCoords();
+    sourcePoints = tops.map((top, at) => ({line: at + 1, top}));
+    // The foot of the document, then the foot of the empty space under it. Two
+    // points and not one: without the first, the last real line and the bottom
+    // of a screenful of nothing are the same interval and every line near the
+    // end of a document interpolates across it.
+    const last = sourcePoints.length;
+    const foot = (tops.length ? tops[tops.length - 1] : 0)
+      + (SURFACE.lineHeight ? SURFACE.lineHeight() : 0);
+    sourcePoints.push({line: last + 1, top: foot});
+    if (pastEnd()) sourcePoints.push({line: last + 2, top: foot + pastEnd()});
+  }
   return sourcePoints;
 }
 
@@ -579,10 +644,13 @@ function previewMap() {
         previewPoints.push({line, top: block.getBoundingClientRect().top - zero});
       }
     }
-    previewPoints.push({
-      line: previewPoints[previewPoints.length - 1].line + 1,
-      top: VIEW_PANE.scrollHeight,
-    });
+    // The foot of the rendered document, and then the foot of the room below it
+    // — the same two points the source side ends with, so the two empty spaces
+    // map onto each other rather than onto the last paragraph.
+    const room = VIEW === 'both' ? pastEnd() : 0;
+    const last = previewPoints[previewPoints.length - 1].line;
+    previewPoints.push({line: last + 1, top: VIEW_PANE.scrollHeight - room});
+    if (room) previewPoints.push({line: last + 2, top: VIEW_PANE.scrollHeight});
   }
   return previewPoints;
 }
@@ -626,6 +694,12 @@ let viewScrolling = false;
 
 function syncFromSource() {
   if (VIEW !== 'both' || viewScrolling) return;
+  // Measured here and not only when the view changes, because the number is the
+  // editor's own box height and Ace re-sizes itself on its own schedule —
+  // `editor.resize()` fires no `resize` event on the window, and the split view
+  // is opened before the editor inside it has been laid out. The write is
+  // guarded by equality, so the ordinary scroll touches nothing.
+  fitPreviewTail();
   editScrolling = true;
   VIEW_PANE.scrollTop = pixelOfLine(previewMap(), lineOfPixel(sourceMap(), SURFACE.scrolled()));
   setTimeout(() => { editScrolling = false; }, SYNC_MS);
@@ -633,6 +707,7 @@ function syncFromSource() {
 
 function syncFromPreview() {
   if (VIEW !== 'both' || editScrolling) return;
+  fitPreviewTail();
   viewScrolling = true;
   SURFACE.scrollTo(pixelOfLine(sourceMap(), lineOfPixel(previewMap(), VIEW_PANE.scrollTop)));
   setTimeout(() => { viewScrolling = false; }, SYNC_MS);
@@ -646,8 +721,17 @@ SURFACE.onScroll(syncFromSource);
 VIEW_PANE.addEventListener('scroll', syncFromPreview);
 SURFACE.onInput(() => { sourcePoints = null; refreshPreview(); });
 TITLED.addEventListener('input', () => refreshPreview());
-// Both maps are in pixels and every pixel here is a function of the width.
-addEventListener('resize', () => { sourcePoints = null; previewPoints = null; });
+// Both maps are in pixels and every pixel here is a function of the width — and
+// the room under the preview is a function of the height, so it is measured
+// again here too.
+addEventListener('resize', () => {
+  sourcePoints = null;
+  previewPoints = null;
+  fitPreviewTail();
+});
+// And when the shell re-measures the box the editor fills, which is its own
+// event and does not go through `resize`.
+addEventListener('openproj:room', fitPreviewTail);
 // Both maps again, on anything that moves the box or changes the text under it
 // without an `input` event — a view change, the gutter's column, the width
 // handle, somebody else's keystroke. The same event the seat layer and the
@@ -772,6 +856,19 @@ const VIEW_LINKED = VIEWS.find(name => VIEW_ASKED.has(name)) || null;
 // next. That is the one thing this key does differently from `SAID` beside it.
 const RESUMED = 'openproj:resumed';
 
+// And where in the document it was, which is the second half of "stay where you
+// are". jcanton, 2026-09-18: "for some reason clicking save on editing a record
+// resets the scroll to the top line of the editor box (while I'd prefer if it
+// didn't)". The reason is that Save reloads — a commit changes the page's base,
+// its history and its rendered copy — and a reload is a new document with a new
+// editor in it, scrolled where a new editor starts.
+//
+// **A line number and not a pixel.** The page comes back at the same width today
+// and need not: a window resized between the press and the paint, a different
+// indent preference, a body the merge rewrote — each moves the pixel and none of
+// them moves the line somebody was reading.
+const RESUMED_AT = 'openproj:resumed-at';
+
 // Read once and forgotten, before the branch rather than inside it: a link wins
 // the argument below, and a one-shot that survives losing it fires on the next
 // page this tab opens instead.
@@ -781,6 +878,14 @@ const RESUMING = (() => {
   // Only the two session views. `view` is the landing and is what a page does
   // anyway, and anything else is a hand-edited entry.
   return held === 'edit' || held === 'both' ? held : null;
+})();
+
+// Read and forgotten in the same breath, for the reason above it: a one-shot
+// that survives losing the argument fires on the next page this tab opens.
+const RESUMING_AT = (() => {
+  const held = Number(forThisTab.get(RESUMED_AT));
+  forThisTab.forget(RESUMED_AT);
+  return Number.isFinite(held) && held > 1 ? held : 0;
 })();
 
 // Called by both save paths immediately before their reload, and by nothing
@@ -793,7 +898,12 @@ const RESUMING = (() => {
 // that did not exist a moment ago rather than reloading the page you were on,
 // and landing on it in the read view is how you check what you just made.
 function keepView() {
-  if (VIEW === 'edit' || VIEW === 'both') forThisTab.set(RESUMED, VIEW);
+  if (VIEW !== 'edit' && VIEW !== 'both') return;
+  forThisTab.set(RESUMED, VIEW);
+  // The top line showing in the editor, through the same map the split view
+  // scrolls by — so a wrapped line counts as the one line it is rather than as
+  // the three rows it draws.
+  forThisTab.set(RESUMED_AT, String(Math.round(lineOfPixel(sourceMap(), SURFACE.scrolled()))));
 }
 
 // And then the remembered one, which is the second half of the preference this
@@ -818,6 +928,17 @@ if (VIEW_LINKED) {
   // This tab saved and reloaded itself a moment ago. It goes back into the view
   // it was in, which is the whole of what `keepView` above wrote down.
   showView(RESUMING);
+  // And back to the line it was on. **After `showView`**, because the editor is
+  // laid out by it and `lineCoords` off a box with no size is a column of
+  // zeroes; and on a frame after that, because Ace measures its own rows when it
+  // first paints and a scroll set before that is a scroll it recomputes away.
+  if (RESUMING_AT) {
+    requestAnimationFrame(() => {
+      sourcePoints = null;
+      SURFACE.scrollTo(pixelOfLine(sourceMap(), RESUMING_AT));
+      syncFromSource();
+    });
+  }
 } else if (VIEW_ARTICLE.classList.contains('editing')) {
   // A session that existed before this script ran: a restored draft — the one
   // place where landing does not mean sessionless — or the create form, which
