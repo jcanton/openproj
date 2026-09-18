@@ -6057,6 +6057,270 @@ _PAST_THE_END = r"""
 """
 
 
+# The preview is a round trip and this page has no server. The stub answers with
+# one block per line so that the rendered side has a `data-startline` to
+# interpolate between for every line the source side has — which is what makes
+# "the same place in both" a question with an answer.
+_BOTH_ENDS = (
+    """
+window.fetch = async () => ({ok: true, json: async () => ({html:
+  Array.from({length: 120}, (_, i) =>
+    '<p data-startline="' + (i * 2 + 1) + '" data-endline="' + (i * 2 + 1) + '">Line '
+    + (i + 1) + ' of the document.</p>').join('')})});
+"""
+    + r"""
+  flipEditing();
+  document.getElementById('view-both').click();
+  await new Promise(r => setTimeout(r, 500));
+  const pane = document.getElementById('body-preview');
+  const editor = SURFACE.editor;
+  // Long enough that both sides scroll, and every line its own block so that the
+  // rendered side has a `data-startline` per line to interpolate between.
+  const long = Array.from({length: 120}, (_, i) => 'Line ' + (i + 1) + ' of the document.')
+    .join('\n\n');
+  SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, long));
+  editor.resize(true);
+  // The preview is a round trip, so this waits for the pane to hold the document
+  // rather than for a number of milliseconds.
+  for (let i = 0; i < 60 && pane.querySelectorAll('[data-startline]').length < 100; i++) {
+    await new Promise(r => setTimeout(r, 100));
+  }
+  const blocks = pane.querySelectorAll('[data-startline]');
+  const room = SURFACE.pastEnd();
+  // As far down as each side will go, asked for by a number neither is long
+  // enough to reach.
+  editor.session.setScrollTop(1e7);
+  editor.renderer.$loop._flush();
+  await new Promise(r => setTimeout(r, 200));
+  const last = blocks[blocks.length - 1];
+  const seen = {
+    room,
+    blocks: blocks.length,
+    // Where the last block sits inside the pane, as a reader sees it: 0 is its
+    // top edge against the pane's top edge.
+    lastBlockAt: Math.round(last.getBoundingClientRect().top - pane.getBoundingClientRect().top),
+    paneTall: Math.round(pane.clientHeight),
+    tailTall: Math.round((pane.querySelector(':scope > .previewtail') || {offsetHeight: 0})
+      .offsetHeight),
+    firstRow: editor.renderer.getFirstVisibleRow(),
+    rows: editor.session.getScreenLength(),
+  };
+  return seen;
+"""
+)
+
+
+def test_the_two_panes_reach_the_end_together(client: TestClient, tmp_path: Path):
+    """**The source side scrolls a screenful past its last line and the rendered
+    side has no such notion**, so the split view's line-for-line sync mapped that
+    whole screenful onto no preview scroll at all: the last line reached the top
+    of the editor while its paragraph stayed jammed against the foot of the
+    preview.
+
+    jcanton reported it the day after `scrollPastEnd` went in, 2026-09-18:
+    *"yesterday we added vertical scrolling to the textbox so the last line is
+    not fixed to the bottom of the window in the editor, but scrolling doesn't
+    move the preview correctly in side-by-side mode (the preview remains at the
+    bottom)"*.
+
+    So the pane is given the same room below its document — the surface's own
+    number, because `scrollPastEnd` is Ace's arithmetic and not a constant to be
+    copied — and both maps are extended through it, so the empty space on one
+    side maps to the empty space on the other. The assertion is what a reader
+    sees: scrolled to the end, the last block is at the TOP of the preview, not
+    at its bottom.
+
+    The room is an empty `.previewtail` child and not padding on the pane:
+    padding is inside `clientHeight`, so the measurement fed back into itself and
+    grew the pane a second time; and padding grows the pane's own box, which
+    overflowed the split. A child adds to `scrollHeight` and to nothing else.
+    """
+    got = measured_in(
+        chrome(),
+        client.get(f"/detail/{TASK}?editor=ace").text,
+        tmp_path / "bothends.html",
+        1400,
+        _BOTH_ENDS,
+        query="?editor=ace",
+        patience=9000,
+    )
+
+    assert got["blocks"] >= 100, (
+        f"the preview holds {got['blocks']} blocks, so the document never reached it and "
+        "this measures an empty pane"
+    )
+    assert got["room"] > 0, (
+        "the surface reports no room past its last line, so `scrollPastEnd` is off and "
+        "there is nothing here to keep in step"
+    )
+    assert abs(got["tailTall"] - got["room"]) <= 1, (
+        f"the pane keeps {got['tailTall']}px below its document and the editor scrolls "
+        f"{got['room']}px past its last line — the two ends do not correspond"
+    )
+    assert got["firstRow"] == got["rows"] - 1, (
+        "the editor did not scroll to its own end, so the pane beside it was never asked "
+        "the question this test is about"
+    )
+    # The claim, in the reader's own terms. Was `paneTall - blockHeight` before
+    # the padding: the last paragraph against the bottom edge.
+    assert got["lastBlockAt"] < got["paneTall"] / 3, (
+        f"the last block sits {got['lastBlockAt']}px down a pane {got['paneTall']}px tall — "
+        "the editor is showing its last line at the top and the preview is still at the foot"
+    )
+
+
+# A document long enough to scroll, written into the page's own textarea before
+# the page is ever opened. It has to be there at LOAD: the scroll is restored by
+# the branch that runs as the page comes up, and a document a test script types
+# in afterwards is a document that branch never saw.
+def _with_a_long_body(page: str, lines: int = 400) -> str:
+    long = "\n".join(f"line {i + 1}" for i in range(lines))
+    return re.sub(
+        r'(<textarea name="body"[^>]*>).*?(</textarea>)',
+        lambda found: found.group(1) + long + found.group(2),
+        page,
+        count=1,
+        flags=re.DOTALL,
+    )
+
+
+# And the tab as a save leaves it. A reload is a new document with a new script,
+# so the only way to ask what the page does with what the save wrote down is to
+# write it down and open the page — which is exactly what the product does.
+def _as_if_a_save_had_just_reloaded(page: str, line: int | None) -> str:
+    seed = "<script>sessionStorage.setItem('openproj:resumed', 'edit');"
+    if line is not None:
+        seed += f"sessionStorage.setItem('openproj:resumed-at', '{line}');"
+    return page.replace("<head>", "<head>" + seed + "</script>", 1)
+
+
+_KEEPS_THE_LINE = r"""
+  flipEditing();
+  await new Promise(r => setTimeout(r, 400));
+  const editor = SURFACE.editor;
+  editor.resize(true);
+  // Somewhere in the middle of a long document, which is the only place where
+  // "where you were" and "the top" are different answers.
+  editor.session.setScrollTop(editor.renderer.lineHeight * 119);
+  editor.renderer.$loop._flush();
+  await new Promise(r => setTimeout(r, 150));
+  // The map is built off the box's own line tops and the box has only just been
+  // given its document; a cached column of zeroes would make this a test about
+  // the cache.
+  sourcePoints = null;
+  // The call the two save paths make, and the whole of what this half is about.
+  keepView();
+  return {
+    wrote: sessionStorage.getItem('openproj:resumed-at'),
+    view: sessionStorage.getItem('openproj:resumed'),
+    firstRow: editor.renderer.getFirstVisibleRow(),
+    rows: editor.session.getScreenLength(),
+  };
+"""
+
+
+_LANDED_WHERE_IT_LEFT = r"""
+  // The restore waits for the editor to have measured its own rows, which takes
+  // more than the one frame it was first written as: a map read a frame after
+  // `showView` is every line at zero. So this waits long enough for the page's
+  // own loop to find a laid-out box, and the number below is that and nothing
+  // finer.
+  await new Promise(r => setTimeout(r, 700));
+  const editor = SURFACE.editor;
+  return {
+    firstRow: editor.renderer.getFirstVisibleRow(),
+    rows: editor.session.getScreenLength(),
+    editing: document.querySelector('article.record').classList.contains('editing'),
+    left: sessionStorage.getItem('openproj:resumed-at'),
+  };
+"""
+
+
+def test_a_save_comes_back_to_the_line_it_was_saved_from(client: TestClient, tmp_path: Path):
+    """jcanton, 2026-09-18: *"for some reason clicking save on editing a record
+    resets the scroll to the top line of the editor box (while I'd prefer if it
+    didn't)"*.
+
+    Save reloads — the read view under the box, the history and the base are all
+    the server's rendering of the commit the page loaded at — and a reload is a
+    new document with a new editor in it, scrolled where a new editor starts. The
+    view already crossed that gap in `openproj:resumed`; this is the other half
+    of "stay where you are", and it crosses the same way.
+
+    Both halves, in two runs, because a reload is two page loads and a test that
+    did it in one would be a test about a variable. The write is `keepView()`,
+    the call every save path makes; the read is a page opened with the tab in the
+    state that call leaves it in.
+
+    **A line and not a pixel**, which is what the second assertion is really
+    about: the number in the tab is the line somebody was reading, and it is
+    turned back into a pixel by the map the page has at the moment it lands.
+
+    The third run is the control, and without it the second one passes on a page
+    that restores nothing: the same seeded view with no line in it stays at the
+    top.
+    """
+    page = _with_a_long_body(client.get(f"/detail/{TASK}?editor=ace").text)
+
+    saving = measured_in(
+        chrome(),
+        page,
+        tmp_path / "keptline.html",
+        1400,
+        _KEEPS_THE_LINE,
+        query="?editor=ace",
+        patience=4800,
+    )
+    assert saving["rows"] == 400, (
+        f"the editor holds {saving['rows']} rows, so the long body never reached the page"
+    )
+    assert saving["firstRow"] > 0, (
+        "the editor did not scroll, so the save below wrote down the top line either way"
+    )
+    assert saving["view"] == "edit", (
+        f"the save left no view behind, so nothing resumes at all: {saving}"
+    )
+    # Ace counts rows from zero and the map counts lines from one.
+    assert abs(int(saving["wrote"]) - (saving["firstRow"] + 1)) <= 1, (
+        f"the save wrote down line {saving['wrote']} while the editor was showing line "
+        f"{saving['firstRow'] + 1} at its top"
+    )
+
+    was = int(saving["wrote"])
+    landed = measured_in(
+        chrome(),
+        _as_if_a_save_had_just_reloaded(page, was),
+        tmp_path / "landedline.html",
+        1400,
+        _LANDED_WHERE_IT_LEFT,
+        query="?editor=ace",
+        patience=4800,
+    )
+    assert landed["editing"], "the reloaded page did not come back into a session"
+    assert abs(landed["firstRow"] + 1 - was) <= 1, (
+        f"the page came back at line {landed['firstRow'] + 1} of {landed['rows']} and the "
+        f"save left it at line {was}"
+    )
+    assert landed["left"] is None, (
+        "the line survived the page that read it, so the next record this tab opens "
+        "opens scrolled into the middle of itself"
+    )
+
+    ordinary = measured_in(
+        chrome(),
+        _as_if_a_save_had_just_reloaded(page, None),
+        tmp_path / "plainline.html",
+        1400,
+        _LANDED_WHERE_IT_LEFT,
+        query="?editor=ace",
+        patience=4800,
+    )
+    assert ordinary["editing"], "the control did not open a session, so it controls nothing"
+    assert ordinary["firstRow"] == 0, (
+        f"a session nobody saved from opened at line {ordinary['firstRow'] + 1}"
+    )
+
+
 def test_the_last_line_can_be_scrolled_to_the_top_of_a_full_height_editor(
     client: TestClient, tmp_path: Path
 ):
