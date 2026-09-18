@@ -3275,7 +3275,10 @@ def _containment_problems(
 
     Only when the parent resolves: a `parent` naming a file nobody wrote is
     deliberately not a problem, so that a plan half-way through an import still
-    loads and still says what it can.
+    loads and still says what it can. That early return is also a HOLE in every
+    write path, and the hole is closed one function down rather than here — see
+    `parent_refusal`, and the paragraph in it about why this rule stays quiet
+    about a file that already exists while the door does not.
     """
     parent = by_id.get(record.parent) if record.parent else None
     if parent is None:
@@ -3291,6 +3294,81 @@ def _containment_problems(
             f"{_an(record.kind)} belongs to {belongs}, not to {_an(parent.kind)}",
             4,
         )
+
+
+def parent_refusal(candidate: Record, by_id: dict[str, Record]) -> str | None:
+    """Why a write may not file this record where it says, or None.
+
+    **Two holes, and they are two different kinds of hole.** Both were measured
+    through the API on 2026-09-18 against the `test_web` corpus, and both
+    committed a 200.
+
+    The first is a rule that exists and was not being run. `PATCH
+    /api/record/{id}` asks `loop_made` and never `validate_all`, so a task filed
+    under a task committed and was reported afterwards — on a protected branch,
+    as a problem beside a record nobody can see the cause of. `POST` does run
+    the validator, and that is not enough either: it filters to blockers, and a
+    blocker is grandfathered to a warning for any record whose
+    `created_schema_version` is below the rule's 4. The fixture plan is written
+    at `schema_version: 2`, so the create door took a wrong-kind parent too.
+
+    The second kind is a parent naming nothing, and this function deliberately
+    does NOT refuse it — see the comment in the body, which is where that was
+    decided and reversed. It is worth knowing that it is genuinely unreported:
+    `_containment_problems` returns before it can be asked, so nothing draws it
+    and `openproj check` says nothing, although `cli.py`'s own comment over
+    `openproj new` claims "a parent that does not exist" is among the things the
+    validator catches. It is not, and that comment is wrong rather than the
+    behaviour.
+
+    **Why the fix is here and not in the validator.** Grandfathering is about the
+    corpus and never about the keystroke: a rule blocks only records created
+    after it existed, because adding one must not invalidate a plan that is
+    already in git. A door refusing a value somebody is typing right now has no
+    such worry — there is a person at a keyboard who can fix it in the same
+    second — which is exactly the split `_reject_a_start_date_this_write_puts_in_
+    the_past` (`web.py`) already makes between a date that drifted and one being
+    typed. Made a validator rule instead, the dangling case would be new, would
+    therefore carry a version above every record in the corpus, and would be
+    demoted to a warning on every single one of them — a gate that cannot close.
+    So `_containment_problems` keeps its permissiveness and its reason, and this
+    is what the write paths ask.
+
+    The ladder itself is asked once, through `_containment_problems`, so the
+    refusal and the report cannot come apart. The sentence is the validator's
+    unchanged: it already names both kinds, and the reader has just picked this
+    parent out of a list.
+
+    `by_id` is every record and not just the plan — an issue and a note are
+    records something can name, and a task hand-filed under one has to reach the
+    same answer here as it does in the report.
+    """
+    if not candidate.parent:
+        return None
+    # **A parent naming nothing is NOT refused here, and that was tried.**
+    #
+    # The first version of this function refused it, on the argument that a
+    # dangling parent has never had a rule anywhere and committed silently. The
+    # argument was right about the facts and wrong about the conclusion, and
+    # three things in this repository say so with one voice:
+    #
+    # `bet_of` above — "A `parent` naming a file nobody wrote is deliberately
+    # allowed — a plan half-way through an import has them". `task()` in
+    # `test_validate`, which builds one on purpose. And
+    # `test_a_committed_parent_that_names_nothing_leaves_every_page_readable`
+    # (`tests/test_web.py`), which asserts the write returns 200 and says in its
+    # own words: "the requirement is not that the write is refused — it is that
+    # the plan still renders afterwards". That test exists because such a commit
+    # once answered 500 on six routes for everybody; the cure was making the
+    # plan survive it, not forbidding it.
+    #
+    # So the hole this leaves is closed where it should be — the menu's parent
+    # control is a `<select>` over records that exist, so the UI cannot express
+    # one — and a person who means it, through the CLI or a hand-written file,
+    # still gets the plan they asked for.
+    for _, _, message, _ in _containment_problems(candidate, by_id):
+        return f"parent: {message}"
+    return None
 
 
 def _bet_problems(

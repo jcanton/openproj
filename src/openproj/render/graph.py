@@ -1512,6 +1512,12 @@ popServes({
   // `undefined` and not a throw — checked against the vendored build,
   // 2026-09-18 — which is the falsy `popMenu` asks for before it opens anything.
   rows: id => cy.getElementById(id).data(),
+  // The same two the table registers, asked of the canvas. `cy.nodes()` is every
+  // record this drawing holds, filtered or not — a faded node is still a legal
+  // parent — and `visible()` is cytoscape's own answer to whether one can be seen,
+  // which is what a receipt about where a new child landed has to be about.
+  all: () => cy.nodes().map(node => node.data()),
+  shows: id => cy.getElementById(id).visible(),
   extras: row => {
     const node = cy.getElementById(row.id);
     // `Add dependency from here` only where there is a bar to save it with, and
@@ -1986,7 +1992,7 @@ def render_graph(
         # answers `!!CONNECT`, which is true on exactly the renders `editable` is
         # true on, and a menu asked to draw a write half with no schema says so
         # in the box rather than quietly drawing a reader's menu to somebody who
-        # may write. `None` otherwise keeps 3.7 kB off a reader's page and out of
+        # may write. `None` otherwise keeps about 5.4 kB off a reader's page and out of
         # the static export, which has nothing to write to.
         pop=_pop_js(links, index if editable else None),
         statuses=STATUSES,

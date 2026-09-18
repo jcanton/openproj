@@ -1490,6 +1490,21 @@ popServes({
   // browser's own menu — which is the right menu over a row somebody is typing
   // into, because it is the one with Paste on it.
   rows: id => DATA.rows[id],
+  // **Every record this page knows, and whether one is on screen.** The parent
+  // picker is built from these: `all` is what it offers, `shows` is what decides
+  // whether a created child can be seen where it landed.
+  //
+  // `DATA.rows` and not the drawn `<tr>`s, because a filtered-out record is still
+  // a legal parent — filing something under a row the facets are currently hiding
+  // is an ordinary thing to want, and offering only what is drawn would make the
+  // picker's contents depend on the filter rather than on the ladder.
+  //
+  // `shows` asks the tbody instead, which is the opposite question and the reason
+  // the two are separate: it is about whether anybody can SEE the answer, and it
+  // is what lets the receipt say "created, but the filter is hiding it" rather
+  // than leaving somebody to conclude the save did nothing.
+  all: () => Object.values(DATA.rows),
+  shows: id => !!tbody.querySelector(`tr[data-id="${id}"]`),
   // This view's own item, spliced in whole between the write half and the three
   // that only look. Asked on every open and never stored, which is why the
   // refusal below can be about the plan as it is now rather than as it was when
@@ -5157,8 +5172,9 @@ def render_table(
         # **The index goes in exactly where `popServes({may})` can answer
         # truthily.** Without it `POP_SCHEMA` is null and the menu draws one
         # refused item saying editing is unavailable here, which on this page
-        # would be a wiring mistake rather than the truth. With it, 3.7 kB of
-        # ladder, glyphs, labels, gates and people is baked into the page — so a
+        # would be a wiring mistake rather than the truth. With it, about 5.4 kB
+        # of ladder, glyphs, labels, gates, people and — since cut 4 — each
+        # kind's field list, control types and defaults is baked into the page — so a
         # reader's copy and the static export, where nothing can be written, are
         # not asked to carry it.
         pop=_pop_js(links, index if editable else None),
