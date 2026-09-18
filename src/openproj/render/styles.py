@@ -1862,10 +1862,4 @@ button.kindchip[hidden] { display: none; }
 #promote .hint { margin: 0; }
 """
     + _EDITING_STYLE
-    # The highlighter's colours, in the sheet every page that can draw a BODY
-    # already inlines — the record page, the create form, the cycle pages, the
-    # deck and Help — and in none of the ones that cannot. It is not in the
-    # shell for that reason: the graph, the timeline and the table have no fence
-    # on them and no reader of those pages should carry the rules for one.
-    + _code_css()
 )
