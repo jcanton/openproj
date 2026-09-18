@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from openproj.model import (
+    CHILD_KINDS,
     ISSUE_STATUS,
     KINDS,
     Issue,
@@ -81,6 +82,58 @@ def test_a_record_opens_at_the_foot_of_its_own_ladder():
     assert "thinking" not in ISSUE_STATUS
     assert Task(id="task-abc123", kind="task", title="T").status == "thinking"
     assert Issue(id="issue-abc123", kind="issue", title="I").status == "ready"
+
+
+def test_the_ladder_reads_the_same_in_both_directions():
+    """`CHILD_KINDS` is `Rung.under` turned round, exactly, for every pair of rungs.
+
+    Derived AND written out, for the two different things each half catches. The
+    derivation is a biconditional over every ordered pair of kinds — `b` is held
+    by `a` if and only if `a` is one of `b`'s `under` — and it is stated against
+    the ladder rather than against the comprehension that builds the map, so
+    inverting the loop (`other.name in rung.under`) fails it rather than agreeing
+    with itself. A literal list of the six answers would not: it would go on
+    passing after a rung was added, which is the one drift the derived map exists
+    to prevent.
+
+    The written-out half is the menu's contract. Every one of those six lines is
+    a `New child ▸` submenu somebody sees, and a ladder rewired by accident —
+    `task` gaining an `under` of `("task",)`, say — satisfies the derivation
+    perfectly while offering a child nothing downstream expects.
+    """
+    names = {rung.name for rung in KINDS}
+    assert set(CHILD_KINDS) == names, "one entry per rung, so the menu never asks for a missing key"
+    for parent in KINDS:
+        holds = CHILD_KINDS[parent.name]
+        assert set(holds) <= names, holds
+        assert len(set(holds)) == len(holds), holds
+        # Ladder order, asked of the ladder: the menu draws the submenu in this
+        # order and re-sorts nothing.
+        assert holds == tuple(rung.name for rung in KINDS if rung.name in set(holds))
+        for child in KINDS:
+            assert (child.name in holds) == (parent.name in child.under), (
+                parent.name,
+                child.name,
+            )
+
+    assert CHILD_KINDS == {
+        # The top of the tree holds the rung below it and nothing else: a pitch
+        # filed straight under a product is three levels of meaning skipped.
+        "product": ("project",),
+        # Two, and the second is the one that keeps getting re-litigated: a task
+        # may skip the pitch, because work nobody shaped still belongs to a
+        # milestone. `PARENT_KINDS["task"]` is where that is decided.
+        "project": ("pitch", "task"),
+        "pitch": ("task",),
+        # A task is the floor of the planned ladder — nothing is filed inside
+        # one, so its `New child ▸` is refused rather than drawn empty.
+        "task": (),
+        # The two inboxes hold nothing at all. They are not containers and they
+        # are not planned; an issue that grows a child is an issue that should
+        # have been promoted.
+        "issue": (),
+        "note": (),
+    }
 
 
 def test_sizes_are_optional_on_both_subclasses():

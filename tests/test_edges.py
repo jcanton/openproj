@@ -33,7 +33,7 @@ def index(demo_root: Path) -> Index:
 
 @pytest.fixture
 def page(index: Index) -> str:
-    return render_graph(index, ROUTES, base_commit=HEAD)
+    return render_graph(index, ROUTES, base_commit=HEAD, may_write=True)
 
 
 def a_dependency(index: Index) -> tuple[str, str]:
@@ -220,7 +220,7 @@ def test_an_edge_edit_is_refused_where_it_would_delete_a_hand_written_line(
     refused where the other impossible edges are refused, and the message names
     the way out. A rare gesture failing with a sentence that teaches beats a
     common gesture silently destroying somebody's line."""
-    page = render_graph(hand_index, ROUTES, base_commit=HEAD)
+    page = render_graph(hand_index, ROUTES, base_commit=HEAD, may_write=True)
     assert "issue-0f0001" not in page, "the off-plan id must not reach a plan page"
 
     got = measured_in(chrome(), page, tmp_path / "offplan.html", 1400, _OFF_PLAN, height=1000)

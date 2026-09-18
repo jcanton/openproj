@@ -25,6 +25,7 @@ nothing.
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import date
 from pathlib import Path
@@ -139,7 +140,7 @@ return {
 
 @pytest.fixture
 def drawn(index: Index, tmp_path: Path) -> dict:
-    page = render_graph(index, ROUTES, base_commit=HEAD)
+    page = render_graph(index, ROUTES, base_commit=HEAD, may_write=True)
     return measured_in(
         chrome(), page, tmp_path / "layout.html", 1900, _GEOMETRY, height=820, patience=3500
     )
@@ -235,7 +236,7 @@ def test_a_card_stays_where_it_was_dragged(index: Index, tmp_path: Path):
     The clamp contributed nothing to the drawing you arrive at. It ran on
     `dragfree` and nowhere else, so the starting view is the layout alone.
     """
-    page = render_graph(index, ROUTES, base_commit=HEAD)
+    page = render_graph(index, ROUTES, base_commit=HEAD, may_write=True)
     got = measured_in(
         chrome(), page, tmp_path / "drag.html", 1900, _DRAGGED, height=820, patience=3500
     )
@@ -279,7 +280,7 @@ def test_the_grouping_holds_on_a_plan_larger_than_the_real_one(big: Index, tmp_p
     layout holds all three properties; what degrades with size is the zoom, not
     the correctness.
     """
-    page = render_graph(big, ROUTES, base_commit=HEAD)
+    page = render_graph(big, ROUTES, base_commit=HEAD, may_write=True)
     got = measured_in(
         chrome(), page, tmp_path / "big.html", 1900, _GEOMETRY, height=820, patience=6000
     )
@@ -390,7 +391,7 @@ def test_the_two_key_rows_are_one_length_and_sit_on_the_drawing(index: Index, tm
     the rows line up on their right edge where the eye already is. What is pinned
     here is the gap, because that is the thing that was wrong.
     """
-    page = render_graph(index, ROUTES, base_commit=HEAD)
+    page = render_graph(index, ROUTES, base_commit=HEAD, may_write=True)
     got = measured_in(
         chrome(), page, tmp_path / "keys.html", 1900, _KEYS, height=820, patience=3500
     )
@@ -504,7 +505,7 @@ def test_a_card_wears_both_its_marks_in_front_of_its_name(index: Index, tmp_path
         unread = unread_fields(kind)
         return "priority" not in unread, "status" not in unread
 
-    page = render_graph(index, ROUTES, base_commit=HEAD)
+    page = render_graph(index, ROUTES, base_commit=HEAD, may_write=True)
     got = measured_in(
         chrome(), page, tmp_path / "marks.html", 1900, _KEYS, height=820, patience=3500
     )
@@ -662,7 +663,7 @@ def test_an_edge_that_crosses_a_card_is_drawn_under_it(big: Index, tmp_path: Pat
     """
     # The generated plan and not the seed corpus: the demo is small enough that no
     # line passes inside a card it is unrelated to, so it cannot answer this.
-    page = render_graph(big, ROUTES, base_commit=HEAD)
+    page = render_graph(big, ROUTES, base_commit=HEAD, may_write=True)
     got = measured_in(
         chrome(), page, tmp_path / "under.html", 1900, _UNDERNEATH, height=820, patience=4000
     )
@@ -727,7 +728,7 @@ def test_two_boxes_that_wait_on_each_other_are_ranked_by_the_majority(tmp_path: 
 
     records, config, _ = load_repo(root)
     index = build_index(records, config, date(2026, 8, 17))
-    page = render_graph(index, ROUTES, base_commit=HEAD)
+    page = render_graph(index, ROUTES, base_commit=HEAD, may_write=True)
     got = measured_in(
         chrome(), page, tmp_path / "mutual.html", 1900, _GEOMETRY, height=820, patience=3500
     )
@@ -817,7 +818,7 @@ def test_the_drawing_is_arranged_once_the_typing_stops_and_not_during_it(
     In Chrome for the reason the rest of this file is: cytoscape and ELK need a
     real document, and the question is what the drawing did.
     """
-    page = render_graph(index, ROUTES, base_commit=HEAD)
+    page = render_graph(index, ROUTES, base_commit=HEAD, may_write=True)
     got = measured_in(
         chrome(),
         page,
@@ -856,3 +857,116 @@ def test_the_drawing_is_arranged_once_the_typing_stops_and_not_during_it(
         "times, which is no more than typing it at speed — the wait is dropping layouts "
         "rather than collapsing them"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Who the page is drawn for
+# --------------------------------------------------------------------------- #
+
+_READS_ANYWAY = """
+const box = document.getElementById('q');
+const shown = document.getElementById('shown');
+const nap = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+const all = cy.nodes(':visible').length;
+box.value = WORD;
+box.dispatchEvent(new Event('input'));
+await nap(600);
+const filtered = cy.nodes(':visible').length;
+const said = Number(shown.textContent);
+box.value = '';
+box.dispatchEvent(new Event('input'));
+await nap(600);
+
+// Whether the script got as far as the write half at all. `connecting` is a
+// top-level `let`, so reading it before its declaration is evaluated throws
+// rather than answering `undefined` — which is the tell AGENTS.md records for a
+// script that died somewhere above. It catches a throw ANYWHERE above that
+// declaration, which is the whole cytoscape construction — including a future
+// bare dereference of `CONNECT`, `SAVE` or `DISCARD`, the three constants that
+// now bind to null on this page. The assignments themselves cannot throw; a
+// `.something` on one of them can, and that is what this is standing over.
+let reached;
+try { reached = typeof connecting; } catch (error) { reached = 'threw ' + error.name; }
+
+return {
+  all, filtered, said, reached,
+  back: cy.nodes(':visible').length,
+  // Asked of the document rather than of the page's text: the words "Edit
+  // dependencies" are still in the script, because the rendered-file export has
+  // always shipped them with nothing to reach them. What must be gone is the
+  // element somebody can press.
+  bar: !!document.getElementById('commitbar'),
+  connect: !!document.getElementById('connect'),
+  save: !!document.getElementById('save'),
+  discard: !!document.getElementById('discard'),
+  base: !!document.getElementById('base'),
+};
+"""
+
+
+def test_a_served_graph_for_a_reader_offers_no_edit_mode_and_still_draws(
+    index: Index, tmp_path: Path
+):
+    """A signed-out visitor was served "Edit dependencies", drew edges on the
+    canvas, pressed Save and collected a 403 for every one of them.
+
+    `editable` here was `base_commit is not None` — "there is a server behind this
+    page" standing in for "this person may write" — which is the exact conflation
+    `/table` was cured of on the `reader-table` branch, immediately above this
+    route in `web.py` and never carried across to it.
+
+    `design/QUEUE.md` predicted for the table that the flag would have to SPLIT
+    rather than narrow, because the reader still sorts, filters and follows links.
+    On the table it narrowed; here it narrows further, because the flag has only
+    ever drawn `#commitbar`. So the claim below is in two halves: nothing a person
+    can press to write, and a drawing that still arranges itself and still
+    filters.
+
+    Not driven through a dbltap into a record, which is this canvas's way in: it
+    sets `location.href`, and the DOM of the page the harness is standing on is
+    the only channel out of a headless run. `test_render.py` holds the rest of
+    what the writer's page must carry.
+    """
+    a_record = sorted(index.plan)[0]
+
+    # The control, and the reason it is one line of text rather than a second
+    # browser run: without it every assertion below would also pass on a page
+    # that had lost its commit bar for everybody.
+    assert 'id="connect"' in render_graph(index, ROUTES, base_commit=HEAD, may_write=True)
+
+    got = measured_in(
+        chrome(),
+        render_graph(index, ROUTES, base_commit=HEAD),
+        tmp_path / "reader.html",
+        1900,
+        _READS_ANYWAY.replace("WORD", json.dumps(a_record)),
+        height=820,
+        patience=3500,
+    )
+
+    assert got["reached"] == "boolean", (
+        f"the script stopped before the write half: `typeof connecting` said {got['reached']}"
+    )
+    for key, element in (
+        ("bar", "commitbar"),
+        ("connect", "connect"),
+        ("save", "save"),
+        ("discard", "discard"),
+        ("base", "base"),
+    ):
+        assert got[key] is False, f"a reader is offered #{element}, which can only refuse them"
+
+    # And still a graph: every planned record drawn, the filter narrowing it and
+    # the count agreeing with the canvas, the whole plan back when the box empties.
+    assert got["all"] == len(index.plan)
+    assert 0 < got["filtered"] < got["all"], (
+        f"searching for {a_record} left {got['filtered']} of {got['all']} nodes drawn"
+    )
+    # The bar counts what MATCHED (`keep.size`); the canvas also keeps what those
+    # depend on, faded, and every box they sit in — so the two numbers are not the
+    # same number and never were.
+    assert 0 < got["said"] <= got["filtered"], (
+        f"the bar says {got['said']} shown over a canvas drawing {got['filtered']}"
+    )
+    assert got["back"] == got["all"], "clearing the box did not bring the plan back"

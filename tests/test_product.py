@@ -20,6 +20,7 @@ import pytest
 
 from openproj.index import _product_of, _project_of, build_index
 from openproj.model import (
+    CHILD_KINDS,
     KIND_NAMES,
     KINDS,
     PARENT_KINDS,
@@ -52,6 +53,10 @@ def test_the_ladder_is_the_only_place_the_kinds_are_written_down():
     assert _MODELS == {rung.name: rung.model for rung in KINDS}
     assert _ID_PREFIXES == {rung.prefix: rung.name for rung in KINDS}
     assert PARENT_KINDS == {rung.name: rung.under for rung in KINDS}
+    assert CHILD_KINDS == {
+        rung.name: tuple(other.name for other in KINDS if rung.name in other.under)
+        for rung in KINDS
+    }
     assert render.PREFIX == {rung.name: rung.prefix for rung in KINDS}
     assert render.KINDS == KIND_NAMES
     assert render._KIND_MODELS == {rung.name: rung.model for rung in KINDS}
@@ -279,7 +284,7 @@ def test_a_product_is_drawn_differently_and_shows_no_card(plan: Path):
 
     records, config, _ = load_repo(plan)
     index = build_index(records, config, date(2026, 8, 20))
-    page = render_graph(index, ROUTES, base_commit="0" * 40)
+    page = render_graph(index, ROUTES, base_commit="0" * 40, may_write=True)
 
     assert 'node[kind = "product"]' in page, "a product is drawn like everything else"
     assert "'border-style': 'dashed'" in page

@@ -2091,9 +2091,17 @@ def create_app(
         )
 
     @app.get("/graph", response_class=HTMLResponse)
-    def graph() -> HTMLResponse:
+    def graph(request: Request) -> HTMLResponse:
+        # `request` is here for `may_write` and for nothing else. This route took
+        # no argument at all until 2026-09-18, which is how it went on serving
+        # "Edit dependencies", Save and Reset to a signed-out reader long after
+        # `/table`, immediately above, had stopped.
         commit, index = index_now()
-        return page(render.render_graph(index, render.ROUTES, base_commit=commit))
+        return page(
+            render.render_graph(
+                index, render.ROUTES, base_commit=commit, may_write=may_write(request)
+            )
+        )
 
     @app.get("/timeline", response_class=HTMLResponse)
     def timeline(

@@ -55,7 +55,7 @@ def served_pages(index: Index) -> dict[str, str]:
 
     return {
         "table": render_table(index, ROUTES, base_commit=HEAD, may_write=True),
-        "graph": render_graph(index, ROUTES, base_commit=HEAD),
+        "graph": render_graph(index, ROUTES, base_commit=HEAD, may_write=True),
         "timeline": render_timeline(index, ROUTES),
         "detail": render_detail(
             index, ROUTES, only=sorted(index.plan)[0], base_commit=HEAD, may_write=True
@@ -1267,7 +1267,7 @@ def test_every_commit_bar_sticks_to_the_same_edge_and_one_rule_decides_it(index:
             [el("article", "record editing"), bar],
         ),
         "cycle": (render_cycle(index, number, ROUTES, base_commit=HEAD), [bar]),
-        "graph": (render_graph(index, ROUTES, base_commit=HEAD), [bar]),
+        "graph": (render_graph(index, ROUTES, base_commit=HEAD, may_write=True), [bar]),
     }
 
     for name, (page, tail) in pages.items():
