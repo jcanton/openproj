@@ -44,9 +44,15 @@ def plan(tmp_path: Path) -> Path:
     _write(tmp_path, "projects", "proj-bbb001.md", "\n".join([
         "---", "id: proj-bbb001", "kind: project", "title: Replace the old thing",
         "status: shaping", "priority: medium", "parent: prod-aaa001", "---", "", "A project.", ""]))
+    # No parent, and that is the point rather than an oversight: a pitch filed
+    # under a project cannot BECOME a project, because a project is filed under a
+    # product. The real gesture on 2026-09-21 had to lift Documentation out of
+    # "Replace blueline" before it could be promoted, and this command refuses
+    # the same way -- `test_rekind_refuses_when_the_parent_cannot_hold_the_new_kind`
+    # is that refusal. So the record that is going to move is parentless here.
     _write(tmp_path, "pitches", "pitch-ccc001.md", "\n".join([
         "---", "id: pitch-ccc001", "kind: pitch", "title: Documentation",
-        "status: thinking", "priority: medium", "parent: proj-bbb001", "---", "", "A pitch.", ""]))
+        "status: thinking", "priority: medium", "---", "", "A pitch.", ""]))
     _write(tmp_path, "tasks", "task-ddd001.md", "\n".join([
         "---", "id: task-ddd001", "kind: task", "title: Write the config docs",
         "status: thinking", "priority: medium", "parent: pitch-ccc001",
@@ -189,15 +195,17 @@ def test_rekind_refuses_an_id_that_names_nothing(plan: Path, capsys):
     assert len(_ids(plan)) == 6
 
 
-def test_rekind_writes_nothing_when_the_result_would_not_validate(plan: Path, capsys):
-    """`_new`'s order, held here too: build every file, parse it back, validate
-    the whole plan with the change applied, and only then touch the disk.
+def test_a_refused_rekind_leaves_every_file_byte_identical(plan: Path, capsys):
+    """`_new`'s order, held here for a sharper reason.
 
-    A rekind that `check` would refuse must not be a thing somebody has to `rm`
-    their way out of — and unlike `new`, this one has already deleted a file by
-    the time anybody runs `check`.
+    `_new` builds, parses back and validates before touching the disk so a bad
+    record is never a file somebody has to `rm`. A rekind that half-lands has
+    already DELETED one, and a plan where the new record exists while its
+    children still point at the old is not a state anybody can be asked to
+    repair. So a refusal has to leave the whole corpus exactly as it was, not
+    merely leave the new record unwritten.
     """
     before = {one: path.read_text(encoding="utf-8") for one, path in _ids(plan).items()}
-    # A product is not filed under anything, and this one is under a project.
+    # Nothing may be filed under a product, and this one has two tasks under it.
     assert main(["rekind", "pitch-ccc001", "product", str(plan)]) == 1
     assert {one: path.read_text(encoding="utf-8") for one, path in _ids(plan).items()} == before
