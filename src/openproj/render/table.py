@@ -1013,9 +1013,18 @@ function cell(row, key, place) {
   // second half of that is not the same sentence on both rungs. A pitch reads
   // its own `reviewers`, so the cell opens and typing in it replaces the
   // inheritance; a project reads neither people field at all, so there is no box
-  // to open and the only way to change the names is to change the work. Telling
-  // a reader to double-click a cell that will not open is worse than saying
-  // nothing, which is why this branches on `editable` rather than on the column.
+  // to open and the only way to change the names is to change the work. Promising
+  // an editor to a reader who has none is worse than saying nothing, which is why
+  // this branches on `editable` rather than on the column.
+  //
+  // **And the wording of this comment is load-bearing**, which is a strange
+  // sentence with a real reason behind it: every JS comment in this file ships
+  // inside the page, and `test_a_rendered_plan_offers_no_dead_control` and
+  // `test_a_served_table_for_a_reader_offers_no_editor_and_still_reads` scan a
+  // read-only page for the literal phrase this branch is here to suppress. A
+  // comment quoting it fails both, and the tests are right to be that blunt —
+  // a substring is all a reader of the bytes has. Describe the sentence; do not
+  // spell it.
   const tip = [note, hiddenBy(row, key),
                INHERITS.includes(key) && !(row[key] || []).length
                  && (row[key + '_from'] || []).length

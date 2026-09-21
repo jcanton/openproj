@@ -67,7 +67,7 @@ def a_task(id: str, title: str = "A task", **fields) -> Task:
 def a_family() -> list[Record]:
     """One project, one pitch under it, two tasks under the pitch, one dependency."""
     return [
-        a_project("proj-a00001", "Griddle", owner="alice", reviewers=["bob"]),
+        a_project("proj-a00001", "Griddle", owner="alice"),
         a_pitch(
             "pitch-b00001", "Halo exchange", parent="proj-a00001", person_weeks=2.0, status="ready"
         ),
@@ -500,11 +500,12 @@ def test_the_missing_required_fields_predicate_reads_the_problems():
     """Severity-agnostic on purpose: a grandfathered rule reports a warning, and a
     field the team has decided it wants is still missing whichever way it reports."""
     records = [
+        # No `assignees` and no `reviewers`: a project reads neither, so a project
+        # carrying them is a project with a problem — and this fixture is here to
+        # be the record that has none.
         a_project(
             "proj-a00001",
             owner="alice",
-            assignees=["alice"],
-            reviewers=["bob"],
             status="in_progress",
             start_date=TODAY,
         ),
@@ -809,6 +810,19 @@ def test_the_seed_facets_are_the_menus_the_table_will_show(seed_index: Index):
         "stonechatty",
         "yellowhammer7",
     ]
+    # One name shorter than the Owner menu beside it, and the missing one is the
+    # point. `merganserly` reviews exactly one record in this corpus —
+    # `proj-7e57a0` — and a project reads no reviewers since `Rung.staffed` split
+    # off `Rung.schedules`, so `_facet_values` returns nothing for the key and the
+    # name has nobody else to come from. That is the menu agreeing with the rest
+    # of the app rather than a name going missing: the same file's key is reported
+    # as not read, its cell on the table draws the reviewers of the work under it
+    # instead, and a menu option that selected a record the tool says holds no
+    # reviewers would be the one place still insisting it does.
+    #
+    # `Whimbrelson` and `redpollard` stay, on `proj-9a4c25`'s keys and on the work
+    # elsewhere that really does name them — which is what makes this an
+    # assertion about the rule and not about deleting two lines from a file.
     assert seed_index.facets["reviewers"] == [
         "(none)",
         "Whimbrelson",
@@ -817,7 +831,6 @@ def test_the_seed_facets_are_the_menus_the_table_will_show(seed_index: Index):
         "hornbillow",
         "ibisbillie",
         "jackdawrie",
-        "merganserly",
         "mudlarkish",
         "redpollard",
     ]
@@ -876,6 +889,16 @@ def test_the_seed_incomplete_records_are_the_ones_missing_fields(seed_index: Ind
     the tests built in memory, which proves the rule and not the reading of a
     file. Do not tidy it; the file's own body says so too.
 
+    `proj-9a4c25` joined it on 2026-09-21 and is the same case one rung down. It
+    carries `assignees` and `reviewers`, which a project stopped reading when
+    `Rung.staffed` split off `Rung.schedules` — a project is a grouping, and the
+    pitches and tasks under it are what anybody is assigned to. It moved OUT of
+    the clean list below rather than being tidied, for `prod-7c2b81`'s reason
+    exactly: it and `proj-7e57a0` are the only two files in the repository that
+    fire the rule, and a rule with no document to fire on is a rule tested
+    against the tests' own idea of itself. `seed/` was stripped instead — that is
+    what `openproj init` writes for somebody else's plan, and it has to be clean.
+
     `pitch-7b3e94` is in here for a third reason, and it is a rule finding
     something rather than a file being wrong. Its two tasks are bet at 1.0 and
     2.0 against its own 3.0, which fits exactly as effort — and Whimbrel and
@@ -898,12 +921,12 @@ def test_the_seed_incomplete_records_are_the_ones_missing_fields(seed_index: Ind
         "task-3e07b2",
         "prod-7c2b81",
         "pitch-7b3e94",
+        "proj-9a4c25",
     } <= incomplete
     assert "task-3d84e9" not in incomplete
     assert incomplete.isdisjoint(
         {
             "prod-6d1a70",
-            "proj-9a4c25",
             "pitch-6f2d18",
             "task-6a5c02",
             "task-6b7d31",
