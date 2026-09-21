@@ -1,4 +1,4 @@
-"""`openproj` — init, check, new, render, serve, schedule and demo, against a plan repository.
+"""`openproj` — init, check, new, rekind, render, serve, schedule and demo, on a plan repository.
 
 The CLI can do everything the web view can. That is deliberate: if the service is
 down, being upgraded, or never comes back, the plan is still readable, still
@@ -552,7 +552,9 @@ def _rekind(args) -> int:
         return 1
 
     new_id = mint_id(kind, {one.stem for one in repo.glob(f"{DIRECTORY[kind]}/*.md")})
-    content = patch_text(path.read_text(encoding="utf-8"), {"id": new_id, "kind": kind}, None, drops)
+    content = patch_text(
+        path.read_text(encoding="utf-8"), {"id": new_id, "kind": kind}, None, drops
+    )
     try:
         candidate = parse_text(content, new_id)
     except ValueError as error:

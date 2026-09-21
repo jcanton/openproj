@@ -39,7 +39,8 @@ def plan(tmp_path: Path) -> Path:
     implementation wrong.
     """
     _write(tmp_path, "products", "prod-aaa001.md", "\n".join([
-        "---", "id: prod-aaa001", "kind: product", "title: The codebase", "---", "", "A codebase.", ""]))
+        "---", "id: prod-aaa001", "kind: product", "title: The codebase",
+        "---", "", "A codebase.", ""]))
     _write(tmp_path, "projects", "proj-bbb001.md", "\n".join([
         "---", "id: proj-bbb001", "kind: project", "title: Replace the old thing",
         "status: shaping", "priority: medium", "parent: prod-aaa001", "---", "", "A project.", ""]))
@@ -48,10 +49,12 @@ def plan(tmp_path: Path) -> Path:
         "status: thinking", "priority: medium", "parent: proj-bbb001", "---", "", "A pitch.", ""]))
     _write(tmp_path, "tasks", "task-ddd001.md", "\n".join([
         "---", "id: task-ddd001", "kind: task", "title: Write the config docs",
-        "status: thinking", "priority: medium", "parent: pitch-ccc001", "---", "", "A task.", ""]))
+        "status: thinking", "priority: medium", "parent: pitch-ccc001",
+        "---", "", "A task.", ""]))
     _write(tmp_path, "tasks", "task-eee001.md", "\n".join([
         "---", "id: task-eee001", "kind: task", "title: Write the code docs",
-        "status: thinking", "priority: medium", "parent: pitch-ccc001", "---", "", "Another task.", ""]))
+        "status: thinking", "priority: medium", "parent: pitch-ccc001",
+        "---", "", "Another task.", ""]))
     # The onlooker: it names the pitch in `depends_on` and nowhere else, so it is
     # the only thing that fails if the repointing loop reads `parent` alone.
     _write(tmp_path, "pitches", "pitch-fff001.md", "\n".join([
