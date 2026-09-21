@@ -554,6 +554,11 @@ def test_a_record_that_does_not_exist_is_a_404_and_not_an_empty_page(client: Tes
     [
         "/",
         f"/detail/{TASK}",
+        # The slide editor, which is its own renderer on the record's address and
+        # inlines three blocks written for other pages — the combobox, the Ace
+        # surface and the whole of `controls.py`'s editor toolkit. Three imported
+        # scripts and one of its own is exactly the shape this test is about.
+        f"/detail/{TASK}?view=slide",
         "/detail",
         "/graph",
         "/timeline",
@@ -606,7 +611,22 @@ def test_no_page_declares_one_name_twice(client: TestClient, route: str):
     # `assert fetches` below exists precisely to keep a page with nothing to
     # announce from satisfying the count vacuously.
     "route",
-    ["/table", f"/detail/{TASK}", "/graph", "/cycles", "/cycle/1", "/new?kind=task"],
+    [
+        "/table",
+        f"/detail/{TASK}",
+        # The slide editor. It was NOT in this list, and that is the whole of
+        # jcanton's 2026-09-21 report from the deployed service: its Save
+        # announced neither end of the write, so the server's own news of the
+        # commit came back down the stream as "This was just changed by somebody
+        # else" over the slide he had just saved. Every other write path on this
+        # page — the asset upload, the drawing save — already had its pair, which
+        # is what a census is for.
+        f"/detail/{TASK}?view=slide",
+        "/graph",
+        "/cycles",
+        "/cycle/1",
+        "/new?kind=task",
+    ],
 )
 def test_every_write_a_page_makes_is_announced_before_and_after_it(client: TestClient, route: str):
     """Otherwise the server's own news comes back as somebody else's.
@@ -631,7 +651,13 @@ def test_every_write_a_page_makes_is_announced_before_and_after_it(client: TestC
         for url, _ in re.findall(
             r"fetch\(\s*(`[^`]*`|'[^']*')[^)]*?method: '(POST|PATCH|PUT)'", scripts, re.S
         )
-        if "/api/preview" not in url
+        # `/api/preview` renders markdown and `/api/slide/preview` renders a
+        # slide; both answer with html and commit nothing. Two spellings because
+        # they are two routes, and the substring that covers the first does not
+        # cover the second — which would have counted the slide editor's preview
+        # as a write and demanded a pair of announcements for a GET in a POST's
+        # clothing.
+        if "/api/preview" not in url and "/api/slide/preview" not in url
     ]
     # The one path here where "how many fetch call sites does the source hold"
     # and "how many writes can happen per press" genuinely differ: `openDrawing`

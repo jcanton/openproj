@@ -591,9 +591,28 @@ _DECK_STYLE = """
    the root rather than a separate page: the deck is already the document, and a
    second route rendering the same slides would be the second copy this file
    argues against on every other line. */
+/* **Everything, and the list is the defect.** Each of these is named because it
+   is one of the things the shell or this page draws AROUND the slides, and the
+   two that were missing were missing for the same reason: nothing here asks
+   "what else is on the page", it asks "what did somebody remember".
+
+   `#build` is the shell's footer — the version, the plan's sha and Report issue
+   — which `@media print` already takes away and this did not, so it was on the
+   wall under every slide. `.railgrip` is the handle beside the rail: the rail
+   itself was hidden and its handle was not, and the handle is a hairline in
+   `--line` against a black screen, which is the vertical white stripe down the
+   left of the projection. Both reported by jcanton, 2026-09-21, from the room.
+
+   `#pile` and `#moved` go too, and they are the reason this is a list of ids
+   rather than "hide `body > *` except the slides": they are `role="status"`
+   live regions, so a plan change during a review would have popped a banner
+   onto the wall — and the deck answers that signal by swapping the sheets
+   underneath the presenter instead, which is the whole of `refresh()` below. */
 :root.presenting body > nav, :root.presenting .deckbar,
 :root.presenting .zoomer,
-:root.presenting .rail, :root.presenting #unreadable,
+:root.presenting .rail, :root.presenting .railgrip,
+:root.presenting #unreadable, :root.presenting #build,
+:root.presenting #pile, :root.presenting #moved,
 :root.presenting body > a.skip { display: none !important; }
 :root.presenting, :root.presenting body { background: #000; overflow: hidden; }
 :root.presenting #main { margin: 0; padding: 0; max-width: none; }
@@ -945,7 +964,15 @@ THUMBS.addEventListener('keydown', event => {
   const from = rows.indexOf(item);
   const to = from + step;
   if (to < 0 || to >= rows.length) return;
-  if (!event.altKey) { rows[to].focus(); return; }
+  // **The bare arrow moves the focus AND the page under it.** It used to move
+  // only the focus, so walking the rail with the keyboard changed which
+  // thumbnail was outlined and left the slide column exactly where it was —
+  // jcanton, 2026-09-21: "moving up and down with the arrows does move the
+  // selection to other thumbnails but doesn't update the larger view on the
+  // right". A rail is navigation, and the pointer half of it has scrolled the
+  // column since it was written; the keyboard half is the same gesture and gets
+  // the same answer, through the same function so the two cannot drift.
+  if (!event.altKey) { rows[to].focus(); reveal(rows[to]); return; }
   if (!MAY_WRITE || item.dataset.id === 'title' || rows[to].dataset.id === 'title') return;
   THUMBS.insertBefore(item, step < 0 ? rows[to] : rows[to].nextSibling);
   item.focus();
@@ -973,7 +1000,10 @@ THUMBS.addEventListener('dblclick', event => {
   if (item) open(item);
 });
 
-// A single click is navigation, which is what a rail is mostly for.
+// Bringing a thumbnail's slide into the column beside it, which is what a rail
+// is mostly for. One function, because two gestures ask for it — a click and an
+// arrow key — and a second copy of this arithmetic is a second answer to "where
+// is slide four".
 //
 // **`scrollTop`, and never `scrollIntoView`.** That method scrolls every
 // scrollable ancestor until the element is in view, and the document is one of
@@ -981,9 +1011,12 @@ THUMBS.addEventListener('dblclick', event => {
 // taking the nav and the deck bar up with it. Measured: nav top 16 to -14 on one
 // click. jcanton, 2026-08-25: the top bar "should not move (ever)", and the only
 // way to promise that is to move exactly one thing by hand.
-THUMBS.addEventListener('click', event => {
-  const item = event.target.closest('li');
-  if (!item) return;
+//
+// That is also why the keyboard path calls this rather than `focus({preventScroll})`
+// plus a scroll of its own: focusing a thumbnail scrolls the RAIL, which is
+// right, and the column is moved here, which is the second of the two boxes on
+// this page that scroll.
+function reveal(item) {
   const slide = SHEETS.querySelector(`[data-key="${CSS.escape(item.dataset.key)}"]`);
   if (!slide) return;
   // Offsets within the scroller, taken from the two boxes rather than from
@@ -991,6 +1024,11 @@ THUMBS.addEventListener('click', event => {
   // parent's unscaled coordinates while both rects are in the same painted ones.
   const box = slide.getBoundingClientRect(), room = SHEETS.getBoundingClientRect();
   SHEETS.scrollTop += box.top - room.top - Math.max(0, (room.height - box.height) / 2);
+}
+
+THUMBS.addEventListener('click', event => {
+  const item = event.target.closest('li');
+  if (item) reveal(item);
 });
 
 // --- Presenting ---------------------------------------------------------

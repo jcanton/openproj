@@ -151,7 +151,18 @@ _SLIDE = """
   {% if editable %}
   {#- No drawings button here either: it is a `FORMATS` entry drawn into
       `#marks` below, beside the image button. See `detail.py`'s copy of this
-      bar. -#}
+      bar.
+
+      **One row, and the commit bar is the other half of it** — the same
+      `.toolrow` the record page wraps its two bars in, and for the same reason
+      it was introduced there (jcanton, 2026-09-16: "move that bar above, in-line
+      with the slide/edit/side-by-side/etc buttons"). This page had the switcher
+      on one line and a second `.editbar` holding Save and Reset on the line
+      under the meta row — two bars, neither the shape of the record page's one,
+      on a page whose whole claim is to be a view OF that record. jcanton,
+      2026-09-21: "make the slide editing view conform to the edit/side-by-side
+      views in all aspects". -#}
+  <div class="toolrow">
   <p class="editbar">{{ slidebar }}
     <span id="views" class="views" role="group" aria-label="How the document is shown">
       <a class="seg" href="{{ links.record }}{{ e.id }}?edit" aria-pressed="false"
@@ -169,6 +180,27 @@ _SLIDE = """
         <circle cx="12" cy="12" r="2.7"/></svg></a>
     </span>
   </p>
+  {#- Save, Reset and the count of what is unsaved, in the record page's own
+      `.commitbar` and with the record page's own ids — `#unsaved`, `#save`,
+      `#reset`, `#state` — because `_DETAIL_STYLE` is inlined here and already
+      styles every one of them. It was a bare `<p class="editbar">` holding two
+      buttons and a hint, which is a third spelling of a control this app has
+      already settled twice.
+
+      **Not hidden, and neither are the buttons.** On the record page the bar and
+      its two buttons are revealed by `showEditing` because that page has a
+      reading mode to be in; this page IS the session — a writer who can see it
+      can write — so there is no state in which a hidden Save would be right. The
+      count still says which of the two things it is: "Nothing changed yet" or
+      "N unsaved changes", which is what the record page says inside a session.
+      -#}
+  <div class="commitbar" id="commitbar">
+    <span id="unsaved">Nothing changed yet</span>
+    <button type="button" id="save">Save</button>
+    <button type="button" id="reset" disabled>Reset</button>
+    <span id="state" role="status"></span>
+  </div>
+  </div>
   {% endif %}
   <h1>{{ e.title }}</h1>
   {#- Whether this slide will actually be DRAWN, said before anybody spends ten
@@ -196,15 +228,6 @@ _SLIDE = """
     {% else %}<span class="hint">on the cycle {{ e.cycle }} deck</span>{% endif %}</p>
 
   {% if editable %}
-  {#- Save and Reset, in the bar the other editors put them in and with the same
-      two words. Reset undoes and stays — it does not leave the editor — which is
-      the decision `_editbar` records on the record page; a second spelling of
-      one control is how `in_progress` became three different words. -#}
-  <p class="editbar" id="editbar">
-    <button type="button" id="save" class="primary">Save</button>
-    <button type="button" id="reset">Reset</button>
-    <span class="hint" id="state" role="status" aria-live="polite"></span>
-  </p>
   <input type="hidden" id="base" value="{{ base_commit }}">
   {% endif %}
 
@@ -517,7 +540,6 @@ const PREVIEW = document.getElementById('preview');
 const FITNOTE = document.getElementById('fitnote');
 const SAVE = document.getElementById('save');
 const RESET = document.getElementById('reset');
-const STATE = document.getElementById('state');
 const BASE = document.getElementById('base');
 // The document as it was when this page was rendered, and the ONE thing Reset
 // restores from. Never `defaultValue`: a browser restoring a form on a back
@@ -570,11 +592,51 @@ function state() {
 // `PROSE.defaultValue`: a browser restoring a form on a back navigation writes
 // the box and leaves `defaultValue` alone, so Reset would put back something the
 // reader never saw — the decision `BASELINE` on the record page records.
-const BASELINE = JSON.stringify(state());
+//
+// **`let`, because this page does not reload after a save.** The record page's
+// baseline is a `const` and can be: its Save ends in `location.reload()`, so the
+// next thing anybody compares against is a freshly rendered page. Here Save
+// advances `BASE.value` and stays, and a baseline that stayed behind meant the
+// bar went on counting the change that had just been committed — and
+// `beforeunload` went on warning about work that was already in git. It is
+// advanced to what was SENT, never to `state()` after the round trip: somebody
+// typing while the request was in the air would otherwise have their keystrokes
+// counted as already saved.
+let BASELINE = JSON.stringify(state());
 
-function dirty() { return JSON.stringify(state()) !== BASELINE; }
+// What is on the page against what was last committed, counted by FIELD the way
+// the record page's `changed()` counts it — so "3 unsaved changes" is three
+// things a reader can point at, and the set of sections is one of them because
+// `slide.sections` is one key in the file.
+function changed() {
+  const now = state(), was = JSON.parse(BASELINE);
+  let count = 0;
+  for (const key of ['skip', 'progress', 'prs', 'lead']) if (now[key] !== was[key]) count += 1;
+  if (JSON.stringify(now.sections) !== JSON.stringify(was.sections)) count += 1;
+  if (now.body !== was.body) count += 1;
+  return count;
+}
 
-function said(words) { if (STATE) STATE.textContent = words; }
+// The record page's commit bar, its ids and its two sentences. It is the same
+// bar — `_DETAIL_STYLE` styles `#unsaved` and `.commitbar.dirty` here as it does
+// there — so the state it shows has to be kept the same way: amber when closing
+// the tab would lose something, and Reset disabled when there is nothing to
+// undo, which is the half of jcanton's 2026-08-25 sentence about a control that
+// answers a press by doing nothing.
+const BAR = document.getElementById('commitbar');
+const UNSAVED = document.getElementById('unsaved');
+
+function dirty() {
+  const count = MAY_WRITE ? changed() : 0;
+  if (BAR) BAR.classList.toggle('dirty', count > 0);
+  if (RESET) RESET.disabled = count === 0;
+  if (UNSAVED) {
+    UNSAVED.textContent = count
+      ? `${count} unsaved change${count === 1 ? '' : 's'}`
+      : 'Nothing changed yet';
+  }
+  return count;
+}
 
 // --- The preview --------------------------------------------------------
 // Asked of the SERVER, and that is the decision worth the round trip. A slide
@@ -635,16 +697,42 @@ function fit() {
 async function save() {
   if (!MAY_WRITE) return;
   SAVE.disabled = true;
-  said('Saving…');
+  // The shell's `announce`, which writes `#state` in the bar above — and there is
+  // no `said` of this page's own anywhere now. It wrote that element
+  // directly, so it was a second name for one thing, and it lost what `announce`
+  // knows: a live region speaks when its contents CHANGE, so the same sentence
+  // said twice reaches a screen reader once.
+  announce('Saving…');
+  // What is going, held before the request rather than read back after it: the
+  // baseline this advances to has to be what was SENT, or keystrokes made while
+  // the request was in the air are counted as committed.
+  const sending = state();
+  // **The shell's banner has to know a write is in the air before it starts.**
+  // The server announces a commit to the event stream before it answers the
+  // request that made it, so the news of your own save arrives before you know
+  // its sha — and with nothing to hold it, saving this page told you this page
+  // had just been changed by somebody else. That is jcanton's 2026-09-21 report
+  // from the deployed service, and it is the same defect the record page and the
+  // cycle page each have a comment about: this editor was simply not in the
+  // census that caught it, which is why `test_every_write_a_page_makes_is_
+  // announced_before_and_after_it` now names this route.
+  dispatchEvent(new Event('openproj:writing'));
+  let committed = null;
   try {
-    const answer = await fetch('/api/record/' + encodeURIComponent(ID), {
+    // A template literal, spelled the way the record page spells the same call.
+    // Not a nicety: `test_every_write_a_page_makes_is_announced_before_and_after_it`
+    // finds a page's writes by reading its source for a `fetch(<url>, …method:)`,
+    // and a url built as `'…' + encodeURIComponent(ID)` puts a `)` between the
+    // two — so this write was invisible to the census that exists to catch
+    // exactly the defect it had.
+    const answer = await fetch(`/api/record/${encodeURIComponent(ID)}`, {
       method: 'PATCH',
       headers: {'content-type': 'application/json'},
       // `body: null` and not the record's body: this editor does not have the
       // record's document on screen and must not write one. A save that carried
       // an empty body would erase the shaping document from a page that never
       // showed it.
-      body: JSON.stringify({base_commit: BASE.value, fields: {slide: state()}, body: null}),
+      body: JSON.stringify({base_commit: BASE.value, fields: {slide: sending}, body: null}),
     });
     const result = await answer.json().catch(() => ({}));
     if (!answer.ok) {
@@ -655,11 +743,26 @@ async function save() {
       // case this line exists for was the one case it could not say, and
       // "That could not be saved." stood over the report naming the file and
       // every field that disagreed.
-      said(refusal(result, answer.status));
+      announce(refusal(result, answer.status));
       return;
     }
     if (result.commit) BASE.value = result.commit;
-    said('Saved.');
+    committed = result.commit || null;
+    // The new ground. Without this the bar went on counting the change that had
+    // just been committed, Reset stayed live over nothing to undo, and closing
+    // the tab warned about work that was already in git.
+    BASELINE = JSON.stringify(sending);
+    // And nothing is new any more. The amber `new` tag means "this heading
+    // arrived since the slide was last saved", which `_boxes` computes on GET —
+    // so after a save it is describing a save that has happened, and the page
+    // does not reload to find out. Removed rather than re-fetched: the boxes
+    // themselves are already right, and only the label about them was stale.
+    for (const label of ARTICLE.querySelectorAll('.pick label.fresh')) {
+      label.classList.remove('fresh');
+      for (const tag of label.querySelectorAll('.tag.new')) tag.remove();
+    }
+    dirty();
+    announce('Saved.');
   } catch (error) {
     // The connection went while the request was in the air. This was `try` and
     // `finally` with no `catch`: the rejection escaped as an unhandled one and
@@ -675,16 +778,20 @@ async function save() {
     // the one being sent, so a save that did land, re-sent unchanged against the
     // same `BASE.value`, merges with itself and answers 200. Predicting a
     // refusal here would be predicting something the store does not do.
-    said(`Not saved — ${error.message}. Press Save again: it sends the same edit `
+    announce(`Not saved — ${error.message}. Press Save again: it sends the same edit `
          + 'against the same base, so a first save that did land is not written twice.');
   } finally {
     SAVE.disabled = false;
+    // Announced even when the write was refused, or one 409 leaves every event
+    // after it held back and the shell's banner never appears again.
+    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
   }
 }
 
 if (MAY_WRITE) {
   SAVE.addEventListener('click', save);
   RESET.addEventListener('click', () => {
+    const undone = changed();
     const was = JSON.parse(BASELINE);
     document.getElementById('skip').checked = was.skip;
     for (const box of ARTICLE.querySelectorAll('.opt'))
@@ -698,14 +805,20 @@ if (MAY_WRITE) {
     // the defect that shipped once already and rewrote somebody's emoji.
     if (SURFACE) SURFACE.splice(0, text().length, was.body);
     else PROSE.value = was.body;
-    said('Reset.');
+    // The record page's own sentence, because discarding is still discarding:
+    // "Reset." said nothing about what had gone, and a page that quietly puts a
+    // value back is a page you have to re-check to trust.
+    announce(undone
+      ? `Reset, ${undone} unsaved change${undone === 1 ? '' : 's'} discarded`
+      : 'Nothing to reset');
+    dirty();
     refresh();
   });
   // Nothing autosaves here, so leaving with unsaved work has to be said. One
   // model per page and it is visible: the bar carries the state and this is the
   // last thing it can say.
   addEventListener('beforeunload', event => {
-    if (dirty()) event.preventDefault();
+    if (changed()) event.preventDefault();
   });
 }
 
@@ -871,8 +984,16 @@ if (SURFACE) {
   attachStatus(SURFACE, document.getElementById('statusbar'));
 }
 
-ARTICLE.addEventListener('change', refresh);
-if (SURFACE) SURFACE.onInput(refresh); else PROSE.addEventListener('input', refresh);
+// Two things watch every edit: the preview redraws and the bar re-counts. The
+// count is not debounced the way the preview is — the preview costs a round trip
+// and the count costs a string compare, and a bar that catches up 400ms after
+// the keystroke is a bar that is wrong for 400ms.
+const edited = () => { dirty(); refresh(); };
+ARTICLE.addEventListener('change', edited);
+if (SURFACE) SURFACE.onInput(edited); else PROSE.addEventListener('input', edited);
+// Once at load, so the bar opens saying which of its two sentences is true
+// rather than saying nothing until the first keystroke.
+dirty();
 addEventListener('resize', fit);
 // The preview is scaled against a pane the shell sizes, so it is re-scaled when
 // that measurement moves.
