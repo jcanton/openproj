@@ -43,7 +43,7 @@ from openproj.model import (
     without_sections,
 )
 from openproj.render import ROUTES, STATIC, STATUSES, render_cycle, render_deck
-from openproj.render.deck import _deck_order
+from openproj.render.deck import _deck_order, _resolved
 from openproj.render.tokens import PRIORITY_GLYPH, STATUS_GLYPH
 
 TODAY = date(2026, 8, 17)
@@ -1657,3 +1657,58 @@ def test_a_wrapped_point_reaches_the_slide_whole_and_leaves_no_code_block():
     # deck. `<pre>` is what markdown-it draws an indented block as, and it is the
     # element a reviewer photographed.
     assert "<pre>" not in drawn
+
+
+def test_a_slide_that_already_carries_points_is_not_blank_paper():
+    """The fallback above is for a slide that would otherwise be a heading, a
+    chip and an id over nothing. A slide carrying ticked points and a pull
+    request is not that: it is the report, which is the one thing a review slide
+    is for — so printing the Solution under it prints the bet, which `_review`
+    says three times a review slide must not carry.
+
+    The question was already being asked, one branch BELOW the fallback, and used
+    only to decide whether to say "Nothing is written on this record". Asking it
+    after the fallback meant it could never reach a slide the fallback had
+    already filled. jcanton, 2026-09-21, looking at `pitch-7c3d41` on the
+    deployed deck: "the entire progress section missing" — its `## Progress` held
+    nothing but its points, so once they were lifted there was no section left to
+    tick and the bet was the only thing deciding what the sheet said.
+
+    A record whose `## Progress` holds only its points is the shape this is
+    about, so the body here is exactly that: no notes, no trailing prose, nothing
+    for `choosable` to offer once the points are gone.
+    """
+    record = _one(
+        body=(
+            "## Problem\nWhy this was bet.\n\n"
+            "## Solution\nWhat was going to happen.\n\n"
+            "## Progress\n- [x] the thing that happened\n- [ ] the thing that did not\n"
+        )
+    )
+    slide, chosen = _resolved(record)
+    assert not chosen and not slide.sections, (
+        "the premise: nothing is ticked, so the fallback is what decides this sheet"
+    )
+
+    drawn = _slides_on(_index_of(record))[0]
+
+    assert [point["text"] for point in drawn["points"]] == [
+        "the thing that happened",
+        "the thing that did not",
+    ]
+    assert "What was going to happen." not in drawn["said"], "the Solution is the bet"
+    assert not drawn["doc"], drawn["doc"]
+    # And not the other end of the chain either: something IS written here, and a
+    # slide saying otherwise over two points is a slide arguing with itself.
+    assert "Nothing is written on this record" not in drawn["said"]
+
+
+def test_a_slide_with_nothing_but_an_empty_box_still_falls_back_to_the_plan():
+    """The other side of the same line, and the reason the question is about words
+    rather than about points. `_TASK_TEMPLATE` ships `## Progress\\n\\n- [ ]` — a
+    box with nothing beside it — which counts, and is not something anybody can
+    stand up and read out. That slide is blank paper and still wants the plan."""
+    record = _one(body="## Solution\nWhat was going to happen.\n\n## Progress\n\n- [ ]\n")
+    drawn = _slides_on(_index_of(record))[0]
+
+    assert "What was going to happen." in drawn["said"]
