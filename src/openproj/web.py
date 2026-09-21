@@ -80,6 +80,7 @@ from .model import (
     ID_PATTERN,
     INBOXES,
     KIND_NAMES,
+    KIND_OF_PREFIX,
     KINDS,
     MAX_BODY_BYTES,
     MAX_SLIDE_BYTES,
@@ -92,6 +93,7 @@ from .model import (
     Slide,
     Unreadable,
     _an,
+    _and_then,
     edited_by_id,
     ends_before_it_starts,
     in_model_order,
@@ -109,11 +111,12 @@ from .model import (
     read_config,
     readable,
     record_paths_in,
+    rekind_plan,
+    rekind_references,
     shaping_document,
     split_front_matter,
     start_date_has_passed,
     unknown_fields,
-    unread_fields,
     validate_all,
     weeks_outside_every_cycle,
     what_json_can_carry,
@@ -482,11 +485,6 @@ STATE_COOKIE = "op_state"
 # was already counting — "the SEVENTH copy" — which is the argument for moving
 # them rather than for adding an eighth.
 #
-# The rung an id names, read off its prefix — the inverse of `PREFIX`, and the
-# one of the group that only this file asks for. It answers the two questions a
-# bare id has to: which directory its file lives in, and which status vocabulary
-# judges a write to it.
-KIND_OF_PREFIX = {rung.prefix: rung.name for rung in KINDS}
 
 
 # `MAX_BODY_BYTES` is imported rather than declared: it moved to `model.py` when
@@ -986,14 +984,6 @@ def _deletion_message(record_id: str, doomed: list[str], edited: list[str]) -> s
         said += f", freed {len(edited)}"
     return said
 
-
-def _and_then(ids: list[str]) -> str:
-    """`a`, `a and b`, `a, b and c`. Sorted, because a list whose order comes out
-    of a dictionary reads as though it means something by it."""
-    names = sorted(ids)
-    if len(names) == 1:
-        return names[0]
-    return ", ".join(names[:-1]) + " and " + names[-1]
 
 
 def _reject_bad_types(fields: dict) -> None:
@@ -3043,87 +3033,6 @@ def create_app(
             await announce(written.commit, [record_id])
         return _result(written, base)
 
-    def _rekind_plan(index, record, kind: str) -> tuple[list[str], list[str]]:
-        """What changing this record's kind would refuse, and what it would drop.
-
-        Both computed before anything is written, and both handed back to the
-        page BEFORE it commits — the fields are a compare-and-swap on the shape
-        of the change, exactly as `also` is for a cascading delete. A reader who
-        was shown "this drops its appetite and its assignees" and then had
-        something else dropped was not asked.
-
-        **This is not a second copy of the containment ladder, and the sentence
-        below is deliberately not the validator's.** `RUNG[k].under` and
-        `PARENT_KINDS[k]` are the same tuple — both are `Rung.under` off the one
-        `KINDS` sequence — so there is nothing here that can drift from what
-        `_containment_problems` (`model.py`) would say about the record
-        afterwards; the ladder is single-sourced already and merging the two
-        readers would move a name, not a fact.
-
-        What can drift, and did, is the WORDING. `_containment_problems` answers
-        "this record standing here is wrong" — *a pitch belongs to a project, not
-        to an issue* — with no ids in it and nothing to do about it, because it
-        is a line in a report beside the record it is about. This answers "the
-        change you just asked for cannot be made", names both records, and says
-        what to do instead. Folding them into one sentence would make one of
-        those two refusals say something it does not mean, which is why the
-        duplication stays. `_an` is imported from the model for exactly that
-        reason: the wording is the part that has to be kept in step by hand, and
-        the article was the first piece of it to come apart — this line read
-        `f"a {kind}"` and said "a issue" on the day issues joined the ladder,
-        which is the failure `_an`'s own docstring names.
-        """
-        rung = RUNG[kind]
-        refusals: list[str] = []
-
-        # Where it sits. A pitch is filed under a project and a task may be
-        # filed under either a pitch or a project, so pitch->task keeps its
-        # parent and task->pitch under a pitch does not.
-        if record.parent:
-            above = index.records.get(record.parent)
-            if above is None:
-                # The parent stays a bare id here and only here: no record in the
-                # plan claims that name, so there is no title to give it and the
-                # complaint is about the spelling. The record itself is named the
-                # way every other refusal on this route names one.
-                refusals.append(
-                    f"{named(record.id, index.records)} names {record.parent} as its parent "
-                    "and that record is not in the plan"
-                )
-            elif above.kind not in rung.under:
-                refusals.append(
-                    f"{_an(kind)} cannot be filed under {_an(above.kind)} and "
-                    f"{named(record.id, index.records)} is under "
-                    f"{named(record.parent, index.records)}. Move it first, or take its "
-                    "parent off"
-                )
-
-        # What sits under it. `under` is per rung, so a pitch with tasks under it
-        # can become a project (a task may be filed under a project) and cannot
-        # become a task (nothing is filed under a task).
-        below = sorted(other.id for other in index.records.values() if other.parent == record.id)
-        stranded = [other for other in below if kind not in RUNG[index.records[other].kind].under]
-        if stranded:
-            # Title then id for every one of them: "Move them first" is an
-            # instruction to open each of these files and change its `parent`,
-            # and a list of six bare ids is six lookups before anybody can start.
-            refusals.append(
-                f"{_and_then([named(one, index.records) for one in stranded])} "
-                f"{'is' if len(stranded) == 1 else 'are'} filed "
-                f"under {named(record.id, index.records)}, and nothing may be filed "
-                f"under {_an(kind)}. Move them first"
-            )
-
-        # What it would stop being able to say. `unread_fields` is the ladder's
-        # own answer and the same one the editors ask, so a field this drops is
-        # a field the new kind would not have offered.
-        drops = sorted(
-            field
-            for field in unread_fields(kind)
-            if getattr(record, field, None) not in (None, "", [], False)
-        )
-        return refusals, drops
-
     @app.post("/api/rekind")
     async def rekind(request: Request) -> JSONResponse:
         """Change a record's kind, by making a new record and retiring the old one.
@@ -3178,7 +3087,7 @@ def create_app(
         if record is None:
             raise HTTPException(404, f"no record {record_id!r}")
 
-        refusals, drops = _rekind_plan(index, record, kind)
+        refusals, drops = rekind_plan(index, record, kind)
         if refusals:
             raise HTTPException(409, ". ".join(refusals))
         # **Losing a field is a question before it is a write**, the shape the
@@ -3243,22 +3152,12 @@ def create_app(
             path: None,
         }
 
-        # Everything that named the old id, in the four fields that hold one.
-        # `blocks` is not among them: it is derived in `build_index` and never
-        # stored, so repointing it here would be writing down a fact the index
-        # computes — the invariant this repository states first.
-        for other in index.records.values():
-            if other.id == record_id:
-                continue
-            fields: dict = {}
-            if other.parent == record_id:
-                fields["parent"] = new_id
-            for name in ("depends_on", "pitched_into", "became"):
-                held = getattr(other, name, None)
-                if held and record_id in held:
-                    fields[name] = [new_id if one == record_id else one for one in held]
-            if not fields:
-                continue
+        # Everything that named the old id. Which fields those are, and why
+        # `blocks` is not one of them, is `rekind_references`.
+        for other_id, fields in rekind_references(
+            index.records.values(), record_id, new_id
+        ).items():
+            other = index.records[other_id]
             where = _path_for(store, base, other.id)
             if where is None:
                 # Both records by title and id. The id is not decoration here: the

@@ -343,30 +343,108 @@ const labelOf = node => node.isChildless()
      node.data('label') || ''].filter(Boolean).join(' ');
 
 // TELLING ONE EDGE FROM ANOTHER. Where several dependencies run through the same
-// corridor, they are one grey line of one width with one arrowhead and the eye
-// cannot follow any of them to its end. So each edge gets its own shade, its own
-// head and its own weight — from a hash of the two ids, so the same dependency
-// looks the same on every load and on everybody's screen.
+// corridor, they are one line of one width with one arrowhead and the eye cannot
+// follow any of them to its end. So each edge gets its own ink and its own
+// weight, from a hash of the two ids, so the same dependency looks the same on
+// every load and on everybody's screen.
 //
-// Deliberately a small range. jcanton, 2026-08-21: "without going over the top,
-// just slightly different shades of grey (not too light otherwise invisible)".
-// The shades are `--line-strong` mixed towards the page's ink and towards its
-// muted grey, never towards the background; the widths are within half a pixel
-// of each other; and the line stays SOLID, because dashed is what an uncommitted
-// connection looks like on this canvas and that meaning is not for sale.
-// Six inks, from the page's own tokens rather than from six greys. Greys within
-// one family are not separable at 1.5px on a busy canvas — jcanton, 2026-08-21,
-// "shades are too similar to distinguish to a human eye... otherwise we should
-// use theme colours (also shades) which gives us more options" — and every token
-// here is one this app already holds legible against the page in both themes and
-// under every colour scheme, mixed halfway to the line colour so a canvas of
-// them reads as a drawing rather than as a chart.
+// **Three inks and three weights, nine buckets, and the numbers are why.** The
+// six inks this had before were mixed 62% towards `--line-strong` to keep them
+// quiet, and measured against the categorical-palette checks that mix put every
+// one of them BELOW the chroma floor -- they were six greys. Worst pair 2.8 dE
+// under deuteranopia and 6.6 dE to normal vision, where 15 is the floor at which
+// two colours can be told apart at all. jcanton, 2026-09-21: "they hardly are:
+// they all appear the same". They were not distinguishable, and no amount of
+// looking at them was going to say so.
 //
-// One arrowhead for all of them, restored: "it's only one arrowhead per edge, it
-// doesn't help figuring out where the edge starts by looking at the end only".
-const EDGE_INKS = [
-  '--line-strong', '--accent', '--ok', '--pri-medium', '--danger', '--st-shaping-line',
-];
+// Unmixing them is not enough: the raw tokens score 10.6 dE, and no subset of
+// the six passes in both themes. They are status and chip inks and were never a
+// categorical palette. These three -- teal, amber, purple -- are the best trio
+// the tokens hold: 14.5 dE under protanopia and 19.8 to normal vision in light,
+// 15.1 and 19.1 in dark. Both clear their floors with room.
+//
+// `--ok` and `--danger` are gone from here for a second reason, which is a bug
+// rather than a measurement. `--ok` IS the colour of `edge.pending` and
+// `--danger` sits beside `edge.dropping`'s `--sev-blocker`, so one ordinary edge
+// in six was drawn in the ink that means "not committed yet". A status colour is
+// reserved; it cannot also be series four.
+//
+// **More hues would be worse, and that was measured too.** Four evenly spaced
+// hues drop to 6.2 dE under deuteranopia -- half the separation of these three --
+// and being derived rather than tokens they would look identical under Gruvbox,
+// Solarized and the rest, which is the harmony this page is built on. Weight is
+// the axis that costs nothing: three widths give nine buckets with every colour
+// pair still at 14.5 dE.
+//
+// The line stays SOLID and the arrowhead stays one shape. Dashed is what an
+// uncommitted connection looks like here and that meaning is not for sale;
+// jcanton on the heads: "it's only one arrowhead per edge, it doesn't help
+// figuring out where the edge starts by looking at the end only".
+const EDGE_INKS = ['--accent', '--pri-medium', '--st-shaping-line'];
+// Far enough apart to be read as different weights rather than as antialiasing,
+// and the heaviest still thin enough to be a drawn line rather than a bar.
+const EDGE_WIDTHS = [1.2, 2.0, 3.0];
+
+// Relative luminance, sRGB, for the one question this page asks of a colour:
+// whether a line in it can be seen against the page at all. `--line-strong` is
+// held at 3:1 in both themes and that is the bar an edge inherits.
+const LUMA = value => {
+  const [r, g, b] = inSRGB(value).match(/\d+/g).map(Number).map(c => {
+    const u = c / 255;
+    return u <= 0.03928 ? u / 12.92 : Math.pow((u + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const CONTRAST = (one, two) => {
+  const [a, b] = [LUMA(one), LUMA(two)].sort((x, y) => y - x);
+  return (a + 0.05) / (b + 0.05);
+};
+
+// Lifted towards the page's own text colour until it clears 3:1, and not one step
+// further. `--st-shaping-line` under the dark theme is 2.39:1 against the
+// surface -- a dependency you can see is the whole point of colouring it -- while
+// the same token is fine in light and fine as a chip everywhere. So the lift is
+// computed against whatever theme is actually loaded rather than written into
+// one of them, which is also what keeps this honest under the eight colour
+// schemes nobody measured.
+const lift = hue => {
+  const page = token('--bg');
+  // Through `inSRGB` on every path, including the one that changes nothing.
+  // `token` hands back a raw value when it holds no `(`, so a scheme whose
+  // --accent is a plain hex would reach cytoscape as `#0f5c6b` while a scheme
+  // that derives it arrives as `rgb(...)` — and what this canvas may be handed
+  // is the invariant `test_the_drawing_gets_colours_it_can_actually_read` was
+  // written for. One shape out of here, whatever came in.
+  if (!page || CONTRAST(hue, page) >= 3) return inSRGB(hue);
+  for (let step = 20; step <= 80; step += 20) {
+    const lifted = inSRGB(`color-mix(in oklab, ${hue}, ${token('--fg')} ${step}%)`);
+    if (CONTRAST(lifted, page) >= 3) return lifted;
+  }
+  return inSRGB(token('--line-strong'));
+};
+
+// Memoised, and not as a flourish. cytoscape calls a style function for every
+// edge on every style recalculation, and each uncached call here costs a
+// `getComputedStyle` plus up to five `getImageData` reads — the canvas round
+// trip `inSRGB` is built on. On the seed corpus that is a few hundred; on a real
+// plan it is whatever the plan has. The answer depends only on the token and on
+// the theme, so it is computed once per pair and thrown away when the theme
+// changes, which is the one event that can move it.
+const LEGIBLE = new Map();
+addEventListener('themechange', () => LEGIBLE.clear());
+
+const legible = hue => {
+  // Not `remembered`: that name belongs to the browser-store helper in the
+  // shell, and `test_nothing_touches_a_browser_store_except_the_helper_that_
+  // survives_a_refusal` pins it to exactly one occurrence across every script
+  // the page inlines. Two classic scripts share one lexical scope, so the name
+  // being taken is the point rather than an inconvenience.
+  const cached = LEGIBLE.get(hue);
+  if (cached) return cached;
+  const answer = lift(hue);
+  LEGIBLE.set(hue, answer);
+  return answer;
+};
 
 function edgeSeed(edge) {
   // FNV-ish over the two ids: stable across loads, and different for two edges
@@ -381,13 +459,15 @@ function edgeSeed(edge) {
 }
 
 function edgeInk(edge) {
-  const name = EDGE_INKS[edgeSeed(edge) % EDGE_INKS.length];
-  const hue = token(name);
-  if (!hue) return token('--line-strong');
-  // Halfway to the line colour: the tokens are chip and status inks and are
-  // meant to carry a word, which is louder than a 1.5px line needs to be. Mixed,
-  // they stay this drawing's greys while being six of them rather than one.
-  return inSRGB(`color-mix(in oklab, ${hue} 62%, ${token('--line-strong')})`);
+  const hue = token(EDGE_INKS[edgeSeed(edge) % EDGE_INKS.length]);
+  return hue ? legible(hue) : token('--line-strong');
+}
+
+// A different slice of the same hash, so ink and weight do not travel together:
+// off one number, every teal edge would be the same width and the nine buckets
+// would be three.
+function edgeWidth(edge) {
+  return EDGE_WIDTHS[Math.floor(edgeSeed(edge) / EDGE_INKS.length) % EDGE_WIDTHS.length];
 }
 
 // The two marks, as the two CHARACTERS they are everywhere else on the site, each
@@ -877,7 +957,10 @@ const cy = cytoscape({
         'line-color': edge => edgeInk(edge),
         'target-arrow-color': edge => edgeInk(edge),
         'target-arrow-shape': 'triangle',
-        'width': 1.5 } },
+        // The second channel, and the one that costs nothing: see EDGE_WIDTHS.
+        // `edge.pending` and `edge.dropping` set their own below and mean it --
+        // a connection that is not committed yet is not one of nine buckets.
+        'width': edge => edgeWidth(edge) } },
     // The two uncommitted states, told apart by colour rather than by dash
     // pattern: both are dashed, because dashed is what "not in the plan yet"
     // looks like here, and one is being added while the other is being taken
@@ -913,7 +996,12 @@ function paint() {
                                 'text-background-color': token('--surface'),
                                 'text-margin-x': e => groupWidth(e) + 12})
     .selector('edge').style({'line-color': edge => edgeInk(edge),
-                             'target-arrow-color': edge => edgeInk(edge)})
+                             'target-arrow-color': edge => edgeInk(edge),
+                             // Repainted on a theme change like the inks, because
+                             // `legible` lifts against the theme that is loaded:
+                             // a width is not theme-dependent but the call that
+                             // sets it alongside the colour has to run again.
+                             'width': edge => edgeWidth(edge)})
     .selector('edge.pending').style({'line-color': token('--ok'),
                                      'target-arrow-color': token('--ok')})
     .selector('edge.dropping').style({'line-color': token('--sev-blocker'),

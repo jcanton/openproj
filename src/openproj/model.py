@@ -2520,6 +2520,12 @@ ID_PATTERN = re.compile(
 # a ladder gets a rung in one place and not another.
 PREFIX = {rung.name: rung.prefix for rung in KINDS}
 DIRECTORY = {rung.name: rung.directory for rung in KINDS}
+# The rung an id names, read off its prefix -- the inverse of `PREFIX`. It
+# answers the two questions a bare id has to: which directory its file lives in,
+# and which status vocabulary judges a write to it. Here beside the other two
+# rung-derived maps rather than in `web.py`, because `openproj rekind` reads an
+# id the same way the routes do.
+KIND_OF_PREFIX = {rung.prefix: rung.name for rung in KINDS}
 MODELS: dict[str, type[Record]] = {rung.name: rung.model for rung in KINDS}
 _PREFIX_FOR_KIND = PREFIX
 _SIZE_FIELD = {"pitch": "person_weeks", "task": "person_weeks"}
@@ -2562,6 +2568,123 @@ def mint_id(kind: str, taken: Collection[str] = ()) -> str:
         if minted not in taken:
             return minted
 
+
+
+def rekind_plan(index, record, kind: str) -> tuple[list[str], list[str]]:
+    """What changing this record's kind would refuse, and what it would drop.
+
+    Here rather than in `web.py` because `openproj rekind` asks the same
+    question and has to get the same answer. Two copies of a containment
+    ladder is two ladders, and the one nobody is looking at is the one that
+    goes stale -- which is the failure `unread_fields` and `RUNG` were
+    single-sourced to prevent in the first place.
+
+    Both computed before anything is written, and both handed back to the
+    page BEFORE it commits — the fields are a compare-and-swap on the shape
+    of the change, exactly as `also` is for a cascading delete. A reader who
+    was shown "this drops its appetite and its assignees" and then had
+    something else dropped was not asked.
+
+    **This is not a second copy of the containment ladder, and the sentence
+    below is deliberately not the validator's.** `RUNG[k].under` and
+    `PARENT_KINDS[k]` are the same tuple — both are `Rung.under` off the one
+    `KINDS` sequence — so there is nothing here that can drift from what
+    `_containment_problems` (`model.py`) would say about the record
+    afterwards; the ladder is single-sourced already and merging the two
+    readers would move a name, not a fact.
+
+    What can drift, and did, is the WORDING. `_containment_problems` answers
+    "this record standing here is wrong" — *a pitch belongs to a project, not
+    to an issue* — with no ids in it and nothing to do about it, because it
+    is a line in a report beside the record it is about. This answers "the
+    change you just asked for cannot be made", names both records, and says
+    what to do instead. Folding them into one sentence would make one of
+    those two refusals say something it does not mean, which is why the
+    duplication stays. `_an` is imported from the model for exactly that
+    reason: the wording is the part that has to be kept in step by hand, and
+    the article was the first piece of it to come apart — this line read
+    `f"a {kind}"` and said "a issue" on the day issues joined the ladder,
+    which is the failure `_an`'s own docstring names.
+    """
+    rung = RUNG[kind]
+    refusals: list[str] = []
+
+    # Where it sits. A pitch is filed under a project and a task may be
+    # filed under either a pitch or a project, so pitch->task keeps its
+    # parent and task->pitch under a pitch does not.
+    if record.parent:
+        above = index.records.get(record.parent)
+        if above is None:
+            # The parent stays a bare id here and only here: no record in the
+            # plan claims that name, so there is no title to give it and the
+            # complaint is about the spelling. The record itself is named the
+            # way every other refusal on this route names one.
+            refusals.append(
+                f"{named(record.id, index.records)} names {record.parent} as its parent "
+                "and that record is not in the plan"
+            )
+        elif above.kind not in rung.under:
+            refusals.append(
+                f"{_an(kind)} cannot be filed under {_an(above.kind)} and "
+                f"{named(record.id, index.records)} is under "
+                f"{named(record.parent, index.records)}. Move it first, or take its "
+                "parent off"
+            )
+
+    # What sits under it. `under` is per rung, so a pitch with tasks under it
+    # can become a project (a task may be filed under a project) and cannot
+    # become a task (nothing is filed under a task).
+    below = sorted(other.id for other in index.records.values() if other.parent == record.id)
+    stranded = [other for other in below if kind not in RUNG[index.records[other].kind].under]
+    if stranded:
+        # Title then id for every one of them: "Move them first" is an
+        # instruction to open each of these files and change its `parent`,
+        # and a list of six bare ids is six lookups before anybody can start.
+        refusals.append(
+            f"{_and_then([named(one, index.records) for one in stranded])} "
+            f"{'is' if len(stranded) == 1 else 'are'} filed "
+            f"under {named(record.id, index.records)}, and nothing may be filed "
+            f"under {_an(kind)}. Move them first"
+        )
+
+    # What it would stop being able to say. `unread_fields` is the ladder's
+    # own answer and the same one the editors ask, so a field this drops is
+    # a field the new kind would not have offered.
+    drops = sorted(
+        field
+        for field in unread_fields(kind)
+        if getattr(record, field, None) not in (None, "", [], False)
+    )
+    return refusals, drops
+
+
+def rekind_references(records, record_id: str, new_id: str) -> dict[str, dict]:
+    """Every record that names `record_id`, and the fields that have to move.
+
+    The four fields that hold an id, and no fifth. `blocks` is deliberately not
+    among them: it is derived in `build_index` and never stored, so repointing
+    it here would be writing down a fact the index computes -- the invariant
+    this repository states first.
+
+    Beside `rekind_plan` and for the same reason: the web route and
+    `openproj rekind` have to sweep the same edges. A hand-written sweep on
+    either side is a sweep that catches `parent`, which is the obvious one, and
+    misses `depends_on`, which is not.
+    """
+    moved: dict[str, dict] = {}
+    for other in records:
+        if other.id == record_id:
+            continue
+        fields: dict = {}
+        if other.parent == record_id:
+            fields["parent"] = new_id
+        for name in ("depends_on", "pitched_into", "became"):
+            held = getattr(other, name, None)
+            if held and record_id in held:
+                fields[name] = [new_id if one == record_id else one for one in held]
+        if fields:
+            moved[other.id] = fields
+    return moved
 
 def unknown_fields(kind: str, fields: Iterable[str]) -> list[str]:
     """The names this kind's model does not own, sorted.
@@ -2670,6 +2793,20 @@ def opens_at(kind: str) -> str:
     place.
     """
     return str(MODELS[kind].model_fields["status"].default)
+
+
+def _and_then(ids: list[str]) -> str:
+    """`a`, `a and b`, `a, b and c`. Sorted, because a list whose order comes out
+    of a dictionary reads as though it means something by it.
+
+    Beside `_an` and moved here for its reason: the wording is the part that has
+    to be kept in step by hand, and `rekind_plan` -- which both the route and the
+    command line now ask -- writes sentences out of both.
+    """
+    names = sorted(ids)
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + " and " + names[-1]
 
 
 def _an(kind: str) -> str:
