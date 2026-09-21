@@ -434,8 +434,13 @@ const LEGIBLE = new Map();
 addEventListener('themechange', () => LEGIBLE.clear());
 
 const legible = hue => {
-  const remembered = LEGIBLE.get(hue);
-  if (remembered) return remembered;
+  // Not `remembered`: that name belongs to the browser-store helper in the
+  // shell, and `test_nothing_touches_a_browser_store_except_the_helper_that_
+  // survives_a_refusal` pins it to exactly one occurrence across every script
+  // the page inlines. Two classic scripts share one lexical scope, so the name
+  // being taken is the point rather than an inconvenience.
+  const cached = LEGIBLE.get(hue);
+  if (cached) return cached;
   const answer = lift(hue);
   LEGIBLE.set(hue, answer);
   return answer;
