@@ -12,6 +12,7 @@ own file, exactly as an edge added is one put in.
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from pathlib import Path
 
@@ -232,3 +233,66 @@ def test_an_edge_edit_is_refused_where_it_would_delete_a_hand_written_line(
     assert got["marked"] is False, "the stored edge was marked for a removal that destroys"
     assert got["drawnOk"] == 1, "a record the canvas sees whole stopped taking edges"
     assert got["wrote"] == [], "a refusal must not reach the server"
+
+
+# --------------------------------------------------------------------------- #
+# WHAT THE LINES ARE COLOURED WITH.
+#
+# Several dependencies through one corridor are followed by eye or not at all, so
+# each edge carries its own ink and its own weight off a hash of its two ids. The
+# inks were six, mixed 62% towards `--line-strong` to keep them quiet, and the
+# mix put every one of them below the chroma floor: six greys, worst pair 2.8 dE
+# under deuteranopia and 6.6 dE to normal vision against a floor of 15. jcanton,
+# 2026-09-21: "they hardly are: they all appear the same".
+#
+# Two of those six were `--ok` and `--danger`, and that is the half of it a
+# measurement does not catch. `--ok` IS `edge.pending`'s colour and `--danger`
+# sits beside `edge.dropping`'s `--sev-blocker`, so one ordinary edge in six was
+# drawn in the ink that means "not committed yet" — on a canvas where that is the
+# only other thing an edge's colour can say.
+#
+# Source and not a browser, deliberately, and it is the exception this file's
+# neighbour argues against: `test_graph_layout.py` reads nothing from the script
+# because the bug it was written for was a correct string over a wrong drawing.
+# This is the opposite shape. The claim is not "the line looks distinct" — that
+# is measured with a validator and written into the comment beside the palette —
+# it is "no status ink is also a series ink", which is a fact about two lists.
+# --------------------------------------------------------------------------- #
+
+GRAPH_SCRIPT = Path(__file__).resolve().parents[1] / "src" / "openproj" / "render" / "graph.py"
+
+
+def _js_list(name: str) -> list[str]:
+    source = GRAPH_SCRIPT.read_text(encoding="utf-8")
+    written = re.search(rf"const {name} = \[(.*?)\];", source, re.S)
+    assert written, f"{name} is not declared in graph.py any more"
+    return [one.strip().strip("'\"") for one in written.group(1).split(",") if one.strip()]
+
+
+def test_no_edge_is_drawn_in_a_colour_that_already_means_something():
+    """The reserved inks are reserved: `edge.pending` and `edge.dropping` own
+    theirs, and an ordinary dependency may not borrow either."""
+    source = GRAPH_SCRIPT.read_text(encoding="utf-8")
+    spoken_for = {
+        one
+        for selector in ("edge.pending", "edge.dropping")
+        for block in re.findall(
+            rf"selector: '{re.escape(selector)}', style: \{{(.*?)\}} \}}", source, re.S
+        )
+        for one in re.findall(r"token\('(--[a-z0-9-]+)'\)", block)
+    }
+    assert spoken_for, "neither pending nor dropping names a token any more"
+    assert not spoken_for & set(_js_list("EDGE_INKS")), (
+        f"an ordinary edge can be drawn in {sorted(spoken_for & set(_js_list('EDGE_INKS')))}, "
+        "which already means pending or dropping"
+    )
+
+
+def test_there_are_more_ways_to_tell_two_edges_apart_than_there_are_inks():
+    """Weight is the second channel, and the reason there is one: three inks is
+    what these tokens can separate, and nine buckets is what three weights make
+    of them without touching the colour at all."""
+    inks, widths = _js_list("EDGE_INKS"), _js_list("EDGE_WIDTHS")
+    assert len(inks) >= 3 and len(widths) >= 2
+    assert len(inks) * len(widths) >= 9
+    assert len(set(widths)) == len(widths), "two buckets of the same weight are one bucket"
