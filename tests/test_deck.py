@@ -1611,3 +1611,49 @@ def test_walking_the_rail_with_the_arrows_moves_the_slide_beside_it(deck: str, t
         "the focus moved and the slide column did not, which is the defect: "
         f"{found['before']} to {found['after']}"
     )
+
+
+def test_a_wrapped_point_reaches_the_slide_whole_and_leaves_no_code_block():
+    """The medium the defect was seen in: a rendered slide.
+
+    `checklist_items` and `without_checklist` have their own tests in
+    `test_model.py`, and those are about strings. This one is about the sheet the
+    room looks at, and it asserts the two things a reviewer actually saw wrong on
+    `pitch-7c3d41`: a point cut off mid-clause, and a grey monospace box under the
+    list holding the halves that had been cut off it. The box is the part a string
+    test cannot see — six spaces of indent is an indented code block, so what was
+    left behind did not merely print twice, it printed as code.
+
+    The body is hard-wrapped at 80 columns because the plan is, and none of the
+    bodies written in this file were. That is the whole reason this shipped: a
+    corpus that does not contain the one string that matters proves nothing.
+    """
+    record = _one(
+        body=(
+            "## Progress\n"
+            "\n"
+            "- [x] Two-layer design agreed -- parallel coupling, no copies -- and\n"
+            "      implemented as #1436, based on main\n"
+            "- [ ] PR descriptions refreshed, then review and merge\n"
+        )
+    )
+    drawn = render_deck(_index_of(record), 37)
+    slide = _slides_on(_index_of(record))[0]
+
+    assert slide["points"] == [
+        {
+            "done": True,
+            "text": "Two-layer design agreed -- parallel coupling, no copies -- and "
+            "implemented as #1436, based on main",
+        },
+        {"done": False, "text": "PR descriptions refreshed, then review and merge"},
+    ]
+    # Nothing of the point is left in the prose below it, and the heading it
+    # emptied goes with it — which is what `without_checklist` already promised
+    # for a point written on one line.
+    assert not slide["doc"], slide["doc"]
+    assert "Progress" not in slide["doc"]
+    # And the one a string could not have told you: no code block anywhere on the
+    # deck. `<pre>` is what markdown-it draws an indented block as, and it is the
+    # element a reviewer photographed.
+    assert "<pre>" not in drawn

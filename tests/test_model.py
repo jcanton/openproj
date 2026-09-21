@@ -302,6 +302,87 @@ def test_a_box_outside_the_counted_headings_stays_in_the_prose_the_slide_prints(
     assert "## Progress" not in kept, "the heading the lift emptied is still there"
 
 
+def test_a_point_that_was_wrapped_is_one_point_and_leaves_nothing_behind():
+    """**Verbatim from the plan**, because this is where the corpus differs from
+    every body written in this file: it is hard-wrapped at 80 columns, so a point
+    with a sentence in it runs onto a second line indented under the first.
+
+    A point used to be a LINE. So the slide got "…and implemented" and the record
+    kept `as #1436, based on main` — six spaces of indent with no list marker in
+    front of it any more, which markdown draws as an indented code block. What a
+    reviewer saw under the points of `pitch-7c3d41` was a grey monospace box
+    holding the back half of three sentences, cut mid-clause. jcanton,
+    2026-09-21, off the deployed deck.
+
+    Both halves are asserted because they are two different functions with one
+    reading between them: `checklist_items` has to lift the whole point and
+    `without_checklist` has to take away everything it lifted.
+    """
+    body = (
+        "## Progress\n"
+        "\n"
+        "- [x] Two-layer design agreed -- parallel coupling, no copies -- and implemented\n"
+        "      as #1436, based on main\n"
+        "- [ ] Diagnostics ownership: `dims` metadata, `DiagnosticsStore`,\n"
+        "      `bind_output_buffers`\n"
+    )
+
+    assert checklist_items(body) == [
+        (
+            True,
+            "Two-layer design agreed -- parallel coupling, no copies -- and implemented "
+            "as #1436, based on main",
+        ),
+        (
+            False,
+            "Diagnostics ownership: `dims` metadata, `DiagnosticsStore`, `bind_output_buffers`",
+        ),
+    ]
+    # One space at the join and not a newline: a hard break in the middle of a
+    # sentence is a slide read from the back of a room with a sentence broken in
+    # the middle of it.
+    assert "\n" not in checklist_items(body)[0][1]
+    assert checklist(body) == (1, 2), "wrapping a point must not change what it counts"
+    assert without_checklist(body).strip() == "", (
+        "the lines a wrapped point ran onto were left behind, indented, with no "
+        "list marker in front of them — which is an indented code block"
+    )
+
+
+def test_a_line_under_a_point_that_is_not_part_of_it_stays_in_the_prose():
+    """The other edge of the same rule, and the reason it is not "everything up to
+    the next box".
+
+    A blank line ends a point, so the paragraph after a list is prose and stays;
+    a nested box is a point of its own, which is what `checklist_items` has
+    promised since it was written ("sub-items are items, and they arrive flat");
+    and a heading ends it whatever its indent.
+    """
+    body = (
+        "## Progress\n"
+        "\n"
+        "- [x] the outer point\n"
+        "  - [ ] the nested one\n"
+        "\n"
+        "And a paragraph nobody put in a list.\n"
+    )
+
+    assert checklist_items(body) == [(True, "the outer point"), (False, "the nested one")]
+    assert "And a paragraph nobody put in a list." in without_checklist(body)
+
+
+def test_a_second_paragraph_inside_a_point_goes_with_the_point():
+    """A blank line ends a point *unless* what follows it is indented past the
+    marker, which is how CommonMark tells a second paragraph inside an item from
+    the paragraph after the list. Left behind, that one is the same indented code
+    block as the wrapped line above — with a blank line in front of it, which is
+    the one arrangement a rule of "a blank line always ends it" gets wrong."""
+    body = "## Progress\n\n- [x] the point\n\n      and more of it\n"
+
+    assert checklist_items(body) == [(True, "the point and more of it")]
+    assert without_checklist(body).strip() == ""
+
+
 def test_a_body_with_no_checklist_counts_nothing_rather_than_zero_of_zero():
     """A body nobody has written a list in has no progress to report, which is
     not the same as no progress made."""
