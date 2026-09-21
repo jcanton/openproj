@@ -407,13 +407,6 @@ const CONTRAST = (one, two) => {
 // computed against whatever theme is actually loaded rather than written into
 // one of them, which is also what keeps this honest under the eight colour
 // schemes nobody measured.
-// Memoised, and not as a flourish. cytoscape calls a style function for every
-// edge on every style recalculation, and each uncached call here costs a
-// `getComputedStyle` plus up to five `getImageData` reads — the canvas round
-// trip `inSRGB` is built on. On the seed corpus that is a few hundred; on a real
-// plan it is whatever the plan has. The answer depends only on the token and on
-// the theme, so it is computed once per pair and thrown away when the theme
-// changes, which is the one event that can move it.
 const lift = hue => {
   const page = token('--bg');
   // Through `inSRGB` on every path, including the one that changes nothing.
@@ -430,6 +423,13 @@ const lift = hue => {
   return inSRGB(token('--line-strong'));
 };
 
+// Memoised, and not as a flourish. cytoscape calls a style function for every
+// edge on every style recalculation, and each uncached call here costs a
+// `getComputedStyle` plus up to five `getImageData` reads — the canvas round
+// trip `inSRGB` is built on. On the seed corpus that is a few hundred; on a real
+// plan it is whatever the plan has. The answer depends only on the token and on
+// the theme, so it is computed once per pair and thrown away when the theme
+// changes, which is the one event that can move it.
 const LEGIBLE = new Map();
 addEventListener('themechange', () => LEGIBLE.clear());
 
