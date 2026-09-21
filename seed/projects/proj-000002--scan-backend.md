@@ -5,9 +5,6 @@ title: scan_backend
 parent: prod-0f0002
 status: in_progress
 owner: firecresta
-assignees: [firecresta, siskinbury]
-reviewers: [jackdawrie, hoopoegrove]
-review_waived: false
 start_date: 2026-06-22
 priority: high
 depends_on: []

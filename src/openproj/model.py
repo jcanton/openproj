@@ -1400,6 +1400,13 @@ class Rung(NamedTuple):
     model: type[Record]
     under: tuple[str, ...]  # the kinds it may be filed under, nearest first
     schedules: bool  # does the scheduler give it dates
+    # Is this rung work somebody DOES, as opposed to a box work sits in. A
+    # separate axis from `schedules` because a project is both: the scheduler
+    # gives it dates — rolled up from the pitches under it — and yet nobody is
+    # assigned to a project any more than anybody is assigned to a codebase. The
+    # names are on the pitches and tasks, which is where `_PEOPLE_FIELDS` is read
+    # and where the validator asks for them.
+    staffed: bool  # do people work on it directly
     depends: bool  # may it wait on anything
     sized: bool  # may it carry person_weeks
     carded: bool  # does a hover show its shaping document
@@ -1428,6 +1435,7 @@ KINDS: tuple[Rung, ...] = (
         Product,
         under=(),
         schedules=False,
+        staffed=False,
         depends=False,
         sized=False,
         carded=False,
@@ -1442,6 +1450,7 @@ KINDS: tuple[Rung, ...] = (
         Project,
         under=("product",),
         schedules=True,
+        staffed=False,
         depends=True,
         sized=False,
         carded=True,
@@ -1456,6 +1465,7 @@ KINDS: tuple[Rung, ...] = (
         Pitch,
         under=("project",),
         schedules=True,
+        staffed=True,
         depends=True,
         sized=True,
         carded=True,
@@ -1474,6 +1484,7 @@ KINDS: tuple[Rung, ...] = (
         Task,
         under=("pitch", "project"),
         schedules=True,
+        staffed=True,
         depends=True,
         sized=True,
         carded=True,
@@ -1488,6 +1499,7 @@ KINDS: tuple[Rung, ...] = (
         Issue,
         under=(),
         schedules=False,
+        staffed=False,
         depends=False,
         sized=False,
         carded=False,
@@ -1502,6 +1514,7 @@ KINDS: tuple[Rung, ...] = (
         Note,
         under=(),
         schedules=False,
+        staffed=False,
         depends=False,
         sized=False,
         carded=False,
@@ -1514,18 +1527,36 @@ KINDS: tuple[Rung, ...] = (
 KIND_NAMES: tuple[str, ...] = tuple(rung.name for rung in KINDS)
 
 
-# The fields that describe work being done, or evidence that it was: a rung the
-# scheduler never sees reads none of them. Nobody is assigned to a codebase, a
-# codebase is not in a cycle, and — jcanton, 2026-08-20 — a codebase does not
-# have a pull request either. `status` is not in this tuple any more: whether a
-# kind reads a status is its own axis (`Rung.statuses`), because a kind can
-# read one without ever being scheduled — gated here, giving it a status would
-# have dragged in the eight fields that come with being work.
-_WORK_FIELDS = (
-    "owner",
+# Who is on the hook for doing it, and whether anybody has to look at it after.
+# Split out of `_WORK_FIELDS` below on `Rung.staffed`, because the two tuples
+# answer two different questions and a project answers them differently: it is
+# scheduled — it has dates, a cycle, a priority, pull requests — and nobody is
+# assigned to it. The work under it carries the names, which is the same argument
+# `size_weeks` already makes about its appetite and `_appetite_problem` already
+# acts on: a container has no size of its own and no hands on it either.
+#
+# `review_waived` travels with them because it is not a fact of its own — it is
+# the switch that turns the reviewers gate off, and a switch for a gate that no
+# longer fires is a box that does nothing.
+_PEOPLE_FIELDS = (
     "assignees",
     "reviewers",
     "review_waived",
+)
+
+# The fields that describe work being scheduled, or evidence that it was: a rung
+# the scheduler never sees reads none of them. A codebase is not in a cycle, and
+# — jcanton, 2026-08-20 — a codebase does not have a pull request either.
+# `status` is not in this tuple any more: whether a kind reads a status is its
+# own axis (`Rung.statuses`), because a kind can read one without ever being
+# scheduled — gated here, giving it a status would have dragged in the fields
+# that come with being work.
+#
+# `owner` stays here and not in `_PEOPLE_FIELDS`: it answers who holds the bet
+# and answers for it, which is a real question about a project and a different
+# one from who is doing the work. jcanton, 2026-09-21.
+_WORK_FIELDS = (
+    "owner",
     "start_date",
     # Both ends of the same fact, or the ladder says a codebase reads no start
     # and reads an end. `_editable_for` and the create form take their boxes from
@@ -1553,6 +1584,12 @@ def unread_fields(kind: str) -> tuple[str, ...]:
         fields.append("depends_on")
     if not rung.sized:
         fields.append("person_weeks")
+    # Two gates and not one, because a project passes the second and fails the
+    # first: it is scheduled and it is not staffed. Every other rung answers both
+    # the same way, so the sets they get back are the ones they had when this was
+    # a single `if not rung.schedules`.
+    if not rung.staffed:
+        fields.extend(_PEOPLE_FIELDS)
     if not rung.schedules:
         fields.extend(_WORK_FIELDS)
     # `status` on its own gate: a kind with an empty vocabulary reads no status.
@@ -3100,6 +3137,14 @@ def _status_problems(
     # ladder says the record does not read.
     if record.kind in RUNG and not RUNG[record.kind].schedules:
         return
+    # Whether to ask this rung for hands at all. A project is scheduled and so
+    # reaches the gates below, and it is not staffed: the pitches and tasks under
+    # it carry the names, and `unread_fields` has just told the reader that its
+    # own `assignees` is not read. Demanding a field in one breath and saying it
+    # is not read in the next is the form-and-validator disagreement this file
+    # bans, one layer down. Same shape as `_appetite_problem`, which yields
+    # nothing for a container for the same reason and has since it was written.
+    staffed = record.kind not in RUNG or RUNG[record.kind].staffed
     if record.status in ("thinking", "shaping", "shelved"):
         return
     if record.status == "ready":
@@ -3110,9 +3155,9 @@ def _status_problems(
         # a record by the people on it (`workers_on`), so a bet with an owner and
         # nobody assigned is a bet that has been accepted and staffed with nobody.
         # jcanton, 2026-08-22.
-        if not record.assignees:
+        if staffed and not record.assignees:
             yield "blocker", "assignees", "a ready record needs somebody on it", 2
-        if not (record.review_waived or reviews):
+        if staffed and not (record.review_waived or reviews):
             yield "blocker", "reviewers", "a ready record needs a reviewer, or review waived", 1
         yield from _appetite_problem(record, f"a ready {record.kind} needs an appetite")
         # No shaped_by gate any more: a pitch's owner IS who shaped it, and the
@@ -3130,9 +3175,9 @@ def _status_problems(
         # no claim on anybody's capacity: it is work that is happening and that
         # the plan cannot account for at all.
         yield from _appetite_problem(record, "work in progress needs an appetite")
-        if not record.assignees:
+        if staffed and not record.assignees:
             yield "blocker", "assignees", "work in progress needs somebody on it", 2
-        if not record.review_waived and not (set(reviews) - {record.owner}):
+        if staffed and not record.review_waived and not (set(reviews) - {record.owner}):
             yield (
                 "blocker",
                 "reviewers",
@@ -3243,7 +3288,16 @@ def _people_problems(record: Record, config: Config) -> Iterator[tuple[str, str 
     """
     if not config.known_people:
         return
+    # Only about fields this rung reads. A project's `reviewers` is already
+    # reported, by the rule that knows the rung does not read it, and a second
+    # line under the first saying the name in it is also misspelled is one of
+    # them being noise — the same argument `_editable_for` makes about `parent`
+    # on a product. The typo this rule exists to catch is one on a record that
+    # will actually be staffed by it.
+    unread = unread_fields(record.kind) if record.kind in RUNG else ()
     for field in ("owner", "assignees", "reviewers", "reported_by", "written_by"):
+        if field in unread:
+            continue
         value = getattr(record, field, None)
         for login in value if isinstance(value, list) else [value] if value else []:
             if login not in config.known_people:
@@ -3777,11 +3831,23 @@ def _problems_for(
                 # refusing to load the plan over a word nobody reads. A planned
                 # kind here is a grouping (today, a product); an unplanned one
                 # is an inbox record, which is not a grouping of anything.
-                what = (
-                    f"{_an(name)} is a grouping and is never scheduled"
-                    if RUNG[name].planned
-                    else f"{_an(name)} is never scheduled"
-                )
+                #
+                # **Three sentences because there are three reasons, and one of
+                # them is new.** A project is scheduled — it has dates, a cycle,
+                # a priority, a bar on the timeline — so telling its author that
+                # it "is never scheduled, so its assignees is not read" would be
+                # a warning arguing with the page one click away. Its assignees
+                # are not read because the work is one rung down, and the
+                # sentence has to say that instead. It is worded to carry all
+                # three of `_PEOPLE_FIELDS`: "nobody works on one directly"
+                # reads as well before `review_waived` — a switch for a gate
+                # that no longer fires — as it does before `assignees`.
+                if field in _PEOPLE_FIELDS and RUNG[name].schedules:
+                    what = f"{_an(name)} is a grouping and nobody works on one directly"
+                elif RUNG[name].planned:
+                    what = f"{_an(name)} is a grouping and is never scheduled"
+                else:
+                    what = f"{_an(name)} is never scheduled"
                 yield "warning", field, f"{what}, so its {field} is not read", 1
 
     # Any kind, because a retired key is in nobody's `model_fields` and so lands

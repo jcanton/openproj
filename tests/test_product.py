@@ -350,6 +350,58 @@ def test_the_editors_do_not_offer_a_field_the_rung_does_not_read():
     assert "size" not in columns["product"]
 
 
+def test_a_project_is_scheduled_and_still_has_nobody_on_it():
+    """The two axes come apart on exactly one rung, and this is the test that says
+    so.
+
+    A product is neither scheduled nor staffed, so one flag answered both
+    questions for as long as it was the only container. A project is a container
+    the scheduler DOES give dates — it has a start, a cycle, a priority, a bar on
+    the timeline — and nobody is assigned to it: the pitches and tasks under it
+    carry the names, which is the same argument `size_weeks` already makes about
+    its appetite. Collapsing the two back into one flag breaks this in whichever
+    direction it is collapsed, which is why both halves are asserted here.
+
+    `owner` is on the scheduled side deliberately. Who answers for a project is a
+    real question about it, and a different one from who is doing the work.
+    """
+    from openproj.model import unread_fields
+
+    unread = set(unread_fields("project"))
+    assert unread == {"assignees", "reviewers", "review_waived", "person_weeks"}, sorted(unread)
+    # Scheduled, and so still reading every field that comes with being work.
+    assert not unread & {"owner", "start_date", "end_date", "cycle", "priority", "prs", "status"}
+    # And nothing moved on the rungs either side. A product reads none of them and
+    # a pitch reads all of them, both of which were true before this rung was
+    # split off and have to stay true after.
+    assert set(unread_fields("pitch")) == set()
+    assert {"assignees", "reviewers", "owner", "prs"} <= set(unread_fields("product"))
+
+
+def test_the_editors_do_not_offer_a_project_a_box_for_hands():
+    """`unread_fields` again, through the two surfaces that build boxes from it.
+
+    The record page and the create form ask it directly, and the table's draft row
+    asks `_new_row_fields`. All three had an assignees box on a project until the
+    rung stopped reading the field, and a box the validator then warns about is
+    the disagreement `unread_fields` exists to prevent.
+    """
+    from openproj.render import _editable_for, _new_row_fields
+
+    one = parse_text(
+        "---\nid: proj-000001\nkind: project\ntitle: The port\n---\n\nx\n",
+        "projects/proj-000001.md",
+    )
+    offered = {field["name"] for field in _editable_for(one)}
+    assert not offered & {"assignees", "reviewers", "review_waived"}, sorted(offered)
+    # And the boxes a project does keep, so this cannot pass by offering nothing.
+    assert {"owner", "start_date", "priority", "status"} <= offered
+
+    columns = _new_row_fields()
+    assert "assignees" not in columns["project"]
+    assert "assignees" in columns["pitch"]
+
+
 def test_a_product_can_be_made_through_the_api(tmp_path: Path):
     """The route that creates one, driven — because every map this needed was
     derived except the two on the write path.

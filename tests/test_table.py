@@ -6258,6 +6258,158 @@ def test_a_row_that_names_no_reviewer_shows_the_ones_under_it(tmp_path: Path):
         assert not row["inherited"], f"{row['id']} names its own and is drawn as borrowing"
 
 
+_CONTAINER_PEOPLE = """
+const found = {};
+for (const key of ['assignees', 'reviewers']) {
+  const cell = tbody.querySelector(`tr[data-id="PROJECT"] td[data-col="${key}"]`);
+  found[key] = {
+    text: cell.textContent.trim(),
+    inherited: cell.classList.contains('inherited'),
+    tip: cell.getAttribute('title') || '',
+    // Present only on a cell the page will open — see the `td` template.
+    editable: cell.hasAttribute('data-field'),
+    own: (DATA.rows['PROJECT'][key] || []).length,
+    from: (DATA.rows['PROJECT'][key + '_from'] || []).length,
+  };
+}
+// The pitch between the project and the tasks, which reads BOTH fields itself.
+const pitch = tbody.querySelector('tr[data-id="pitch-000001"]');
+found.pitchAssignees = {
+  text: pitch.querySelector('td[data-col="assignees"]').textContent.trim(),
+  from: (DATA.rows['pitch-000001'].assignees_from || []).length,
+};
+found.pitchReviewers = {
+  text: pitch.querySelector('td[data-col="reviewers"]').textContent.trim(),
+  from: (DATA.rows['pitch-000001'].reviewers_from || []).length,
+};
+return found;
+"""
+
+
+def test_a_project_shows_the_people_on_the_work_under_it(tmp_path: Path):
+    """A project reads neither people field, so both of its columns answer from
+    below — and the pitch between it and the tasks is walked THROUGH rather than
+    stopped at.
+
+    Two claims a substring could not make and a DOM test could not make either.
+    The first is that the cells are not empty: a project's own `assignees` is
+    nulled by `rows.read`, and until the rollup was gated on `schedules` instead
+    of on `unread` the very act of marking the field unread blanked the cell this
+    key exists to fill. The second is the tooltip, which is a different sentence
+    here than on a pitch: a pitch opens its cell and typing replaces the
+    inheritance, a project has no box to open, and telling a reader to
+    double-click a cell that will not open is worse than saying nothing.
+
+    Driven in a real browser rather than asserted on `_row`, because every one of
+    these cells is built at runtime and appears in no rendered file — and because
+    `inherited` is a class whose whole purpose is a ground the reader sees.
+    """
+    # Hand-built, and three rungs deep on purpose: `seed/`'s projects name their
+    # own people (they did, until this change), and the walk that would pass a
+    # two-rung corpus is the one that stops at the pitch and reports nobody.
+    records = [
+        Project(
+            id="proj-000001",
+            kind="project",
+            title="A grouping",
+            status="in_progress",
+            owner="ann",
+            start_date=date(2026, 8, 10),
+        ),
+        Pitch(
+            id="pitch-000001",
+            kind="pitch",
+            title="The bet",
+            parent="proj-000001",
+            status="ready",
+            owner="ann",
+            reviewers=[],
+            person_weeks=4,
+            start_date=date(2026, 8, 10),
+        ),
+        Task(
+            id="task-000001",
+            kind="task",
+            title="One",
+            parent="pitch-000001",
+            status="ready",
+            owner="ann",
+            assignees=["ann"],
+            reviewers=["bo"],
+            person_weeks=2,
+            start_date=date(2026, 8, 10),
+        ),
+        Task(
+            id="task-000002",
+            kind="task",
+            title="Two",
+            parent="pitch-000001",
+            status="ready",
+            owner="bo",
+            assignees=["bo"],
+            reviewers=["cy"],
+            person_weeks=2,
+            start_date=date(2026, 8, 10),
+        ),
+    ]
+    page = render_table(
+        build_index(records, Config(), date(2026, 8, 17)), base_commit="deadbee", may_write=True
+    )
+    got = measured_in(
+        chrome(),
+        page,
+        tmp_path / "container-people.html",
+        1460,
+        _CONTAINER_PEOPLE.replace("PROJECT", "proj-000001"),
+    )
+
+    for key in ("assignees", "reviewers"):
+        cell = got[key]
+        assert cell["own"] == 0, f"the project is carrying {key} of its own"
+        assert cell["from"], f"nothing reached {key} from the work under the project"
+        assert cell["text"], (
+            f"the {key} cell is empty on a project with {cell['from']} people below it"
+        )
+        assert cell["inherited"], f"the {key} cell does not say the names are not its own"
+        assert not cell["editable"], (
+            f"the {key} cell offers an editor for a field a project does not read"
+        )
+        assert "Double-click" not in cell["tip"], (
+            f"the {key} tooltip tells the reader to open a cell that will not open: "
+            f"{cell['tip']!r}"
+        )
+        assert "Change them on the work itself." in cell["tip"], cell["tip"]
+
+    # The names themselves, and both tasks reached: `ann, bo` and `bo, cy` rather
+    # than whichever one the walk happened to stop on. Read off the payload and
+    # not the cell, whose text is clamped to the column's width.
+    assert got["assignees"]["from"] == 2
+    assert got["reviewers"]["from"] == 2
+
+    # **And the pitch in between is not drawn the same way, which is the half of
+    # this that a screenshot found and no assertion had.** The two rollups answer
+    # to different rules. A pitch that names no reviewer and has reviewed tasks
+    # under it IS reviewed — `_status_problems` takes `reviewers_under` and stops
+    # asking — so its reviewers cell shows them. Nothing says that about
+    # assignees, and nothing should: the scheduler prices a record by the people
+    # on it, so a pitch has to name its own. Drawn on the same terms, this row
+    # showed two inherited names in a pale cell beside the warning triangle for
+    # "a ready record needs somebody on it" — the page contradicting itself
+    # inside one row, which is exactly what a reader cannot act on.
+    assert got["pitchReviewers"]["from"] == 2, "the reviewers rule stopped reaching the pitch"
+    assert got["pitchReviewers"]["text"]
+    assert got["pitchAssignees"]["from"] == 0, (
+        "the pitch is shown assignees from its tasks while the gate still demands its own"
+    )
+    # Asserted on the NAMES and not on an empty cell: what the pitch does draw
+    # there is the warning mark for the gate it is failing, which is the whole
+    # point — the cell says "nobody is on this", and it would be saying it beside
+    # two names if the rollup reached here.
+    assert not {"ann", "bo"} & set(got["pitchAssignees"]["text"].split()), (
+        got["pitchAssignees"]["text"]
+    )
+
+
 _DROP_ON_A_DEAD_CONNECTION = r"""
 const loose = [];
 addEventListener('unhandledrejection', event => {
