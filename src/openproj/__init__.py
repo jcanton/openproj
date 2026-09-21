@@ -1,3 +1,3 @@
 """openproj: Shape Up planning kept as markdown records in a git repository."""
 
-__version__ = "0.57.0"
+__version__ = "0.58.0"
