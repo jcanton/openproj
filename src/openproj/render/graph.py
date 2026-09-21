@@ -400,7 +400,7 @@ const CONTRAST = (one, two) => {
   return (a + 0.05) / (b + 0.05);
 };
 
-// Lifted towards the page's own ink until it clears 3:1, and not one step
+// Lifted towards the page's own text colour until it clears 3:1, and not one step
 // further. `--st-shaping-line` under the dark theme is 2.39:1 against the
 // surface -- a dependency you can see is the whole point of colouring it -- while
 // the same token is fine in light and fine as a chip everywhere. So the lift is
@@ -411,7 +411,7 @@ const legible = hue => {
   const page = token('--bg');
   if (!page || CONTRAST(hue, page) >= 3) return hue;
   for (let step = 20; step <= 80; step += 20) {
-    const lifted = inSRGB(`color-mix(in oklab, ${hue}, ${token('--ink')} ${step}%)`);
+    const lifted = inSRGB(`color-mix(in oklab, ${hue}, ${token('--fg')} ${step}%)`);
     if (CONTRAST(lifted, page) >= 3) return lifted;
   }
   return token('--line-strong');
