@@ -1506,16 +1506,32 @@ def _review(
     # room. `chosen` is the whole reason `_resolved` returns a pair.
     if chosen:
         return Markup(""), ""
-    plan, cut = _to_fit(only_sections(said, _PLAN_HEADINGS), _PLAN_WORDS)
-    if plan:
-        return _markdown(plan, links, assets), _PLAN_CUT if cut else ""
+    # **The points count as something on the sheet, and this is where that is
+    # asked.** Everything below is for a slide that would otherwise be blank
+    # paper, and a slide carrying four ticked points and a pull request is not
+    # blank paper — it is the report, which is the one thing a review slide is
+    # for. Printing the Solution under it is printing the bet, which the three
+    # paragraphs above say a review slide must not carry.
+    #
     # `checklist_items` and not a second reading of the same lines: the points at
     # the top of the slide are this exact call, so the sentence and the sheet
     # cannot disagree about whether anything up there has words on it. A box with
     # nothing beside it is what the empty template ships and is not something a
     # person can stand up and read out.
+    #
+    # It was asked one branch lower, of the "nothing is written on this record"
+    # note alone, so a slide with points fell through the plan fallback first and
+    # came out with the shaping argument on it. Six records in the real plan were
+    # in that state; making a wrapped point whole took the count to twelve,
+    # because a `## Progress` holding nothing but its points is empty once they
+    # are lifted and `choosable` stops offering it — which is right, and left the
+    # fallback as the only thing deciding what the sheet says. jcanton,
+    # 2026-09-21: "another has the entire progress section missing".
     if any(text for _, text in checklist_items(record.body)):
         return Markup(""), ""
+    plan, cut = _to_fit(only_sections(said, _PLAN_HEADINGS), _PLAN_WORDS)
+    if plan:
+        return _markdown(plan, links, assets), _PLAN_CUT if cut else ""
     return Markup(""), _NOTHING_SAID
 
 
