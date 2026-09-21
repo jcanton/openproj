@@ -44,17 +44,24 @@ from ruamel.yaml import YAML
 from .index import build_index
 from .model import (
     DIRECTORY,
+    ID_PATTERN,
+    KIND_OF_PREFIX,
     MODELS,
     Config,
     _an,
+    _and_then,
     edited_by_id,
     in_model_order,
     load_repo,
+    loop_made,
     mint_id,
+    named,
     opening_fields,
     parent_refusal,
     parse_text,
     patch_text,
+    rekind_plan,
+    rekind_references,
     unknown_fields,
     validate_all,
 )
@@ -160,6 +167,37 @@ def _parser() -> argparse.ArgumentParser:
         "command is `git push` and nothing else.",
     )
     new.add_argument("--json", action="store_true", help="print the id and path as JSON")
+
+    rekind = commands.add_parser(
+        "rekind",
+        help="change a record's kind",
+        description=(
+            "Change a record's kind, the way the kind chip does in the editor. "
+            "The id carries the kind, so the record gets a new one and "
+            "everything that named the old one is repointed — which is the part "
+            "a hand-written move forgets."
+        ),
+    )
+    rekind.add_argument("id", help="the record to change")
+    rekind.add_argument("kind", choices=sorted(DIRECTORY))
+    rekind.add_argument("repo", type=Path)
+    rekind.add_argument(
+        "--drop",
+        metavar="FIELD,FIELD",
+        help="the fields this change would lose, named back to confirm it. "
+        "Without them the command prints the list and writes nothing; a list "
+        "that does not match what it computes is refused, because it means "
+        "the plan moved under whoever typed it.",
+    )
+    rekind.add_argument(
+        "--commit",
+        action="store_true",
+        help="commit the whole change as one commit, authored by your git "
+        "identity. One commit and not several: a log showing a record appear, "
+        "its children reparent and the old record vanish says three things "
+        "that are not one decision.",
+    )
+    rekind.add_argument("--json", action="store_true", help="print the ids and paths as JSON")
 
     render = commands.add_parser("render", help="write the static pages")
     render.add_argument("repo", type=Path)
@@ -419,6 +457,163 @@ def _new(args) -> int:
         print(f"{relative}\ngit add {relative} && git commit && git push")
     return 0
 
+
+
+def _record_file(repo: Path, record_id: str) -> Path | None:
+    """Where this record's file actually is.
+
+    Filenames are `<id>--<slug>.md` and the slug drifts as titles are edited, so
+    the path cannot be reconstructed from the id -- it has to be found. The web
+    half learned this the hard way and says so in `_path_for`; guessing
+    `<id>.md` works on a corpus nobody has renamed and fails on every real one.
+    """
+    kind = KIND_OF_PREFIX.get(record_id.split("-")[0])
+    if kind is None:
+        return None
+    for path in sorted((repo / DIRECTORY[kind]).glob("*.md")):
+        if path.stem == record_id or path.stem.startswith(f"{record_id}--"):
+            return path
+    return None
+
+
+def _rekind(args) -> int:
+    """Change a record's kind, which means giving it a new id and repointing
+    everything that named the old one.
+
+    **The id carries the kind, so changing the kind changes the id.** That is
+    settled in `POST /api/rekind`, with the reasoning that matters: freeing ids
+    from kinds moves the seam that turns an id into a path, and points every id
+    in git history, every PR link and every note at a file that no longer
+    exists. This command mints a fresh id for the same reason the route does.
+
+    The order is `_new`'s and for a sharper version of its reason. `_new` builds
+    the file, parses it back and validates it against the plan it is about to
+    join before touching the disk, so a record `check` would refuse never
+    becomes a file somebody has to `rm`. Here the stakes are higher: a rekind
+    that half-lands has already DELETED a file, and a plan where the new record
+    exists and its children still point at the old one is not a state anybody
+    can be asked to repair. So every file is built and the whole plan validated
+    with the change applied, and only then does anything move.
+    """
+    repo, record_id, kind = args.repo, args.id, args.kind
+
+    if args.commit and (refusal := _cannot_commit_in(repo)) is not None:
+        print(f"blocker: {refusal}")
+        return 1
+    if not ID_PATTERN.match(record_id):
+        print(f"blocker: {record_id!r} is not a record id")
+        return 1
+    was = KIND_OF_PREFIX.get(record_id.split("-")[0])
+    if was is None:
+        print(f"blocker: {record_id!r} is not a record id")
+        return 1
+    if kind == was:
+        print(f"blocker: {record_id} is already {_an(kind)}")
+        return 1
+
+    records, config, _ = load_repo(repo)
+    # The day does not enter the decision -- what this refuses and what it drops
+    # are structural -- but `build_index` pairs a plan with one, so it gets today.
+    index = build_index(records, config, date.today())
+    record = index.records.get(record_id)
+    path = _record_file(repo, record_id)
+    if record is None or path is None:
+        print(f"blocker: no record {record_id!r}")
+        return 1
+
+    refusals, drops = rekind_plan(index, record, kind)
+    for refusal in refusals:
+        print(f"blocker: {refusal}")
+    if refusals:
+        print("nothing written")
+        return 1
+
+    # **Losing a field is a question before it is a write**, the shape the route
+    # uses and for its reason: a caller who was shown "this drops its appetite"
+    # and then lost its owner as well was not asked. The echo is compared, not
+    # merely required -- a `--yes` on a terminal that has been open a while
+    # confirms whatever the list happens to be now.
+    named_back = sorted(one.strip() for one in args.drop.split(",")) if args.drop else None
+    if drops and named_back is None:
+        print(
+            f"blocker: making {named(record_id, index.records)} {_an(kind)} drops "
+            f"{_and_then(drops)}, because {_an(kind)} does not read "
+            f"{'that field' if len(drops) == 1 else 'those fields'}. "
+            "Nothing was changed."
+        )
+        print(f"say --drop {','.join(drops)} to take it")
+        return 1
+    if named_back is not None and named_back != drops:
+        print(
+            f"blocker: making {named(record_id, index.records)} {_an(kind)} drops "
+            f"{_and_then(drops) or 'nothing'}, which is not what was named back. "
+            "Nothing was changed -- read it again and decide."
+        )
+        return 1
+
+    new_id = mint_id(kind, {one.stem for one in repo.glob(f"{DIRECTORY[kind]}/*.md")})
+    content = patch_text(path.read_text(encoding="utf-8"), {"id": new_id, "kind": kind}, None, drops)
+    try:
+        candidate = parse_text(content, new_id)
+    except ValueError as error:
+        print(f"blocker: {new_id}: that would not read back as a record: {error}")
+        print("nothing written")
+        return 1
+
+    # Every file this touches, built in full before any of it lands.
+    writes: dict[Path, str | None] = {repo / DIRECTORY[kind] / f"{new_id}.md": content, path: None}
+    after = [one for one in records if one.id != record_id]
+    for other_id, fields in rekind_references(records, record_id, new_id).items():
+        where = _record_file(repo, other_id)
+        if where is None:
+            print(
+                f"blocker: {named(other_id, index.records)} names "
+                f"{named(record_id, index.records)} and its file could not be found"
+            )
+            print("nothing written")
+            return 1
+        moved = patch_text(where.read_text(encoding="utf-8"), fields, None)
+        writes[where] = moved
+        after = [one for one in after if one.id != other_id] + [parse_text(moved, other_id)]
+    after.append(candidate)
+
+    if (loop := loop_made(candidate, after)) is not None:
+        print(f"blocker: {loop}")
+        print("nothing written")
+        return 1
+
+    problems = sorted(
+        (problem for problem in validate_all(after, config) if problem.record_id == new_id),
+        key=lambda p: (p.severity, p.field or ""),
+    )
+    for problem in problems:
+        print(f"{problem.severity}: {new_id}: {problem.field}: {problem.message}")
+    if any(problem.severity == "blocker" for problem in problems):
+        print("nothing written")
+        return 1
+
+    for where, text in writes.items():
+        if text is None:
+            where.unlink()
+        else:
+            where.parent.mkdir(parents=True, exist_ok=True)
+            where.write_text(text, encoding="utf-8")
+
+    touched = sorted(str(one.relative_to(repo)) for one in writes)
+    committed = (
+        _commit_everything(repo, f"{new_id}: was {record_id}, {was} becomes {kind}")
+        if args.commit
+        else None
+    )
+    if args.json:
+        print(json.dumps({"id": new_id, "was": record_id, "files": touched, "commit": committed}))
+    elif committed:
+        print(f"{new_id}: was {record_id}")
+        print(f"committed {committed[:7]} -- `git push` when you are ready")
+    else:
+        print(f"{new_id}: was {record_id}")
+        print(f"{len(touched)} files changed; git add -A && git commit && git push")
+    return 0
 
 def _not_a_bare_clone(repo: Path) -> str | None:
     """What `serve --repo` on a checkout still cannot promise, said once at startup.
@@ -1049,6 +1244,8 @@ def main(argv: list[str] | None = None) -> int:
         return _check(args.repo, args.today)
     if args.command == "new":
         return _new(args)
+    if args.command == "rekind":
+        return _rekind(args)
     if args.command == "render":
         return _render(args.repo, args.out_dir, args.today)
     if args.command == "serve":
