@@ -10592,3 +10592,79 @@ def test_a_vim_yank_reaches_the_system_clipboard(client: TestClient, tmp_path: P
         f"deleting a line wrote to the clipboard as well: {got['afterDelete']}"
     )
     assert "beta" not in got["text"], "the delete did not happen, so it proves nothing"
+
+
+# --------------------------------------------------------------------------- #
+# The slide editor's commit bar — the record page's, not a third spelling
+# --------------------------------------------------------------------------- #
+
+_SLIDE_COMMIT_BAR = r"""
+const row = document.querySelector('.slideedit .toolrow');
+const bar = document.getElementById('commitbar');
+const unsaved = document.getElementById('unsaved');
+const save = document.getElementById('save');
+const reset = document.getElementById('reset');
+const heading = document.querySelector('.slideedit h1');
+const line = box => Math.round(box.getBoundingClientRect().top);
+const opened = {
+  said: unsaved.textContent, resetOff: reset.disabled, amber: bar.classList.contains('dirty'),
+};
+// One thing changed, through the control a person would use.
+document.getElementById('skip').click();
+await new Promise(resolve => setTimeout(resolve, 50));
+return {
+  inRow: !!(row && row.contains(bar) && row.contains(save) && row.contains(reset)),
+  // The bar and the switcher on one line, which is what `.toolrow` is for.
+  level: line(bar) === line(document.getElementById('views')),
+  // And the heading under both of them, not between them.
+  headingUnder: line(heading) > line(bar),
+  opened,
+  typed: {
+    said: unsaved.textContent, resetOff: reset.disabled,
+    amber: bar.classList.contains('dirty'),
+  },
+};
+"""
+
+
+def test_the_slide_editor_commits_in_the_bar_every_other_editor_commits_in(
+    client: TestClient, tmp_path: Path
+):
+    """One control, one spelling. This page had Save and Reset in a bare
+    `<p class="editbar">` on a row of their own under the meta line, with a hint
+    beside them and nothing that said whether anything was unsaved — a third
+    shape for a bar the record page and the cycle page had already settled on.
+    jcanton, 2026-09-21: "in this editor is a [save][reset] bar and buttons. not
+    uniform with the other views ... make the slide editing view conform to the
+    edit/side-by-side views in all aspects".
+
+    So the assertions are the record page's own facts about that bar: it is in
+    the `.toolrow` beside the view switcher, it is level with it, the heading is
+    below both, it counts what is unsaved, it goes amber when there is something
+    to lose, and Reset is dead until there is something to undo.
+
+    The count is driven rather than read: `#unsaved` says "Nothing changed yet"
+    in the markup, so a test that only looked at the rendered page would pass
+    with `dirty()` never wired to anything at all — which is precisely the state
+    this page was in, because `dirty()` existed and only `beforeunload` called it.
+    """
+    got = measured_in(
+        chrome(),
+        client.get(f"/detail/{TASK}?view=slide").text,
+        tmp_path / "slide-bar.html",
+        1400,
+        _SLIDE_COMMIT_BAR,
+        patience=3000,
+    )
+
+    assert got["inRow"], "Save, Reset and the count are not in the row the switcher is in"
+    assert got["level"], "the commit bar is not on the switcher's line"
+    assert got["headingUnder"], "the record's name is above the controls rather than below them"
+
+    assert got["opened"]["said"] == "Nothing changed yet"
+    assert got["opened"]["resetOff"], "Reset was live over nothing to undo"
+    assert not got["opened"]["amber"], "the bar warned about unsaved work before anything was typed"
+
+    assert got["typed"]["said"] == "1 unsaved change", got["typed"]["said"]
+    assert not got["typed"]["resetOff"], "Reset stayed dead over a change it could undo"
+    assert got["typed"]["amber"], "the bar did not say that closing the tab would lose something"

@@ -1508,3 +1508,106 @@ def test_an_image_attribute_that_is_not_a_size_never_reaches_the_page():
         # And the picture survives every one of them: a hostile attribute costs
         # the attribute, never the figure.
         assert carried["src"].endswith("0123456789abcdef.png"), hostile
+
+
+# --------------------------------------------------------------------------- #
+# Presenting, and walking the rail
+# --------------------------------------------------------------------------- #
+
+
+def test_nothing_the_app_draws_is_on_the_wall_when_the_deck_is_presented(
+    deck: str, tmp_path: Path
+):
+    """Presenting hides the app by naming what to hide, and a list like that is
+    only ever as complete as somebody's memory of the page.
+
+    Two things were missing from it, both reported by jcanton on 2026-09-21 from
+    a review he was giving: the shell's footer — `openproj 0.59.0 · plan 1d02102 ·
+    Report issue` — sitting under the slide, and the rail's drag handle, which is
+    a hairline in `--line` and reads on a black projection as a white vertical
+    line down the left. The rail itself WAS hidden, which is what made the second
+    one so hard to see coming: the column was gone and its handle was not.
+
+    Asked of Chrome after the mode is actually entered, and not of the
+    stylesheet, because the question is whether anything is painted. A rule that
+    resolves is the frozen column's edge all over again — and `#build` is drawn by
+    the shell, outside the markup this file has any say over, so a source test
+    here could only assert the selector is present rather than that it matches.
+
+    `requestFullscreen` is refused in a headless run, which is the point of the
+    mode being a class on the root and not a fullscreen API: everything asserted
+    below is CSS, so the refusal costs the browser chrome and nothing else.
+    """
+    from browser import chrome, measured_in
+
+    found = measured_in(
+        chrome(),
+        deck,
+        tmp_path / "presenting.html",
+        1400,
+        """
+        document.getElementById('present').click();
+        const painted = name => {
+          const el = document.querySelector(name);
+          if (!el) return null;
+          const box = el.getBoundingClientRect();
+          return {display: getComputedStyle(el).display, area: box.width * box.height};
+        };
+        return {
+          build: painted('#build'), grip: painted('.railgrip'), rail: painted('.rail'),
+          nav: painted('body > nav'), bar: painted('.deckbar'), zoom: painted('.zoomer'),
+          counter: painted('#counter'), showing: !!document.querySelector('.slide.showing'),
+        };
+        """,
+    )
+
+    # The mode really was entered, or every assertion below passes vacuously —
+    # this is the mutation test of the harness, inline.
+    assert found["showing"], "no slide is being presented, so nothing here is evidence"
+    assert found["counter"]["area"] > 0, "the presenter's place in the deck is furniture that stays"
+
+    for part in ("build", "grip", "rail", "nav", "bar", "zoom"):
+        assert found[part] is None or found[part]["display"] == "none", (part, found[part])
+        assert found[part] is None or found[part]["area"] == 0, (part, found[part])
+
+
+def test_walking_the_rail_with_the_arrows_moves_the_slide_beside_it(deck: str, tmp_path: Path):
+    """The rail is navigation, and the keyboard half of it navigated nothing.
+
+    A click on a thumbnail has scrolled the slide column since the rail was
+    written; a bare arrow key moved the focus ring down the rail and left the
+    column exactly where it was — jcanton, 2026-09-21: "moving up and down with
+    the arrows does move the selection to other thumbnails but doesn't update the
+    larger view on the right". Alt with an arrow is the other gesture and still
+    reorders; only the bare one is asked about here.
+
+    Driven in a browser because the thumbnails are built at runtime by `railed()`
+    and appear in no rendered file, and because what is being asserted is a
+    scroll offset — which is a fact about layout and not about markup.
+    """
+    from browser import chrome, measured_in
+
+    found = measured_in(
+        chrome(),
+        deck,
+        tmp_path / "rail.html",
+        1400,
+        """
+        const thumbs = [...document.querySelectorAll('#thumbs > li')];
+        const sheets = document.getElementById('sheets');
+        thumbs[0].focus();
+        const before = sheets.scrollTop;
+        thumbs[0].dispatchEvent(new KeyboardEvent('keydown',
+          {key: 'ArrowDown', bubbles: true, cancelable: true}));
+        await new Promise(resolve => setTimeout(resolve, 50));
+        return {thumbs: thumbs.length, before, after: sheets.scrollTop,
+                moved: document.activeElement === thumbs[1]};
+        """,
+    )
+
+    assert found["thumbs"] > 1, "a rail of one thumbnail cannot be walked"
+    assert found["moved"], "the focus did not reach the next thumbnail"
+    assert found["after"] > found["before"], (
+        "the focus moved and the slide column did not, which is the defect: "
+        f"{found['before']} to {found['after']}"
+    )
