@@ -2107,6 +2107,10 @@ _HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
 # means — "a point that is only a box keeps its place in the count and says
 # nothing, which is exactly what is on the page it came from".
 _CHECKBOX = re.compile(r"^\s*[-*+]\s+\[([ xX])\](?=\s|$)")
+# Any list item at all, ticked or not, bulleted or numbered. Used only to say
+# where one point ENDS: a line under a point that is itself a marker opens a new
+# item rather than continuing the one above.
+_LIST_MARKER = re.compile(r"^\s*(?:[-*+]|\d{1,9}[.)])(?=\s|$)")
 # Fenced blocks, kept whole so that a pitch quoting markdown keeps its example.
 _FENCED = re.compile(r"((?:^|\n)(?:```|~~~).*?(?:\n(?:```|~~~)[^\n]*|\Z))", re.S)
 _COMMENT = re.compile(r"<!--.*?-->", re.S)
@@ -2238,6 +2242,77 @@ def _progress_scoped(body: str) -> Iterator[tuple[str, bool, bool]]:
         yield line, in_code, bool(depth)
 
 
+def _checklist_lines(body: str) -> list[tuple[str, bool, int | None]]:
+    """Every line of the body, with the index of the checklist point it is part of.
+
+    **A point is an ITEM and not a line**, which is the whole of this function.
+    Both `checklist_items` and `without_checklist` used to match `_CHECKBOX`
+    against each line on its own, so a point somebody had wrapped — and the real
+    plan wraps at 80 columns, with 48 continuation lines across it — was half
+    lifted and half left:
+
+        - [x] Two-layer design agreed -- parallel coupling, no copies -- and implemented
+              as #1436, based on main
+
+    The slide got "…and implemented" and the record kept `as #1436, based on
+    main` as an orphan. Six spaces of indent with no list marker in front of it
+    any more is an indented code block, so what a reviewer saw under the points
+    was a grey monospace box holding the back half of three sentences, each cut
+    mid-clause. jcanton, 2026-09-21, reporting it off the deployed deck.
+
+    The extent is markdown's own, because the point of lifting a point is that
+    the slide says what the record page says. A line continues the one above it
+    when it is not blank, not a heading and not another list marker — and, if a
+    blank line came between, when it is also indented past the marker, which is
+    how CommonMark tells a second paragraph inside an item from the paragraph
+    after the list. A lazy continuation at column 0 is taken as a continuation
+    because that is what a renderer does with it: leaving it behind would print
+    it twice, once inside the point on the slide and once as prose beneath.
+
+    A nested `- [ ]` is NOT a continuation — `_CHECKBOX` is asked first, so a
+    sub-item opens a point of its own, which is what `checklist_items` has always
+    promised ("sub-items are items, and they arrive flat").
+
+    The list is built once and read by both callers, rather than each deciding
+    for itself where a point ends: two readings of one document is two chances
+    for the tick on a slide and the prose under it to disagree about which line
+    belongs to which — which is the shape of the defect this replaces.
+    """
+    lines = list(_progress_scoped(body))
+    # Which point each line belongs to, or `None` for a line no point claims.
+    of: list[int | None] = [None] * len(lines)
+    seen = 0
+    at = 0
+    while at < len(lines):
+        line, in_code, counted = lines[at]
+        if in_code or not counted or not _CHECKBOX.match(line):
+            at += 1
+            continue
+        indent = len(line) - len(line.lstrip())
+        of[at] = seen
+        # `end` is one past the last line this point has claimed; `run` walks
+        # ahead of it, so a blank line is only claimed if something after it
+        # turns out to be inside the item too.
+        end = run = at + 1
+        while run < len(lines):
+            text, nested, inside = lines[run]
+            if nested or not inside:
+                break
+            if not text.strip():
+                run += 1
+                continue
+            if _CHECKBOX.match(text) or _LIST_MARKER.match(text) or _HEADING.match(text):
+                break
+            if run != end and len(text) - len(text.lstrip()) <= indent:
+                break
+            for back in range(end, run + 1):
+                of[back] = seen
+            end = run = run + 1
+        seen += 1
+        at = end
+    return [(line, in_code, of[where]) for where, (line, in_code, _) in enumerate(lines)]
+
+
 def checklist_items(body: str) -> list[tuple[bool, str]]:
     """Every task-list item under `## Progress` or `## Solution`, as (ticked, what
     it says).
@@ -2271,14 +2346,21 @@ def checklist_items(body: str) -> list[tuple[bool, str]]:
     `- [ ]` with nothing after it — keeps its place in the count and says nothing,
     which is exactly what is on the page it came from.
     """
-    found: list[tuple[bool, str]] = []
-    for line, in_code, counted in _progress_scoped(body):
-        if in_code or not counted:
+    ticked: dict[int, bool] = {}
+    said: dict[int, list[str]] = {}
+    for line, _, of in _checklist_lines(body):
+        if of is None:
             continue
         mark = _CHECKBOX.match(line)
         if mark:
-            found.append((mark.group(1) != " ", line[mark.end() :].strip()))
-    return found
+            ticked[of] = mark.group(1) != " "
+            said[of] = [line[mark.end() :].strip()]
+        elif line.strip():
+            # Joined with one space, which is what a renderer does with a wrapped
+            # paragraph. Keeping the newline would put a hard break in the middle
+            # of a sentence on a slide read from the back of a room.
+            said[of].append(line.strip())
+    return [(ticked[at], " ".join(part for part in said[at] if part)) for at in sorted(said)]
 
 
 def checklist(body: str) -> tuple[int, int]:
@@ -2310,16 +2392,15 @@ def without_checklist(body: str) -> str:
     reads a shaping document, and `render.py` is held to
     `test_no_page_is_assembled_by_substitution`.
     """
+    # Only the points that were LIFTED, which is the other end of
+    # `checklist_items` being scoped: a box in a rabbit hole is not on the
+    # slide's list any more, so taking it out of the prose as well would delete a
+    # line off the slide that nothing anywhere puts back. `_checklist_lines`
+    # answers that for the whole item and not for its first line, so the lines a
+    # wrapped point runs onto go with it — left behind they were an indented
+    # block with no list marker in front of them, which markdown draws as code.
     return _without_emptied_headings(
-        [
-            (line, in_code)
-            for line, in_code, counted in _progress_scoped(body)
-            # Only the points that were LIFTED, which is the other end of
-            # `checklist_items` being scoped: a box in a rabbit hole is not on the
-            # slide's list any more, so taking it out of the prose as well would
-            # delete a line off the slide that nothing anywhere puts back.
-            if in_code or not counted or not _CHECKBOX.match(line)
-        ]
+        [(line, in_code) for line, in_code, of in _checklist_lines(body) if of is None]
     )
 
 
