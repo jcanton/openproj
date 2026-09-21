@@ -5,9 +5,6 @@ title: whole_roast
 parent: prod-0f0001
 status: in_progress
 owner: jackdawrie
-assignees: [jackdawrie, hornbillow, hoopoegrove]
-reviewers: [hoopoegrove, hornbillow]
-review_waived: false
 start_date: 2026-06-22
 priority: high
 depends_on: []

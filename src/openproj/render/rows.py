@@ -17,18 +17,27 @@ from .detail import _tasks_add_up_to, _tasks_under
 from .tokens import _SIZE_FIELD_NAME
 
 
-def _reviewers_under(index: Index, record_id: str) -> list[str]:
-    """`model.reviewers_under`, over the index's own child map.
+def _people_under(index: Index, record_id: str, field: str) -> list[str]:
+    """Everybody named in `field` on the work filed under this record, each once.
 
-    The map the validator walks is built from records and skips shelved ones;
-    this one is `index.children`, which is ids. Two shapes of the same fact, so
-    the walk is here and the rule is there — and the rule is the one that decides
-    whether anything is wrong, which is why this function only draws.
+    `model.reviewers_under`, over the index's own child map, and asked of either
+    people field. The map the validator walks is built from records and skips
+    shelved ones; this one is `index.children`, which is ids. Two shapes of the
+    same fact, so the walk is here and the rule is there — and the rule is the
+    one that decides whether anything is wrong, which is why this function only
+    draws.
+
+    **Parameterised rather than copied.** It answered `reviewers` alone until a
+    project stopped reading its own `assignees`, and the obvious next move — a
+    second function with `child.assignees` on one line — would have been a fourth
+    copy of this walk in the repository, three of which would then be carrying a
+    `seen` set that one of them could quietly lose. An invariant written twice is
+    guarded once.
 
     A `seen` set for the same reason `reviewers_under` has one: a parent cycle is
     a blocker this tool reports rather than a plan it refuses to load, so this map
     really can hold A whose child is B whose child is A — and a walk without it
-    never comes back.
+    never comes back. It took a laptop down before a test caught it.
     """
     found: list[str] = []
     seen: set[str] = {record_id}
@@ -38,7 +47,7 @@ def _reviewers_under(index: Index, record_id: str) -> list[str]:
         if child is None or child.status == "shelved" or child.id in seen:
             continue
         seen.add(child.id)
-        found += child.reviewers
+        found += getattr(child, field)
         stack += index.children.get(child.id, [])
     return list(dict.fromkeys(found))
 
@@ -234,9 +243,10 @@ def _row(index: Index, record_id: str) -> dict:
     # validator reports from and the editors decline to offer.
     unread = unread_fields(record.kind)
     # Whether this rung is work at all, as against a grouping something is filed
-    # under. `unread_fields` answers per FIELD and progress is not a field — it
-    # is counted — so the ladder is asked directly for the one thing that decides
-    # it. See `progress` below.
+    # under. `unread_fields` answers per FIELD and neither of the two things this
+    # decides is a field — progress is counted, and the inherited people are a
+    # walk — so the ladder is asked directly. See `progress`, `assignees_from`
+    # and `reviewers_from` below.
     works = RUNG[record.kind].schedules
 
     def read(name, value):
@@ -400,19 +410,57 @@ def _row(index: Index, record_id: str) -> dict:
         "progress_text": counted.text if counted and works else "",
         "prs": read("prs", record.prs),
         "tags": record.tags,
-        # Who reviews the work filed under this record, when it names nobody
-        # itself. A pitch with reviewed tasks under it IS reviewed — the rule in
-        # `model.py` says so and stops asking — and this is the same fact drawn
-        # rather than enforced. Kept separate from `reviewers` on purpose: that
-        # key is what the file holds and what the cell editor starts from, and
+        # Who is on the work filed under this record, and who reviews it, when it
+        # names nobody itself. A pitch with reviewed tasks under it IS reviewed —
+        # the rule in `model.py` says so and stops asking — and this is the same
+        # fact drawn rather than enforced. A project is the same case one rung up
+        # and for both fields at once, since it reads neither of its own.
+        #
+        # Kept separate from `assignees` and `reviewers` on purpose: those keys
+        # are what the file holds and what the cell editor starts from, and
         # merging the two would make opening the editor an accidental way to
         # write somebody else's name into this record.
+        #
+        # **`works` is the outer gate on both, and it used to be `unread`.** The
+        # reviewers rollup read `"reviewers" not in unread`, which was the same
+        # question while the only unstaffed rung was also unscheduled — and
+        # became the wrong one the day a project stopped reading its own, since
+        # marking the field unread would then have blanked the very cell this key
+        # exists to fill. What is actually being asked is "does this row stand
+        # for work at all": a product does not (`schedules=False`), and drawing
+        # "the people who review the work under this" in a column a codebase has
+        # no stake in reads as a field it holds.
+        #
+        # **The inner gates are not the same gate, and the difference is the
+        # validator.** A pitch that names no reviewer and has reviewed tasks
+        # under it IS reviewed — `_status_problems` takes `reviewers_under` and
+        # stops asking — so drawing those names on the pitch shows what the rule
+        # already believes. There is no such rule for assignees, and there should
+        # not be: the scheduler prices a record by the people on it, so a pitch
+        # still has to name its own. Drawn on the same terms, a `ready` pitch
+        # would show two inherited names in a pale cell beside a warning triangle
+        # saying "a ready record needs somebody on it" — the page contradicting
+        # itself within one row. It did, for one screenshot.
+        #
+        # So assignees roll up only where the rung does not read the field at
+        # all, which is the one rung whose own answer cannot exist: a project.
+        # `unread` rather than `staffed` because it is the same list the cell's
+        # editability and the validator's warning both come off, and a fourth
+        # reading of the ladder is a fourth thing to keep in step.
+        "assignees_from": (
+            _people_under(index, record_id, "assignees")
+            if works and "assignees" in unread
+            else []
+        ),
+        # Reviewers, on the rule above: nobody named here, and the record still
+        # counts as reviewed. Asked of `read(...)` and not of the field, so a key
+        # a project should not be carrying cannot suppress the rollup that
+        # replaced it — a hand-written `reviewers:` on a project would otherwise
+        # blank the row's own key AND the inherited one, leaving the cell empty
+        # on a record with names in its file.
         "reviewers_from": (
-            _reviewers_under(index, record_id)
-            if not record.reviewers and "reviewers" not in unread
-            # A container reads no reviewers, its own or anybody's: a product row
-            # was drawing "the people who review the work under this" in a column
-            # it has no stake in, which reads as a field it holds.
+            _people_under(index, record_id, "reviewers")
+            if works and not read("reviewers", record.reviewers)
             else []
         ),
         # Three fields that are not columns and are not drawn anywhere on this

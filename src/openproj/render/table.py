@@ -535,6 +535,18 @@ const fieldOf = key => COLUMN_FIELD[key] || key;
 // The columns that draw a date, from `_TABLE_DATES`.
 const DATES = {{ dates|tojson }};
 
+// The two columns a record can answer from the work filed under it. Each one's
+// rollup rides on the row as `<key>_from` (`rows.py`), so the three places that
+// read one index by the key instead of naming the column. `reviewers` was the
+// only inheriting column for a while and all three spelled it out, which is why
+// adding `assignees` meant finding them; a third column that starts inheriting
+// is now one entry here and one key on the row.
+//
+// WHICH rows carry a rollup is `rows.py`'s question and not this file's, and the
+// two fields do not answer it the same way — see the comment there. Everything
+// here draws whatever arrived.
+const INHERITS = ['assignees', 'reviewers'];
+
 // Whether the value in this cell was worked out rather than typed. It decides
 // one thing — the muted italic `.derived` — and it used to be `!editable && why`
 // written at that one site, which is the same answer for every column BUT the
@@ -735,10 +747,12 @@ function shown(row, key) {
   if (key === 'tags') return clamped((value || []).map(esc), 'tag', 'tags');
   // Nobody named here, and somebody named underneath: a pitch whose tasks each
   // have a reviewer is reviewed, and the validator has stopped asking it for one
-  // of its own. Drawn rather than left blank, because a column that is empty on
-  // the row and answered a level down is a column that reads as a gap.
-  if (key === 'reviewers' && !(value || []).length && (row.reviewers_from || []).length)
-    return clamped(row.reviewers_from.map(esc), 'person', 'people');
+  // of its own. A project is that case for both people columns at once — it
+  // reads neither field, and the pitches and tasks under it carry the names.
+  // Drawn rather than left blank, because a column that is empty on the row and
+  // answered a level down is a column that reads as a gap.
+  if (INHERITS.includes(key) && !(value || []).length && (row[key + '_from'] || []).length)
+    return clamped(row[key + '_from'].map(esc), 'person', 'people');
   // Every list in the table clamps, for the same reason and by the same badge.
   // These two were the last that did not, and they were most of the wrapping
   // left: `OngChia, nfarabullini, jcanton` took three lines in a 159px column and
@@ -958,8 +972,8 @@ function cell(row, key, place) {
     // this record rather than from its own file, which is the difference between
     // "these are the reviewers" and "these are the reviewers, and changing them
     // means changing the tasks".
-    key === 'reviewers' && !(row.reviewers || []).length
-      && (row.reviewers_from || []).length ? 'inherited' : '',
+    INHERITS.includes(key) && !(row[key] || []).length
+      && (row[key + '_from'] || []).length ? 'inherited' : '',
     // Something is still in the way. Only where there is: a column tinted on
     // every row says nothing, and the value of this is that the few tinted cells
     // are the ones worth looking at. Written beside the number rather than as a
@@ -994,10 +1008,29 @@ function cell(row, key, place) {
   // gesture with no name on it, and the same cell is where Enter picks the row
   // up. A row that can go nowhere says that instead, which is also why it has no
   // handle to explain.
+  //
+  // Where an inherited value came from, and what to do about it — and the
+  // second half of that is not the same sentence on both rungs. A pitch reads
+  // its own `reviewers`, so the cell opens and typing in it replaces the
+  // inheritance; a project reads neither people field at all, so there is no box
+  // to open and the only way to change the names is to change the work. Promising
+  // an editor to a reader who has none is worse than saying nothing, which is why
+  // this branches on `editable` rather than on the column.
+  //
+  // **And the wording of this comment is load-bearing**, which is a strange
+  // sentence with a real reason behind it: every JS comment in this file ships
+  // inside the page, and `test_a_rendered_plan_offers_no_dead_control` and
+  // `test_a_served_table_for_a_reader_offers_no_editor_and_still_reads` scan a
+  // read-only page for the literal phrase this branch is here to suppress. A
+  // comment quoting it fails both, and the tests are right to be that blunt —
+  // a substring is all a reader of the bytes has. Describe the sentence; do not
+  // spell it.
   const tip = [note, hiddenBy(row, key),
-               key === 'reviewers' && !(row.reviewers || []).length
-                 && (row.reviewers_from || []).length
-                 ? 'From the work filed under this record. Editing names reviewers of its own.'
+               INHERITS.includes(key) && !(row[key] || []).length
+                 && (row[key + '_from'] || []).length
+                 ? 'From the work filed under this record. ' + (editable
+                     ? 'Editing names ' + named + ' of its own.'
+                     : 'Change them on the work itself.')
                  : '',
                // What the cell is showing, on the two columns where that is not
                // what editing writes. Before the sentence about editing, because

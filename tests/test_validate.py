@@ -80,6 +80,18 @@ def bad_id_prefix(kind: str) -> str:
     return f"id prefix must match kind {kind}"
 
 
+# The sentence a project gets for a people field, and deliberately not the one a
+# product gets for the same key: a project IS scheduled — it has dates, a cycle,
+# a priority and a bar on the timeline — so "is never scheduled" would be a
+# warning arguing with the page one click away. Built from the field rather than
+# written out per key, because all three of them get it.
+def not_staffed(field: str) -> str:
+    return (
+        f"a project is a grouping and nobody works on one directly, "
+        f"so its {field} is not read"
+    )
+
+
 def missing_target(target: str) -> str:
     """The one dependency sentence that stays a bare id, and deliberately.
 
@@ -149,7 +161,13 @@ def pitch(**overrides: object) -> Pitch:
 
 
 def project(**overrides: object) -> Project:
-    """A wip project that breaks no rule."""
+    """A wip project that breaks no rule.
+
+    No `assignees` and no `reviewers`, and their absence is the point: a project
+    is a grouping nobody works on directly, so a project carrying either is a
+    project that warns. They were here while the rule asked every scheduled rung
+    for hands, and leaving them would have made the clean fixture a dirty one.
+    """
     fields: dict[str, object] = {
         "id": PROJECT_ID,
         "kind": "project",
@@ -157,8 +175,6 @@ def project(**overrides: object) -> Project:
         "parent": None,
         "status": "in_progress",
         "owner": "jackdawrie",
-        "assignees": ["jackdawrie"],
-        "reviewers": ["merganserly"],
         "start_date": date(2026, 8, 3),
     }
     return Project(**(fields | overrides))
@@ -1133,8 +1149,13 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         # by the people on it — so each of these is forecast as though a whole
         # person were on it while naming nobody. All warnings, because the corpus
         # is created_schema_version 1 and the rule is 2.
+        # `proj-7e57a0` was in this list and is not any more. It is a project,
+        # and a project is a grouping nobody works on directly — the pitches and
+        # tasks under it carry the names, which is the same argument
+        # `_appetite_problem` has always made about its appetite. The rule that
+        # used to fire here is the one two lines below it now, about the key the
+        # file still carries.
         ("warning", "pitch-1b3f9a", "assignees", NEEDS_SOMEBODY_READY, 2),
-        ("warning", "proj-7e57a0", "assignees", NEEDS_SOMEBODY_WIP, 2),
         ("warning", "task-0e4b7a", "assignees", NEEDS_SOMEBODY_READY, 2),
         ("warning", "task-2b6c94", "assignees", NEEDS_SOMEBODY_READY, 2),
         ("warning", "task-53a9f0", "assignees", NEEDS_SOMEBODY_WIP, 2),
@@ -1142,6 +1163,15 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         ("warning", "task-5a4e39", "assignees", NEEDS_SOMEBODY_READY, 2),
         ("warning", "task-5c1d84", "assignees", NEEDS_SOMEBODY_READY, 2),
         ("warning", "task-5f062b", "assignees", NEEDS_SOMEBODY_READY, 2),
+        # Two projects carrying people fields a project does not read, and they
+        # are KEPT in the corpus rather than tidied out of it — these are the only
+        # two files in the repository that exercise the sentence, and a corpus
+        # that does not contain the one string that matters proves nothing. The
+        # seed corpus, which is what `openproj init` writes for somebody else's
+        # plan, was stripped instead: that one has to be clean.
+        ("warning", "proj-7e57a0", "reviewers", not_staffed("reviewers"), 1),
+        ("warning", "proj-9a4c25", "assignees", not_staffed("assignees"), 1),
+        ("warning", "proj-9a4c25", "reviewers", not_staffed("reviewers"), 1),
         # wip without a start date
         ("blocker", "proj-7e57a0", "start_date", NEEDS_START_DATE, 1),
         ("blocker", "pitch-48ea9e", "start_date", NEEDS_START_DATE, 1),
@@ -1717,8 +1747,59 @@ def test_the_form_is_told_to_ask_for_somebody():
     """`required_at` is what marks the label, and it is derived from the gate
     rather than restated — so this is the same rule, read the way a form reads
     it."""
-    for kind in ("project", "pitch", "task"):
+    for kind in ("pitch", "task"):
         assert set(required_at(kind)["assignees"]) == {"ready", "in_progress"}, kind
+
+
+def test_the_form_never_asks_a_project_for_hands():
+    """The other half of the rule above, and the reason it is a separate test: a
+    project is the one scheduled rung that is not staffed.
+
+    `required_at` is what the record page marks its labels from and what the
+    table's `missingFor` reads to decide whether a status change will be refused,
+    so a gate left standing here is a red label over a box that is not on the
+    page — the form and the validator disagreeing in the most annoying possible
+    order, which is the failure `unread_fields` exists to prevent.
+
+    `owner` is asserted present in the same breath, because the easy wrong fix
+    for all of this was to exempt the whole rung: a project still has somebody
+    who answers for it, and that is a different question from who does the work.
+    """
+    gates = required_at("project")
+    assert "assignees" not in gates
+    assert "reviewers" not in gates
+    assert set(gates["owner"]) == {"ready"}
+
+
+def test_a_ready_project_with_nobody_on_it_is_clean():
+    """The rule as a reader meets it. `required_at` above is derived from this
+    gate, so the two cannot drift — but a map with a key missing is not the claim
+    worth making, which is that somebody can move a project to `ready` without
+    being asked to staff a container.
+
+    `start_date=None` because the fixture's is in the past and a ready record
+    holding a date that has gone by warns about THAT — a different rule, and one
+    that would make this test pass for the wrong reason the day it was relaxed.
+    """
+    assert check(project(status="ready", start_date=None)) == []
+
+
+def test_a_project_carrying_people_is_warned_and_not_refused():
+    """Ignored rather than wrong, so the plan still loads.
+
+    And the sentence is its own, because a project IS scheduled: telling its
+    author it "is never scheduled" — which is what a product is told about the
+    same key — would be a warning arguing with the bar this record has on the
+    timeline. `review_waived` is in the set for completeness and has to be `True`
+    to be reported at all: `_carries` reads a `False` as the model's own default
+    and says nothing, which is right, since a file saying "review is not waived"
+    has stated nothing.
+    """
+    carried = project(assignees=["jackdawrie"], reviewers=["merganserly"], review_waived=True)
+    assert summaries(check(carried)) == {
+        ("warning", PROJECT_ID, field, not_staffed(field), 1)
+        for field in ("assignees", "reviewers", "review_waived")
+    }
 
 
 # --- §4 and §6: the end date, and dates compared to dates ---------------------
