@@ -2205,28 +2205,32 @@ def _proposed(index: Index, number: int, window: tuple[date, date] | None) -> Cy
     )
 
 
-def _bet_row(record: Record, number: int, rung: str = "") -> dict:
+def _bet_row(record: Record, number: int, by_id: dict[str, Record], rung: str = "") -> dict:
     """One row of the betting table: a bet, or one of the tasks that make it up.
 
     One shape for both, because they are the same row. A task's appetite is typed
     into the same kind of box, its status and priority are picked from the same
     two lists, and the search reads its words the same way — the differences are
-    that a task is not a thing a cycle can be bet on and that it is drawn under
-    the row it belongs to. Written as two dicts they would have drifted the first
-    time somebody added a column.
+    that a task inside a pitch is not a thing a cycle can be bet on and that it is
+    drawn under the row it belongs to. Written as two dicts they would have
+    drifted the first time somebody added a column.
 
     `rung` carries the connector, and it is what says which of the two this is.
     Empty on a bet, which is drawn at the top level and has nothing to hang off;
     `tee` or `end` on a task, which is what the table page's `connectors()`
     computes for a child and what the browser recomputes here whenever the search
     hides a row.
+
+    `by_id` is here for `is_bettable`, which asks what kind of record holds this
+    one — a chore under a project is bet in its own right and a task inside a
+    pitch is not, and neither is visible from the record alone.
     """
     size = size_weeks(record)
     # Whether a cycle can be bet on this row at all, which is the one control a
-    # task does not get. Asked of the model rather than of `rung`, so the tick and
-    # the indent stay two facts: `is_bettable` is what decided this record was not
-    # in the loop above, and it is what decides here too.
-    bettable = is_bettable(record)
+    # task inside a pitch does not get. Asked of the model rather than of `rung`,
+    # so the tick and the indent stay two facts: `is_bettable` is what decided
+    # this record was not in the loop above, and it is what decides here too.
+    bettable = is_bettable(record, by_id)
     # Bet in an earlier cycle and still running: shown, counted, and not
     # re-stampable. Overwriting its cycle would move the deadline its overrun is
     # measured against and forgive the slip.
@@ -2438,22 +2442,25 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         index.plan.items(),
         key=lambda kv: (order.index(kv[1].status) if kv[1].status in order else len(order), kv[0]),
     ):
-        # A bet is made on a pitch, or on a chore nobody pitched. A task under a
-        # pitch is part of that bet and comes with it; a project is a container
-        # for bets and is not one. Listing all three put a milestone and eleven
-        # of its own tasks on the table beside the five pitches they belong to,
-        # and ticking any of them stamped a second cycle onto one decision.
-        if record.status not in order or not is_bettable(record):
+        # A bet is made on a pitch, or on a task no pitch already holds the bet
+        # for. A task INSIDE a pitch is part of that bet and comes with it; a
+        # project is a container for bets and is not one. Listing all three put a
+        # milestone and eleven of its own tasks on the table beside the five
+        # pitches they belong to, and ticking any of them stamped a second cycle
+        # onto one decision.
+        if record.status not in order or not is_bettable(record, index.plan):
             continue
-        candidates.append(_bet_row(record, number))
+        candidates.append(_bet_row(record, number, index.plan))
         # And what is inside the bet, under it. The appetite the room argues
         # about is the pitch's, but the thing that has to change for it to be met
         # is a task's — and until now that meant leaving the meeting's own page
         # for the table or for each record in turn. The rows are the same shape
         # as the one above them and their appetites are typed the same way; what
-        # they do not have is a tick, because a task is not a thing a cycle is
-        # bet on (`is_bettable`) and stamping one would put a second cycle on one
-        # decision.
+        # they do not have is a tick, because a task whose pitch is right above it
+        # is not a thing a cycle is bet on (`is_bettable`) and stamping one would
+        # put a second cycle on one decision. A chore under a project reaches this
+        # table through the branch above instead, with a tick of its own: nothing
+        # holds its bet, so there is no second decision to stamp.
         #
         # Neither parked nor finished. A shelved task is not in the bet at all,
         # and a done one is in it and cannot be changed by anybody in the room —
@@ -2476,6 +2483,7 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
                 _bet_row(
                     index.plan[child],
                     number,
+                    index.plan,
                     # `end` on the last one drawn and `tee` on the others, which
                     # is the whole of `connectors()` at one level deep — the only
                     # depth this table has, because a bet's contents are its

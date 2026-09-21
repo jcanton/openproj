@@ -3263,9 +3263,16 @@ def _people_problems(record: Record, config: Config) -> Iterator[tuple[str, str 
 # with a milestone rather than nowhere. The alternative was a pitch invented to
 # hold them, which puts a bet in the corpus that no betting table ever made —
 # and a plan that lies about what was bet is worse than one whose tree is two
-# levels deep in places. `is_bettable` already says a parentless task is bet in
-# its own right; a task under a project takes the project's cycle, the same way
-# a task under a pitch takes the pitch's, so nothing downstream has to change.
+# levels deep in places.
+#
+# **This paragraph used to end "a task under a project takes the project's
+# cycle, the same way a task under a pitch takes the pitch's, so nothing
+# downstream has to change", and every clause of that was wrong.** A project is
+# not bet, so there was no cycle to take: `bet_of` walked up, found a project,
+# and answered None. The task's own `cycle:` was then reported as ignored and
+# dropped from every capacity sum — the exact opposite of the sentence, on the
+# very shape this rung was widened to allow. `is_bettable` asks what HOLDS a
+# task now, and only a pitch takes its cycle away from it.
 #
 # Public, and it was `_PARENT_KINDS`: the table ships this map to the browser so
 # that dragging a row onto one that cannot hold it is refused while the mouse is
@@ -3301,14 +3308,36 @@ CHILD_KINDS = {
 }
 
 
-def is_bettable(record: Record) -> bool:
+def is_bettable(record: Record, by_id: dict[str, Record]) -> bool:
     """Whether a cycle can be bet on this record.
 
-    A pitch, or a task nobody pitched. Those are the two things a betting table
-    puts a name against: everything else either contains bets (a project) or is
-    part of one (a task under a pitch), and takes its cycle from what holds it.
+    A pitch, or a task no pitch already holds the bet for. Those are what a
+    betting table puts a name against; a project contains bets and is not one.
+
+    **The question is what HOLDS the task, and it used to be whether the task was
+    held at all** — `record.parent is None`. Those read the same only if the sole
+    home for a task is a pitch, and the ladder says otherwise: `task` is `under=
+    ("pitch", "project")`, because work nobody shaped still belongs to a project.
+    So filing a chore where it belongs took it out of the plan's arithmetic. Its
+    `cycle:` was reported as ignored, `cycle_of` answered None, and `counts_in` —
+    which every capacity sum goes through — said the work was in no cycle at all.
+    Measured on `icon4py-plan`, 2026-09-21: cycle 38 held a four-week task under
+    `proj-24b2bb` and `load(38)` came back empty, so the capacity meter on that
+    cycle's page was drawn over nothing. The only way to bet the task was to
+    unfile it from its project, which is a worse plan in exchange for a true sum.
+
+    A parent that resolves to anything other than a pitch — a project, or a
+    wrong-kind parent `_containment_problems` is already reporting, or a name
+    nobody wrote — leaves the record's own number the only one there is, and it
+    is kept. `by_id` is therefore required: the answer is about the parent's
+    KIND, which a record cannot see from inside itself.
     """
-    return record.kind == "pitch" or (record.kind == "task" and record.parent is None)
+    if record.kind == "pitch":
+        return True
+    if record.kind != "task":
+        return False
+    parent = by_id.get(record.parent) if record.parent else None
+    return parent is None or parent.kind != "pitch"
 
 
 def bet_of(record: Record, by_id: dict[str, Record]) -> Record | None:
@@ -3319,19 +3348,15 @@ def bet_of(record: Record, by_id: dict[str, Record]) -> Record | None:
     walks up the parent chain are three chances to disagree.
 
     A `parent` naming a file nobody wrote is deliberately allowed — a plan
-    half-way through an import has them — and such a task falls back to its own
-    `cycle`. There is no pitch to inherit from, and dropping the number it does
-    carry would take the work out of every capacity sum on the site over a
-    reference somebody has not written yet.
+    half-way through an import has them — and such a task keeps its own `cycle`.
+    That used to be a branch here, guarding against a rule that asked the wrong
+    question; `is_bettable` now asks whether a PITCH holds the bet, an unresolved
+    parent is not one, and the branch is gone rather than moved.
     """
-    if is_bettable(record):
+    if is_bettable(record, by_id):
         return record
-    if record.parent is None:
-        return None
-    parent = by_id.get(record.parent)
-    if parent is None:
-        return record
-    return parent if is_bettable(parent) else None
+    parent = by_id.get(record.parent) if record.parent else None
+    return parent if parent is not None and is_bettable(parent, by_id) else None
 
 
 def cycle_of(record: Record, by_id: dict[str, Record]) -> int | None:
@@ -3448,17 +3473,16 @@ def _bet_problems(
 ) -> Iterator[tuple[str, str | None, str, int]]:
     """A cycle stamped on something nobody bets.
 
-    A bet is made on a pitch, or on a chore nobody pitched. A task under a pitch
-    is part of that bet and takes its cycle from it; a project is a container for
-    bets and is not one. Stored on both, the two are one fact in two files and
-    the copy is stale the first time somebody re-bets the pitch — which is the
-    same argument that keeps `blocks` derived.
+    A bet is made on a pitch, or on a task no pitch already holds the bet for. A
+    task inside a pitch is part of that bet and takes its cycle from it; a
+    project is a container for bets and is not one. Stored on both, the two are
+    one fact in two files and the copy is stale the first time somebody re-bets
+    the pitch — which is the same argument that keeps `blocks` derived.
+
+    A task under a PROJECT is not that, and used to be told it was. It reaches
+    `is_bettable` as a bet now, so it never gets here and its number is read.
     """
-    if record.cycle is None or is_bettable(record):
-        return
-    # Nothing to inherit from: an unresolved parent leaves this record's own
-    # number the only one there is, and `bet_of` keeps it for that reason.
-    if record.parent is not None and record.parent not in by_id:
+    if record.cycle is None or is_bettable(record, by_id):
         return
     if record.kind == "project":
         yield (
@@ -3468,12 +3492,16 @@ def _bet_problems(
             4,
         )
         return
-    parent = by_id.get(record.parent) if record.parent else None
-    named = f" from {parent.id}" if parent is not None else ""
+    # Only a task whose parent IS a pitch is left, so there is always a pitch to
+    # name. The sentence used to say "the bet is on the pitch" and then name
+    # whatever the parent happened to be — on a task filed under a project, a
+    # project, in a sentence about pitches. It was the bug in one line.
+    parent = by_id[record.parent]
     yield (
         "warning",
         "cycle",
-        f"the bet is on the pitch, so this task takes its cycle{named}; the number here is ignored",
+        f"the bet is on {parent.id}, so this task takes its cycle from it; "
+        "the number here is ignored",
         4,
     )
 
