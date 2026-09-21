@@ -32,6 +32,7 @@ from openproj.model import (
     Project,
     Record,
     Task,
+    cycle_of,
     load_repo,
     parse_text,
     validate_all,
@@ -1050,6 +1051,47 @@ def test_a_pitch_with_children_is_no_more_unsized_than_it_is_charged():
 
     assert index.load(37) == {}
     assert index.unsized_in(37) == {"ann": ["task-c00001"]}
+
+
+def test_a_task_under_a_project_is_charged_to_the_cycle_it_was_bet_into():
+    """**What the old `parent is None` rule actually cost.**
+
+    Filing a chore under the project it belongs to used to take it out of the
+    plan's arithmetic entirely: `is_bettable` asked whether the task had a parent
+    at all, `cycle_of` therefore answered None, and `counts_in` — which every
+    capacity sum goes through — said the work was in no cycle. The number in the
+    file was not merely unread, it was unread by the meter drawn over it.
+
+    Measured on the real plan, 2026-09-21: `icon4py-plan`'s cycle 38 held a
+    4-week task under `proj-24b2bb` and `load(38)` came back EMPTY. Nobody was
+    charged a single person-week in a cycle three people were working in.
+
+    So what is asserted here is not the id `cycle_of` returns — it is the weeks
+    landing on somebody's row. The two tasks below differ only in their parent,
+    and they have to be charged alike.
+    """
+    records = [
+        a_project("proj-a00001", status="in_progress"),
+        a_task(
+            "task-c00001",
+            parent="proj-a00001",
+            owner="ann",
+            person_weeks=4.0,
+            cycle=37,
+            status="ready",
+        ),
+        a_task("task-c00002", owner="bo", person_weeks=4.0, cycle=37, status="ready"),
+    ]
+    index = build_index(records, _two_cycles(), TODAY)
+
+    assert cycle_of(records[1], index.plan) == 37
+    assert index.counts_in(records[1], 37), "the gate every capacity sum goes through"
+    assert index.load(37) == {"ann": 4.0, "bo": 4.0}, (
+        "a home under a project is not a reason to be charged to nobody"
+    )
+    # Charged to that cycle and to no other — the half that a `cycle_of` of None
+    # also got right, by accident.
+    assert index.load(36) == {}
 
 
 def test_a_bet_nobody_has_sized_is_counted_where_it_was_bet_and_carried_into_nothing():

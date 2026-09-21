@@ -7326,6 +7326,86 @@ def test_the_betting_table_puts_a_bets_tasks_under_it(
             assert '<td class="betname"><span class="tree"' in block, record_id
 
 
+def test_a_task_filed_under_a_project_gets_a_tick_of_its_own():
+    """The other half of "a task is bet unless a pitch holds the bet", on the
+    page the room actually sits in front of.
+
+    A chore under a project is the thing the betting table exists to put a name
+    against: nobody shaped a pitch for it, so there is no bet above it to stamp,
+    and until it had a tick the only way to bet one at this table was to unfile
+    it from the project it belongs to. Its sibling under a pitch still has no
+    tick, for the reason it never did — stamping it would put a second cycle on
+    one decision.
+    """
+    from openproj.model import Config, Cycle, Pitch, Project, Task
+    from openproj.render import ROUTES, render_cycle
+
+    plan = Cycle(
+        cycle=37,
+        starts_on=date(2026, 8, 17),
+        reviews_on=date(2026, 9, 28),
+        availability={"ann": 1.0},
+    )
+    config = Config(known_people=["ann"]).with_plans([plan])
+    records = [
+        Project(id="proj-a00001", kind="project", title="Runtime", status="in_progress"),
+        Task(
+            id="task-c00001",
+            kind="task",
+            title="A chore nobody shaped",
+            parent="proj-a00001",
+            owner="ann",
+            person_weeks=4.0,
+            cycle=37,
+            status="ready",
+        ),
+        Pitch(
+            id="pitch-b00001",
+            kind="pitch",
+            title="A shaped bet",
+            parent="proj-a00001",
+            owner="ann",
+            person_weeks=4.0,
+            cycle=37,
+            status="ready",
+        ),
+        Task(
+            id="task-c00002",
+            kind="task",
+            title="Part of the shaped bet",
+            parent="pitch-b00001",
+            owner="ann",
+            person_weeks=2.0,
+            status="ready",
+        ),
+    ]
+    index = build_index(records, config, date(2026, 8, 17))
+    page = render_cycle(index, 37, ROUTES)
+
+    body = re.search(r'<table id="bets".*?<tbody>(.*?)</tbody>', page, re.S)
+    assert body, "the betting table has no body"
+    rows = {
+        record_id: block
+        for record_id, block in re.findall(
+            r'<tr data-id="([^"]+)"(.*?)(?=<tr data-id=|\Z)', body.group(1), re.S
+        )
+    }
+
+    assert "task-c00001" in rows, "the chore is not on the table it is the whole point of"
+    assert '<input type="checkbox"' in rows["task-c00001"], "and it cannot be bet on"
+    assert '<input type="checkbox"' in rows["pitch-b00001"]
+    assert '<input type="checkbox"' not in rows["task-c00002"], (
+        "a task inside a pitch is still part of somebody else's bet"
+    )
+    # Drawn at the top level, like the pitch beside it: `rung` is empty on a bet
+    # and carries a connector only on a task hanging off one.
+    assert 'data-id="task-c00001" data-rung=""' in body.group(1)
+    # The chore's 4.0 plus the pitch's task at 2.0. The pitch itself charges
+    # nothing: it has a child, so its appetite is a rollup and charging both
+    # would count the same work twice.
+    assert index.load(37) == {"ann": 6.0}, "and the meter over the table agrees with it"
+
+
 def test_the_betting_tables_connectors_follow_what_is_on_screen(
     server_pages: dict[str, str], tmp_path: Path
 ):

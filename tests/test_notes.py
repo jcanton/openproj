@@ -457,7 +457,9 @@ def test_an_issue_promoted_into_a_task_lands_as_a_task_this_plan_can_read_back(
     made = next(record for record in records_now if record.id == new_id)
 
     assert made.kind == "task" and made.parent is None
-    assert is_bettable(made), "which is the state the model already has a word for"
+    assert is_bettable(made, {e.id: e for e in records_now}), (
+        "which is the state the model already has a word for"
+    )
     assert not [
         p
         for p in validate_all(records_now, config)

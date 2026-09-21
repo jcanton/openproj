@@ -68,6 +68,12 @@ NEEDS_END_DATE = "a done record needs the date it ended"
 SHOULD_HAVE_PARENT = "a task should have a parent"
 DEPENDS_ON_CYCLE = "part of a blocked-by cycle"
 PARENT_CYCLE = "part of a parent cycle"
+# Only a task inside a PITCH is told its number is ignored, so the pitch is
+# always there to name — which is why this takes the id rather than appending an
+# optional " from ...". The old wording said "the bet is on the pitch" while
+# naming whatever the parent happened to be, and on a task filed under a project
+# it named a project in a sentence about pitches.
+INHERITS = "the bet is on {}, so this task takes its cycle from it; the number here is ignored"
 
 
 def bad_id_prefix(kind: str) -> str:
@@ -653,10 +659,20 @@ def test_a_pitch_under_a_project_and_a_task_under_a_pitch_are_the_shape():
     assert [p for p in validate_all(records, Config()) if p.field == "parent"] == []
 
 
-def test_a_chore_nobody_pitched_keeps_its_own_cycle_and_a_parented_task_does_not():
-    """A bet is made on a pitch, or on a task nobody pitched. Both belong on a
-    betting table; a task inside a pitch came with the pitch, and a second cycle
-    number on it is one fact in two files."""
+def test_only_a_task_inside_a_pitch_gives_up_its_cycle():
+    """A task is bet in its own right unless a pitch already holds the bet.
+
+    The rule used to be `parent is None`, and it read a task's home as though it
+    were the question. It is not: a task filed under a PROJECT is work somebody
+    put on a betting table by name — nobody shaped a pitch for it and nobody
+    meant its number to be thrown away. Only a task inside a pitch came with a
+    bet already made, and only there is a second cycle number one fact in two
+    files.
+
+    What that cost is measured in `test_a_task_under_a_project_is_charged_to_the
+    _cycle_it_was_bet_into`: the number was not merely ignored in the report, it
+    was ignored by every capacity sum on the site.
+    """
     dated = Config(cycles={36: (date(2026, 6, 22), date(2026, 8, 14))})
     records = [
         Pitch(id="pitch-000001", kind="pitch", title="Q", cycle=36),
@@ -669,13 +685,53 @@ def test_a_chore_nobody_pitched_keeps_its_own_cycle_and_a_parented_task_does_not
             created_schema_version=4,
         ),
         Task(id="task-000002", kind="task", title="Chore", cycle=36),
+        Project(id="proj-000001", kind="project", title="P"),
+        Task(
+            id="task-000003",
+            kind="task",
+            title="Filed under the project",
+            parent="proj-000001",
+            cycle=36,
+            created_schema_version=4,
+        ),
     ]
+    by_id = {e.id: e for e in records}
     problems = [p for p in validate_all(records, dated) if p.field == "cycle"]
 
-    assert [p.record_id for p in problems] == ["task-000001"]
+    assert [p.record_id for p in problems] == ["task-000001"], (
+        "the one whose bet is somebody else's, and nothing else"
+    )
     assert problems[0].severity == "warning", "it is ignored, not refused"
-    assert cycle_of(records[1], {e.id: e for e in records}) == 36, "inherited from its pitch"
-    assert cycle_of(records[2], {e.id: e for e in records}) == 36, "its own"
+    assert problems[0].message == INHERITS.format("pitch-000001")
+    assert cycle_of(records[1], by_id) == 36, "inherited from its pitch"
+    assert cycle_of(records[2], by_id) == 36, "its own: nobody pitched it"
+    assert cycle_of(records[4], by_id) == 36, "its own: a project holds bets, it does not make them"
+
+
+def test_a_task_whose_parent_names_nothing_keeps_the_only_number_there_is():
+    """A plan half-way through an import has these, and dropping the number it
+    carries would take the work out of every capacity sum over a reference
+    somebody has not written yet.
+
+    This used to be a branch of its own in `bet_of`, guarding a rule that asked
+    the wrong question. Under "bet unless a pitch holds the bet" it needs no
+    branch: an unresolved parent is not a pitch, so the task is bet, which is the
+    answer the branch was there to produce.
+    """
+    dated = Config(cycles={36: (date(2026, 6, 22), date(2026, 8, 14))})
+    orphan = Task(
+        id="task-000001",
+        kind="task",
+        title="T",
+        parent="pitch-nobodywrotethis",
+        cycle=36,
+        created_schema_version=4,
+    )
+
+    assert cycle_of(orphan, {orphan.id: orphan}) == 36
+    assert [p for p in validate_all([orphan], dated) if p.field == "cycle"] == [], (
+        "nothing to inherit from is not a reason to complain about the number"
+    )
 
 
 def test_a_project_is_not_bet_because_it_holds_bets():
@@ -1063,9 +1119,7 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
     # by its own stated 2026-12-21 — but steadier is not still, and the argument
     # for pinning the day is the pair of them and not either alone.
     spans, _ = schedule(records, config, PLAN_TODAY)
-    inherits = (
-        "the bet is on the pitch, so this task takes its cycle from {}; the number here is ignored"
-    )
+    inherits = INHERITS
     # `PLAN_TODAY` here too, and now it is load-bearing rather than tidy: one rule
     # compares a stated start date against the day the plan is judged around, and
     # this corpus holds a ready task dated 2026-12-21. Left to read the clock,
