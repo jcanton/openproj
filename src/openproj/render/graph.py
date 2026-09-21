@@ -409,12 +409,18 @@ const CONTRAST = (one, two) => {
 // schemes nobody measured.
 const legible = hue => {
   const page = token('--bg');
-  if (!page || CONTRAST(hue, page) >= 3) return hue;
+  // Through `inSRGB` on every path, including the one that changes nothing.
+  // `token` hands back a raw value when it holds no `(`, so a scheme whose
+  // --accent is a plain hex would reach cytoscape as `#0f5c6b` while a scheme
+  // that derives it arrives as `rgb(...)` — and what this canvas may be handed
+  // is the invariant `test_the_drawing_gets_colours_it_can_actually_read` was
+  // written for. One shape out of here, whatever came in.
+  if (!page || CONTRAST(hue, page) >= 3) return inSRGB(hue);
   for (let step = 20; step <= 80; step += 20) {
     const lifted = inSRGB(`color-mix(in oklab, ${hue}, ${token('--fg')} ${step}%)`);
     if (CONTRAST(lifted, page) >= 3) return lifted;
   }
-  return token('--line-strong');
+  return inSRGB(token('--line-strong'));
 };
 
 function edgeSeed(edge) {
