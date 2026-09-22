@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from markupsafe import Markup
 
-from ..index import Index, _product_of, _project_of, predicates_of
+from ..index import Index, holder_fields, predicates_of
 from ..model import RUNG, unread_fields
 from .controls import _FILTER_JS, _facets_html
 from .env import _compiled
@@ -211,8 +211,10 @@ def _record_row(index: Index, record_id: str) -> dict:
         "priority": read("priority"),
         "cycle": read("cycle"),
         "prs": read("prs"),
-        "project": _project_of(record, index.records),
-        "product": _product_of(record, index.records),
+        # See `_row` in `rows.py`: the three ancestors the bar filters by, and
+        # what each is called, so that `project:warm_bubble` means the same
+        # thing here as it does there.
+        **holder_fields(record, index.records),
         "predicates": predicates_of(index, record_id),
         "search": index.search_blob[record_id],
         # See `_row` in `rows.py`: the narrow haystack `bare` reads for a

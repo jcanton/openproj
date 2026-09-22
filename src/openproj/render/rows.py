@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..index import Index, _product_of, _project_of, predicates_of
+from ..index import Index, holder_fields, predicates_of
 from ..model import RUNG, size_weeks, staffing_of, unread_fields
 
 # The record page's own reading of what a pitch's tasks come to, imported rather
@@ -483,8 +483,11 @@ def _row(index: Index, record_id: str) -> dict:
         "person_weeks": getattr(record, "person_weeks", None),
         # Not a column, but the control bar offers it: a dropdown whose value the
         # client cannot see is a filter that changes the URL and does nothing.
-        "project": _project_of(record, index.plan),
-        "product": _product_of(record, index.plan),
+        # `product`, `project`, `pitch` and a `_title` for each, spelled in
+        # `holder_fields` (`index.py`) because the landing's rows carry the same
+        # six and a key on one and not the other is one filter meaning two
+        # things depending on which page a link opens in.
+        **holder_fields(record, index.plan),
         "predicates": predicates_of(index, record_id),
         # What the box searches, built once by `searchable` (`index.py`) and
         # carried rather than rebuilt: the browser used to search

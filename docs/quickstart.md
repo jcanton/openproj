@@ -110,9 +110,18 @@ punctuation, or of so much punctuation that fewer than three letters are left of
 `field:value` narrows to one field — `owner:jackdawrie`, `tag:gpu`, `status:ready`, `cycle:37`. A
 field is still matched whole, so `cycle:3` answers nothing at all rather than standing for every
 cycle whose number starts with a 3, and `status:done` is not a way of asking for every status with
-"done" in it; `title:` and `pr:` are the two that look inside. Two terms beside each other mean
-both; `or`, `not` and brackets are there when you want them. One thing to know about `not`: it
-takes away whatever its word finds, and its word now finds a little more than the letters you
+"done" in it; `title:`, `pr:` and the three below are the ones that look inside.
+
+`product:`, `project:` and `pitch:` ask about an ancestor rather than about the record in front of
+you, so each returns the record named and everything filed under it, however deep:
+`project:warm_bubble` is the project, its pitches and their tasks, and `pitch:reproducibility` is
+that bet and the work under it. Either name works — the title, as the menu above the box draws it,
+or the id it submits. A bare word never does this: `warm_bubble` on its own finds the project
+record and nothing else, which is how you ask for the one rather than the hundred.
+
+Two terms beside each other mean both; `or`, `not` and brackets are there when you want them. One
+thing to know about `not`: it takes away whatever its word finds, and its word finds a little more
+than the letters you
 typed, so `not smcl` hides a little more too. A query the box cannot read matches nothing and says
 why, under the box, while you type the rest of it.
 
