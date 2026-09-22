@@ -1654,9 +1654,19 @@ def test_a_wrapped_point_reaches_the_slide_whole_and_leaves_no_code_block():
     assert not slide["doc"], slide["doc"]
     assert "Progress" not in slide["doc"]
     # And the one a string could not have told you: no code block anywhere on the
-    # deck. `<pre>` is what markdown-it draws an indented block as, and it is the
-    # element a reviewer photographed.
-    assert "<pre>" not in drawn
+    # deck. An indented block is what markdown-it draws as a `pre` element, and
+    # that box is what a reviewer photographed.
+    #
+    # **Parsed and not searched for**, which this assertion learned the hard way:
+    # it was `"<pre>" not in drawn`, and the stylesheet is inlined into every
+    # page — so the day a CSS comment in `styles.py` named the element it was
+    # describing, a test about a slide's content failed on prose about a
+    # selector. The question is whether the document contains a code block, and
+    # that is a question about an element. `elements` does not look inside
+    # `<style>`, because `html.parser` reads a stylesheet as text.
+    from pages import elements
+
+    assert "pre" not in {one.tag for one in elements(drawn)}
 
 
 def test_a_slide_that_already_carries_points_is_not_blank_paper():

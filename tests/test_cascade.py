@@ -29,6 +29,7 @@ from openproj.render import (
     STATUSES,
     render_cycle,
     render_cycles,
+    render_deck,
     render_detail,
     render_table,
     render_timeline,
@@ -1432,3 +1433,61 @@ def test_no_stylesheet_has_an_unclosed_comment(served_pages):
                 f"{view}: {opens} comment openings and {closes} closings — "
                 "everything after the odd one out is being thrown away"
             )
+
+
+# --------------------------------------------------------------------------- #
+# The code block's ground
+# --------------------------------------------------------------------------- #
+
+
+def test_a_code_block_is_one_ground_and_not_one_per_line(index: Index):
+    """The tint belongs to the block, and the inline rule is off inside it.
+
+    `.doc code` is the rule for an identifier in running prose. A `<code>` inside
+    a `<pre>` is the same element and inline as well, so for as long as that was
+    the only rule a fence was painted one box per LINE BOX, each as wide as its
+    own text — grey bars with the indentation showing through as page, and a
+    blank line inside the block drawn as a gap in the middle of it. jcanton,
+    2026-09-22: "code blocks have line background coloured line by line, and only
+    where there's chars."
+
+    Asked here and not as a substring, because the fix is two rules that have to
+    beat two others and one of the four is on a different page: `.slide .doc code`
+    is (0,2,1) and outranks `.doc pre code` at (0,1,2), so a deck needs its own
+    pair or the per-line tint comes back on slides and nowhere else. That is the
+    kind of miss this module exists for.
+    """
+    detail = sheet_of(render_detail(index, ROUTES, only=sorted(index.plan)[0], base_commit=HEAD))
+    deck = sheet_of(render_deck(index, sorted(index.cycles)[-1], ROUTES))
+
+    doc = PAGE + [el("div", "doc read")]
+    slide = PAGE + [el("section", "slide"), el("div", "doc")]
+    for sheet, root, where in ((detail, doc, "a record"), (deck, slide, "a slide")):
+        block, inside = root + [el("pre")], root + [el("pre"), el("code")]
+        inline = root + [el("p"), el("code")]
+
+        ground = sheet.winner(block, "background")
+        assert ground and ground.value not in (None, "none"), (
+            f"{where}: the fence itself has no ground\n" + says(sheet, block, "background")
+        )
+        assert sheet.value(inside, "background") == "none", (
+            f"{where}: the inline tint is still painting inside the fence, "
+            f"line by line\n" + says(sheet, inside, "background")
+        )
+        assert sheet.value(inside, "padding") == "0", says(sheet, inside, "padding")
+        # And the inline rule still does its own job, three words away from the
+        # fence: switching it off everywhere would have been the other way to
+        # make this screenshot look right.
+        assert sheet.value(inline, "background") == ground.value, (
+            f"{where}: an identifier in prose lost its tint\n"
+            + says(sheet, inline, "background")
+        )
+
+    # `.doc pre` and `pre.mermaid` are both (0,1,1), so they do not resolve each
+    # other — they agree by carrying the same values, and an undrawn diagram is
+    # meant to look like exactly the code block it would otherwise have been.
+    # What must still win is the reset, at (0,2,1), or mermaid draws its picture
+    # on a grey card.
+    drawn = doc + [el("pre", "mermaid", data_processed="")]
+    assert detail.value(drawn, "background") == "none", says(detail, drawn, "background")
+    assert detail.value(drawn, "padding") == "0", says(detail, drawn, "padding")

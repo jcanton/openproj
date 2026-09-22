@@ -1663,6 +1663,31 @@ textarea.body-field { resize: none; }
 .doc { border-top: 1px solid var(--line); padding-top: 1rem; }
 .doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
 .doc code { background: var(--surface-2); padding: 0 .25em; }
+/* **A fence is one box, and the rule above was drawing it a line at a time.**
+   `.doc code` is the inline rule — a tint and a quarter-em either side, so an
+   identifier in running prose reads as code. A `<code>` inside a `<pre>` is the
+   same element and inline as well, so it took the same tint and painted one box
+   per line box, each as wide as its own text: a code block came out as a ragged
+   stack of grey bars with the indentation showing through as white, and a blank
+   line inside the block showing as a gap in the middle of it. jcanton,
+   2026-09-22: "code blocks have line background coloured line by line, and only
+   where there's chars".
+
+   So the ground moves up to the block, and the inline rule is switched off
+   inside it — the pair the Help page has had all along (`.helpdoc pre`), now
+   where every document this app draws can reach it. `.doc pre code` is (0,1,2)
+   against `.doc code` at (0,1,1) and wins on weight, in either order.
+
+   `overflow-x` is the same bargain `.doc pre` was already described as taking
+   two rules below and did not: a fence wider than the column scrolls inside its
+   own box rather than the page scrolling sideways. The values are `pre.mermaid`'s
+   (`shell.py`), because an undrawn diagram is meant to look like exactly this;
+   the two rules are both (0,1,1), so they agree by having the same values
+   rather than by winning, and `pre.mermaid[data-processed]` at (0,2,1) still
+   outranks both to switch the box off once mermaid has drawn. */
+.doc pre { background: var(--surface-2); padding: .6rem .7rem; border-radius: 3px;
+           overflow-x: auto; margin: 0 0 1rem; }
+.doc pre code { background: none; padding: 0; }
 /* Where a promoted record says where it came from. It is the first thing in the
    document and it is not part of the problem statement, so it is set apart
    rather than left as an indented paragraph that reads like one. One copy now:
