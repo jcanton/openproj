@@ -315,6 +315,13 @@ _DECK_STYLE = """
 .slide a, .slide a:visited { color: var(--paper-link); }
 .slide .doc { border-top: 1px solid var(--paper-line); padding-top: 1rem; }
 .slide .doc code, .slide code { background: var(--paper-tint); }
+/* The same block ground as a record's, in the deck's paper colours. Both halves
+   are needed: `.doc pre` is (0,1,1) and would put the THEME's surface on a white
+   slide, and `.slide .doc code` above is (0,2,1), which outranks `.doc pre code`
+   at (0,1,2) — so without this the per-line tint the block rule exists to remove
+   would come back on a slide and nowhere else. */
+.slide .doc pre { background: var(--paper-tint); }
+.slide .doc pre code { background: none; }
 .slide .meter { background: var(--paper-line); }
 .slide .meter > span { background: var(--paper-link); }
 /* The status, as the word and not as the ladder. The five status fills are a
