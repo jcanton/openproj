@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pytest
 from browser import chrome, measured_in
+from pages import tags
 
 # `one_pitch` and `HEAD` from the card's own file, because the page under test
 # here is the card's: a record with a document on it, and the commit the table
@@ -86,7 +87,7 @@ def test_the_text_survives_being_coloured():
     """
     source = 'if a < b and c: print("hi")  # <not a tag>'
     drawn = str(_markdown(f"```python\n{source}\n```\n", ROUTES))
-    assert "<not a tag>" not in drawn, "a fence's text reached the page as markup"
+    assert "not" not in tags(drawn), "a fence's text reached the page as markup"
     # Unescaped rather than escaped by hand: which characters a renderer chooses
     # to escape is its business, and an expectation written as a chain of
     # `.replace` calls is a second, worse escaper that fails on the day the first
@@ -103,7 +104,7 @@ def test_a_hostile_language_name_does_not_reach_the_page_as_markup():
     too.
     """
     drawn = str(_markdown('```"><script>alert(1)</script>\nx\n```\n', ROUTES))
-    assert "<script>" not in drawn, drawn
+    assert "script" not in tags(drawn), drawn
 
 
 def test_the_attributes_on_the_tag_survive_the_highlighter():

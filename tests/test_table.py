@@ -61,6 +61,7 @@ import pygit2
 import pytest
 from browser import chrome, measured_in, measured_on_a_phone, pressed_in, screenshot
 from fastapi.testclient import TestClient
+from pages import elements, tags
 from test_store import commit_directly
 from test_web import (
     ANN,
@@ -1188,9 +1189,9 @@ def test_the_table_draws_its_rows_in_a_browser_that_refuses_storage(page: str):
     working = run_js(page)
     denied = run_js(page, storage="denied")
 
-    drawn = [written for written in denied["written"] if "<tr" in written]
+    drawn = [written for written in denied["written"] if "tr" in tags(written)]
     assert drawn, f"storage denied and the table drew nothing: {denied['errors']}"
-    assert drawn == [written for written in working["written"] if "<tr" in written], (
+    assert drawn == [written for written in working["written"] if "tr" in tags(written)], (
         "a browser that refuses storage draws different rows from one that allows it"
     )
     for record_id in payload(page)["rows"]:
@@ -2088,7 +2089,8 @@ def test_creating_is_the_detail_page_with_nothing_in_it(new_page: str, client: T
     ):
         assert shape in new_page, shape
         assert shape in detail, shape
-    assert "<label>" not in new_page, "the old flat list of labelled controls is gone"
+    bare = [one for one in elements(new_page) if one.tag == "label" and not one.attrs]
+    assert not bare, "the old flat list of labelled controls is gone"
 
     # And they agree about where the control that commits the form is — jcanton,
     # 2026-08-20, "consistency!". The two pages had it at opposite ends of the

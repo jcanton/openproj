@@ -33,6 +33,7 @@ from urllib.parse import unquote
 
 import pytest
 from browser import chrome, measured_in
+from pages import elements
 
 from openproj.index import Index, build_index
 from openproj.model import load_repo, unread_fields
@@ -524,8 +525,9 @@ def test_a_card_wears_both_its_marks_in_front_of_its_name(index: Index, tmp_path
             assert card["image"].startswith("data:image/svg+xml"), card["image"][:40]
         # One `<text>` per mark the rung actually reads — so a card of a kind
         # that reads neither draws no marks rather than two invented ones.
-        assert drawn.count("<text") == pri + stat, (
-            f"a {card['kind']} card draws {drawn.count('<text')} marks and its rung "
+        marks = len([one for one in elements(drawn) if one.tag == "text"])
+        assert marks == pri + stat, (
+            f"a {card['kind']} card draws {marks} marks and its rung "
             f"reads {pri + stat}: {drawn or '(no drawing)'}"
         )
         assert any(one in drawn for one in PRIORITY_GLYPH.values()) == pri, drawn

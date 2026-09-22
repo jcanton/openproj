@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 from browser import chrome, measured_in
+from pages import tags
 from test_injection import run_js
 
 from openproj.index import Index, build_index
@@ -236,11 +237,13 @@ def test_the_read_only_hill_has_no_stops_on_it(index: Index) -> None:
     reading = render_detail(index, ROUTES, only=record_id)
     assert 'data-hill="record"' in reading
     assert 'role="radiogroup"' not in reading
-    # Asked of the facts list and not of the file: the shell's stylesheet writes
-    # `input:not([type="checkbox"]):not([type="radio"])`, and a substring search
-    # over the whole page finds a selector and calls it a control.
+    # Asked of the facts list, and asked of a parser. The stylesheet is inlined
+    # into every page and writes `input:not([type="checkbox"]):not([type="radio"])`,
+    # so a search of the text for `<input` finds a selector and calls it a
+    # control — the scope below was the first answer to that and `tags` is the
+    # one that does not depend on where the rule happens to be written.
     facts = re.search(r'<dl id="facts">(.*?)</dl>', reading, re.S).group(1)
-    assert "<input" not in facts, "a page nobody may write is drawing controls"
+    assert "input" not in tags(facts), "a page nobody may write is drawing controls"
 
 
 def test_the_card_draws_the_hill_and_keeps_the_word(index: Index) -> None:

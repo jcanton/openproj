@@ -22,6 +22,7 @@ from pathlib import Path
 import pygit2
 import pytest
 from fastapi.testclient import TestClient
+from pages import tags
 from test_store import commit_directly
 from test_web import ANN, CLIENT_ID, CLIENT_SECRET, SECRET, SEED
 
@@ -90,7 +91,7 @@ def test_a_reader_can_still_read_the_whole_record(repo: Path):
     would be a worse defect than the console lines it was cleaning up."""
     page = page_for(repo, signed_in=False)
 
-    assert "<article" in page
+    assert "article" in tags(page)
     assert ONE in page
 
 

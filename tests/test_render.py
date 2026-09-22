@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 from markupsafe import escape
-from pages import elements, headings, lit, render_source, selects
+from pages import elements, headings, lit, render_source, selects, tags
 
 from openproj.index import Index, build_index
 from openproj.model import KIND_NAMES, Config, load_repo
@@ -1146,7 +1146,7 @@ def test_the_detail_page_opens_as_an_index_not_a_wall_of_text(rendered: Path, se
 
 def test_the_detail_page_renders_the_shaping_doc_as_markdown(rendered: Path):
     body = read(rendered, "detail.html")
-    assert "<h2>" in body, "markdown headings should render as headings"
+    assert "h2" in tags(body), "markdown headings should render as headings"
     # Line-initial only: `## Appetite` inside a code span is correctly rendered
     # markdown, not leaked source.
     assert not re.search(r"^## ", body.split("<script")[0], re.M), "raw markdown leaked"
@@ -1325,8 +1325,9 @@ def test_the_people_page_is_one_table_with_one_header(rendered: Path):
     table = re.search(r"<table id=\"roles\"[^>]*>.*?</table>", body, re.S).group(0)
 
     assert len(people) > 5, "the corpus names enough people for this to matter"
-    assert body.count("<table") == 1, "one table, not one per person"
-    assert body.count("<thead>") == 1
+    drawn = [one.tag for one in elements(body)]
+    assert drawn.count("table") == 1, "one table, not one per person"
+    assert drawn.count("thead") == 1
     # Every person is a tbody inside that one table rather than a section beside it.
     assert table.count('<tbody class="person"') == len(people)
     assert len(re.findall(r'<tr class="group', table)) == len(people)
@@ -3264,7 +3265,7 @@ def test_the_contents_of_text_cannot_carry_markup(seed_index: Index):
     """
     served = preview_html(_MATHS)
 
-    assert "<script" not in served, "a script tag reached the page through an equation"
+    assert "script" not in tags(served), "a script tag reached the page through an equation"
     assert "alert(1)" in served, (
         "the text was dropped rather than made safe, which hides the injection instead of "
         "defusing it — and takes the reader's own `\\text{}` with it"
@@ -3773,8 +3774,7 @@ def test_every_page_names_itself_and_holds_exactly_one_main(rendered: Path):
     """
     for page in PAGES:
         body = read(rendered, page)
-        assert body.count('<main id="main">') == 1, page
-        assert body.count("</main>") == 1, page
+        assert len([one for one in elements(body) if one.tag == "main"]) == 1, page
 
     for page, name in PAGE_NAMES.items():
         # These five draw no stored markdown, so every heading on them is the
@@ -4179,7 +4179,8 @@ def test_every_record_in_the_export_carries_the_link_back(rendered: Path):
         ".map(a => a.getAttribute('href') + ' ' + a.textContent)"
     )
     got = run_js(read(rendered, "detail.html"), every, page=True, session=left)["value"]
-    assert len(got) == read(rendered, "detail.html").count("<article")
+    articles = [one for one in elements(read(rendered, "detail.html")) if one.tag == "article"]
+    assert len(got) == len(articles)
     assert set(got) == {f"{here} ← Table"}
 
 
@@ -4354,7 +4355,7 @@ def test_only_an_asset_this_tool_stored_is_ever_drawn_as_an_image():
         # instead varies in one case, and honestly — markdown-it refuses to link
         # `javascript:` at all and leaves the line as text, which is a better
         # answer than the link this would otherwise have made of it.
-        assert "<img" not in drawn, source
+        assert "img" not in tags(drawn), source
         assert "(external image)" in drawn or source in str(drawn), source
 
 
@@ -4382,7 +4383,7 @@ def test_a_drawing_is_drawn_and_a_lookalike_is_not():
         "drawings/sub/draw-a1b2c3.png",  # our prefix, somebody else's tree
     ):
         drawn = _body_html(_record(f"![x]({source})"))
-        assert "<img" not in drawn, source
+        assert "img" not in tags(drawn), source
 
 
 def test_the_deck_still_inlines_a_picture_after_the_prefix_moved():
@@ -6123,9 +6124,9 @@ def test_a_persons_icon_is_drawn_in_the_page_and_not_fetched(seed_root: Path):
 
     row = page.split(f'data-login="{who}"')[1].split("</tbody>")[0]
     assert '<svg class="icon"' in row, row[:400]
-    assert "<path" in row
-    assert "<img" not in row
-    assert "src=" not in row
+    assert "path" in tags(row)
+    assert "img" not in tags(row)
+    assert not [one for one in elements(row) if "src" in one.attrs]
 
 
 def test_a_plan_where_nobody_has_picked_one_draws_the_page_as_it_was(seed_root: Path):
@@ -6171,7 +6172,7 @@ def test_no_icon_is_a_character_the_reader_has_to_own_a_font_for():
     for name, art in render._ICON_ART.items():
         assert name.isascii() and name.islower(), name
         assert art.isascii(), f"{name} is drawn with a character and not with a path"
-        assert "<path" in art or "<circle" in art, name
+        assert tags(art) & {"path", "circle"}, name
 
 
 def test_no_two_icons_are_the_same_mark(seed_root: Path):
@@ -6360,7 +6361,7 @@ def test_a_record_that_is_not_there_is_an_empty_page_and_not_a_KeyError(seed_ind
     page = render_detail(seed_index, ROUTES, only="task-ffffff")
 
     assert "task-ffffff" not in page
-    assert "<article" not in page
+    assert "article" not in tags(page)
 
 
 @pytest.fixture
@@ -7217,7 +7218,7 @@ def test_the_betting_tables_closed_sets_are_chosen_and_never_typed(server_pages:
         for rung in ladder:
             assert f'value="{rung}"' in chosen, f"{field} cannot choose {rung}"
             assert glyphs[rung] in chosen, f"{field}'s {rung} lost its mark"
-        assert "<input" not in chosen, f"{field} can still be typed into"
+        assert "input" not in tags(chosen), f"{field} can still be typed into"
 
 
 def test_a_carried_row_may_be_repriced_but_not_re_bet(server_pages: dict[str, str]):

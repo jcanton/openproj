@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 from browser import chrome, measured_in
 from marionette import driving
+from pages import elements
 from test_injection import run_js
 from test_table import script
 
@@ -150,9 +151,14 @@ def test_the_card_says_the_things_a_row_does_not(index: Index):
     assert record.owner in drawn
     assert record.tags[0] in drawn
     wanted = [fact["label"] for fact in card_facts()[record.kind]["facts"]]
+    # The rows themselves, parsed out of the card. `f"<dt>{word}</dt>" in drawn`
+    # is the same claim written as a string, and it answers the day a `<dt>`
+    # gains an attribute — or the day a word one of these labels happens to be
+    # is written inside a comment somewhere on the page.
+    rows = [one.text for one in elements(drawn) if one.tag == "dt"]
     for word in wanted:
-        assert f"<dt>{word}</dt>" in drawn, f"{word} is an editable field and no row of the card"
-    assert "<dt>With</dt>" not in drawn, (
+        assert word in rows, f"{word} is an editable field and no row of the card"
+    assert "With" not in rows, (
         "the card still lists `With`, which reads well and is not a field: the box beside "
         "it edits `assignees`, and one of them is lying"
     )

@@ -25,7 +25,7 @@ import pygit2
 import pytest
 from browser import _devtools, _evaluated, chrome, in_a_live_page, measured_in
 from fastapi.testclient import TestClient
-from pages import elements
+from pages import elements, tags
 from test_store import commit_directly
 from test_web import (
     ANN,
@@ -528,7 +528,7 @@ def test_the_facts_read_as_a_column_beside_the_document(page: str):
     The measure is on `.panes` and not on the article: since 2026-08-24 the
     article is the page's own width, so that the header above the panes is level
     with the nav in all three views instead of riding the split's extra body."""
-    assert page.count("<article") == 1
+    assert len([one for one in elements(page) if one.tag == "article"]) == 1
     assert '<aside class="facts">' in page
     assert page.index('<aside class="facts">') < page.index('<div class="main">')
     assert re.search(r"\.panes \{[^}]*width: var\(--measure", page, re.S)
@@ -594,7 +594,7 @@ def test_a_preview_cannot_be_used_to_smuggle_html(client: TestClient):
     """The body is written by signed-in members and rendered back to everybody, so
     a script tag in a shaping doc would run in every reader's browser."""
     response = client.post("/api/preview", json={"body": "<script>alert(1)</script>\n"})
-    assert "<script>" not in response.json()["html"]
+    assert "script" not in tags(response.json()["html"])
 
 
 def test_a_conflict_reaches_the_page_as_a_report_and_never_as_markers(
@@ -1035,7 +1035,7 @@ def test_a_derived_row_carries_no_label_because_it_carries_no_control(page: str)
 
     assert derived, "the page draws no derived fact"
     for row in derived:
-        assert "<label" not in row, row
+        assert "label" not in tags(row), row
 
 
 def test_the_detail_page_announces_a_save_it_only_used_to_draw(page: str):
@@ -2004,7 +2004,7 @@ def test_starting_a_cycle_asks_for_dates_and_nothing_else(client: TestClient):
 
     assert 'id="number"' in create and 'id="starts"' in create and 'id="reviews"' in create
     assert 'id="start"' in create
-    assert "<textarea" not in create, "no goal box here any more"
+    assert "textarea" not in tags(create), "no goal box here any more"
 
 
 # --- Tab, and the way back out of the box -----------------------------------

@@ -54,7 +54,7 @@ import pygit2
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
-from pages import elements, render_source
+from pages import elements, render_source, tags
 
 # `test_remote` owns the vocabulary for a plan with a remote on the other end of
 # it — what a fork looks like, how to take the remote away without a socket, and
@@ -542,7 +542,7 @@ def test_a_detail_route_serves_one_record_and_not_the_whole_corpus(client: TestC
     # happen is a second record being *served*.
     article = body.split("<article", 1)[1].split("</article>")[0]
     assert "Downgrade numpy for global sums" not in article
-    assert body.count("<article") == 1
+    assert len([one for one in elements(body) if one.tag == "article"]) == 1
 
 
 def test_a_record_that_does_not_exist_is_a_404_and_not_an_empty_page(client: TestClient):
@@ -2795,7 +2795,7 @@ def test_a_nonsense_window_falls_back_instead_of_failing(client: TestClient):
     for query in ("from=yesterday", "to=2026-13-01", "zoom=lots", "zoom=0", "from=x&to=y&zoom=z"):
         response = client.get(f"/timeline?{query}")
         assert response.status_code == 200, query
-        assert "<svg" in response.text, query
+        assert "svg" in tags(response.text), query
 
 
 def test_a_backwards_window_does_not_invert_the_drawing(client: TestClient):
@@ -3781,8 +3781,8 @@ def test_the_preview_still_refuses_html(client: TestClient):
         json={"body": '<script>alert(1)</script>\n\n<img src="assets/deadbeefdeadbeef.png">\n'},
     ).json()["html"]
 
-    assert "<script>" not in smuggled
-    assert "<img" not in smuggled
+    assert "script" not in tags(smuggled)
+    assert "img" not in tags(smuggled)
 
 
 def test_every_control_on_the_cycle_page_has_a_name(client: TestClient):
@@ -3804,7 +3804,7 @@ def test_every_control_on_the_cycle_page_has_a_name(client: TestClient):
     # is promised and cannot reach.
     for derived in ("Builds until", "Cool-down ends"):
         assert f'<dt class="derived">{derived}</dt>' in setup, derived
-    assert "<label" not in setup.split("Builds until")[1]
+    assert "label" not in tags(setup.split("Builds until")[1])
     assert '<label for="joining"' in page and 'id="joining"' in page
 
     # This table's rows and no other's. The page draws three tables and two of
