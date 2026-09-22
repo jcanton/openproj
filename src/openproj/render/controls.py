@@ -182,12 +182,20 @@ function wanted(field) { return params.getAll(field).filter(Boolean); }
 // list exists in `index.py`, where `test_the_two_field_lists_are_the_same` holds
 // the two together.
 const QUERY_FIELDS = ['kind','status','owner','priority','cycle','assignees',
-                      'reviewers','tags','product','project','id','title','prs','predicate'];
+                      'reviewers','tags','product','project','pitch','id','title','prs',
+                      'predicate'];
+// The fields whose value is a record id rather than a word: an ancestor, found
+// by the walk `_holder_of` does in `index.py`. Each answers to that record's
+// title as well, which rides on the row in its own key. `_HOLDER_FACETS` is the
+// other copy of this list and `test_the_holder_fields_are_the_same` pins them.
+const HOLDER_FIELDS = ['product','project','pitch'];
 const ALIASES = {tag: 'tags', assignee: 'assignees', reviewer: 'reviewers',
                  pr: 'prs', person: 'owner'};
 // Free text, matched by substring; everything else is a vocabulary and is
-// matched whole, so `cycle:3` does not answer for cycle 30.
-const FREE_TEXT = ['title', 'prs'];
+// matched whole, so `cycle:3` does not answer for cycle 30. The holder fields
+// are free text because a pitch is titled with a sentence and nobody types a
+// whole one — see `FREE_TEXT` in `query.py`, which carries the argument.
+const FREE_TEXT = ['title', 'prs', 'product', 'project', 'pitch'];
 
 // One record's values per field, lowered — the same map `query_fields` builds in
 // `index.py`, so both parsers are asked about identical data and a disagreement
@@ -198,7 +206,13 @@ function queryFields(row) {
     // `predicates` on the row, `predicate` in the language: the menu is named
     // for the question and the row for its answers.
     const held = name === 'predicate' ? row.predicates : row[name];
-    fields[name] = [].concat(held ?? []).map(String).map(v => v.toLowerCase())
+    // A holder answers to its title as well as to its id, and the title rides in
+    // a key of its own rather than inside `row[name]`: the facet branch of
+    // `matches` below reads `row[field]` straight against what a menu submitted,
+    // and a title in there would be a value the box accepts and the server does
+    // not. `query_fields` in `index.py` joins the same two on the same field.
+    const called = HOLDER_FIELDS.includes(name) ? row[name + '_title'] : null;
+    fields[name] = [].concat(held ?? [], called ?? []).map(String).map(v => v.toLowerCase())
       .filter(v => v !== '');
   }
   return fields;

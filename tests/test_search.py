@@ -35,7 +35,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-from test_index import a_task
+from test_index import a_pitch, a_product, a_project, a_task
 from test_injection import run_js
 
 from openproj.index import Index, apply_filters, build_index
@@ -410,6 +410,12 @@ def test_the_language_is_evaluated_the_same_in_the_browser(index: Index, page: s
     the only thing standing between them and a query that means two things.
     """
     tags = [t for t in index.facets["tags"] if t != "(none)"][:2]
+    # One holder of each rung, by id and by the title the menu draws over it.
+    # Read off the corpus rather than written down, like every other needle here.
+    holders = {
+        kind: sorted(i for i, record in index.plan.items() if record.kind == kind)[0]
+        for kind in ("product", "project", "pitch")
+    }
     queries = [
         "",
         "throughflow",
@@ -466,6 +472,12 @@ def test_the_language_is_evaluated_the_same_in_the_browser(index: Index, page: s
         # on: Python called them spaces and the browser did not.
         "kind:task\u0085status:done",
         "kind:task\u001estatus:done",
+        # The holder fields, both spellings of each: an ancestor asked for by the
+        # id the menu submits, and by the title it draws over it.
+        *(f"{kind}:{holder}" for kind, holder in holders.items()),
+        *(f"{kind}:{index.plan[holder].title}" for kind, holder in holders.items()),
+        f"pitch:{index.plan[holders['pitch']].title} and kind:task",
+        "task:anything",
     ]
     disagreed = {}
     for query in queries:
@@ -473,6 +485,224 @@ def test_the_language_is_evaluated_the_same_in_the_browser(index: Index, page: s
         there = found_in_the_browser(page, query)
         if here != there:
             disagreed[query] = (here, there)
+    assert not disagreed, "\n".join(
+        f"  {q!r}: server {s}, browser {b}" for q, (s, b) in disagreed.items()
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The holder fields: product, project, pitch
+#
+# A holder is an ANCESTOR asked for by name — `project:warm_bubble` is the
+# project and every pitch and task filed under it, at any depth, because
+# `_holder_of` walks the parent chain rather than reading a field. There are
+# three rungs of them and `task:` is deliberately not a fourth: nothing is filed
+# under a task, so it would be `id:` spelled differently.
+#
+# Two of the three matched the holder's ID and nothing else, so
+# `project:warm_bubble` — the name on the screen, and the name the Project menu
+# draws over the id it actually submits — answered nothing at all, with no
+# sentence beside the box, while `project:proj-000123` answered eighteen rows.
+# jcanton, 2026-09-22, having typed the first one.
+# --------------------------------------------------------------------------- #
+
+HOLDERS = ("product", "project", "pitch")
+
+
+def holders_of(index: Index, kind: str) -> list[str]:
+    return sorted(i for i, record in index.plan.items() if record.kind == kind)
+
+
+def test_a_holder_is_found_by_its_title_as_well_as_its_id(index: Index):
+    """The two spellings are one question.
+
+    A containment and not an equality, over a corpus. A holder's title is free
+    text — `pitch:reproducible` is the question somebody has about a pitch
+    called "Ranks are reproducible across decompositions" — so the title's
+    answer is allowed to be the wider one where two names share a word, and an
+    equality here would go red on the commit that gives two pitches related
+    names, which is a fact about the plan and not about the language. The exact
+    answer is asked of `ladder_index` below, where every string was chosen.
+    """
+    for kind in HOLDERS:
+        holders = holders_of(index, kind)
+        assert holders, f"this corpus holds no {kind}, so this asks nothing"
+        for holder in holders:
+            title = index.plan[holder].title
+            assert '"' not in title, f"{holder} cannot be quoted into a query"
+            by_id = set(ids(index, f"{kind}:{holder}"))
+            by_title = set(ids(index, f'{kind}:"{title}"'))
+            assert by_id, f"{kind}:{holder} found nothing"
+            assert by_id <= by_title, f"{kind}:{title} lost {sorted(by_id - by_title)}"
+
+
+def test_a_holder_returns_itself_and_everything_filed_under_it(index: Index):
+    """Down the ladder, and only down it.
+
+    A holder is always in its own answer — `_holder_of` starts at the record
+    itself — and everything else in the answer is below it on the ladder. The
+    second half is what stops this passing on a filter that quietly returned the
+    whole plan.
+    """
+    below = {
+        "product": {"project", "pitch", "task"},
+        "project": {"pitch", "task"},
+        "pitch": {"task"},
+    }
+    for kind in HOLDERS:
+        for holder in holders_of(index, kind):
+            answer = ids(index, f"{kind}:{holder}")
+            assert holder in answer
+            assert {index.plan[i].kind for i in answer} <= {kind, *below[kind]}
+
+
+def test_a_task_is_not_a_holder(index: Index):
+    """Nothing is filed under a task, so `task:` is a field this plan has not got
+    — and an unknown field matches nothing rather than everything, which is the
+    rule that makes leaving it out safe rather than merely tidy."""
+    task = next(i for i, record in index.plan.items() if record.kind == "task")
+    assert ids(index, f"task:{task}") == []
+    assert ids(index, f"id:{task}") == [task]
+
+
+# The ladder, four rungs of it, with every string chosen here — so that "a bare
+# word finds the record and not what is under it" is a claim about the language
+# and not about which letters `seed/` happens to contain. The two pitches share a
+# title for the same reason `cool_index` carries a decoy: a rule that returns one
+# subtree out of one subtree is indistinguishable from most of the rules that
+# were rejected.
+LADDER_IDS = {
+    "product": "prod-7a0001",
+    "project": "proj-7a0001",
+    "pitch": "pitch-7a0001",
+    "twin": "pitch-7a0002",
+    "task": "task-7a0001",
+    "twin_task": "task-7a0002",
+    "loose": "task-7a0003",
+}
+
+
+@pytest.fixture
+def ladder_index() -> Index:
+    return build_index(
+        [
+            a_product(LADDER_IDS["product"], "Kiln"),
+            a_project(LADDER_IDS["project"], "warm_bubble", parent=LADDER_IDS["product"]),
+            a_pitch(
+                LADDER_IDS["pitch"],
+                "bed_heat",
+                parent=LADDER_IDS["project"],
+                person_weeks=2.0,
+            ),
+            a_pitch(
+                LADDER_IDS["twin"],
+                "bed_heat",
+                parent=LADDER_IDS["project"],
+                person_weeks=2.0,
+            ),
+            a_task(
+                LADDER_IDS["task"],
+                "Element wiring",
+                parent=LADDER_IDS["pitch"],
+                person_weeks=1.0,
+            ),
+            a_task(
+                LADDER_IDS["twin_task"],
+                "Thermocouple",
+                parent=LADDER_IDS["twin"],
+                person_weeks=1.0,
+            ),
+            # Filed straight under the project: a task may skip the pitch, which
+            # is why `under` is written out per rung in `model.py`. It is the row
+            # that tells `project:` and `pitch:` apart.
+            a_task(
+                LADDER_IDS["loose"],
+                "Cabling",
+                parent=LADDER_IDS["project"],
+                person_weeks=1.0,
+            ),
+        ],
+        COOL_CONFIG,
+        date(2026, 8, 17),
+    )
+
+
+@pytest.fixture
+def ladder_page(ladder_index: Index) -> str:
+    return render_table(ladder_index, base_commit="deadbee", may_write=True)
+
+
+def test_each_rung_of_the_ladder_answers_for_what_is_under_it(ladder_index: Index):
+    every = sorted(LADDER_IDS.values())
+    assert apply_filters(ladder_index, {}, "product:Kiln") == every
+    assert apply_filters(ladder_index, {}, "project:warm_bubble") == sorted(
+        set(every) - {LADDER_IDS["product"]}
+    )
+    # The task filed under the project and not under either pitch: in the
+    # project's answer, in neither pitch's.
+    assert LADDER_IDS["loose"] in apply_filters(ladder_index, {}, "project:warm_bubble")
+    assert LADDER_IDS["loose"] not in apply_filters(ladder_index, {}, "pitch:bed_heat")
+    assert apply_filters(ladder_index, {}, f"pitch:{LADDER_IDS['pitch']}") == sorted(
+        [LADDER_IDS["pitch"], LADDER_IDS["task"]]
+    )
+
+
+def test_a_title_two_holders_share_answers_for_both_of_them(ladder_index: Index):
+    """A menu means OR within a field, and so does this: two pitches called
+    `bed_heat` are two answers to one question rather than a conflict. The id is
+    how you ask for one of them, and it is what the menu submits."""
+    assert apply_filters(ladder_index, {}, "pitch:bed_heat") == sorted(
+        [
+            LADDER_IDS["pitch"],
+            LADDER_IDS["task"],
+            LADDER_IDS["twin"],
+            LADDER_IDS["twin_task"],
+        ]
+    )
+
+
+def test_a_bare_word_finds_the_holder_and_not_what_is_under_it(ladder_index: Index):
+    """jcanton, 2026-09-22: "with bare word finding only the match and not
+    everything under it, so kiln4py only finds the product record".
+
+    The walk belongs to the field and to nothing else. `searchable()` is one
+    record's own values, so a bare word has never followed a parent — this is
+    here to keep it that way, because the obvious way to implement the field
+    above is to widen the blob, and that would silently answer the whole subtree
+    for every word in a project's name."""
+    assert apply_filters(ladder_index, {}, "Kiln") == [LADDER_IDS["product"]]
+    assert apply_filters(ladder_index, {}, "warm_bubble") == [LADDER_IDS["project"]]
+    assert apply_filters(ladder_index, {}, "bed_heat") == sorted(
+        [LADDER_IDS["pitch"], LADDER_IDS["twin"]]
+    )
+
+
+def test_the_holder_fields_are_evaluated_the_same_in_the_browser(
+    ladder_index: Index, ladder_page: str
+):
+    """The row carries the holder's title as well as its id, or the box in front
+    of a reader answers differently from the link they were sent. Asked of the
+    ladder rather than of `seed/` because every string in it was chosen: a
+    disagreement here is the plumbing and cannot be the corpus."""
+    queries = [
+        "product:Kiln",
+        f"product:{LADDER_IDS['product']}",
+        "project:warm_bubble",
+        "project:warmbubble",
+        f"project:{LADDER_IDS['project']}",
+        "pitch:bed_heat",
+        "pitch:bed-heat",
+        f"pitch:{LADDER_IDS['pitch']}",
+        "pitch:bed_heat and not project:warm_bubble",
+        "task:anything",
+        "Kiln",
+    ]
+    said = found_in_the_browser_for_each(ladder_page, queries)
+    disagreed = {
+        query: (apply_filters(ladder_index, {}, query), said[query])
+        for query in queries
+        if apply_filters(ladder_index, {}, query) != said[query]
+    }
     assert not disagreed, "\n".join(
         f"  {q!r}: server {s}, browser {b}" for q, (s, b) in disagreed.items()
     )
@@ -839,6 +1069,26 @@ def test_the_two_field_lists_are_the_same():
     there = re.findall(r"'([^']+)'", said)
 
     assert sorted(there) == sorted(here), f"browser {sorted(there)}, server {sorted(here)}"
+
+
+def test_the_holder_fields_are_the_same():
+    """Which fields hold a record id, pinned the same way.
+
+    A field in one list and not the other is a title that filters in the table
+    and matches nothing through a link, or the reverse — and neither side errs,
+    which is the shape of every divergence this file exists for. It is also the
+    list that decides which rows carry a `_title` key at all, so a rung added to
+    one of them and not the other ships a key nothing reads.
+    """
+    from openproj.index import _HOLDER_FACETS
+    from openproj.render import _FILTER_JS
+
+    said = re.search(r"const HOLDER_FIELDS = \[([^\]]*)\]", _FILTER_JS).group(1)
+    there = re.findall(r"'([^']+)'", said)
+
+    assert sorted(there) == sorted(_HOLDER_FACETS), (
+        f"browser {sorted(there)}, server {sorted(_HOLDER_FACETS)}"
+    )
 
 
 def test_the_aliases_and_the_free_text_fields_are_the_same():

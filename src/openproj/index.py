@@ -682,6 +682,16 @@ def _product_of(record: Record, by_id: dict[str, Record]) -> str | None:
     return _holder_of(record, by_id, "product")
 
 
+def _pitch_of(record: Record, by_id: dict[str, Record]) -> str | None:
+    """The pitch a record belongs to. Same walk, one rung further down.
+
+    Empty for a task filed straight under a project, which the ladder allows —
+    `under=("pitch", "project")` on the task rung — and which is the one case
+    that tells this apart from `_project_of` on a real plan.
+    """
+    return _holder_of(record, by_id, "pitch")
+
+
 def _holder_of(record: Record, by_id: dict[str, Record], kind: str) -> str | None:
     """The nearest ancestor of this kind, walking up the parent chain.
 
@@ -888,7 +898,12 @@ def _ordered(field: str, values: set[str]) -> list[str]:
 # both answers to a walk up the chain. Written once because three call sites ask
 # the same question — `build_index`, `query_fields` and `matching` — and a list
 # that grew a rung in two of them would offer a menu that filters nothing.
-_HOLDER_FACETS = ("product", "project")
+#
+# Three rungs and not four. Nothing is filed under a task — no rung in `KINDS`
+# carries `under=("task",)` — so `task:` would be `id:` spelled differently, and
+# an unknown field matches nothing rather than everything, which is what makes
+# leaving it out safe rather than merely tidy.
+_HOLDER_FACETS = ("product", "project", "pitch")
 
 
 def _facet_values(record: Record, field: str, by_id: dict[str, Record]) -> list[str]:
@@ -1098,6 +1113,45 @@ def predicates_of(index: Index, record_id: str) -> list[str]:
     return [name for name in COMPUTED_PREDICATES if _matches_predicate(index, record_id, name)]
 
 
+def _title_of(by_id: dict[str, Record], record_id: str | None) -> str | None:
+    """What a record is called, or None where it is called nothing.
+
+    An untitled record is one nobody can find again — every create path refuses
+    one, and a plan hand-written in git can still hold one — and an empty title
+    must not reach a field's values: `plain("")` is `""`, and the whole-match
+    branch of `evaluate` guards the needle rather than the haystack, so a blank
+    would sit in the list looking like a value.
+
+    A record id no file was written for answers None, exactly as `_holder_of`
+    does one line above: a dangling `parent` is deliberately not a validation
+    problem, so every lookup down this path is a `.get`.
+    """
+    record = by_id.get(record_id) if record_id else None
+    return (record.title.strip() or None) if record else None
+
+
+def holder_fields(record: Record, by_id: dict[str, Record]) -> dict[str, str | None]:
+    """The ancestors a row is filtered by, and what each of them is called.
+
+    One function and not a spelling per row builder: `_row` (`rows.py`) and
+    `_record_row` (`records.py`) both ship these, the browser's `queryFields`
+    reads them by name, and a key on one page's rows and not on the other's is
+    one filter meaning two things depending on which view a link opens in.
+
+    `<field>_title` BESIDE `<field>` rather than inside it. The checkbox branch
+    of `matches()` reads `row[field]` straight against what a menu submitted, so
+    a title in there would be a value the box accepts and the server refuses —
+    the two parsers disagreeing, which is the failure `tests/test_search.py`
+    exists to catch.
+    """
+    fields: dict[str, str | None] = {}
+    for field in _HOLDER_FACETS:
+        holder = _holder_of(record, by_id, field)
+        fields[field] = holder
+        fields[f"{field}_title"] = _title_of(by_id, holder)
+    return fields
+
+
 def query_fields(index: Index, record_id: str) -> dict[str, list[str]]:
     """One record's values per field, lowered — what `query.evaluate` asks about.
 
@@ -1106,10 +1160,28 @@ def query_fields(index: Index, record_id: str) -> dict[str, list[str]]:
     disagreement between them is the language rather than the plan.
     """
     record = index.records[record_id]
-    fields = {
-        field: [value.lower() for value in _facet_values(record, field, index.records)]
-        for field in (*_SCALAR_FACETS, *_LIST_FACETS, *_HOLDER_FACETS)
-    }
+    fields: dict[str, list[str]] = {}
+    for field in (*_SCALAR_FACETS, *_LIST_FACETS, *_HOLDER_FACETS):
+        values = _facet_values(record, field, index.records)
+        fields[field] = [value.lower() for value in values]
+        # A holder answers to its TITLE as well as to its id, and only here.
+        # `_facet_values` stays ids alone, because that is what a `<select>`
+        # submits and what a pasted URL has to carry, and a menu whose options
+        # were two per project is a menu nobody can read. So the id is the
+        # value and the title is a second way of typing it: `project:warm_bubble`
+        # is the name on the screen — the Project menu draws it over the id it
+        # submits — and it answered nothing at all, with no sentence beside the
+        # box, while `project:proj-000123` answered eighteen rows.
+        #
+        # Titles are not unique and this does not pretend they are: two pitches
+        # called `bed_heat` are two answers to one question, which is the OR the
+        # menus already mean within a field. The id is how you ask for one.
+        if field in _HOLDER_FACETS:
+            fields[field] += [
+                title.lower()
+                for value in values
+                if (title := _title_of(index.records, value)) is not None
+            ]
     fields["id"] = [record.id.lower()]
     fields["title"] = [record.title.lower()]
     fields["prs"] = [pr.lower() for pr in record.prs]

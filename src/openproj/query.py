@@ -70,7 +70,18 @@ ALIASES = {
 # the separators inside one stop counting: `#`, `/`, `_` and `-` are how a
 # reference and an id are *punctuated*, and a person retyping one from memory
 # gets the letters right and the punctuation wrong.
-FREE_TEXT = ("title", "prs")
+#
+# The three HOLDER fields are here for the first of those reasons and not the
+# second. A holder's values are an id and that record's title — the ancestor
+# walk `_holder_of` does, joined in `query_fields` (`index.py`) — and a pitch is
+# titled with a sentence, so whole-matching one means `pitch:"Ranks are
+# reproducible across decompositions"` typed out and quoted or nothing at all.
+# `pitch:reproducible` is the question somebody actually has, and it is the same
+# question `title:` has always answered this way. The id goes through `found`
+# beside the title rather than keeping a whole-match of its own: an id is
+# punctuated, `plain` leaves it one run of characters, and a needle that is a
+# substring of one id is a needle that names it.
+FREE_TEXT = ("title", "prs", "product", "project", "pitch")
 
 
 # --------------------------------------------------------------------------- #

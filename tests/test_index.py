@@ -258,6 +258,12 @@ def test_facets_cover_every_filterable_field(family_index: Index):
         "cycle",
         "product",
         "project",
+        # The third holder rung. It has no dropdown — `_PLAN_FACETS` in
+        # `controls.py` is the list the bar draws from, and a real plan's
+        # pitches would fill a select with hundreds of options — but it is a
+        # facet like the two above it, so `?pitch=` narrows a pasted link
+        # exactly as `?project=` does.
+        "pitch",
         "tags",
         "predicate",
     }
