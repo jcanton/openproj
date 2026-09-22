@@ -520,7 +520,7 @@ def test_the_fixture_really_is_hostile(hostile_static):
     # shared page, the issue and the note among them. A fold that quietly
     # dropped the two would pass every substring above off the three records
     # alone.
-    assert hostile_static["detail.html"].count("<article") == 5
+    assert census(hostile_static["detail.html"]).tags["article"] == 5
 
 
 # --------------------------------------------------------------------------- #

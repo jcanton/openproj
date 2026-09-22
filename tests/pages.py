@@ -310,6 +310,32 @@ def elements(page: str) -> list[Element]:
     return parser.found
 
 
+def tags(page: str) -> set[str]:
+    """Every element name a rendered document actually contains.
+
+    For the assertion whose whole content is "there is no `<img>` here" — which
+    is the shape that kept being written as `"<img" not in page`, and which that
+    string cannot answer for two reasons at once.
+
+    **A page carries its own stylesheet and its own scripts.** Everything is
+    inlined, so a `<style>` or `<script>` block is part of the text of every
+    page this app renders, and a comment inside one that names the element it is
+    describing satisfies the search. That is not a hypothetical: a comment added
+    to `styles.py` saying that a `<code>` inside a `<pre>` is inline failed a
+    deck test asserting `"<pre>" not in page` — a test about what a review slide
+    carries, red because of prose about a selector. `html.parser` reads the
+    contents of `<style>` and `<script>` as text, so nothing in either reaches
+    this set.
+
+    **And a substring cannot tell markup from text.** `&lt;script&gt;` in a
+    rendered fence contains no `<script`, but `<script` appears in plenty of
+    things that are not an element. Five escaping bugs shipped here under tests
+    that asserted on substrings of a page; the claim in every one of them was
+    about an element.
+    """
+    return {one.tag for one in elements(page)}
+
+
 # The renderer's own source, as one text. It was one file until render.py became
 # a package, and four tests read it off disk rather than restating what it
 # contains: the `|safe` sweep, the one-escaper count, the marker corpus, and the

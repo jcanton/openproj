@@ -26,6 +26,7 @@ from pathlib import Path
 import pygit2
 import pytest
 import uvicorn
+from pages import elements, tags
 from test_store import commit_directly
 
 from openproj.index import build_index
@@ -54,9 +55,27 @@ flowchart LR
 # The renderer: which markup a fence becomes
 
 
+def diagrams(page: str) -> int:
+    """How many `pre.mermaid` elements a document actually contains.
+
+    `'<pre class="mermaid">' in page` was the same claim written as a string, and
+    it is the wrong medium for it twice over. A page inlines its own stylesheet,
+    which holds the `pre.mermaid` rules and the comment explaining them, so the
+    text of every page carries prose about this element whether or not the page
+    draws one. And `test_the_loader_is_not_offered_a_diagram_somebody_typed`
+    below hands `_page` that exact string as CONTENT: the question there is
+    whether it came back as markup or as text, which is the one question a
+    substring search cannot answer — it is round two's "what if a value equals
+    the mechanism", asked of the mechanism and then answered by the mechanism.
+    """
+    return len(
+        [one for one in elements(page) if one.tag == "pre" and one.attrs.get("class") == "mermaid"]
+    )
+
+
 def test_a_mermaid_fence_is_a_diagram_where_there_is_a_server():
     drawn = str(_markdown(DIAGRAM, ROUTES))
-    assert '<pre class="mermaid">' in drawn
+    assert diagrams(drawn) == 1
     assert "flowchart LR" in drawn
     assert "language-mermaid" not in drawn
 
@@ -67,7 +86,7 @@ def test_a_mermaid_fence_is_a_code_block_where_there_is_not():
     which is the seam `_image` and `_link` already switch on.
     """
     drawn = str(_markdown(DIAGRAM, STATIC))
-    assert '<pre class="mermaid">' not in drawn
+    assert diagrams(drawn) == 0
     assert "flowchart LR" in drawn
 
 
@@ -78,11 +97,11 @@ def test_every_other_fence_is_left_alone():
     # the fence is a fence and its text is all still there.
     for info in ("", "python", "bash", "mermaidish"):
         drawn = str(_markdown(f"```{info}\nnot a diagram\n```\n", ROUTES))
-        assert '<pre class="mermaid">' not in drawn, info
+        assert diagrams(drawn) == 0, info
         assert "not a diagram" in re.sub(r"<[^>]+>", "", drawn), info
     # And the info string's FIRST word is what decides, so a fence carrying an
     # attribute after the language is still a diagram.
-    assert '<pre class="mermaid">' in str(_markdown("```mermaid title=x\nA-->B\n```\n", ROUTES))
+    assert diagrams(str(_markdown("```mermaid title=x\nA-->B\n```\n", ROUTES))) == 1
 
 
 def test_the_text_inside_a_fence_is_escaped_like_any_other_value():
@@ -92,9 +111,9 @@ def test_the_text_inside_a_fence_is_escaped_like_any_other_value():
     """
     hostile = "```mermaid\nA --> B</pre><script>alert(1)</script>\n```\n"
     drawn = str(_markdown(hostile, ROUTES))
-    assert "<script>" not in drawn
+    assert "script" not in tags(drawn)
     assert "&lt;/pre&gt;&lt;script&gt;" in drawn
-    assert drawn.count('<pre class="mermaid">') == 1
+    assert diagrams(drawn) == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -115,7 +134,7 @@ def test_only_a_page_with_a_diagram_on_it_carries_the_loader(seed_root: Path):
 
     index = index_of(seed_root)
     served_help = render_help(index, ROUTES)
-    assert '<pre class="mermaid">' in served_help
+    assert diagrams(served_help) >= 1
     assert "mermaidLibrary" in served_help
 
     people = render_people(index, ROUTES)
@@ -136,7 +155,7 @@ def test_a_title_that_merely_equals_the_mechanism_does_not_turn_it_on():
 
     page = _page('<pre class="mermaid">flowchart LR</pre>', "<p>nothing here</p>", links=ROUTES)
     assert "mermaidLibrary" not in page
-    assert '<pre class="mermaid">' not in page
+    assert diagrams(page) == 0
 
 
 def test_the_static_export_carries_no_diagram_and_no_loader(seed_root: Path, tmp_path: Path):
@@ -148,7 +167,7 @@ def test_the_static_export_carries_no_diagram_and_no_loader(seed_root: Path, tmp
     written = render_static(index_of(seed_root), tmp_path)
     for name in written:
         body = (tmp_path / name).read_text(encoding="utf-8")
-        assert '<pre class="mermaid">' not in body, name
+        assert diagrams(body) == 0, name
         assert "mermaidLibrary" not in body, name
         assert "/static/mermaid.min.js" not in body, name
 

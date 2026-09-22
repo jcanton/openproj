@@ -1,5 +1,6 @@
 import ast
 import json
+import re
 from pathlib import Path
 
 import openproj
@@ -143,4 +144,74 @@ def test_the_durations_table_still_knows_what_the_suite_is_made_of():
         f"unmeasured one is given the average — but the groups are no longer "
         f"balanced by anything real. Regenerate with `uv run pytest "
         f"--store-durations`."
+    )
+
+
+# The shape this refuses: a bare tag name, asked of a string. Anything with an
+# attribute or text after it is a different (and milder) kind of brittleness and
+# is left alone — `'<td data-col="edited">' not in landing` goes stale when an
+# attribute is added, which is a failure you can see, not one that hides.
+_BARE_TAG = re.compile(r"^</?[A-Za-z][A-Za-z0-9]*>?$")
+
+# The two that are not about a rendered page, and so cannot be answered by
+# parsing one. Named with the reason, because an unexplained exemption is how
+# this list grows back into the thing it replaced.
+_NOT_A_PAGE = {
+    # A vendored `.js` file read off the disk, scanned for a script terminator.
+    # The claim is about the bytes, and there is no document to parse.
+    ("test_injection.py", "</script"),
+    # `sections()` returns the headings of a MARKDOWN body as plain strings. The
+    # `<symbol>` here is a heading somebody wrote inside a fence, not an element.
+    ("test_parse.py", "<symbol>"),
+}
+
+
+def _string_operands(tree: ast.AST):
+    """Every string literal this module asks `in`, `not in` or `.count` about."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare) and len(node.ops) == 1:
+            if isinstance(node.ops[0], (ast.In, ast.NotIn)):
+                yield node, node.left
+        elif isinstance(node, ast.Call) and node.args:
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "count":
+                yield node, node.args[0]
+
+
+def test_no_test_asks_a_page_for_a_tag_by_searching_its_text():
+    """`"<img" not in page` cannot answer the question it is written for.
+
+    Every page this app renders inlines its own stylesheet and its own scripts,
+    so a `<style>` or `<script>` block is part of the text of the page, and a
+    comment inside one that names the element it describes satisfies the search.
+    Measured on the seed corpus rather than argued: the record page's text holds
+    `<img` twice and `<pre>` once while drawing neither, `<textarea` fifteen
+    times while drawing one, and the table's text holds `<tr` eleven times for
+    one row element. A comment added to `styles.py` saying that a `<code>`
+    inside a `<pre>` is inline turned a deck test red for exactly this reason.
+
+    The second half is older and is `pages.elements`' own docstring: a substring
+    cannot tell markup from text, and five escaping bugs shipped here under tests
+    that searched a page for one. `"<h2>" in body` was in this suite while the
+    page it read drew five `<h2>` elements and contained the string once.
+
+    So the question goes to `pages.tags` or `pages.elements`, and this is the
+    tripwire that keeps the next one from being written. It reads the tests as
+    syntax rather than as text so that its own rule cannot match itself.
+    """
+    here = Path(__file__).parent
+    offenders = []
+    for path in sorted(here.glob("test_*.py")):
+        for node, operand in _string_operands(ast.parse(path.read_text())):
+            if not isinstance(operand, ast.Constant) or not isinstance(operand.value, str):
+                continue
+            if not _BARE_TAG.match(operand.value):
+                continue
+            if (path.name, operand.value) in _NOT_A_PAGE:
+                continue
+            offenders.append(f"{path.name}:{node.lineno}: {operand.value!r}")
+
+    assert not offenders, (
+        "a tag name searched for in a string — ask `pages.tags` or `pages.elements` "
+        "instead, or name it in `_NOT_A_PAGE` with the reason it is not a page:\n  "
+        + "\n  ".join(offenders)
     )
