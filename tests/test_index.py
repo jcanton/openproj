@@ -20,6 +20,7 @@ import pytest
 from openproj.index import (
     COMPUTED_PREDICATES,
     NO_VALUE,
+    CycleWindow,
     Index,
     _matches_predicate,
     apply_filters,
@@ -1735,6 +1736,50 @@ def test_the_build_end_a_predicate_uses_is_the_one_the_timeline_uses(seed_index:
     odd = Config(cycles={9: (date(2026, 1, 5), date(2026, 3, 1))}, cooldown_weeks=1.0)
     assert build_index([], odd, date(2026, 1, 5)).cooldown_weeks == 1.0
     assert isinstance(seed_index.plans.get(37), (Cycle, type(None)))
+
+
+def test_cycle_windows_is_the_one_place_the_three_dates_come_from(seed_index: Index):
+    """The timeline computed these itself and the calendar needs the same three.
+    An invariant written twice is guarded once."""
+    windows = seed_index.cycle_windows()
+
+    assert windows == sorted(windows, key=lambda w: w.number)
+    assert [w.number for w in windows] == sorted(seed_index.cycles)
+    for window in windows:
+        assert isinstance(window, CycleWindow)
+        opens, closes = seed_index.cycles[window.number]
+        assert window.opens == opens
+        assert window.closes == closes
+        assert opens <= window.builds_until <= closes
+        # The same date the predicates and the timeline are drawn against: two
+        # answers to "when does this cycle stop building" is one of them wrong.
+        assert window.builds_until == seed_index.build_end(window.number)
+
+
+def test_a_plan_that_has_dated_no_cycle_has_no_windows_rather_than_an_error(seed_root: Path):
+    """Empty must not look like broken. Every consumer degrades to a plain
+    calendar; none of them may meet an exception."""
+    records, config, _ = load_repo(seed_root)
+    config = config.model_copy(update={"cycles": {}, "plans": {}})
+    index = build_index(records, config, TODAY)
+
+    assert index.cycle_windows() == []
+
+
+def test_an_absurd_cooldown_costs_that_cycles_flag_and_not_every_page(seed_root: Path):
+    """`Index.build_end` was a bare `round(self.cooldown_weeks * 7)`, and
+    `round()` raises on infinity — so one number in one config file raised
+    inside `_matches_predicate` and took nine routes down. `schedule.build_end`
+    has always bounded before rounding; this is the second copy meeting the
+    guard the first one has."""
+    records, config, _ = load_repo(seed_root)
+    config = config.model_copy(update={"cooldown_weeks": float("inf")})
+    index = build_index(records, config, TODAY)
+    number = sorted(index.cycles)[0]
+    opens, _ = index.cycles[number]
+
+    assert index.build_end(number) == opens
+    assert all(w.builds_until >= w.opens for w in index.cycle_windows())
 
 
 def test_a_record_in_progress_with_nothing_linked_is_a_question_not_a_rule(seed_index: Index):

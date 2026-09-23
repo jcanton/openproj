@@ -14,7 +14,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Iterable
-from datetime import date, timedelta
+from datetime import date
+from typing import NamedTuple
 
 from pydantic import BaseModel, model_validator
 
@@ -39,7 +40,7 @@ from .model import (
     workers_on,
 )
 from .query import QueryError, evaluate, parse, plain
-from .schedule import Explanation, Span, schedule
+from .schedule import Explanation, Span, build_end, schedule
 
 COMPUTED_PREDICATES = (
     "blocked",
@@ -203,6 +204,22 @@ def _progress_of(
         return None
     ticked, items = checklist(record.body)
     return Progress(done=ticked, total=items, unit="items") if items else None
+
+
+class CycleWindow(NamedTuple):
+    """A cycle's three dates, which is all any drawing of one needs.
+
+    The timeline worked these out inside its own band loop and immediately threw
+    the dates away for pixels; the calendar needs the same three and no pixels.
+    Written once here rather than twice there, because the copy that stayed in
+    `Index.build_end` had already drifted — it was missing both guards the
+    scheduler's copy has.
+    """
+
+    number: int
+    opens: date
+    builds_until: date
+    closes: date
 
 
 class Index(BaseModel):
@@ -414,21 +431,50 @@ class Index(BaseModel):
         return began <= window[1] and self.today >= window[0]
 
     def build_end(self, cycle: int | None) -> date | None:
-        """The last day of a cycle's build.
+        """The last day of a cycle's build, through the scheduler's own function.
 
         From the record where there is one — `with_plans` fills `builds_until` in
         from the two meeting dates — and otherwise from the window less the
         cool-down. Asked through the index rather than by rebuilding a `Config`,
         which would substitute the default cool-down for the repository's own and
         leave a filter quietly disagreeing with the timeline it explains.
+
+        This used to repeat the arithmetic — `window[1] - timedelta(days=round(
+        self.cooldown_weeks * 7))` — and repeating it meant repeating it without
+        the two guards `schedule.build_end` carries: `days_after`, which bounds
+        before it rounds because `round()` raises on infinity, and the clamp that
+        stops a cool-down longer than the window putting the end of build before
+        the start of it. A `cooldown_weeks` of `.inf` in one config file was nine
+        routes down, from one number.
         """
         window = self.cycles.get(cycle) if cycle is not None else None
-        if window is None:
+        if window is None or cycle is None:
             return None
-        plan = self.plans.get(cycle)
-        if plan is not None and plan.builds_until is not None:
-            return plan.builds_until
-        return window[1] - timedelta(days=round(self.cooldown_weeks * 7))
+        return build_end(cycle, window, self._config())
+
+    def _config(self) -> Config:
+        """The narrow Config the scheduler's date functions ask for.
+
+        Built from what the index carries rather than passed in, for the reason
+        the windows are carried at all: a renderer is handed an index and never a
+        Config, and a rebuilt one-field Config substitutes the default cool-down
+        for the repository's own — which leaves a filter quietly disagreeing with
+        the timeline that explains it.
+        """
+        return Config(cooldown_weeks=self.cooldown_weeks, plans=self.plans)
+
+    def cycle_windows(self) -> list[CycleWindow]:
+        """Every dated cycle, as the three dates a drawing of one needs.
+
+        Unclamped: the timeline clips to its own window and the calendar shows
+        whatever month a reader is on, and a helper that clipped for one of them
+        would be wrong for the other.
+        """
+        config = self._config()
+        return [
+            CycleWindow(number, opens, build_end(number, (opens, closes), config), closes)
+            for number, (opens, closes) in sorted(self.cycles.items())
+        ]
 
     def load(self, cycle: int) -> dict[str, float]:
         """Person-weeks each person is holding in this cycle.

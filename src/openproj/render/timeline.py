@@ -5,8 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 from ..index import Index
-from ..model import RUNG, Config, days_after, size_weeks
-from ..schedule import build_end
+from ..model import RUNG, days_after, size_weeks
 from .controls import _FILTER_JS, _facets_html, _summary_html
 from .env import _compiled, _fragment
 from .pop import _POP_STYLE, _pop_js
@@ -302,21 +301,26 @@ def _timeline(
             "tip": why,
         }
     cycles = []
-    config = Config(cooldown_weeks=index.cooldown_weeks, plans=index.plans)
-    for number, (opens, closes) in sorted(index.cycles.items()):
+    # Where building stops is `Index.cycle_windows`, not worked out here. It is
+    # the date an overrun is measured against (`schedule._overrun`), and the
+    # chart used to draw its only rule at the end of the *window* — two weeks of
+    # cool-down further right, so a bar could finish visibly before the line and
+    # still be flagged amber. The calendar draws the same three dates, and an
+    # invariant written twice is guarded once: the copy that lived on `Index`
+    # had already lost both of the scheduler's guards.
+    for number, opens, builds_until, closes in index.cycle_windows():
         if closes < origin or opens > last:
             continue
         left = x(max(opens, origin))
-        # Where building stops. This is the date an overrun is measured against
-        # (`schedule._overrun`), and the chart used to draw its only rule at the
-        # end of the *window* — two weeks of cool-down further right. A bar could
-        # finish visibly before the line and still be flagged amber, which is the
-        # kind of contradiction that ends a timeline's credit with a room.
-        builds_until = build_end(number, (opens, closes), config)
         cycles.append(
             {
                 "number": number,
                 "label": f"cycle {number}",
+                # Which of the two tints this band wears. Adjacent cycles
+                # alternate so that two running up against each other read as two
+                # things; the parity is the cycle's own number, so a band does not
+                # change colour when the window scrolls past the cycle before it.
+                "tint": "alt" if number % 2 else "main",
                 "x": left,
                 "width": round(max(1.0, x(min(closes, last), 1) - left), 1),
                 "build_x": x(builds_until) if origin <= builds_until <= last else None,
