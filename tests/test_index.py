@@ -17,6 +17,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+from pages import elements
 
 from openproj.index import (
     COMPUTED_PREDICATES,
@@ -1816,6 +1817,92 @@ def test_an_absurd_cooldown_costs_that_cycles_flag_and_not_every_page(
 
     undated = _proposed(index, max(index.cycles) + 1, None)
     assert undated.ends_on >= undated.builds_until
+
+
+def test_an_absurd_appetite_draws_a_full_bar_and_not_a_500_on_three_pages(
+    seed_root: Path, tmp_path: Path
+):
+    """The same question as the cool-down above, asked of the other number a
+    person types — and it had the same answer on three more routes.
+
+    `person_weeks` is a float in a record file, and a load bar is
+    `min(100, round(100 * held / capacity))`. `round()` raises on infinity, so
+    one `person_weeks: .inf` in one committed task made /people, /cycles and
+    /cycle/<its cycle> answer 500 — permanently, on a protected branch, off a
+    file that parses, validates and loads without a word. `openproj check`
+    reported the same blocker and warning counts as a clean corpus and never
+    mentioned the file; `openproj render` died with a traceback after writing
+    some of the pages and not the rest.
+
+    Three copies of the expression, so nothing guarded it: the cycle page's
+    roster, the cycles index's card and the people page's per-cycle load each
+    wrote it out. `_percent` is the one copy, and it bounds before it rounds,
+    which is the order `days_after` and `within_the_calendar` (`model.py`)
+    already settled on for the same reason.
+
+    Entered where a person's commit enters it — the number goes into the file
+    and `load_repo` reads it — for the reason the cool-down test gives: a fixture
+    edited after the load is a fixture that never crosses the path the defect
+    lives on. It renders rather than asking `_percent` directly, because a helper
+    that answers correctly while two of the three call sites still spell the
+    arithmetic out is exactly the state this defect was already in.
+
+    Beside the cool-down test rather than in the render suite, because what is
+    pinned is one number against every page that divides by something, and a
+    page tested in another file is the page that gets the guard last.
+
+    The bar is full and not empty. A ratio nobody can read is drawn as "as much
+    as it can hold", the same direction `_cycle_totals` keeps its own sum in: a
+    bar drawn empty is a cycle that looks free to bet into.
+    """
+    from openproj.render import render_cycle, render_cycles, render_people
+
+    root = tmp_path / "plan"
+    shutil.copytree(seed_root, root)
+    bet = root / "tasks" / "task-6a5c02--lower-the-scan-operator.md"
+    bet.write_text(bet.read_text().replace("person_weeks: 1.5", "person_weeks: .inf"))
+
+    records, config, unreadable = load_repo(root)
+
+    # The file is a record and stays one. The defect is downstream of every
+    # gate there is, which is why nothing upstream is allowed to notice it here.
+    assert unreadable == []
+    assert len(records) == len(load_repo(seed_root)[0])
+
+    dated = build_index(records, config, TODAY)
+    holder = dated.plan["task-6a5c02"].assignees[0]
+    cycle = cycle_of(dated.plan["task-6a5c02"], dated.plan)
+
+    # Built a second time, for a day inside the cycle the bet is in. The people
+    # page draws a load bar only for somebody on the CURRENT cycle's roster, and
+    # the module's TODAY sits in the cycle before this one — so at that date the
+    # page has no bar to get wrong and the test would pass over the site it is
+    # here for. Read off the window rather than written down, because a date
+    # typed in beside a corpus that is allowed to grow is a date that stops
+    # meaning "during the bet".
+    opens, closes = dated.cycles[cycle]
+    index = build_index(records, config, opens + (closes - opens) / 2)
+    assert index.load(cycle)[holder] == float("inf")
+
+    pages = {
+        "people": render_people(index),
+        "cycles": render_cycles(index),
+        f"cycle/{cycle}": render_cycle(index, cycle),
+    }
+
+    # Every width a bar is given, off the parsed document rather than out of the
+    # page's characters: the stylesheet is inlined into all three of these, and
+    # `width: 100%` is a string it contains whatever the data says.
+    for name, page in pages.items():
+        widths = [
+            element.attrs["style"]
+            for element in elements(page)
+            if element.attrs.get("style", "").startswith("width:")
+        ]
+        assert widths, f"{name} drew no bar at all"
+        drawn = [float(width.removeprefix("width:").removesuffix("%").strip()) for width in widths]
+        assert all(0 <= one <= 100 for one in drawn), f"{name}: {widths}"
+        assert 100 in drawn, f"{name} drew nothing full for a bet of infinite weeks"
 
 
 def test_a_record_in_progress_with_nothing_linked_is_a_question_not_a_rule(seed_index: Index):

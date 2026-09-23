@@ -32,6 +32,37 @@ from .tokens import PRIORITIES, STATUSES
 _DEFAULT_CYCLE_DAYS = 28
 
 
+def _percent(part: float, whole: float) -> int:
+    """`part` of `whole` as a whole percent from 0 to 100, for a bar's width.
+
+    Written once because it was written three times — the cycle page, the cycles
+    index and the people page each carried `min(100, round(100 * x / capacity))`,
+    and all three raised. An invariant written three times is guarded in none of
+    them: `person_weeks: .inf` in one hand-committed task file made the ratio
+    infinite, `round()` raises OverflowError on infinity, and /people, /cycles and
+    /cycle/37 all answered 500 off a file `openproj check` reported nothing about.
+
+    The bound goes BEFORE the round, which is the whole of the fix and the same
+    order `days_after` and `within_the_calendar` (`model.py`) settled on. The two
+    ends were already the right ones — a bar cannot be wider than full or
+    narrower than empty — they were just applied to an integer that could no
+    longer be made.
+
+    The constants come first in both comparisons because NaN loses every one of
+    them, exactly as `within_the_calendar` does it: `min(100.0, nan)` is 100.0
+    and `min(nan, 100.0)` is the NaN, which rounds no better than the infinity
+    did. NaN is reachable here and not hypothetical — an `availability` of `.inf`
+    makes the capacity infinite too, and inf/inf is NaN.
+
+    So an unreadable ratio draws a full bar rather than an empty one. That is the
+    direction this number must never be wrong in: the cycles index says so about
+    its own sum, and a bar drawn empty is a cycle that looks free to bet into.
+    """
+    if not whole:
+        return 0
+    return round(max(0.0, min(100.0, 100 * part / whole)))
+
+
 _CYCLE = """
 {#- The same header the detail page and the create form wear: a way back, then
     the name, then the meta line. `.back` and not `.editbar` — this is one link
@@ -2360,9 +2391,7 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
                 "capacity": capacity,
                 "held": held.get(login, 0.0),
                 "over": capacity and held.get(login, 0.0) > capacity,
-                "percent": min(100, round(100 * held.get(login, 0.0) / capacity))
-                if capacity
-                else 0,
+                "percent": _percent(held.get(login, 0.0), capacity),
                 "unsized": len(unsized.get(login, [])),
                 "until": max(mine).isoformat() if mine else "—",
             }
@@ -2624,7 +2653,7 @@ def _cycle_totals(index: Index, number: int) -> dict:
         "bet": bet,
         "unsized": len(unsized),
         "capacity": capacity,
-        "percent": min(100, round(100 * bet / capacity)) if capacity else 0,
+        "percent": _percent(bet, capacity),
         "over": bool(capacity) and bet > capacity,
     }
 
@@ -2744,7 +2773,7 @@ def _person_load(index: Index, logins: list[str]) -> dict:
             "unsized": len(missing.get(login, [])),
             "capacity": capacity,
             "over": bool(capacity) and held > capacity,
-            "percent": min(100, round(100 * held / capacity)) if capacity else 0,
+            "percent": _percent(held, capacity),
             "elsewhere": elsewhere.get(login, 0.0),
         }
     return {"cycle": number, "recorded": plan is not None, "people": people}
