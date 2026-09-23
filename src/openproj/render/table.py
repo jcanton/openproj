@@ -1562,9 +1562,9 @@ popServes({
   // The re-read and not an `Object.assign` of the fields that were sent. Status
   // and owner are two of the things this page cannot work out the consequences
   // of: a status moves the problems, the predicates the facets filter by and the
-  // progress rollup of everything above it, an owner moves the `unowned` mark
-  // and the schedule that follows from staffing, and `parent` moves all of that
-  // plus the row's cycle and dates. `refreshRows` asks `/api/table.json` — the
+  // progress rollup of everything above it, an owner moves the problems the
+  // readiness rules raise about who answers and who reviews, and `parent`
+  // moves all of that plus the row's cycle and dates. `refreshRows` asks `/api/table.json` — the
   // very payload this page was rendered from — and regroups the problems and
   // resummarises inside itself, so `refreshProblems` beside it would be a second
   // read of a fact that has already arrived.

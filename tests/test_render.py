@@ -1697,11 +1697,19 @@ def test_the_pages_that_add_weeks_up_say_how_many_they_could_not_count():
             title="Bet and sized",
             status="ready",
             owner="ann",
+            assignees=["ann"],
             cycle=37,
             person_weeks=3.0,
         ),
         *[
-            Pitch(id=f"pitch-00000{n}", kind="pitch", title="Shaping", owner="ann", cycle=37)
+            Pitch(
+                id=f"pitch-00000{n}",
+                kind="pitch",
+                title="Shaping",
+                owner="ann",
+                assignees=["ann"],
+                cycle=37,
+            )
             for n in (2, 3)
         ],
     ]
@@ -7834,6 +7842,7 @@ def test_a_task_filed_under_a_project_gets_a_tick_of_its_own():
             title="A chore nobody shaped",
             parent="proj-a00001",
             owner="ann",
+            assignees=["ann"],
             person_weeks=4.0,
             cycle=37,
             status="ready",
@@ -7844,6 +7853,7 @@ def test_a_task_filed_under_a_project_gets_a_tick_of_its_own():
             title="A shaped bet",
             parent="proj-a00001",
             owner="ann",
+            assignees=["ann"],
             person_weeks=4.0,
             cycle=37,
             status="ready",
@@ -7854,6 +7864,7 @@ def test_a_task_filed_under_a_project_gets_a_tick_of_its_own():
             title="Part of the shaped bet",
             parent="pitch-b00001",
             owner="ann",
+            assignees=["ann"],
             person_weeks=2.0,
             status="ready",
         ),
