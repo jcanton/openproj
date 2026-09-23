@@ -406,6 +406,19 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
      Amber rather than red for the same reason — being blocked is normal. */
   --waiting: #fdf0dd;
   --band: #c3d6de;
+  /* The second tint, worn by the cycle beside this one on the timeline and in
+     the calendar's grid. Two tints of ONE ink and not two hues: hue is the
+     channel a dichromat loses, which is why the status fills are a luminance
+     ladder rather than five colours, and fifteen cycles in fifteen colours is
+     that same mistake at fifteen times the size. The only question a reader
+     asks of two bands running up against each other is whether they are one
+     thing or two, and a second tint answers exactly that and nothing more. */
+  --band-alt: #d3e2e8;
+  /* The edge on the day a cycle opens and the day it closes. A band one tint
+     away from its neighbour is not a boundary on a monochrome screen, and the
+     two dates that are facts rather than tints deserve a channel that survives
+     one. */
+  --band-edge: #7ea3b0;
   /* Where the pointer is, on a table wide enough to lose your place in.
      **Translucent, and that is the whole design.** Every other tint here is an
      opaque colour because it is the cell's ground and stands for something — a
@@ -486,6 +499,11 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
     --pri-high: #e08a5a; --pri-very-high: #e0796a;
     --waiting: #34291a;
     --band: #2a3941;
+    /* Darker than `--band` here and lighter than it in the light theme: in both,
+       the alternate tint is the one nearer the page's own ground, so the cycle
+       you are pointing at is the one that stands further off it. */
+    --band-alt: #223037;
+    --band-edge: #5d7a85;
   }
 }
 :root[data-theme="dark"] {
@@ -515,6 +533,11 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
   --sev-warn: #d9a557; --sev-warn-soft: #332409;
   --drop: #1e3a2b;
   --band: #2a3941;
+  /* The same two values as the media query above, and they have to be: a reader
+     who never touches the toggle matches only that block, and a reader who has
+     chosen dark matches only this one. */
+  --band-alt: #223037;
+  --band-edge: #5d7a85;
   --pri-very-low: #6fc095; --pri-low: #8fc772; --pri-medium: #d9a557;
   --pri-high: #e08a5a; --pri-very-high: #e0796a;
   --waiting: #34291a;
@@ -563,6 +586,12 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
   --sev-warn-soft: color-mix(in oklab, var(--base09) 14%, var(--bg));
   --drop: color-mix(in oklab, var(--base0B) 18%, var(--bg));
   --band: color-mix(in oklab, var(--base0C) 30%, var(--bg));
+  /* One ink, three strengths. Derived from the same base0C the band is, so a
+     scheme that moves the band moves its neighbour and its edge with it — three
+     hand-picked values here would be three that can disagree with each other in
+     twenty palettes at once. */
+  --band-alt: color-mix(in oklab, var(--base0C) 18%, var(--bg));
+  --band-edge: color-mix(in oklab, var(--base0C) 65%, var(--bg));
   --waiting: color-mix(in oklab, var(--base09) 18%, var(--bg));
   /* The ladder the meter counts: green, green-yellow, yellow, orange, red. `low`
      is a mix because the format has no slot between green and yellow, and five
