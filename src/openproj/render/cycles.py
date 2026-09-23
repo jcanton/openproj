@@ -18,6 +18,7 @@ from ..model import (
 )
 from ..query import plain
 from ..schedule import build_end
+from .calendar import _CALENDAR_STYLE, _calendar_js
 from .controls import _FILTER_JS, _combobox_html, _cycle_numbers, _facets_html
 from .env import _compiled
 from .icons import _ICON_ART, ICONS, icon_svg
@@ -1184,6 +1185,10 @@ for (const head of BETS.querySelectorAll('th[data-sort]')) {
 }
 </script>
 {% endif %}
+{#- The setup form's two date boxes are drawn on this page in BOTH modes —
+    there is no reading/editing toggle here — so the calendar is not gated on
+    `editable` the way the record page's and the table's are. -#}
+{{ calendar }}
 """
 
 _CYCLE_STYLE = (
@@ -1600,6 +1605,9 @@ document.getElementById('yes').onclick = async () => {
 };
 </script>
 {% endif %}
+{#- Only the create form has a date box, and it is inside the `{% if editable %}`
+    above; the gate is at `calendar=`, where the reason is. -#}
+{{ calendar }}
 """
 
 _PEOPLE = """
@@ -2579,11 +2587,19 @@ def render_cycle(
         statuses=STATUSES,
         priorities=PRIORITIES,
         combobox=_combobox_html(index, live=base_commit is not None),
+        # Ungated, unlike the record page's and the table's: `#setup` draws its
+        # two date boxes whatever `base_commit` is — this page has no
+        # reading/editing toggle — so a reader has the boxes and would otherwise
+        # have no popup on them. The cycle page is not in the static export, so
+        # nothing carries these bytes to a memory stick either way.
+        calendar=_calendar_js(index),
     )
     return _page(
         f"openproj — cycle {number}",
         body,
-        _DETAIL_STYLE + _CYCLE_STYLE + _SUGGEST_STYLE,
+        # Last, because the calendar's cell rules win their ties on source order
+        # — see the ladder comment in `calendar.py`.
+        _DETAIL_STYLE + _CYCLE_STYLE + _SUGGEST_STYLE + _CALENDAR_STYLE,
         links,
         # `/cycle/37` is not `/cycles`, and one cycle is what the Cycles listing is
         # a listing of — so the item that got you here is the item that stays lit.
@@ -2678,10 +2694,14 @@ def render_cycles(index: Index, links: Links = STATIC, base_commit: str | None =
     decided = set(index.plans) | set(index.cycles)
     top = max(decided) if decided else 0
     ends = index.cycles.get(top)
+    # Asked once, because it now decides the create form, the calendar and the
+    # calendar's sheet rather than only the first — the same reason `render_table`
+    # gives for hoisting its own.
+    editable = base_commit is not None
     body = _compiled(_CYCLES).render(
         cycles=rows,
         links=links,
-        editable=base_commit is not None,
+        editable=editable,
         base_commit=base_commit or "",
         # Whether there is a page per cycle to link a card to. Only the server
         # serves one; `render_static` writes six files and no cycle is among
@@ -2715,11 +2735,17 @@ def render_cycles(index: Index, links: Links = STATIC, base_commit: str | None =
             else {},
         },
         roster=last.availability if last else {},
+        # Only the "Start a cycle" form has a date box and it is inside the
+        # template's `{% if editable %}`, so the listing a reader gets — and the
+        # `cycles.html` the static export writes — has none and is not asked to
+        # carry 60 KB of picker.
+        calendar=_calendar_js(index) if editable else Markup(""),
     )
     return _page(
         "openproj — cycles",
         body,
-        _DETAIL_STYLE + _CYCLE_STYLE,
+        # Last, for the tie-on-order reason in `calendar.py`'s ladder comment.
+        _DETAIL_STYLE + _CYCLE_STYLE + (_CALENDAR_STYLE if editable else ""),
         links,
         "cycles",
         index.unreadable,

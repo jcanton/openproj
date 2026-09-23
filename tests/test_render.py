@@ -227,7 +227,7 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(
     inlined = sorted(
         path.name for path in static.iterdir() if path.suffix == ".js" and path.name not in FETCHED
     )
-    assert len(inlined) == 4, inlined
+    assert len(inlined) == 5, inlined
 
     # **"Exactly once, into the page that uses it" — which is not the same claim
     # as "exactly once, into the graph".** It was, when every vendored script was
@@ -237,13 +237,23 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(
     # named beside the files, and a file nobody claims fails the last line rather
     # than passing quietly.
     editing = editable_page(seed_index, editor="ace")[1]
+    # **`datepicker.min.js` is the first vendored script that belongs to more
+    # than one page.** Every page with a date field inlines it — the record page
+    # and the create form, the table, both cycle pages and the timeline — so
+    # "the page that uses it" names the editing surface here, and the graph
+    # stays the counter-example it already was: a graph has no date field
+    # anywhere on it, and neither has `/help` or `/people`. Which pages carry it
+    # and which must not is asked properly in `tests/test_calendar.py`; what
+    # this line is for is the older claim beside it, that the bytes are inlined
+    # ONCE into the page that has them.
+    ON_AN_EDITING_PAGE = ("ace.js", "keybinding-vim.js", "datepicker.min.js")
     for name in inlined:
         # 200 and not 120: two of these are webpack bundles whose first 120
         # characters are the same UMD preamble, so the shorter signature found
         # each of them twice and called one of them a defect. Same length as the
         # sibling check in test_injection.py, which is where that was learnt.
         signature = (static / name).read_text(encoding="utf-8")[:200]
-        wanted = editing if name in ("ace.js", "keybinding-vim.js") else graph
+        wanted = editing if name in ON_AN_EDITING_PAGE else graph
         other = graph if wanted is editing else editing
         assert wanted.count(signature) == 1, name
         assert other.count(signature) == 0, f"{name} is in a page that does not use it"

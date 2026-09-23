@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import date
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -19,9 +20,22 @@ from cascade import El, Sheet, el
 import openproj.render.calendar as calendar_module
 from openproj.index import Index, build_index
 from openproj.model import load_repo
+from openproj.render import (
+    ROUTES,
+    render_cycle,
+    render_cycles,
+    render_detail,
+    render_graph,
+    render_help,
+    render_people,
+    render_records,
+    render_static,
+    render_table,
+    render_timeline,
+)
 from openproj.render.calendar import _calendar_js
 from openproj.vendor import _static_dir
-from tests.pages import render_paths, tags
+from tests.pages import elements, render_paths, tags
 
 # The corpus's own today, which `cycle_windows` does not read: a cycle's three
 # dates come from `config.cycles` and the cool-down and from nothing else, so
@@ -1174,3 +1188,359 @@ def test_a_plan_with_no_dated_cycle_gets_a_calendar_and_no_chip_row(
     assert found["days"] == 42, "the grid did not draw"
     assert found["banded"] == 0
     assert found["rows"] == 0, "an empty chip row was drawn"
+
+
+# --------------------------------------------------------------------------- #
+# On the pages
+# --------------------------------------------------------------------------- #
+#
+# The widget is imported by the pages that want it, not carried by the shell —
+# the same shape `_FILTER_JS`, `_REQUIRED_JS` and the combobox already have, and
+# the same reason `pop.py` gives for its own: `shell.py` ships on all twelve
+# pages, and two of them — `/help` and `/people` — have no date field anywhere
+# on them. Measured on the frozen corpus, the block is 53 KB of script and 7 KB
+# of stylesheet.
+
+
+def _sheet_of_everything(page: str) -> Sheet:
+    """Every `<style>` block a page serves, concatenated in document order.
+
+    `cascade.sheet_of` reads the first one, which is the shell's and holds the
+    page's own sheet inlined into it. That is the whole sheet on nine of the
+    eleven pages and not on the record page, which appends Ace's look and the
+    editing surface's after it — and later is exactly what wins a tie. The
+    calendar's cell rules are written to win theirs on source order, so a
+    question about them has to see everything written after them.
+    """
+    return Sheet("\n".join(re.findall(r"<style>(.*?)</style>", page, re.S)))
+
+
+class _Chain(HTMLParser):
+    """The open elements above the first `<input type="date">` on a page."""
+
+    VOID = frozenset("area base br col embed hr img input link meta source track wbr".split())
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._open: list[El] = []
+        self.found: list[El] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        got = {k: v or "" for k, v in attrs}
+        if tag == "input" and got.get("type") == "date" and self.found is None:
+            self.found = list(self._open)
+        if tag not in self.VOID:
+            self._open.append(
+                el(tag, got.get("class", ""), got.get("id", ""))
+            )
+
+    def handle_endtag(self, tag: str) -> None:
+        for depth in range(len(self._open) - 1, -1, -1):
+            if self._open[depth].tag == tag:
+                del self._open[depth:]
+                return
+
+
+def _where_the_box_is(page: str) -> list[El]:
+    """The real ancestry of a date box on a rendered page, parsed off it.
+
+    The library inserts the popup with `inputField.after()`, so a day cell's
+    ancestors are these elements and then `.datepicker > .datepicker-picker >
+    .datepicker-grid`. Derived and not typed out, because it is the part that
+    moves: the record page's box sits in `form#edit > .panes > aside.facts >
+    dl#facts > dd`, and every one of those is a name some other stylesheet on
+    the page selects on.
+    """
+    parser = _Chain()
+    parser.feed(page)
+    assert parser.found is not None, "this page draws no date box to hang a popup off"
+    return parser.found
+
+
+def _boxes_in(page: str) -> list[str]:
+    """The id of every `<input type="date">` the markup really holds.
+
+    Parsed and not searched for: `type="date"` appears in the prose of
+    `table.py`'s own stylesheet, in `calendar.py`'s selectors and in four
+    comments, all of which ship inside the page.
+    """
+    return [
+        one.attrs.get("id", "")
+        for one in elements(page)
+        if one.tag == "input" and one.attrs.get("type") == "date"
+    ]
+
+
+@pytest.fixture
+def surfaces(seed_index: Index) -> dict[str, tuple[str, bool]]:
+    """Every page, in both modes, beside whether a date box can appear on it.
+
+    The second half of each pair is the rule and not a recording: a page earns
+    the calendar by having somewhere for a date box to be, and it is written
+    down here per page because for one of them — the table — it is not a
+    question the rendered markup can answer.
+    """
+    head = "0123456789abcdef0123456789abcdef01234567"
+    one = sorted(seed_index.plan)[0]
+    number = max(seed_index.cycles)
+    return {
+        # The record page and the create form: `_control_html` draws a date as
+        # text for a reader, so the read-only page — which is what the export
+        # writes to `detail.html` — holds no box at all.
+        "record": (render_detail(seed_index, ROUTES, only=one, base_commit=head), True),
+        "new": (render_detail(seed_index, ROUTES, base_commit=head, creating="task"), True),
+        "record (reader)": (render_detail(seed_index, ROUTES, only=one), False),
+        # **The table serves no date box in its markup and still needs the
+        # widget.** Every cell is drawn by `draw()` and the box is built by
+        # `openEditor` when one is opened, so a rule written as "the document
+        # holds an `input[type=date]`" would have taken the calendar off the one
+        # page that makes date boxes for a living. The gate is `editable`, which
+        # is what the cell editor is behind.
+        "table": (render_table(seed_index, ROUTES, base_commit=head, may_write=True), True),
+        "table (reader)": (render_table(seed_index, ROUTES, base_commit=head), False),
+        # The cycle page draws `#setup` in both modes — it has no reading/editing
+        # toggle — so a reader has the two boxes and gets the popup on them.
+        "cycle": (render_cycle(seed_index, number, ROUTES, base_commit=head), True),
+        "cycle (reader)": (render_cycle(seed_index, number, ROUTES), True),
+        # The listing's two boxes are in "Start a cycle", which is inside the
+        # template's `{% if editable %}`.
+        "cycles": (render_cycles(seed_index, ROUTES, base_commit=head), True),
+        "cycles (reader)": (render_cycles(seed_index, ROUTES), False),
+        # `#tl-from` and `#tl-to` say which slice of the calendar is drawn, which
+        # is a question a reader asks too. The one exported page with a date box.
+        "timeline": (render_timeline(seed_index, ROUTES), True),
+        # The four with no date field anywhere on them, in the mode that carries
+        # the most: a page that grew 60 KB for a control it does not have would
+        # otherwise grow it quietly.
+        "graph": (render_graph(seed_index, ROUTES, base_commit=head, may_write=True), False),
+        "records": (render_records(seed_index, ROUTES), False),
+        "people": (render_people(seed_index, ROUTES, editable=True), False),
+        "help": (render_help(seed_index, ROUTES), False),
+    }
+
+
+def test_a_page_carries_the_calendar_exactly_where_a_date_box_can_appear(
+    surfaces: dict[str, tuple[str, bool]],
+):
+    """Both halves, because they are two edits in two files.
+
+    The script is a template slot and the stylesheet is a `+` in the `_page`
+    call, so a page can be given one without the other — and a page with the
+    glue and no sheet is a popup drawn as a column of unstyled text over the
+    form, while a page with the sheet and no glue is 7 KB nothing will ever
+    match. The sheet is asked of the cascade rather than of a substring:
+    `datepicker` is a word in the bundle, in this module's prose and in the
+    licence notice, all of which ship inside the page.
+    """
+    for name, (page, wanted) in surfaces.items():
+        sheet = _sheet_of_everything(page)
+        glue = "const CYCLE_WINDOWS = " in page
+        painted = sheet.winner(day("cyc"), "background") is not None
+        assert glue is wanted, f"{name}: script {'present' if glue else 'missing'}"
+        assert painted is wanted, f"{name}: stylesheet {'present' if painted else 'missing'}"
+        # And the derived half, which cannot go stale: whatever the table above
+        # says, a page that really does draw a date box needs the popup on it.
+        if _boxes_in(page):
+            assert glue, f"{name} draws {_boxes_in(page)} and carries no calendar"
+
+
+def test_the_export_carries_the_calendar_on_the_one_page_that_has_a_date_box(
+    seed_index: Index, tmp_path: Path
+):
+    """`render_static` renders these same templates with no server at all, and
+    every one of them with `base_commit=None`.
+
+    So the export is not "the served pages minus the routes": it is the reader's
+    mode of each, where the record page and the table draw their dates as text
+    and the listing has no create form. `timeline.html` is the only exported
+    page with a date box in it, because the window controls are a reader's
+    controls. A second page appearing here is 60 KB in a directory somebody
+    mails, and it would arrive silently.
+    """
+    render_static(seed_index, tmp_path)
+    carried = {
+        path.name
+        for path in sorted(tmp_path.glob("*.html"))
+        if "const CYCLE_WINDOWS = " in path.read_text(encoding="utf-8")
+    }
+    assert carried == {"timeline.html"}
+    for path in sorted(tmp_path.glob("*.html")):
+        page = path.read_text(encoding="utf-8")
+        if _boxes_in(page):
+            assert path.name in carried, f"{path.name} draws a date box and carries no calendar"
+
+
+# The cells whose ground the sheet decides, and the rule that has to decide it.
+# The same five the isolated resolution above asks about, because the claim here
+# is not that the ladder is right — that is settled — but that nothing a real
+# page brings with it gets in front of the answer.
+_ON_A_REAL_PAGE = [
+    ("an even cycle", "cyc", ".datepicker-cell.cyc"),
+    ("an odd cycle", "cyc cyc-alt", ".datepicker-cell.cyc-alt"),
+    ("a cool-down", "cyc cyc-cool", ".datepicker-cell.cyc-cool"),
+    ("an odd cool-down", "cyc cyc-alt cyc-cool", ".datepicker-cell.cyc-alt.cyc-cool"),
+    ("the selected day", "cyc cyc-alt cyc-cool selected", ".datepicker-cell.selected.cyc-cool"),
+]
+
+
+def test_the_calendars_cells_still_win_against_the_page_they_were_put_on(
+    surfaces: dict[str, tuple[str, bool]],
+):
+    """A page carrying the widget is a page whose cascade is no longer this
+    sheet in isolation.
+
+    The muting at the top of `_CALENDAR_STYLE` was deliberately weakened to
+    (0,2,0) so that the `.selected` block below it could take the tie on order.
+    Three of the five band fills are (0,2,0) as well. A rule that wins on order
+    alone wins only against what is written before it — and five stylesheets are
+    now written before it, plus the shell's, on pages whose date boxes sit
+    inside `dl#facts`, `p.editbar`, `form.tl-controls` and `td.edit`.
+
+    So the resolution is asked again with the page's own ancestry above the
+    popup and every rule the page serves in the sheet, and it is asked of the
+    cells, the chip row and the header's buttons — the three places the widget
+    borrows a class name (`.button`, `button`, `.day`) that these pages already
+    use for something else.
+    """
+    for name, (page, wanted) in surfaces.items():
+        if not wanted or not _boxes_in(page):
+            continue
+        sheet = _sheet_of_everything(page)
+        above = _where_the_box_is(page)
+        for what, classes, selector in _ON_A_REAL_PAGE:
+            path = above + day(classes)
+            won, value = decided_by(sheet, path, "background")
+            assert won == selector, (
+                f"{name}: {what} is grounded by `{won} {{ background: {value} }}`,\n"
+                f"not by the calendar's own `{selector}`. Everything reaching it:\n"
+                + losers(sheet, path, "background")
+            )
+        # The chip row's controls are bare `<button>`s inside a form on four of
+        # these five pages, and `#setup button`, `.editbar button` and
+        # `.tl-controls .acts button` are all rules that exist.
+        chips = above + [
+            el("div", "datepicker"),
+            el("div", "datepicker-picker"),
+            el("div", "cyc-chips"),
+            el("button"),
+        ]
+        won, value = decided_by(sheet, chips, "background")
+        assert won == ".cyc-chips button", (
+            f"{name}: a chip is grounded by `{won} {{ background: {value} }}`\n"
+            + losers(sheet, chips, "background")
+        )
+        # And the month arrows, which the library gives the class every primary
+        # control on these pages already wears.
+        arrow = above + [
+            el("div", "datepicker"),
+            el("div", "datepicker-picker"),
+            el("div", "datepicker-header"),
+            el("div", "datepicker-controls"),
+            el("button", "button prev-btn"),
+        ]
+        won, value = decided_by(sheet, arrow, "background")
+        assert won == ".datepicker-controls .button", (
+            f"{name}: a month arrow is grounded by `{won} {{ background: {value} }}`\n"
+            + losers(sheet, arrow, "background")
+        )
+
+
+# The five grounds and the spill-over's ink, forced onto a cell the library
+# really built rather than onto a div made here — the classes are ours, the
+# element and its place in the popup are the library's.
+_PAINTED = """
+  const box = document.querySelector('input[type="date"]');
+  openCalendar(box);
+  const cells = [...document.querySelectorAll('.datepicker-grid .datepicker-cell.day')];
+  const paint = (classes) => {
+    const cell = cells[10];
+    const was = cell.className;
+    cell.className = 'datepicker-cell day ' + classes;
+    const seen = [getComputedStyle(cell).backgroundColor, getComputedStyle(cell).color];
+    cell.className = was;
+    return seen;
+  };
+  const root = getComputedStyle(document.documentElement);
+  return {
+    accent: root.getPropertyValue('--accent').trim(),
+    onAccent: root.getPropertyValue('--on-accent').trim(),
+    grounds: {
+      cyc: paint('cyc'),
+      alt: paint('cyc cyc-alt'),
+      cool: paint('cyc cyc-cool'),
+      altcool: paint('cyc cyc-alt cyc-cool'),
+      selected: paint('cyc cyc-alt cyc-cool selected'),
+      spill: paint('next'),
+    },
+  };
+"""
+
+
+def _hex(value: str) -> str:
+    """`rgb(15, 92, 107)` as `#0f5c6b`, so a painted pixel can be compared with
+    the token it is meant to be."""
+    numbers = re.findall(r"\d+", value)
+    return "#" + "".join(f"{int(one):02x}" for one in numbers[:3])
+
+
+def test_a_real_page_paints_the_ladder_in_five_colours_and_not_in_none(
+    seed_index: Index, tmp_path: Path
+):
+    """The one claim the resolver cannot make, asked on two pages that share no
+    stylesheet but the shell's.
+
+    **The host the driven tests above use defines no colour tokens at all.**
+    It is `_CALENDAR_STYLE` and the widget on a bare document, so `var(--band)`
+    resolves to nothing and every band cell in those nine tests is painted
+    `rgba(0, 0, 0, 0)` over black. That is the right host for the questions they
+    ask — classes, names, the live region, what a chip does — and it is exactly
+    the wrong one for this: a ladder of five fills that is really one
+    transparent cell five times over would pass every one of them.
+
+    So it is asked where the tokens are, on the record page and on the timeline
+    — `_DETAIL_STYLE` and `_SUGGEST_STYLE` against `_timeline_css()` and
+    `_POP_STYLE`, with the shell underneath both. Five distinct grounds, the
+    selected day on the page's own `--accent` in its own `--on-accent`, and the
+    two pages agreeing to the byte.
+    """
+    head = "0123456789abcdef0123456789abcdef01234567"
+    seen = {
+        name: measured_in(chrome(), page, tmp_path / f"{name}.html", 1280, _PAINTED)
+        for name, page in (
+            (
+                "record",
+                render_detail(
+                    seed_index,
+                    ROUTES,
+                    only=sorted(seed_index.plan)[0],
+                    base_commit=head,
+                    may_write=True,
+                ),
+            ),
+            ("timeline", render_timeline(seed_index, ROUTES)),
+        )
+    }
+
+    for name, found in seen.items():
+        grounds = found["grounds"]
+        # The four band fills, each a real colour and each its own. `color-mix`
+        # comes back as an unresolved `oklab(...)` and a flat token as `rgb(...)`,
+        # so they are compared as strings — which is all "these are five
+        # different fills" needs.
+        rungs = ("cyc", "alt", "cool", "altcool", "selected")
+        ladder = [grounds[rung][0] for rung in rungs]
+        assert len(set(ladder)) == 5, f"{name}: the ladder paints {len(set(ladder))}: {ladder}"
+        for rung, painted in zip(rungs, ladder, strict=True):
+            assert painted != "rgba(0, 0, 0, 0)", f"{name}: {rung} is painted nothing at all"
+        # The selected day is the answer to the question the popup was opened to
+        # ask, and the sentence for that here is "it takes the accent".
+        assert _hex(grounds["selected"][0]) == found["accent"], name
+        assert _hex(grounds["selected"][1]) == found["onAccent"], name
+        # And the spill-over rung, which is the one the ladder was weakened for:
+        # no ground of its own, and ink that is not the ink of a day in the month.
+        assert grounds["spill"][0] == "rgba(0, 0, 0, 0)", f"{name}: a spilled day took a ground"
+        assert grounds["spill"][1] != grounds["cyc"][1], f"{name}: a spilled day is not muted"
+
+    assert seen["record"]["grounds"] == seen["timeline"]["grounds"], (
+        "the calendar is painted differently on two pages that carry the same sheet"
+    )

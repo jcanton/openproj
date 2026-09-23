@@ -6,6 +6,7 @@ from datetime import date
 
 from ..index import Index
 from ..model import RUNG, days_after, size_weeks
+from .calendar import _CALENDAR_STYLE, _calendar_js
 from .controls import _FILTER_JS, _facets_html, _summary_html
 from .env import _compiled, _fragment
 from .pop import _POP_STYLE, _pop_js
@@ -619,6 +620,11 @@ _TIMELINE = """
     not hoisted into an earlier one — the `popServes(…)` call below needs this
     block to have run. -#}
 {{ pop }}
+{#- Ungated: `#tl-from` and `#tl-to` set which slice of the calendar is drawn, so
+    they are here for a reader as well as for a writer — this page has no editing
+    mode to gate on, and `timeline.html` in the static export is the one exported
+    page that carries a date box. -#}
+{{ calendar }}
 <script>
 const scroller = document.querySelector('.scroll');
 const svg = scroller.querySelector('svg');
@@ -1128,6 +1134,7 @@ def render_timeline(
         ),
         filters=_FILTER_JS,
         pop=_pop_js(links),
+        calendar=_calendar_js(index),
         # The rows the shared `matches()` reads, for the bars that were drawn. Not
         # the whole plan: a bar that is not on this window cannot be filtered onto it.
         bars={"rows": timeline["rows"], "human": HUMAN},
@@ -1137,7 +1144,9 @@ def render_timeline(
     # `_SUGGEST_STYLE` is the table's — and the shell's, which they do share,
     # ships on all twelve pages for a box three of them draw. Concatenated the way
     # `table.py` already writes `_TABLE_STYLE + _SUGGEST_STYLE`.
-    style = _timeline_css() + _POP_STYLE
+    # The calendar's sheet last, because its cell rules are written to win
+    # their ties on source order — see the ladder comment in `calendar.py`.
+    style = _timeline_css() + _POP_STYLE + _CALENDAR_STYLE
     return _page(
         "openproj — timeline",
         body,
