@@ -12,6 +12,7 @@ there is: facet values and filter values are always strings, and `apply_filters`
 returns ids sorted by id so that a shared URL renders identically twice.
 """
 
+import shutil
 from datetime import date
 from pathlib import Path
 
@@ -1766,20 +1767,55 @@ def test_a_plan_that_has_dated_no_cycle_has_no_windows_rather_than_an_error(seed
     assert index.cycle_windows() == []
 
 
-def test_an_absurd_cooldown_costs_that_cycles_flag_and_not_every_page(seed_root: Path):
-    """`Index.build_end` was a bare `round(self.cooldown_weeks * 7)`, and
-    `round()` raises on infinity — so one number in one config file raised
-    inside `_matches_predicate` and took nine routes down. `schedule.build_end`
-    has always bounded before rounding; this is the second copy meeting the
-    guard the first one has."""
-    records, config, _ = load_repo(seed_root)
-    config = config.model_copy(update={"cooldown_weeks": float("inf")})
+def test_an_absurd_cooldown_costs_that_cycles_flag_and_not_every_page(
+    seed_root: Path, tmp_path: Path
+):
+    """`round()` raises on infinity, and `cooldown_weeks` is a float a person
+    types into `config/defaults.yaml`. Three places multiplied it by seven and
+    rounded: `Index.build_end`, `Config._resolve` and `_proposed` on the cycle
+    page — and two of them rounded BEFORE `days_after` could bound anything, so
+    one number in one committed file was nine routes down.
+
+    Entered where a person's commit enters it, through a copy of the corpus with
+    the bad line appended and `load_repo` run over that. The earlier version of
+    this test built the config with `model_copy(update=...)` AFTER `load_repo`
+    had already run with the corpus's real 2.0, so `with_plans` — the copy that
+    raises first, and OUTSIDE every `readable()` wrapper, meaning the raise
+    escapes `load_repo` itself — was never reached at all. The test passed over a
+    live defect, which is what a fixture edited after the fact buys you.
+
+    So there are two claims and the first is the bigger one: the plan still
+    LOADS. Then the flag: the cycle whose cool-down swallowed its own window
+    reports a build that ends on the day it opened, rather than before it.
+    """
+    root = tmp_path / "plan"
+    shutil.copytree(seed_root, root)
+    defaults = root / "config" / "defaults.yaml"
+    defaults.write_text(defaults.read_text() + "\ncooldown_weeks: .inf\n")
+
+    records, config, unreadable = load_repo(root)
+
+    assert config.cooldown_weeks == float("inf")
+    assert unreadable == []
+    assert len(records) == len(load_repo(seed_root)[0])
+
     index = build_index(records, config, TODAY)
     number = sorted(index.cycles)[0]
     opens, _ = index.cycles[number]
 
     assert index.build_end(number) == opens
     assert all(w.builds_until >= w.opens for w in index.cycle_windows())
+
+    # The third copy, on the branch of `_proposed` that nothing else reaches: a
+    # cycle number nobody has dated at all, where the cool-down is added to the
+    # cadence instead of read off a window. It lives in the renderer and is
+    # imported here rather than left to the render suite, because what is being
+    # pinned is this arithmetic in every place it is written, and a copy tested
+    # in a different file is the copy that gets the guard last.
+    from openproj.render.cycles import _proposed
+
+    undated = _proposed(index, max(index.cycles) + 1, None)
+    assert undated.ends_on >= undated.builds_until
 
 
 def test_a_record_in_progress_with_nothing_linked_is_a_question_not_a_rule(seed_index: Index):

@@ -2182,7 +2182,13 @@ def _proposed(index: Index, number: int, window: tuple[date, date] | None) -> Cy
     if window is None:
         starts_on = index.today
         builds_until = days_after(starts_on, _DEFAULT_CYCLE_DAYS - 1)
-        ends_on = days_after(builds_until, round(index.cooldown_weeks * 7))
+        # No `round()` around the week count: `days_after` rounds inside itself,
+        # after `within_the_calendar` has bounded the number, and a `round()`
+        # out here raises on `cooldown_weeks: .inf` before `days_after` is ever
+        # entered — the same one-number-takes-the-page-down defect
+        # `Index.build_end` and `Config._resolve` both carried. `round(round(x))`
+        # is `round(x)` for everything finite, so no dated cycle's proposal moves.
+        ends_on = days_after(builds_until, index.cooldown_weeks * 7)
     else:
         starts_on = window[0]
         builds_until = build_end(number, window, config)
