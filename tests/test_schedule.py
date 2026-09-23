@@ -933,7 +933,7 @@ def test_an_owner_who_is_not_assigned_is_not_booked():
 
     assert spans["task-aaa001"].start == spans["task-aaa002"].start == MONDAY
     assert spans["task-aaa001"].end == date(2026, 9, 11)  # four working weeks
-    assert explanations["task-aaa002"].worker_busy_until is None
+    assert "task-aaa002" not in explanations, "nothing held it back, so nothing explains it"
 
 
 def test_an_owner_with_nobody_assigned_is_unowned_work():
