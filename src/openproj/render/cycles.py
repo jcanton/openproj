@@ -15,6 +15,7 @@ from ..model import (
     is_bettable,
     size_weeks,
     without_comments,
+    workers_on,
 )
 from ..query import plain
 from ..schedule import build_end
@@ -2343,9 +2344,7 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         mine = [
             index.spans[i].end
             for i, e in index.plan.items()
-            if index.counts_in(e, number)
-            and login in (e.assignees + ([e.owner] if e.owner else []))
-            and i in index.spans
+            if index.counts_in(e, number) and login in workers_on(e) and i in index.spans
         ]
         people.append(
             {
@@ -2379,7 +2378,7 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         # The same two exclusions `load` makes, so this list explains that number
         # and not a different one: a parent is a rollup and charges nothing, and
         # work with nobody on it charges nobody.
-        if not index.children.get(i) and (index.plan[i].owner or index.plan[i].assignees)
+        if not index.children.get(i) and workers_on(index.plan[i])
     ]
 
     # What this cycle produced, which nothing above it can say. Every figure in

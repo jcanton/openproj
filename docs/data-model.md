@@ -111,8 +111,8 @@ flowchart LR
 
 ## Sizes, dependencies, requiredness
 
-A size is `person_weeks` on a pitch and on a task, and the people on it divide it, each at their own
-availability. **There is no default.** A record nobody has sized is not scheduled, weighs nothing in
+A size is `person_weeks` on a pitch and on a task, and the people on it — its `assignees` — divide
+it, each at their own availability. **There is no default.** A record nobody has sized is not scheduled, weighs nothing in
 its parent's progress and charges nobody's capacity, and every page that adds weeks up says how many
 records it could not count — a number the tool invented is a number that arrives everywhere looking
 like one somebody estimated. Shaping and thinking work is unsized by definition and stays that way;
@@ -136,7 +136,9 @@ the team writing `High+` in the margin of its own table.
 **A reviewer is named when the bet is made, not when a PR appears**: a bet nobody will review is a
 bet that should not be made. `review_waived` is a deliberate act, for work with nothing to review,
 and it is a facet and a count, so a team that waives everything sees itself doing it. **A reviewer is
-not a worker**: review is never charged against capacity.
+not a worker**: review is never charged against capacity. **Neither is an owner**: the owner's job
+is to see the work done, and they are booked, scheduled around and charged capacity only if they
+are also among the `assignees`. A record with an owner and nobody assigned is work nobody is on.
 
 **Parse permissively, validate strictly, and grandfather.** Every field is optional at the type level
 and `status` and `priority` are plain `str`, so a hand-edited file with a missing field or a retired

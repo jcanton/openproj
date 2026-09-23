@@ -45,6 +45,15 @@ HALF_TIME = CONFIG.model_copy(update={"nominal_availability": 0.6})
 # written once and both of a record's names taken off it. It is spelled out where
 # the claim is about the title itself — an assertion that a sentence names the
 # title proves nothing while the title is a substring of the id beside it.
+#
+# `owner` is also the one assignee unless `assignees` is passed, because that is
+# what almost every record in a real plan is and what almost every test here
+# means by it: "ann is doing this". Only the assignees are booked (2026-09-23),
+# so the tests that are about the difference pass `assignees` and say so.
+def _staffed(owner: str | None, fields: dict) -> dict:
+    return {"assignees": [owner] if owner else [], **fields}
+
+
 def task(
     suffix: str,
     *,
@@ -59,7 +68,7 @@ def task(
         title=suffix if title is None else title,
         owner=owner,
         person_weeks=size,
-        **fields,
+        **_staffed(owner, fields),
     )
 
 
@@ -77,7 +86,7 @@ def pitch(
         title=suffix if title is None else title,
         owner=owner,
         person_weeks=size,
-        **fields,
+        **_staffed(owner, fields),
     )
 
 
@@ -895,7 +904,7 @@ def test_a_size_is_person_weeks_and_the_people_on_it_divide_it():
     never divided. That was right about the arithmetic the code did and wrong
     about what the number meant."""
     alone, _ = run([pitch("bbb001", owner="ann", size=6.0)])
-    shared, _ = run([pitch("bbb001", owner="ann", assignees=["bo", "cy"], size=6.0)])
+    shared, _ = run([pitch("bbb001", owner="ann", assignees=["ann", "bo", "cy"], size=6.0)])
 
     assert alone["pitch-bbb001"].end == date(2026, 9, 25)  # six working weeks
     assert shared["pitch-bbb001"].end == date(2026, 8, 28)  # two
@@ -904,10 +913,35 @@ def test_a_size_is_person_weeks_and_the_people_on_it_divide_it():
 def test_an_owner_who_is_also_an_assignee_is_one_person():
     """Most owners are. Counted twice they were booked twice, and now that the
     people on a bet divide it, they would have halved it single-handed."""
-    once, _ = run([pitch("bbb001", owner="ann", size=4.0)])
-    twice, _ = run([pitch("bbb001", owner="ann", assignees=["ann"], size=4.0)])
+    once, _ = run([pitch("bbb001", owner="ann", assignees=["ann"], size=4.0)])
+    twice, _ = run([pitch("bbb001", owner="ann", assignees=["ann", "ann"], size=4.0)])
 
     assert once["pitch-bbb001"] == twice["pitch-bbb001"]
+
+
+def test_an_owner_who_is_not_assigned_is_not_booked():
+    """An owner sees the work done; that is not a claim on their weeks — jcanton,
+    2026-09-23. Owning `task-aaa001` while doing `task-aaa002` used to queue the
+    second behind the first, and the reason given was that the owner was busy.
+    Nor does the owner divide the size: bo alone takes the whole four weeks."""
+    spans, explanations = run(
+        [
+            task("aaa001", owner="ann", assignees=["bo"], size=4.0),
+            task("aaa002", owner="cy", assignees=["ann"], size=1.0),
+        ]
+    )
+
+    assert spans["task-aaa001"].start == spans["task-aaa002"].start == MONDAY
+    assert spans["task-aaa001"].end == date(2026, 9, 11)  # four working weeks
+    assert explanations["task-aaa002"].worker_busy_until is None
+
+
+def test_an_owner_with_nobody_assigned_is_unowned_work():
+    """Not booked, and marked as having nobody on it — which is what the ready
+    gate's "needs somebody on it" has been saying about this record all along."""
+    spans, _ = run([task("aaa001", owner="ann", assignees=[], size=2.0)])
+
+    assert spans["task-aaa001"].unowned
 
 
 def test_availability_stretches_the_work_of_whoever_is_slower():
@@ -1185,7 +1219,7 @@ def dags(draw: st.DrawFn) -> list[Record]:
 
 
 def workers_of(record: Record) -> list[str]:
-    return ([record.owner] if record.owner else []) + record.assignees
+    return record.assignees
 
 
 @settings(deadline=None)
@@ -1227,7 +1261,9 @@ def test_property_adding_an_item_that_shares_no_worker_and_no_ancestor_never_mov
     records: list[Record],
 ):
     before, _ = run(records)
-    stranger = Task(id="task-ffffff", kind="task", title="stranger", owner="zed", person_weeks=2.0)
+    stranger = Task(
+        id="task-ffffff", kind="task", title="stranger", assignees=["zed"], person_weeks=2.0
+    )
     after, _ = run([*records, stranger])
     assert {i: after[i] for i in before} == before
 
@@ -1281,13 +1317,32 @@ GOLDEN_TODAY = date(2026, 8, 17)
 # seven. The working is in `THE HEARTH ISLAND` below, and the four mechanisms it
 # turns on are named there. Cycles 37 and 38 are dated by `cycles/*.md` records
 # and not by `config/cycles.yaml`, so `Config.with_plans` is in the derivation too.
+#
+# OWNERS STOPPED BEING WORKERS, 2026-09-23 (jcanton: an owner sees the work done
+# and is booked only if also assigned). Eight corpus records have an owner and
+# `assignees: []`; they are now one notional person at nominal rate who books
+# nobody. Four of them moved, each because the owner had been queued behind
+# their own other work, and each was derived here before the run was read:
+#   pitch-1b3f9a  size 1.0, no blockers, no start_date. Was held behind
+#                 merganserly's task-53a9f0 (ends 08-26 -> 08-27). Now nothing
+#                 holds it: floor 08-17, 5 working days    -> 08-17 .. 08-21
+#   task-0e4b7a   size 1.0, no blockers. Was held behind nightjarelli's
+#                 pitch-48ea9e (08-17..08-21 -> 08-24). Now -> 08-17 .. 08-21
+#   task-2b6c94   size 0.5; its one blocker task-31f6c4 is done. Was held
+#                 behind Oxpeckerly's pitch-48ea9e -> 08-24. The same three
+#                 working days from the floor               -> 08-17 .. 08-19
+#                 and its cycle-34 overrun shrinks by those seven days.
+#   proj-7e57a0   rollup of its one child task-0e4b7a      -> 08-17 .. 08-21
+# The other four owner-only records did not move: 53a9f0 is `begun`, 5a4e39 is
+# first in its owner's queue already, and 5c1d84/5f062b/58d7c6 are held by
+# their `depends_on` edges and never by a person.
 GOLDEN_SPANS = {
-    "proj-7e57a0": (date(2026, 8, 24), date(2026, 8, 28)),
-    "pitch-1b3f9a": (date(2026, 8, 27), date(2026, 9, 2)),
+    "proj-7e57a0": (date(2026, 8, 17), date(2026, 8, 21)),
+    "pitch-1b3f9a": (date(2026, 8, 17), date(2026, 8, 21)),
     "pitch-48ea9e": (date(2026, 8, 17), date(2026, 8, 21)),
     "pitch-5e7b1c": (date(2026, 8, 13), date(2026, 9, 21)),
-    "task-0e4b7a": (date(2026, 8, 24), date(2026, 8, 28)),
-    "task-2b6c94": (date(2026, 8, 24), date(2026, 8, 26)),
+    "task-0e4b7a": (date(2026, 8, 17), date(2026, 8, 21)),
+    "task-2b6c94": (date(2026, 8, 17), date(2026, 8, 19)),
     "task-53a9f0": (date(2026, 8, 13), date(2026, 8, 26)),
     "task-58d7c6": (date(2026, 9, 15), date(2026, 9, 21)),
     "task-5a4e39": (date(2026, 8, 17), date(2026, 8, 17)),
@@ -1419,7 +1474,9 @@ GOLDEN_ABSENT = {
 GOLDEN_OVERRUNS = {
     "pitch-48ea9e": 15.0,
     "pitch-5e7b1c": 52 / 7,
-    "task-2b6c94": 166 / 7,
+    # 159/7, not 166/7: it ends 08-19 and not 08-26 now that nobody is waiting
+    # for Oxpeckerly — see OWNERS STOPPED BEING WORKERS above.
+    "task-2b6c94": 159 / 7,
     # 26/7, not 4.0: it starts four days earlier now, so it ends four days
     # earlier and overruns its cycle by that much less.
     "task-53a9f0": 26 / 7,
@@ -1427,6 +1484,18 @@ GOLDEN_OVERRUNS = {
     "task-5a4e39": 17 / 7,
     "task-5c1d84": 45 / 7,
     "task-5f062b": 24 / 7,
+}
+
+
+GOLDEN_UNOWNED = {
+    "pitch-1b3f9a",
+    "task-0e4b7a",
+    "task-2b6c94",
+    "task-53a9f0",
+    "task-58d7c6",
+    "task-5a4e39",
+    "task-5c1d84",
+    "task-5f062b",
 }
 
 
@@ -1442,7 +1511,9 @@ def test_the_seed_corpus_golden_overruns_and_flags(seed_root: Path):
     assert not GOLDEN_ABSENT & spans.keys()
     overruns = {i: s.overruns_cycle_weeks for i, s in spans.items() if s.overruns_cycle_weeks}
     assert overruns == pytest.approx(GOLDEN_OVERRUNS)
-    assert not [s for s in spans.values() if s.unowned]
+    # Exactly the records with an owner and nobody assigned — an owner is not on
+    # the work unless assigned (2026-09-23), and every other corpus record is.
+    assert {i for i, s in spans.items() if s.unowned} == GOLDEN_UNOWNED
     assert not [s for s in spans.values() if s.unscheduled or s.historical]
 
 
