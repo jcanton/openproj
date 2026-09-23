@@ -7247,7 +7247,7 @@ def test_hovering_a_cycle_lights_the_chart_under_it(rendered: Path):
 
     assert '<g class="cycle-band-group">' in body
     assert '<rect class="cycle-hover"' in body
-    assert ".cycle-hover { fill: var(--row-hover); opacity: 0; pointer-events: none; }" in body
+    assert ".cycle-hover { fill: var(--row-hover); opacity: 0; pointer-events: auto; }" in body
     # Whole, so the query and the rule cannot drift apart: a rule left outside it
     # and a rule inside a query that never matches look identical to every other
     # assertion, which is why `test_a_touch_screen_gets_no_cycle_wash_either`
@@ -7273,9 +7273,15 @@ def test_the_hover_wash_gates_nothing(rendered: Path):
     assert ".cycle-rule { stroke: var(--line-strong); stroke-dasharray: 3 3; }" in body
 
 
-def _hovered_cycle(browser: str, page: str, where: Path, flags: tuple[str, ...] = _A_MOUSE) -> dict:
-    """Lay the timeline out, put a real pointer on a cycle's band, and report what
-    the wash under it resolved to before and after.
+def _hovered_cycle(
+    browser: str,
+    page: str,
+    where: Path,
+    flags: tuple[str, ...] = _A_MOUSE,
+    at: str = "band",
+) -> dict:
+    """Lay the timeline out, put a real pointer somewhere in a cycle's column, and
+    report what the wash under it resolved to before and after.
 
     A real pointer and not `dispatchEvent`, for the reason `_hovered` gives: a
     synthetic event is `isTrusted: false`, sets no `:hover`, and would report a
@@ -7284,6 +7290,14 @@ def _hovered_cycle(browser: str, page: str, where: Path, flags: tuple[str, ...] 
     cannot keep on its own — this repository's unpainted `box-shadow` resolved to
     exactly the value every test asserted on exactly the element they asserted it
     on, and Chrome drew nothing.
+
+    **`at` is the whole of why this takes a parameter, and it is a defect's
+    name.** `band` is the 18px strip at the top of the chart; `plot` is the same
+    column well down among the rows, on none of them; `bar` is a bar in that
+    column. Asked only at `band`, this helper reported a wash that worked while
+    the chart beside every bar did nothing at all — which is where a reader's
+    pointer actually is. The three points are found in one pass because they have
+    to be the same cycle's column: picked separately they could be two.
     """
     import shutil
     import time
@@ -7304,37 +7318,85 @@ def _hovered_cycle(browser: str, page: str, where: Path, flags: tuple[str, ...] 
         found = _evaluated(
             call,
             """(() => {
-          // The band that is actually on screen, not the first in the document:
+          // A cycle that is actually on screen, and that has a bar in its column:
           // the plot scrolls sideways and the label column is drawn over its left
-          // edge, so cycle 34's band is at a point the pointer cannot reach.
+          // edge, so cycle 34's band is at a point the pointer cannot reach, and a
+          // cycle with nothing bet in it has no `bar` point to offer.
           const labels = document.querySelector('.labels').getBoundingClientRect();
+          const reachable = (x, y) =>
+            x > labels.right + 4 && x < innerWidth - 4 && y > 0 && y < innerHeight;
           for (const group of document.querySelectorAll('.cycle-band-group')) {
             const band = group.querySelector('.cycle-band').getBoundingClientRect();
-            const x = Math.round(band.left + band.width / 2);
             const y = Math.round(band.top + band.height / 2);
-            if (x < labels.right + 4 || x > innerWidth - 4 || y < 0 || y > innerHeight) continue;
-            const box = group.querySelector('.cycle-hover').getBoundingClientRect();
-            return {before: getComputedStyle(group.querySelector('.cycle-hover')).opacity,
-                    height: box.height, width: box.width, at: [x, y]};
+            const bar = [...document.querySelectorAll('rect[data-id]')]
+              .map((rect) => [rect, rect.getBoundingClientRect()])
+              .find(([, b]) => b.width > 12 && b.height > 4
+                    && b.left >= band.left && b.right <= band.right
+                    && reachable(Math.round(b.left + b.width / 2),
+                                 Math.round(b.top + b.height / 2)));
+            if (!bar) continue;
+            const box = bar[1];
+            const x = Math.round(box.left + box.width / 2);
+            if (!reachable(x, y)) continue;
+            // Off every bar AND off every rule, in the same column: the row gap
+            // under the bar just found. A bar is painted over the wash and takes
+            // the pointer first, which is the property the `bar` point exists to
+            // hold — so `plot` has to be somewhere no bar is, or it would be
+            // asking that question a second time instead of this one.
+            //
+            // The month rules and the today line span the whole plot and are drawn
+            // after every cycle group, so they take the pointer over the wash the
+            // way a bar does. Measured: the first bar found had its centre within
+            // a pixel of a month rule, and the point picked under it reported the
+            // chart dead on a chart that works. A hairline is not what this asks
+            // about, so the scan steps sideways until the ground under the pointer
+            // is the chart's own — which is the `<svg>` with the wash transparent
+            // and the wash itself without, and therefore not a criterion that
+            // decides the answer.
+            let gapX = 0;
+            const gap = Math.round(box.bottom + 5);
+            for (let step = 0; step <= Math.floor(box.width / 2) && !gapX; step += 3) {
+              for (const candidate of [x - step, x + step]) {
+                if (!reachable(candidate, gap)) continue;
+                const under = document.elementFromPoint(candidate, gap);
+                if (!under || under.tagName === 'line' || under.hasAttribute('data-id')) continue;
+                gapX = candidate;
+                break;
+              }
+            }
+            if (!gapX) continue;
+            const wash = group.querySelector('.cycle-hover');
+            const seen = wash.getBoundingClientRect();
+            return {
+              before: getComputedStyle(wash).opacity,
+              height: seen.height, width: seen.width,
+              id: bar[0].dataset.id,
+              band: [x, y], bar: [x, Math.round(box.top + box.height / 2)], plot: [gapX, gap],
+            };
           }
           return null;
         })()""",
         )
-        assert found, "no cycle band was on screen to point at"
-        call(
-            "Input.dispatchMouseEvent",
-            {"type": "mouseMoved", "x": found["at"][0], "y": found["at"][1]},
-        )
-        time.sleep(0.3)
+        assert found, "no cycle band with a bar under it was on screen to point at"
+        assert at in ("band", "bar", "plot"), f"`at` must name a point; it was {at!r}"
+        found["at"] = found[at]
+        x, y = found[at]
+        call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y})
+        # A second later, and the reason is the hover card: the bar's own hover
+        # opens one on a delay this page owns, so an answer taken immediately
+        # would report the card missing on a page where it arrives.
+        time.sleep(1.2)
         return found | _evaluated(
             call,
             """(() => {
           const group = [...document.querySelectorAll('.cycle-band-group')]
             .find(g => g.matches(':hover'));
-          if (!group) return {hovered: false, during: '0', fill: 'none'};
+          const bar = document.querySelector('rect[data-id]:hover');
+          const answer = {barHovered: bar ? bar.dataset.id : null};
+          if (!group) return Object.assign(answer, {hovered: false, during: '0', fill: 'none'});
           const wash = group.querySelector('.cycle-hover');
-          return {hovered: true, during: getComputedStyle(wash).opacity,
-                  fill: getComputedStyle(wash).fill};
+          return Object.assign(answer, {hovered: true, during: getComputedStyle(wash).opacity,
+                  fill: getComputedStyle(wash).fill});
         })()""",
         )
 
@@ -7357,6 +7419,59 @@ def test_the_hover_wash_is_actually_painted(rendered: Path, tmp_path: Path):
     assert got["height"] > 100, f"the wash has no height to be seen in: {got['height']}px"
     assert got["width"] > 20, f"the wash is drawn on no width at all: {got['width']}px"
     assert got["fill"] != "none", "the wash resolved to no fill, so nothing is painted"
+
+
+def test_the_wash_answers_the_pointer_where_the_bars_are(rendered: Path, tmp_path: Path):
+    """The band strip is 18px and the chart under it is twenty-odd rows, and the
+    pointer is in the rows.
+
+    `.cycle-hover` was `pointer-events: none`, so the only descendants that could
+    put `:hover` on the group were the band, the label and two hairline rules —
+    every one of them in that strip. Measured with a real pointer: at the band's
+    centre the wash resolved to 1, and at the SAME x a few pixels below a bar it
+    resolved to 0. So the reader went on sighting up to the strip to find out
+    which cycle a bar was in, which is the motion the wash exists to remove, and
+    every test written for it asked at the one point where it worked.
+    """
+    from browser import chrome
+
+    got = _hovered_cycle(
+        chrome(), read(rendered, "timeline.html"), tmp_path / "cycles-plot.html", at="plot"
+    )
+
+    assert got["hovered"], (
+        "no cycle lit with the pointer in its column among the rows, so the wash is "
+        "still a highlight on the 18px strip at the top of the chart"
+    )
+    assert float(got["during"]) == 1, f"the wash did not come up under the pointer: {got}"
+
+
+def test_a_bar_keeps_the_pointer_the_wash_now_takes(rendered: Path, tmp_path: Path):
+    """The price of giving the wash `pointer-events: auto`, asked rather than
+    argued.
+
+    The wash is the first child of its group and every bar is drawn after every
+    group, so a bar is painted over it and hit-testing gives the bar the pointer.
+    That is what keeps the bar's hover card and its right-click menu working, and
+    it is a fact about document ORDER — move the wash to the end of its group, or
+    give the bars a `z-index`, and the wash silently swallows every bar on the
+    chart while the chart still lights.
+
+    The consequence is also asserted, because it is the honest half: with the
+    pointer on a bar the wash does NOT light, since the bar is the thing being
+    pointed at. The column answers everywhere else in it.
+    """
+    from browser import chrome
+
+    got = _hovered_cycle(
+        chrome(), read(rendered, "timeline.html"), tmp_path / "cycles-bar.html", at="bar"
+    )
+
+    assert got["barHovered"] == got["id"], (
+        f"the wash took the pointer from the bar: {got['barHovered']} hovered, "
+        f"{got['id']} pointed at"
+    )
+    assert not got["hovered"], "the wash lit through a bar, so the bar is not on top after all"
 
 
 def test_a_touch_screen_gets_no_cycle_wash_either(rendered: Path, tmp_path: Path):

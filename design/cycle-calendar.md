@@ -160,9 +160,19 @@ is wrong for most of the people who will ever see it, because most readers never
   two things and not one long one.
 - The cool-down keeps its own alpha, re-checked against the band once the tints alternate: the fills
   are layered and a value chosen against the old flat band is a value chosen against something else.
-- Hovering a cycle's label band lightly tints the full chart height for that cycle's columns. It is
-  pointer-only, so it gates nothing — the dashed rule and the labels remain the record of where a
-  cycle ends, exactly as they are now.
+- Hovering a cycle lightly tints the full chart height for that cycle's columns. It is pointer-only,
+  so it gates nothing — the dashed rule and the labels remain the record of where a cycle ends,
+  exactly as they are now.
+- **Anywhere in the column, and not only on the label band.** The ask names the top of the timeline
+  and that is where it was first built, with `pointer-events: none` on the wash — which left the
+  18px strip as the only thing that could put `:hover` on the group. Measured with a real pointer:
+  lit at the band's centre, dead at the same x among the rows. But the question the wash answers is
+  *which bar belongs to which cycle*, and that is asked with the pointer down where the bars are, so
+  a wash that works only at the top leaves the reader making the same sighting motion it was drawn
+  to remove. The wash takes the pointer now; the bars are drawn after every cycle group and so still
+  win hit-testing, which was measured rather than assumed — the hover card and the right-click menu
+  are byte-identical either way. `test_the_wash_answers_the_pointer_where_the_bars_are` and
+  `test_a_bar_keeps_the_pointer_the_wash_now_takes` are the two halves.
 
 ## The timeline's own date fields get chips and no bands
 

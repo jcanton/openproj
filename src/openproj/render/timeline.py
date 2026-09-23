@@ -1067,8 +1067,33 @@ svg { display: block; }
    the app's one wash — the table's row highlight — and two numbers standing for
    the same strength are two numbers that drift apart. So `opacity` here is a
    switch between drawn and not drawn, and how strong the wash is stays in the
-   one place it was decided. `pointer-events: none` so the bar under it is still
-   what you hover and what a right-click finds.
+   one place it was decided.
+
+   **`pointer-events: auto`, and it was `none`, which answered the pointer in the
+   wrong place.** `:hover` reaches the group from a descendant that takes the
+   pointer, and with the wash transparent the only such descendants are the 18px
+   band strip, the label and two hairline rules — so the chart lit when the
+   pointer was on the strip and did nothing at all beside a bar. Measured with a
+   real pointer on the seed plan at 1400x900: at the band's centre `opacity` was
+   1, and at the same x 120px down it was 0. That is the reader sighting up to
+   the strip, which is the motion this rule was added to remove.
+
+   **The bar still wins, and that was measured rather than argued.** The wash is
+   the first child of its group and every bar is drawn after every group, so a
+   bar is painted over it and takes the pointer first: at a bar's centre, with
+   this set to `auto`, `rect[data-id]:hover` was still the bar, its hover card
+   still fetched, and a trusted right press still opened the record menu with
+   the same three items. The wash does not light while the pointer is ON a bar,
+   for that same reason — the bar is the thing being pointed at — and the column
+   answers everywhere else in it.
+
+   Written out rather than deleted, although `auto` is a `<rect>`'s initial
+   value: the declaration is where this reasoning hangs, and a property with no
+   line has nowhere to say why. Filtering does not turn the taller wash into a
+   hit target below the chart — the server draws it at the UNFILTERED height,
+   and `applyFilter` shrinks the `<svg>` and its `viewBox`, which clips it.
+   Measured at seven rows of twenty-three: a pointer 30px under the shortened
+   chart lit nothing.
 
    **No transition.** `test_the_app_moves_in_two_places` is an inventory of this
    app's two animated rules and a third has to justify itself; an opacity that
@@ -1078,7 +1103,7 @@ svg { display: block; }
    touch device has no pointer to follow and keeps the last-tapped `:hover` until
    something else is tapped, so a phone would be left with one cycle lit and no
    way to move off it. */
-.cycle-hover { fill: var(--row-hover); opacity: 0; pointer-events: none; }
+.cycle-hover { fill: var(--row-hover); opacity: 0; pointer-events: auto; }
 @media (hover: hover) {
   .cycle-band-group:hover .cycle-hover { opacity: 1; }
 }
