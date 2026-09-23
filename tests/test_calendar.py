@@ -426,12 +426,22 @@ def _a_month_holding_more_than_build_days(index: Index) -> date:
 
 
 def _page_with_a_date_field(index: Index, value: date) -> str:
-    """One date box and the real widget, with nothing else on the page."""
+    """One date box and the real widget, with nothing else on the page.
+
+    The box is inside a `<form id="edit">` because that is where the record page
+    keeps it — `CONTROLS` is `FORM.querySelectorAll('[data-type]')` — and two
+    claims here rest on it. The library inserts its popup with
+    `inputField.after()`, so the whole widget lands INSIDE that form, which is
+    what makes a bare `<button>` in the chip row a submit button. And Reset
+    announces itself by dispatching one `input` on the form rather than on any
+    box, so the event this widget has to hear is a form's.
+    """
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         f"<style>{calendar_module._CALENDAR_STYLE}</style></head><body>"
-        '<label for="start">Starts on</label>'
-        f'<input type="date" id="start" name="start_date" value="{value.isoformat()}">'
+        '<form id="edit"><label for="start">Starts on</label>'
+        f'<input type="date" id="start" name="start_date" data-type="date"'
+        f' value="{value.isoformat()}"></form>'
         f"{_calendar_js(index)}</body></html>"
     )
 
@@ -781,3 +791,186 @@ def test_the_widget_turns_no_value_into_markup():
     assert "createTextNode" in glue and "textContent" in glue
     for markup in ("innerHTML", "insertAdjacentHTML", "outerHTML"):
         assert markup not in glue, f"the calendar's glue builds markup with {markup}"
+
+
+# --------------------------------------------------------------------------- #
+# The seam between the box and the widget, in both directions
+# --------------------------------------------------------------------------- #
+#
+# `input.value` is the only channel between this widget and the rest of the app,
+# and a channel has two ends. Neither end carried anything on its own: a value
+# assigned by script fires no event, so the widget never heard the page, and the
+# library assigns `inputField.value` in `refreshUI` and dispatches only its own
+# `changeDate`, so the page never heard the widget. Both were measured before
+# either was written, and the scripts below are those measurements.
+
+# What Reset really does, and the whole reason this is not a `change` listener.
+# `resetEdits` (`detail.py`) assigns every control and then dispatches ONE `input`
+# on the form — its own comment says why, and the plan this was written from
+# assumed a `change` on the box that nothing anywhere fires.
+RESET = """
+  const box = document.getElementById('start');
+  const picker = openCalendar(box);
+  const iso = (d) => d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    + `-${String(d.getDate()).padStart(2, '0')}` : null;
+  const reading = () => ({
+    value: box.value,
+    picker: iso(picker.getDate()),
+    shown: document.querySelector('.view-switch').textContent,
+    live: document.querySelector('.datepicker [aria-live]').textContent,
+    selected: [...document.querySelectorAll('.datepicker-cell.selected')]
+      .map((cell) => [cell.firstChild.nodeValue, cell.getAttribute('aria-selected')]),
+  });
+
+  const before = reading();
+  box.value = '2026-12-25';
+  document.getElementById('edit').dispatchEvent(new Event('input', {bubbles: true}));
+  const after = reading();
+
+  // And the other thing Reset restores: a field that was cleared. An empty box
+  // is not a date and must not be parsed as one.
+  box.value = '';
+  document.getElementById('edit').dispatchEvent(new Event('input', {bubbles: true}));
+  const cleared = reading();
+
+  return {before, after, cleared, open: !!document.querySelector('.datepicker.active')};
+"""
+
+
+def test_a_reset_moves_the_calendar_with_the_box_it_belongs_to(
+    seed_index: Index, tmp_path: Path
+):
+    """A value set from outside does not reach the widget. Measured, with a
+    dispatched event and everything: `getDate()` stayed on the old date and the
+    grid stayed on the old month.
+
+    Two paths here set a date field from outside and neither is a person typing —
+    Reset restoring from `BASELINE`, and the table's `draw()` replacing its
+    tbody. A calendar still showing the edited month after a Reset disagrees with
+    the box it belongs to, in the one flow whose entire job is undoing a mistake,
+    and it disagrees silently: the next click in the grid writes December's
+    answer to August's question.
+
+    The whole widget is asked and not only `getDate()`, because the selection and
+    the drawing are two different things — `setDate(…, {render: false})` moves one
+    and leaves the other — and what a reader sees is the drawing.
+    """
+    page = _page_with_a_date_field(seed_index, date(2026, 8, 17))
+    found = measured_in(chrome(), page, tmp_path / "calendar.html", 1280, RESET)
+
+    assert found["before"]["picker"] == "2026-08-17", "the popup did not open on the box's date"
+    assert found["before"]["shown"] == "August 2026"
+
+    after = found["after"]
+    assert after["value"] == "2026-12-25", "the test did not set the box"
+    assert after["picker"] == "2026-12-25", "the widget is holding a date the box does not"
+    # The three a reader can actually see: the month in the header, the month in
+    # the live region, and which day is drawn as chosen.
+    assert after["shown"] == "December 2026", "the grid is still drawing the month Reset undid"
+    assert after["live"] == "December 2026"
+    assert after["selected"] == [["25", "true"]]
+    assert found["open"], "the popup shut itself on a Reset, which is not what Reset does"
+
+    # A cleared field is not a date. `update()` is the library's own read of the
+    # input field and takes the empty string as "nothing selected"; parsing
+    # `box.value` by hand is how `''` becomes today, or Invalid Date.
+    assert found["cleared"]["picker"] is None
+    assert found["cleared"]["value"] == "", "the widget wrote a date back into a cleared box"
+    assert found["cleared"]["selected"] == []
+
+
+PICK_A_DAY = """
+  const box = document.getElementById('start');
+  const form = document.getElementById('edit');
+  const heard = [];
+  form.addEventListener('input', (event) => heard.push('input:' + event.target.id));
+  form.addEventListener('change', (event) => heard.push('change:' + event.target.id));
+
+  openCalendar(box);
+  // A day this month, by its own number: a spill-over cell would commit a date
+  // in a month this grid is not drawing, which is a different claim.
+  const cell = [...document.querySelectorAll('.datepicker-cell.day')].find((one) =>
+    !one.classList.contains('prev') && !one.classList.contains('next')
+    && one.firstChild.nodeValue === '21');
+  cell.click();
+  return {value: box.value, heard, clicked: cell.firstChild.nodeValue};
+"""
+
+
+def test_picking_a_day_tells_the_page_the_way_a_date_field_would(
+    seed_index: Index, tmp_path: Path
+):
+    """The other end of the same channel, and it was open. Measured: clicking a
+    day wrote `2026-08-21` into the box and the form heard nothing at all.
+
+    `refreshUI` ASSIGNS `inputField.value`, and a value assigned by script fires
+    no event — the fact `resetEdits` is written around — while the only thing the
+    library dispatches is its own `changeDate`, which nothing outside
+    `calendar.py` listens for. The record page marks itself dirty from `input` and
+    `change` on the form (`FORM.addEventListener` in `detail.py`) and the table
+    commits a cell from `change`, so a day picked in this popup was an edit the
+    save bar did not know about and a cell that never committed: the new date on
+    screen and nothing holding it, until a reload took it away.
+
+    Both events and in this order, because that is what a native date field fires
+    when a person picks a date, and every page here was written against one.
+    """
+    page = _page_with_a_date_field(seed_index, date(2026, 8, 17))
+    found = measured_in(chrome(), page, tmp_path / "calendar.html", 1280, PICK_A_DAY)
+
+    assert found["clicked"] == "21", "this test clicked something other than a day"
+    assert found["value"].endswith("-21"), "the picker did not write the day that was clicked"
+    assert found["heard"] == ["input:start", "change:start"]
+
+
+def test_replacing_a_tbody_takes_its_calendars_with_it(seed_index: Index, tmp_path: Path):
+    """The second path that sets a date field from outside: the table's `draw()`,
+    which assigns `tbody.innerHTML` and throws every row away.
+
+    The open question was whether a popup survives that. It is the library's
+    `container` option that decides it — with one, the popup is appended to that
+    element and would outlive the row it belongs to; without one, `Picker` does
+    `inputField.after(this.element)` and the popup is the input's next sibling, so
+    a replaced tbody takes both. No `container` is passed, and this is that
+    measurement rather than a reading of the source: pass one and the count below
+    stays at two, which is a popup anchored to a cell that no longer exists,
+    still listening on `document`.
+
+    So there is no `destroy()` in `calendarFor` — the fix that would be needed if
+    this answered the other way — and this is what says it is still not needed.
+    """
+    page = _page_with_a_date_field(seed_index, date(2026, 8, 17))
+    found = measured_in(chrome(), page, tmp_path / "calendar.html", 1280, """
+      // The form's own box first, and it is the control: it is not in the
+      // tbody, so it has to be there afterwards. A count that went to zero
+      // would say the redraw took every calendar on the page, which is a
+      // different and much worse answer than the one this is asking for.
+      document.getElementById('start').focus();
+      // Then the table's own gesture, on the table's own shape: a row built at
+      // runtime, a picker opened in its cell, and then `tbody.innerHTML = …`,
+      // which is the line `draw()` ends on.
+      const table = document.createElement('table');
+      table.innerHTML = '<tbody id="rows"><tr><td>'
+        + '<input type="date" id="cell" value="2026-08-17"></td></tr></tbody>';
+      document.body.appendChild(table);
+      const cell = document.getElementById('cell');
+      cell.focus();
+      const opened = document.querySelectorAll('.datepicker').length;
+      document.getElementById('rows').innerHTML =
+        '<tr><td><input type="date" id="cell2" value="2026-08-17"></td></tr>';
+      const left = document.querySelectorAll('.datepicker').length;
+      // A stray click anywhere is what the library's own outside-click listener
+      // answers, and a dead picker answering it is how this fails loudly rather
+      // than by leaking.
+      let threw = null;
+      try { document.body.click(); } catch (error) { threw = String(error); }
+      return {opened, left, threw, alive: document.querySelectorAll('.datepicker').length};
+    """)
+
+    # Two: the form's, and the cell's. Without this the count below proves
+    # nothing — a redraw that removes a popup that was never built is not a
+    # measurement of anything.
+    assert found["opened"] == 2, "focusing the cell built no calendar, so nothing was redrawn"
+    assert found["left"] == 1, "a calendar outlived the row it was anchored to"
+    assert found["threw"] is None
+    assert found["alive"] == 1

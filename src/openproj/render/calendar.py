@@ -206,6 +206,24 @@ function isoOf(day) {
   return `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`;
 }
 
+// A day, spelled out for a reader who is not looking at it. The one place an ISO
+// string becomes a sentence here, because the cells and the chips are naming the
+// same fact and two formatters is two shapes for it.
+//
+// `${iso}T00:00` and not `new Date(iso)`: a bare ISO date is parsed as UTC, so
+// west of Greenwich it spells the day before. That is `isoOf`'s defect arriving
+// by the other door — one cell out for a whole hemisphere, exactly right for
+// London, and no reader can tell which of the two they are.
+//
+// `undefined` as the locale, which is the reader's own: a date is one of the few
+// things every locale writes differently and the app has no better answer than
+// the machine's. The library's own furniture — the header, Today, Clear — is its
+// `en` table and stays English; that difference is the library's and not ours.
+function spelled(iso) {
+  return new Date(`${iso}T00:00`).toLocaleDateString(undefined,
+    { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
+
 // What `beforeShowDay` gives back per day: the band classes, the edges, and the
 // cycle's number on the day it opens.
 //
@@ -268,10 +286,7 @@ function describeGrid(picker) {
     // Written rather than left to the cell's contents: the contents are a day
     // number and a badge, and the badge is hidden precisely so it is not read —
     // which leaves "14" as the whole of what the cell would otherwise announce.
-    const said = iso
-      ? new Date(`${iso}T00:00`).toLocaleDateString(undefined,
-          { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-      : cell.textContent;
+    const said = iso ? spelled(iso) : cell.textContent;
     cell.setAttribute('aria-label', found
       ? `${said}, cycle ${found.number}${found.phase === 'cool' ? ' cool-down' : ''}`
       : said);
@@ -322,6 +337,27 @@ function calendarFor(box) {
   for (const when of ['show', 'changeView', 'changeYear', 'changeMonth', 'changeDate']) {
     box.addEventListener(when, () => describeGrid(picker));
   }
+  // **The widget writes the box and the page hears nothing.** Measured, by
+  // counting what a `<form>` saw when a day was clicked: the box went to
+  // 2026-08-21 and the form heard nothing at all. `refreshUI` ASSIGNS
+  // `inputField.value`, and a value assigned by script fires no event — the same
+  // fact `resetEdits` in `detail.py` is written around — while the only thing
+  // the library does dispatch is its own `changeDate`, which nothing outside
+  // this file listens for. The record page marks itself dirty from `input` and
+  // `change` on the form and the table commits a cell from `change`, so a day
+  // picked in this popup was an edit the save bar did not know about and a cell
+  // that never committed: the value on screen, and nothing holding it.
+  //
+  // Both events and in that order, because that is what a native date field
+  // fires when a person picks a date, and every page here was written against a
+  // native date field. This is not a loop: `syncCalendar` answers the `change`
+  // with `update()`, which compares before it renders and re-dispatches
+  // `changeDate` only when the dates actually differ — measured at a recursion
+  // depth of one.
+  box.addEventListener('changeDate', () => {
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    box.dispatchEvent(new Event('change', { bubbles: true }));
+  });
   return picker;
 }
 
@@ -332,6 +368,45 @@ function openCalendar(box) {
   // second open takes on a picker that is already up. Cheap and idempotent.
   describeGrid(picker);
   return picker;
+}
+
+// **A value set from outside does not reach the widget.** Measured:
+// `box.value = '2026-12-25'` and a dispatched `change` left `getDate()` on the
+// old date and the grid on the old month — a calendar disagreeing with the box
+// it belongs to, silently.
+//
+// `update()` and not `setDate(box.value)`, because it is the library's own "read
+// the input field again": an empty box — which is what a cleared field and a
+// half-typed date both read as — clears the selection instead of being parsed as
+// a date, and a value that already agrees costs a comparison and no render.
+// `autohide` is forced off because it defaults to `config.autohide`, which is
+// true here, and a popup that shut itself on a Reset would be the widget
+// answering a question nobody asked.
+function syncCalendar(box) {
+  const picker = CALENDARS.get(box);
+  if (picker) picker.update({ autohide: false });
+}
+
+// **The event arrives on the FORM and not on the box, and that is measured too.**
+// The record page's Reset assigns every control and then dispatches ONE `input`
+// on the form — `resetEdits` in `detail.py`, whose own comment says why: a value
+// assigned by script fires nothing. So a listener that asked whether
+// `event.target` was a date box would never run in the one flow this exists for,
+// the flow whose entire job is undoing a mistake. The target is therefore asked
+// for the date boxes UNDER it as well as for itself, which costs an empty
+// `querySelectorAll` on a keystroke in a text field and finds every box a Reset
+// just rewrote.
+function syncCalendarsIn(target) {
+  if (!target || !target.matches) return;
+  if (target.matches('input[type="date"]')) syncCalendar(target);
+  else for (const box of target.querySelectorAll('input[type="date"]')) syncCalendar(box);
+}
+
+// Both events, because the two writers use two. Reset dispatches `input`; a
+// `change` is what the boxes themselves announce, including the one this file
+// dispatches when the picker writes the value.
+for (const when of ['change', 'input']) {
+  document.addEventListener(when, (event) => syncCalendarsIn(event.target));
 }
 
 // The native indicator is hidden under a fine pointer and left alone under a
