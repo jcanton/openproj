@@ -375,13 +375,30 @@ function chipsFor(picker) {
     // difference between a chip and the day cell it stands for, and both were
     // measured rather than chosen.
     //
-    // **It does not close.** `autohide` is on, so `setDate` would hide the popup
-    // — and a chip, unlike a day cell, is a focusable control INSIDE that popup:
-    // measured, `document.activeElement` was still the chip after the popup went
-    // to `display: none`, which is a reader's focus left on nothing. The grid
+    // **It does not close, on the pages where there is still a page.**
+    // `autohide` is on, so `setDate` would hide the popup — and a chip, unlike a
+    // day cell, is a focusable control INSIDE that popup: measured,
+    // `document.activeElement` was still the chip after the popup went to
+    // `display: none`, which is a reader's focus left on nothing. The grid
     // jumping to that cycle's opening month with the day selected under its band
     // is also the only confirmation the press has happened, and hiding it is
     // hiding the answer.
+    //
+    // That is the record page and the create form. It is NOT the timeline, and
+    // saying so here is the point of the qualifier: `timeline.py` hangs
+    // `control.onchange = () => form.requestSubmit()` on every control in its
+    // window bar, so the `change` dispatched below applies the window and the
+    // browser navigates to `?from=…`. The popup does not close there; it goes
+    // with the document.
+    //
+    // **And that is wanted rather than tolerated.** The control this widget
+    // replaces is a native date picker, which fires `change` on a pick too, and
+    // every other control in that bar already applies itself on one. A chip that
+    // set the box and then waited for a Go button would be the only thing on the
+    // page that did — and the `?from=` in the address bar is what makes the
+    // window shareable, which is the timeline's own argument for submitting at
+    // all. `test_the_timelines_window_fields_get_the_chips_and_not_the_bands`
+    // counts that submit.
     //
     // **`forceRefresh`, because the same date is not the same view.** The
     // library skips the re-render when the new date equals the selection, so

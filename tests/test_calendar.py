@@ -1227,14 +1227,27 @@ def test_a_plan_with_no_dated_cycle_gets_a_calendar_and_no_chip_row(
 
 
 A_WINDOW_FIELD = """
-  const box = document.getElementById('tl-from');
-  const form = box.closest('form');
-  // The timeline's controls are a real form pointed at a real route, so a chip
-  // that submitted it would navigate away and the measurement would come back
-  // as a page that never laid out rather than as a defect with a name.
+  // The timeline's controls are a real form pointed at a real route, and a chip
+  // DOES submit it — see the test below. So the submit is counted and then
+  // stopped, or the page navigates and the measurement comes back as a page that
+  // never laid out rather than as an answer.
+  //
+  // On the DOCUMENT, in the CAPTURE phase, and both halves are load-bearing.
+  // `timeline.py` registers its own submit handler on the form when the page
+  // loads, so a listener added here is behind it in registration order and runs
+  // second — by which time that handler has already assigned `location.search`
+  // and the navigation is under way. `preventDefault` does not reach an
+  // assignment to `location`; only never running it does, and capture on an
+  // ancestor is the only phase that comes first.
   let submitted = 0;
-  form.addEventListener('submit', (event) => { submitted += 1; event.preventDefault(); });
+  document.addEventListener('submit', (event) => {
+    submitted += 1;
+    event.preventDefault();
+    event.stopPropagation();
+  }, true);
 
+  const box = document.getElementById('tl-from');
+  const before = box.value;
   openCalendar(box);
   const cells = [...document.querySelectorAll('.datepicker-cell.day')];
   const row = document.querySelector('.cyc-chips');
@@ -1260,9 +1273,17 @@ A_WINDOW_FIELD = """
       && cycleOf(isoOf(new Date(Number(cell.dataset.date))))).length,
     chips: chips.length,
     names: chips.map((chip) => chip.getAttribute('aria-label')),
+    before: before,
   };
-  if (chips.length) chips[0].click();
-  answer.value = box.value;
+  // The LAST chip and not the first. `tl-from` is rendered already holding the
+  // day the FIRST cycle opens — it is the timeline's own origin — so pressing
+  // chip zero sets the date the box already had, which changes nothing, fires
+  // nothing, and is satisfied by a chip with no handler at all. Measured: with
+  // `picker.setDate(...)` replaced by `undefined`, every assertion this script
+  // fed still passed. The test below asserts the premise rather than trusting
+  // it, by comparing `before` against what the press produced.
+  if (chips.length) chips[chips.length - 1].click();
+  answer.after = box.value;
   answer.submitted = submitted;
   return answer;
 """
@@ -1283,6 +1304,20 @@ def test_the_timelines_window_fields_get_the_chips_and_not_the_bands(
     with the hook on, counted by the same `cycleOf`. Without it, `banded == 0`
     is a sentence a popup that never opened also satisfies — and this widget has
     a `FINE.matches` gate that can decline to open for reasons of its own.
+
+    **A chip applies the window, and that is wanted.** `changeDate` reaches the
+    box as `input` and `change` — see `calendarFor` — and `timeline.py` hangs
+    `control.onchange = () => form.requestSubmit()` on every control in that
+    form, so a press navigates to `?from=…` and the window is redrawn. That is
+    parity with the control this widget replaces: a native date picker fires
+    `change` on a pick too, and every other control in this bar already applies
+    itself on one. A chip that set the box and waited for a Go button would be
+    the only thing on the page that did.
+
+    One consequence, and it belongs here rather than in a surprise: the chip's
+    "it does not close" — `autohide: false`, so a reader's focus is not left on
+    a hidden control — is a property of the record page and the create form. On
+    THIS page the popup goes with the document, because the document goes.
     """
     page = render_timeline(seed_index, ROUTES)
     found = measured_in(chrome(), page, tmp_path / "timeline.html", 1280, A_WINDOW_FIELD)
@@ -1305,10 +1340,27 @@ def test_the_timelines_window_fields_get_the_chips_and_not_the_bands(
     # The chips are the half that stays, and they are live: a row that is drawn
     # and does nothing is worse than no row.
     assert found["chips"] == len(windows)
-    assert found["value"] == windows[0].opens.isoformat()
-    assert found["submitted"] == 0, "pressing a chip submitted the timeline's own form"
     for cycle, name in zip(windows, found["names"], strict=True):
         assert f"cycle {cycle.number}" in name, name
+
+    # The premise, asserted rather than assumed. `tl-from` is rendered holding
+    # the timeline's origin, which is the day the first cycle opens, so a press
+    # on the chip for that cycle writes the value the box already had — and
+    # "the box holds the right date afterwards" is then true of a chip with no
+    # handler at all.
+    last = windows[-1].opens.isoformat()
+    assert found["before"] != last, (
+        "the box already held the date the chip under test sets, so nothing below "
+        "distinguishes a live chip from a dead one"
+    )
+    assert found["after"] == last, "the chip did not set the day its cycle opens"
+    # Applied, not merely written. This is the page's own auto-apply — a `change`
+    # on any control in `.tl-controls` submits it — and it is what makes the chip
+    # the same gesture as picking a day in the grid.
+    assert found["submitted"] == 1, (
+        "pressing a chip did not apply the window; on this page a chip is a "
+        "window control and applying it is the whole of what it is for"
+    )
 
 
 # --------------------------------------------------------------------------- #
