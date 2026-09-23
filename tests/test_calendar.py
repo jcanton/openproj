@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 from browser import chrome, measured_in, measured_on_a_phone
 from cascade import El, Sheet, el
+from pages import elements, render_paths, tags
 
 import openproj.render.calendar as calendar_module
 from openproj.index import Index, build_index
@@ -35,7 +36,6 @@ from openproj.render import (
 )
 from openproj.render.calendar import _calendar_js
 from openproj.vendor import _static_dir
-from tests.pages import elements, render_paths, tags
 
 # The corpus's own today, which `cycle_windows` does not read: a cycle's three
 # dates come from `config.cycles` and the cool-down and from nothing else, so
