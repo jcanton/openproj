@@ -7313,6 +7313,7 @@ def _hovered_cycle(
 
     from browser import _devtools, _evaluated
 
+    assert at in ("band", "bar", "plot"), f"`at` must name a point; it was {at!r}"
     where.write_text(page)
     profile = where.parent / f"{where.stem}-profile"
     shutil.rmtree(profile, ignore_errors=True)
@@ -7387,9 +7388,9 @@ def _hovered_cycle(
         })()""",
         )
         assert found, "no cycle band with a bar under it was on screen to point at"
-        assert at in ("band", "bar", "plot"), f"`at` must name a point; it was {at!r}"
-        found["at"] = found[at]
-        x, y = found[at]
+        # Reported back as `at`, so a failure message says where the pointer went
+        # as well as what it found there.
+        x, y = found["at"] = found[at]
         call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y})
         # A second later, and the reason is the hover card: the bar's own hover
         # opens one on a delay this page owns, so an answer taken immediately
