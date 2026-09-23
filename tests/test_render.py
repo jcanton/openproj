@@ -1176,6 +1176,15 @@ def test_the_cooldown_survives_the_tint_the_second_band_is_drawn_in(rendered: Pa
     hairline as well. So the claim is that the second tint costs the cool-down
     nothing — and that is exactly the claim that fails if `--band-alt` is put back
     on the page's side of `--band`.
+
+    **`second >= main` does not say that both are legible, and `main` is the one
+    that is not.** Over `--band` in the dark theme — the tint a cycle at EVEN rank
+    wears, so half the bands on the chart — the cool-down measures contrast 1.046,
+    dE 1.90 and dL* 1.36, which is under the just-noticeable difference. Over
+    `--band-alt` in the same theme it is 1.126, dE 4.02, dL* 3.46. The number that
+    is not mine to move is the one this test passes over, and it is written down
+    so nobody reads the assertion as evidence the cool-down can be seen. Moving it
+    means moving `--line` or the alpha, and `--line` is the grid and the legend.
     """
     themes = tokens(read(rendered, "timeline.html"))
 
