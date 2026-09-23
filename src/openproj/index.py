@@ -16,7 +16,7 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable
 from datetime import date
 from functools import cached_property
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from pydantic import BaseModel, model_validator
 
@@ -471,11 +471,14 @@ class Index(BaseModel):
 
         The cache is sound because an Index is built once, in `build_index`, and
         never written to afterwards: nothing in `src/` assigns a field on one or
-        mutates a field's dict in place, and the one place that was tempted says
-        so — `/api/slide/preview` in `web.py` takes a `model_copy` rather than
-        assigning through, because the index is shared by every request in the
-        process. Two threads racing this compute the same Config twice and one
-        wins, which is the same value either way.
+        mutates a field's dict in place. Two threads racing this compute the same
+        Config twice and one wins, which is the same value either way.
+
+        `model_copy` was cited here as the safe alternative to assigning through,
+        and it is not — it copies the instance `__dict__`, which is where a
+        `cached_property` puts its answer, so a copy that replaces
+        `cooldown_weeks` keeps the Config built from the old one. That is
+        answered below, in code, because a docstring is not a guard.
 
         `build_end` itself is the other candidate and cannot be this: it is
         keyed by a cycle, so caching it means a dict per index rather than a
@@ -486,6 +489,42 @@ class Index(BaseModel):
         that needs it is the one caller with nowhere to put it.
         """
         return Config(cooldown_weeks=self.cooldown_weeks, plans=self.plans)
+
+    # A copy of an index must not carry a cache computed off the original's
+    # fields. `model_copy` copies `__dict__` wholesale, and a `cached_property`
+    # lives in there beside the fields — pydantic's own docstring warns that it
+    # "might have unexpected side effects if you store anything in it, on top of
+    # the model fields (e.g. the value of cached properties)". Measured on
+    # pydantic 2.13.4: `index.model_copy(update={"cooldown_weeks": 5.0})` gave a
+    # copy whose `cooldown_weeks` was 5.0 and whose `_config.cooldown_weeks` was
+    # still 2.0, so every `build_end` off that copy answered with the cool-down
+    # the caller had just replaced — silently, and on the one number the whole
+    # function exists to get from the repository rather than from a default.
+    #
+    # Nothing copies an index with that field today. `/api/slide/preview` in
+    # `web.py` copies a RECORD, and the one place that copies an index —
+    # `tests/test_render.py`, updating `plan` and `children` — happens to update
+    # fields the cached Config does not read. That is the entire distance between
+    # sound and wrong, and it is a field name, which is why this is a line of
+    # code and not another sentence in the docstring above.
+    #
+    # Evicted by TYPE and not by name, so a second `cached_property` added to
+    # this class is guarded by having been added rather than by somebody
+    # remembering this comment. Both dunders, because `model_copy` is one of
+    # these two plus the update, and `copy.copy` and `copy.deepcopy` are the
+    # other callers: overriding `model_copy` alone would leave those carrying a
+    # stale cache for the same reason.
+    def _uncached(self) -> Index:
+        for name, attribute in vars(type(self)).items():
+            if isinstance(attribute, cached_property):
+                self.__dict__.pop(name, None)
+        return self
+
+    def __copy__(self) -> Index:
+        return super().__copy__()._uncached()
+
+    def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Index:
+        return super().__deepcopy__(memo)._uncached()
 
     def cycle_windows(self) -> list[CycleWindow]:
         """Every dated cycle, as the three dates a drawing of one needs.
