@@ -1848,8 +1848,19 @@ def test_an_absurd_appetite_draws_a_full_bar_and_not_a_500_on_three_pages(
     arithmetic out is exactly the state this defect was already in.
 
     Beside the cool-down test rather than in the render suite, because what is
-    pinned is one number against every page that divides by something, and a
-    page tested in another file is the page that gets the guard last.
+    pinned is one number against the pages that draw a load bar, and a page
+    tested in another file is the page that gets the guard last.
+
+    **Three pages, and that is the whole of what this pins.** It is not every
+    page that divides by something, and the difference is two live defects rather
+    than a nicety of wording: `availability: .inf` reaches `_CYCLE`'s roster row
+    as `(row.rate * 100)|round|int` and answers OverflowError on /cycle/<n>, and
+    `person_weeks: .nan` reaches `round(100 * counted.fraction)` (`detail.py`)
+    and answers ValueError on the parent's record page and on the static
+    `detail.html`. Both measured the way this test measures, through the file.
+    They are a branch of their own — jcanton, 2026-09-23 — and the reason they
+    are written down in a passing test is that a docstring claiming more than its
+    assertions is how the next reader concludes the sweep is finished.
 
     The bar is full and not empty. A ratio nobody can read is drawn as "as much
     as it can hold", the same direction `_cycle_totals` keeps its own sum in: a

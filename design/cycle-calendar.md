@@ -276,6 +276,16 @@ hoisting the Config into a `cached_property` bought its own defect: `model_copy`
 `__dict__`, which is exactly where a `cached_property` puts its answer, so a copy carried a Config
 built from the field the copy had just replaced.
 
+**And the hunt did not finish, which is the part a scorecard is for.** Two more unbounded floats out
+of a plan file reach a rounding that raises, both measured through the file the way the ones above
+were. `availability: .inf` in a cycle record renders as `(row.rate * 100)|round|int` in `_CYCLE`'s
+roster row and answers `OverflowError` on `/cycle/<n>`. `person_weeks: .nan` on one task reaches
+`round(100 * counted.fraction)` (`detail.py`) and answers `ValueError` on its PARENT's record page
+and on the static `detail.html`, which is every record at once; the deck spells that expression a
+third time and the corpus does not reach it. They are their own branch — jcanton, 2026-09-23 — with a
+sweep in both languages and a validation rule in `_problems_for` beside them, and the reason they are
+written here is that this branch's own commits read like a finished sweep and are not one.
+
 **Both drawings alternated on the wrong fact, and the words were right the whole time.** The
 timeline wrote `"alt" if number % 2 else "main"` and the calendar's `dayInCycle` wrote
 `found.number % 2`, so each of them tested the parity of a cycle's NUMBER while the commit subject,

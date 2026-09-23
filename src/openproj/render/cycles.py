@@ -66,6 +66,22 @@ def _percent(part: float, whole: float) -> int:
     was last showing where a reload drew an empty one. Whoever changes this
     changes that, and the comment above `percent` says which of the two rules
     here does not survive the translation.
+
+    **This is not the last of them, and the honest count belongs here rather than
+    in a 500.** Two more places take an unbounded float out of a plan file and
+    hand it to a rounding that raises, and both were measured on a copy of the
+    corpus with the value written into the file the way a person writes it.
+    `_CYCLE`'s roster row renders the rate as `(row.rate * 100)|round|int`, so an
+    `availability: .inf` in a cycle record answers `OverflowError: cannot convert
+    float infinity to integer` on /cycle/<that cycle>. And the record page takes
+    `round(100 * counted.fraction)` twice (`detail.py`), so a `person_weeks: .nan`
+    on one task made its PARENT's page — and the whole of the static
+    `detail.html`, which is every record at once — answer `ValueError: cannot
+    convert float NaN to integer`; the deck spells that same expression a third
+    time, and the corpus above does not reach it. They are a branch of their own,
+    with a sweep in both languages and a validation rule in `_problems_for`
+    beside them — jcanton, 2026-09-23 — and they are named here so that the next
+    reader of this docstring does not read "one helper now" as "all of them".
     """
     if not whole:
         return 0
