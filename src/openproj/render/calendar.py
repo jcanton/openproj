@@ -102,9 +102,9 @@ _CALENDAR_STYLE = """
 
    All four fills are (0,2,0) or (0,3,0) and they are written in the order they
    must resolve in, so say how: `.cyc-alt` follows `.cyc` and beats it on order
-   for an odd-numbered cycle; `.cyc-cool` follows both and beats them for a
-   cool-down day; and `.cyc-alt.cyc-cool` is (0,3,0) and beats all three, which
-   is what keeps an odd cycle's cool-down on the odd cycle's tint instead of
+   for a cycle wearing the second tint; `.cyc-cool` follows both and beats them
+   for a cool-down day; and `.cyc-alt.cyc-cool` is (0,3,0) and beats all three,
+   which is what keeps that cycle's cool-down on that cycle's tint instead of
    collapsing every cool-down in the month to one colour. */
 .datepicker-cell.cyc { background: var(--band); }
 .datepicker-cell.cyc-alt { background: var(--band-alt); }
@@ -262,7 +262,11 @@ function dayInCycle(day) {
   const found = cycleOf(iso);
   if (!found) return null;
   const classes = ['cyc'];
-  if (found.number % 2) classes.push('cyc-alt');
+  // The server's answer, not this cell's arithmetic: which of the two tints a
+  // cycle wears is a fact about the cycle NEXT to it, and a `% 2` here read the
+  // spelling of the number instead. `CycleWindow` (`index.py`) has the case it
+  // got wrong, and the timeline's band carried the same line.
+  if (found.window.alt) classes.push('cyc-alt');
   if (found.phase === 'cool') classes.push('cyc-cool');
   if (iso === found.window.opens) classes.push('cyc-opens');
   if (iso === found.window.closes) classes.push('cyc-closes');
@@ -600,6 +604,13 @@ def _calendar_js(index: Index) -> Markup:
             "opens": window.opens.isoformat(),
             "builds": window.builds_until.isoformat(),
             "closes": window.closes.isoformat(),
+            # Carried rather than worked out in the browser. This was
+            # `found.number % 2` in `dayInCycle`, which is the alternation keyed
+            # on the spelling of the number instead of on which cycle comes next
+            # — see `CycleWindow` (`index.py`). The timeline had the same line,
+            # so the rule was written twice in two languages and wrong in both;
+            # it is now decided once, where the sort that defines "next" is.
+            "alt": window.alt,
         }
         for window in index.cycle_windows()
     ]

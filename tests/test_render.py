@@ -1074,21 +1074,76 @@ def test_a_cycle_gets_a_band_of_its_own_above_the_months(rendered: Path):
     assert re.search(r'<text class="today-label"[^>]*>today</text>', body)
 
 
-def test_two_cycles_running_up_against_each_other_read_as_two(rendered: Path):
+@pytest.fixture
+def cycles_that_touch(seed_root: Path) -> Index:
+    """The corpus under a `config/cycles.yaml` that skips numbers and whose cycles
+    genuinely run back to back.
+
+    Neither corpus in this repository can ask the question the tint is named for,
+    and they fail it in both directions at once. Both are numbered consecutively,
+    so the cycle's own number and its position in the plan agree in them whatever
+    the code does. And their windows are held apart by a weekend and by a month
+    — `seed/config/cycles.yaml` says the month is the conference window and is
+    deliberate — so no two bands on either chart ever meet in x, which is the
+    whole arrangement the feature is named after. A corpus that does not hold the
+    one case that matters proves nothing.
+
+    34, 36, 38, 40 is what one cancelled cycle and one renumbering look like, and
+    each window here opens the day after the one before it closes. `plans` goes
+    with the dates because a `Cycle` record is keyed by number and the records for
+    35 and 37 are about cycles this config no longer has.
+    """
+    records, config, _ = load_repo(seed_root)
+    touching = {
+        34: (date(2026, 2, 2), date(2026, 3, 27)),
+        36: (date(2026, 3, 28), date(2026, 5, 22)),
+        38: (date(2026, 5, 23), date(2026, 7, 17)),
+        40: (date(2026, 7, 18), date(2026, 9, 11)),
+    }
+    updated = config.model_copy(update={"cycles": touching, "plans": {}})
+    return build_index(records, updated, date(2026, 8, 17))
+
+
+def test_two_cycles_running_up_against_each_other_read_as_two(cycles_that_touch: Index):
     """They were one fill with a dashed rule between them, so a reader looking for
     where one ends found a line and the same colour either side of it.
 
-    The parity is the cycle's own number, so the set of tints drawn is exactly the
-    two — a band whose tint came from its position in the window would change
-    colour when the window scrolled past the cycle before it.
+    **The property, and not the palette.** This asserted that the set of tints
+    drawn was exactly `{"", "alt"}`, which is satisfied by any plan holding one
+    odd-numbered cycle anywhere on the chart — including a plan drawing four
+    touching bands in a single fill, as long as the odd one is somewhere else.
+    The claim a reader can check is that no two bands which MEET share a tint,
+    and that is what is asked here.
+
+    Stated as narrowly as it is true: over the bands this page draws, in x order,
+    and only between two that actually touch. "Every cycle in the plan
+    alternates" would be a claim about cycles clipped out of the window, which
+    this page does not draw and a reader cannot see.
     """
-    body = read(rendered, "timeline.html")
-    bands = re.findall(r'<rect class="cycle-band([^"]*)"', body)
+    from openproj.render import render_timeline
+
+    page = render_timeline(cycles_that_touch)
+    bands = sorted(
+        (
+            float(one.attrs["x"]),
+            float(one.attrs["width"]),
+            " ".join(sorted(set(one.attrs["class"].split()) - {"cycle-band"})),
+        )
+        for one in elements(page)
+        if one.tag == "rect" and "cycle-band" in one.attrs.get("class", "").split()
+    )
 
     assert len(bands) > 1, "one cycle on the chart proves nothing about two"
-    assert {band.strip() for band in bands} == {"", "alt"}, "every band wears the same tint"
-    assert ".cycle-band { fill: var(--band); }" in body
-    assert ".cycle-band.alt { fill: var(--band-alt); }" in body
+    assert len(bands) == len(cycles_that_touch.cycles), "a band was clipped out of this window"
+    for (left, width, tint), (right, _, next_tint) in zip(bands, bands[1:], strict=False):
+        # The fixture's guard, first. Two bands with a gap between them are told
+        # apart by the gap, and asserting alternation across one would be the
+        # loose property that flakes and gets deleted by whoever meets it.
+        assert round(left + width, 1) == right, f"the bands at {left} and {right} do not meet"
+        assert tint != next_tint, f"two cycles meeting at x={right} wear one fill"
+
+    assert ".cycle-band { fill: var(--band); }" in page
+    assert ".cycle-band.alt { fill: var(--band-alt); }" in page
 
 
 def test_the_second_band_tint_is_defined_in_every_theme(rendered: Path):

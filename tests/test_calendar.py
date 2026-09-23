@@ -69,6 +69,7 @@ def test_the_page_carries_every_dated_cycle_as_its_three_dates(seed_index: Index
             "opens": window.opens.isoformat(),
             "builds": window.builds_until.isoformat(),
             "closes": window.closes.isoformat(),
+            "alt": window.alt,
         }
 
 
@@ -560,16 +561,21 @@ def _bands_for(day: date, windows: list) -> set[str]:
     """What the band classes on that day have to be.
 
     The rule and not a recording of the output: a cycle runs from the day it
-    opens to the day it closes, alternates tint by its own number so that two
-    touching cycles read as two, wears the cool-down fill after the last build
-    day, and carries an edge on each of the two days that are facts. Written here
-    in Python against `cycle_windows()` so that the browser's copy has something
-    to disagree with.
+    opens to the day it closes, wears the second tint when the cycle before it in
+    the plan wore the first so that two touching cycles read as two, wears the
+    cool-down fill after the last build day, and carries an edge on each of the
+    two days that are facts. Written here in Python against `cycle_windows()` so
+    that the browser's copy has something to disagree with.
+
+    The tint is read off the window rather than recomputed from `window.number`,
+    which is what this said and what the page said, and both were wrong the same
+    way: a plan whose numbers skip drew touching cycles in one fill. It is one
+    rule now and it lives where the sort that defines "next" is.
     """
     for window in windows:
         if window.opens <= day <= window.closes:
             bands = {"cyc"}
-            if window.number % 2:
+            if window.alt:
                 bands.add("cyc-alt")
             if day > window.builds_until:
                 bands.add("cyc-cool")

@@ -309,7 +309,7 @@ def _timeline(
     # still be flagged amber. The calendar draws the same three dates, and an
     # invariant written twice is guarded once: the copy that lived on `Index`
     # had already lost both of the scheduler's guards.
-    for number, opens, builds_until, closes in index.cycle_windows():
+    for number, opens, builds_until, closes, alt in index.cycle_windows():
         if closes < origin or opens > last:
             continue
         left = x(max(opens, origin))
@@ -317,11 +317,18 @@ def _timeline(
             {
                 "number": number,
                 "label": f"cycle {number}",
-                # Which of the two tints this band wears. Adjacent cycles
-                # alternate so that two running up against each other read as two
-                # things; the parity is the cycle's own number, so a band does not
-                # change colour when the window scrolls past the cycle before it.
-                "tint": "alt" if number % 2 else "main",
+                # Which of the two tints this band wears, so that two cycles
+                # running up against each other read as two things.
+                #
+                # `cycle_windows` keys it on the cycle's rank among the plan's
+                # cycles and the reason is in `CycleWindow` (`index.py`): this
+                # was the parity of the cycle's own NUMBER, which answers a
+                # different question and agrees with the right one only while the
+                # numbers run consecutively. A `config/cycles.yaml` holding 34,
+                # 36, 38, 40 back to back drew four bands in one uniform fill —
+                # the defect the alternation exists to remove — and one cancelled
+                # or renumbered cycle is the whole distance to it.
+                "tint": "alt" if alt else "main",
                 "x": left,
                 "width": round(max(1.0, x(min(closes, last), 1) - left), 1),
                 "build_x": x(builds_until) if origin <= builds_until <= last else None,

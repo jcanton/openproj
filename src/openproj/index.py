@@ -208,19 +208,40 @@ def _progress_of(
 
 
 class CycleWindow(NamedTuple):
-    """A cycle's three dates, which is all any drawing of one needs.
+    """A cycle's three dates, and which of the two tints it wears.
 
-    The timeline worked these out inside its own band loop and immediately threw
-    the dates away for pixels; the calendar needs the same three and no pixels.
+    The timeline worked the dates out inside its own band loop and immediately
+    threw them away for pixels; the calendar needs the same three and no pixels.
     Written once here rather than twice there, because the copy that stayed in
     `Index.build_end` had already drifted — it was missing both guards the
     scheduler's copy has.
+
+    `alt` is here for the same reason and it arrived the harder way round: the
+    two drawings each worked it out from the cycle's NUMBER, and each of them
+    was answering a different question from the one the alternation asks.
     """
 
     number: int
     opens: date
     builds_until: date
     closes: date
+    # Whether this cycle wears the second of the two tints, on the timeline's
+    # band and in the calendar's grid.
+    #
+    # The claim the alternation makes is about ADJACENCY — two cycles running up
+    # against each other have to read as two — so it is keyed on the cycle's RANK
+    # among the plan's dated cycles. Parity of the NUMBER says the same thing
+    # only while the numbers run consecutively: a plan holding 34, 36, 38, 40
+    # with contiguous windows drew four bands in ONE uniform fill, which is the
+    # exact thing the tint was added to remove, and one cancelled or renumbered
+    # cycle is all it takes to get there.
+    #
+    # Rank over the PLAN's cycles and not over the ones a drawing happens to
+    # show, which is the property number parity was chosen for and is worth
+    # keeping: a band does not repaint when the timeline's window scrolls past
+    # the cycle before it, and the calendar's grid does not repaint when a reader
+    # pages into a month that holds one cycle instead of two.
+    alt: bool
 
 
 class Index(BaseModel):
@@ -532,11 +553,21 @@ class Index(BaseModel):
         Unclamped: the timeline clips to its own window and the calendar shows
         whatever month a reader is on, and a helper that clipped for one of them
         would be wrong for the other.
+
+        Sorted, and the order is load-bearing rather than tidy: `alt` is the rank
+        in this list, so the alternation both drawings make is a statement about
+        which cycle comes NEXT and not about how the numbers happen to be spelt.
         """
         config = self._config
         return [
-            CycleWindow(number, opens, build_end(number, (opens, closes), config), closes)
-            for number, (opens, closes) in sorted(self.cycles.items())
+            CycleWindow(
+                number,
+                opens,
+                build_end(number, (opens, closes), config),
+                closes,
+                alt=bool(rank % 2),
+            )
+            for rank, (number, (opens, closes)) in enumerate(sorted(self.cycles.items()))
         ]
 
     def load(self, cycle: int) -> dict[str, float]:
