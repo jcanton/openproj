@@ -2065,8 +2065,17 @@ def test_the_date_boxes_hold_the_window_on_screen(seed_index: Index):
     from openproj.render import render_timeline
 
     whole = render_timeline(seed_index)
-    origin = re.search(r'name="from" value="([\d-]+)"', whole).group(1)
-    last = re.search(r'name="to" value="([\d-]+)"', whole).group(1)
+    # Parsed, not matched. This read `name="from" value="([\d-]+)"` off the text
+    # and went to `None.group(1)` the day the box gained `data-cycles`, which is
+    # an attribute between the two it was pattern-matching and changes nothing
+    # about the claim. A regex over markup asserts the order somebody wrote the
+    # attributes in; the claim is that the control holds the date being drawn.
+    boxes = {
+        one.attrs["name"]: one.attrs.get("value")
+        for one in elements(whole)
+        if one.tag == "input" and one.attrs.get("type") == "date"
+    }
+    origin, last = boxes["from"], boxes["to"]
 
     assert origin and last, "the boxes hold the window the chart is drawing"
     assert "Showing the whole plan" not in " ".join(whole.split()), (
@@ -2075,7 +2084,11 @@ def test_the_date_boxes_hold_the_window_on_screen(seed_index: Index):
     assert "Drag sideways or scroll" in " ".join(whole.split())
 
     windowed = render_timeline(seed_index, window=(date(2026, 9, 1), date(2026, 9, 30)))
-    assert 'name="from" value="2026-09-01"' in windowed
+    assert {
+        one.attrs["name"]: one.attrs.get("value")
+        for one in elements(windowed)
+        if one.tag == "input" and one.attrs.get("type") == "date"
+    }["from"] == "2026-09-01"
     assert "a window of the plan" in " ".join(windowed.split())
     # Apply was a button and Reset a bare link, which reads as one control and one
     # afterthought.

@@ -174,8 +174,20 @@ _CALENDAR_STYLE = """
 .cyc-chips button:focus-visible { outline: 2px solid var(--focus); }
 
 /* The native indicator is hidden only where our popup actually opens. Under a
-   coarse pointer it stays, and so does the OS wheel behind it. */
-@media (pointer: fine) {
+   coarse pointer it stays, and so does the OS wheel behind it.
+
+   `not (pointer: coarse)` and not `(pointer: fine)`, which is what this said
+   first and which named the wrong case. `pointer` reports the PRIMARY pointing
+   device, and a machine with none at all — a keyboard-only desktop, a kiosk, a
+   headless browser — reports `pointer: none`, which is neither. Asking for
+   `fine` therefore withheld the widget from every reader who has no mouse,
+   which is exactly the reader the bands are least replaceable for: there is no
+   hovering a band to find out what it is. Only a thumb is meant to be excluded,
+   so a thumb is what the query names. CI found this the honest way — the Ubuntu
+   runner's headless Chrome reports no pointer, so three tests that open the
+   popup by focusing a box failed there and passed on a laptop, which reports a
+   trackpad. */
+@media not (pointer: coarse) {
   input[type="date"]::-webkit-calendar-picker-indicator { display: none; }
 }
 """
@@ -552,10 +564,15 @@ for (const when of ['change', 'input']) {
   document.addEventListener(when, (event) => syncCalendarsIn(event.target));
 }
 
-// The native indicator is hidden under a fine pointer and left alone under a
-// coarse one, so this asks the stylesheet's own question. A phone keeps the OS
-// wheel, which beats any grid this size under a thumb.
-const FINE = window.matchMedia('(pointer: fine)');
+// The stylesheet's own question, asked in the same words so the two halves
+// cannot drift: the indicator is hidden exactly where this opens. A phone keeps
+// the OS wheel, which beats any grid this size under a thumb.
+//
+// The excluded case is named, rather than the included one required. `pointer`
+// reports the primary pointing device and a machine with none reports `none`,
+// so `(pointer: fine)` — which is what this asked first — withheld the popup
+// from a keyboard-only desktop as well as from a phone.
+const COARSE = window.matchMedia('(pointer: coarse)');
 
 // One delegated listener and not a hook per host. Three of the places a date box
 // appears are built at runtime — the table's cells, its draft row and the `#pop`
@@ -564,7 +581,7 @@ const FINE = window.matchMedia('(pointer: fine)');
 // arrive with none.
 document.addEventListener('focusin', (event) => {
   const box = event.target;
-  if (box.matches && box.matches('input[type="date"]') && FINE.matches) openCalendar(box);
+  if (box.matches && box.matches('input[type="date"]') && !COARSE.matches) openCalendar(box);
 });
 
 // The keyboard's own way in, which is what a combobox uses and what this needs
@@ -573,7 +590,7 @@ document.addEventListener('focusin', (event) => {
 document.addEventListener('keydown', (event) => {
   const box = event.target;
   if (event.altKey && event.key === 'ArrowDown' && box.matches
-      && box.matches('input[type="date"]') && FINE.matches) {
+      && box.matches('input[type="date"]') && !COARSE.matches) {
     event.preventDefault();
     openCalendar(box);
   }

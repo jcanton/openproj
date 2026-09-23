@@ -855,11 +855,18 @@ def test_no_title_can_inline_a_library_a_second_time(marker_static, marker_serve
     # mermaid in: `startswith` is a rule about spelling, and the reason a file is
     # not on the graph is a fact about the file.
     FETCHED = {"excalidraw.js", "mermaid.min.js"}
+    # `datepicker.min.js` is excluded for Ace's reason and not for theirs: it is
+    # inlined, but into the pages that have a date field, and the graph has none.
+    # The `#pop` form can build one on an editable graph page, and that box keeps
+    # the native picker — 36 KB on every load of a page whose date box appears
+    # only inside a menu was the trade, and it is written down in
+    # `design/cycle-calendar.md` rather than decided here.
+    ELSEWHERE = {"datepicker.min.js"}
     heads = {
         path.name: path.read_text(encoding="utf-8")[:200]
         for path in STATIC_DIR.iterdir()
         if path.suffix == ".js"
-        and path.name not in FETCHED
+        and path.name not in FETCHED | ELSEWHERE
         and not path.name.startswith(("ace", "keybinding-"))
     }
     assert len(heads) == 2, "the graph vendors two libraries"

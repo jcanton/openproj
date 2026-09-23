@@ -1898,8 +1898,56 @@ def test_a_phone_keeps_the_native_picker_and_our_popup_stays_shut(
     assert with_a_mouse["declined"] is False, (
         "Alt+Down did not open the popup for a mouse, so the keyboard has no door"
     )
+
     assert with_a_mouse["box"] < on_a_phone["a bare box"]["box"], (
         f"the same box is {with_a_mouse['box']}px under a mouse and "
         f"{on_a_phone['a bare box']['box']}px under a thumb — the native indicator is "
         f"taking the same room in both, so one of the two readers has two pickers or none"
     )
+
+
+# 1 is POINTER_NONE: a machine whose primary pointing device is nothing at all.
+# `(pointer: fine)` and `(pointer: coarse)` are BOTH false under it, which is the
+# whole reason it is here — it is the case a gate written as "fine" silently
+# excludes, and it is not hypothetical. CI found it: the Ubuntu runner's headless
+# Chrome reports it, so three tests that open the popup by focusing a box failed
+# there and passed on a laptop, which reports a trackpad.
+_NO_POINTER = (
+    "--blink-settings=primaryHoverType=1,availableHoverTypes=1,"
+    "primaryPointerType=1,availablePointerTypes=1",
+)
+
+
+def test_a_machine_with_no_pointer_at_all_still_gets_the_calendar(
+    seed_index: Index, tmp_path: Path
+):
+    """The gate names the case it excludes rather than the case it requires.
+
+    `pointer` reports the PRIMARY pointing device, and a keyboard-only desktop, a
+    kiosk and a headless browser all report `none` — neither fine nor coarse. So
+    `(pointer: fine)`, which is what this asked first, withheld the widget from
+    every reader with no mouse, and that is the reader the bands are least
+    replaceable for: there is no hovering a band to find out what it is, and the
+    cycle a date falls in is otherwise on no screen they can reach.
+
+    Asked with both doors, because they are two gates and not one — focus, and
+    Alt+Down for the reader who closed the popup with Escape and wants it back.
+    And the stylesheet's half is asked in the same breath: hiding the native
+    indicator without opening ours is a date field with no picker at all.
+    """
+    found = measured_in(
+        chrome(),
+        _a_bare_date_box(seed_index),
+        tmp_path / "no-pointer.html",
+        1280,
+        _UNDER_A_THUMB,
+        flags=_NO_POINTER,
+    )
+
+    assert not found["fine"] and not found["coarse"], (
+        f"the emulated machine reports a pointer after all — {found} — so this "
+        "test is about something other than the case it is named for"
+    )
+    assert found["declined"] is False, "Alt+Down opened nothing for a reader with no pointer"
+    assert found["told"] is True, "the page has no calendar at all, so nothing was gated"
+
