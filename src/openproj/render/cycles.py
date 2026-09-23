@@ -19,6 +19,7 @@ from ..model import (
 )
 from ..query import plain
 from ..schedule import build_end
+from .calendar import _CALENDAR_STYLE, _calendar_js
 from .controls import _FILTER_JS, _combobox_html, _cycle_numbers, _facets_html
 from .env import _compiled
 from .icons import _ICON_ART, ICONS, icon_svg
@@ -31,6 +32,88 @@ from .tokens import PRIORITIES, STATUSES
 # weeks is the team's cadence; every cycle written after the first one carries
 # its predecessor's length instead.
 _DEFAULT_CYCLE_DAYS = 28
+
+
+def _percent(part: float, whole: float) -> int:
+    """`part` of `whole` as a whole percent from 0 to 100, for a bar's width.
+
+    Written once because it was written three times — the cycle page, the cycles
+    index and the people page each carried `min(100, round(100 * x / capacity))`,
+    and all three raised. An invariant written three times is guarded in none of
+    them: `person_weeks: .inf` in one hand-committed task file made the ratio
+    infinite, `round()` raises OverflowError on infinity, and /people, /cycles and
+    /cycle/37 all answered 500 off a file `openproj check` reported nothing about.
+
+    The bound goes BEFORE the round, which is the whole of the fix and the same
+    order `days_after` and `within_the_calendar` (`model.py`) settled on. The two
+    ends were already the right ones — a bar cannot be wider than full or
+    narrower than empty — they were just applied to an integer that could no
+    longer be made.
+
+    The constants come first in both comparisons because NaN loses every one of
+    them, exactly as `within_the_calendar` does it: `min(100.0, nan)` is 100.0
+    and `min(nan, 100.0)` is the NaN, which rounds no better than the infinity
+    did. NaN is reachable here and not hypothetical — an `availability` of `.inf`
+    makes the capacity infinite too, and inf/inf is NaN.
+
+    So an unreadable ratio draws a full bar rather than an empty one. That is the
+    direction this number must never be wrong in: the cycles index says so about
+    its own sum, and a bar drawn empty is a cycle that looks free to bet into.
+
+    **There is a second copy, in the browser, and it is called `percent`.** The
+    cycle page's `recount` redraws the roster's bars while a rate is being typed,
+    so the same ratio is taken in JavaScript — and it was taken there with only
+    the upper bound, which made `-1` in a rate box freeze the bar at whatever it
+    was last showing where a reload drew an empty one. Whoever changes this
+    changes that, and the comment above `percent` says which of the two rules
+    here does not survive the translation.
+
+    **This is not the last of them, and the honest count belongs here rather than
+    in a 500.** Two more places take an unbounded float out of a plan file and
+    hand it to a rounding that raises, and both were measured on a copy of the
+    corpus with the value written into the file the way a person writes it.
+    `_CYCLE`'s roster row renders the rate as `(row.rate * 100)|round|int`, so an
+    `availability: .inf` in a cycle record answers `OverflowError: cannot convert
+    float infinity to integer` on /cycle/<that cycle>. And the record page takes
+    `round(100 * counted.fraction)` twice (`detail.py`), so a `person_weeks: .nan`
+    on one task made its PARENT's page — and the whole of the static
+    `detail.html`, which is every record at once — answer `ValueError: cannot
+    convert float NaN to integer`; the deck spells that same expression a third
+    time, and the corpus above does not reach it. They are a branch of their own,
+    with a sweep in both languages and a validation rule in `_problems_for`
+    beside them — jcanton, 2026-09-23 — and they are named here so that the next
+    reader of this docstring does not read "one helper now" as "all of them".
+    """
+    if not whole:
+        return 0
+    return round(max(0.0, min(100.0, 100 * part / whole)))
+
+
+def _over(held: float, capacity: float) -> bool:
+    """Whether somebody is holding more weeks than their capacity buys.
+
+    **The browser has the second copy, inside `recount`, and it is spelled
+    `capacity > 0 && held > capacity`.** This one was `capacity and held >
+    capacity`, written out three times, and the two shapes disagree on every
+    negative number — which a rate box takes, because it is a plain text input.
+    With a hand-committed `availability: {someone: -1}` the served row came down
+    wearing `class="over"` with that person named under "Over capacity", and one
+    character typed into the rate box took both away. Commit 4e259a4 fixed the
+    BAR two lines above this line in `recount` and left the flag beside it.
+
+    `capacity > 0` and not `bool(capacity)`, and the browser's is the shape that
+    is right rather than merely the one that won: a capacity is a number of
+    weeks, so a capacity that is not positive is not a budget somebody can be
+    over. It also keeps this flag agreeing with the bar drawn next to it —
+    `_percent(1.0, -4.0)` is 0, so the alternative was an empty bar in a row
+    coloured for being full. NaN loses `> 0` as well, which is the same direction
+    `_percent` puts its constants first for.
+
+    Whoever changes either of these changes an invariant written in two
+    languages, which is this repository's characteristic way of guarding half of
+    one.
+    """
+    return capacity > 0 and held > capacity
 
 
 _CYCLE = """
@@ -762,6 +845,40 @@ for (const pick of document.querySelectorAll('#bets select.pick')) {
   };
 }
 
+// **The browser's copy of `_percent` (`cycles.py`), and it has to stay one.**
+// Whoever changes either of these is changing an invariant written in two
+// languages, which is this repository's characteristic way of guarding half of
+// one. The server bounds the ratio at both ends; this bounded only the top —
+// `Math.min(100, Math.round(100 * held / capacity))` — so the same two numbers
+// gave two different bars. A rate box takes any text, and `-1` in one assigned
+// `width: "-25%"`, which is not a width: CSSOM refuses it and leaves the last
+// good one standing, so the bar stopped following the rate and went on drawing
+// a load nobody holds, while a reload drew `_percent(1.0, -4.0)` = 0.
+//
+// A stale bar rather than a full one only because the server always writes an
+// inline width to be stale AT. `span.bar > span` (`shell.py`) declares no width
+// of its own, so a fill that ever loses one is a block child filling the whole
+// 140px track — measured, and asserted as `bare` in
+// `test_the_load_bar_is_the_same_width_in_the_browser_as_it_is_on_the_server`.
+//
+// The bound goes BEFORE the round for the reason the Python says: `Math.round`
+// hands back the `Infinity` it was given, and a rate of `1e-323` makes the
+// ratio infinite. `Infinity%` and `NaN%` are refused exactly as `-25%` is, so
+// the JavaScript copy was only ever right about those two by accident.
+//
+// **NaN is where the two languages part and the translation is not literal.**
+// Python puts the constants first so that NaN loses every comparison and an
+// unreadable ratio draws a FULL bar — the direction this number must never be
+// wrong in, because a bar drawn empty is a cycle that looks free to bet into.
+// `Math.min` propagates NaN whichever side it is on, so the ordering trick does
+// nothing here and the case is named instead.
+function percent(part, whole) {
+  if (!whole) return 0;
+  const ratio = 100 * part / whole;
+  if (Number.isNaN(ratio)) return 100;
+  return Math.round(Math.max(0, Math.min(100, ratio)));
+}
+
 // Capacity is what a rate BUYS, so it has to move while the rate is being typed.
 // Left to the next page load, the number somebody is setting is invisible at the
 // moment they are setting it — which is most of the moment that matters.
@@ -773,10 +890,16 @@ function recount() {
     const held = Number(row.dataset.held) || 0;
     const capacity = rate * build;
     row.querySelector('.capacity').textContent = capacity.toFixed(1) + ' wk';
-    row.querySelector('.bar > span').style.width =
-      capacity ? Math.min(100, Math.round(100 * held / capacity)) + '%' : '0%';
-    row.classList.toggle('over', capacity > 0 && held > capacity);
-    if (capacity > 0 && held > capacity) over.push(row.dataset.login);
+    row.querySelector('.bar > span').style.width = percent(held, capacity) + '%';
+    // **The browser's copy of `_over` (`cycles.py`), and it has to stay one.**
+    // The server spelled this `capacity and held > capacity` in all three of the
+    // places it asks, which disagrees with the line below on every negative
+    // number — and a rate box is a plain text input, so `-1` is one keystroke.
+    // The served row came down wearing `class="over"` and this took it off. The
+    // bar on the line above was put in step by 4e259a4; the flag was not.
+    const beyond = capacity > 0 && held > capacity;
+    row.classList.toggle('over', beyond);
+    if (beyond) over.push(row.dataset.login);
   }
   const line = document.getElementById('over');
   if (line) {
@@ -1154,6 +1277,10 @@ for (const head of BETS.querySelectorAll('th[data-sort]')) {
 }
 </script>
 {% endif %}
+{#- The setup form's two date boxes are drawn on this page in BOTH modes —
+    there is no reading/editing toggle here — so the calendar is not gated on
+    `editable` the way the record page's and the table's are. -#}
+{{ calendar }}
 """
 
 _CYCLE_STYLE = (
@@ -1570,6 +1697,9 @@ document.getElementById('yes').onclick = async () => {
 };
 </script>
 {% endif %}
+{#- Only the create form has a date box, and it is inside the `{% if editable %}`
+    above; the gate is at `calendar=`, where the reason is. -#}
+{{ calendar }}
 """
 
 _PEOPLE = """
@@ -2183,7 +2313,13 @@ def _proposed(index: Index, number: int, window: tuple[date, date] | None) -> Cy
     if window is None:
         starts_on = index.today
         builds_until = days_after(starts_on, _DEFAULT_CYCLE_DAYS - 1)
-        ends_on = days_after(builds_until, round(index.cooldown_weeks * 7))
+        # No `round()` around the week count: `days_after` rounds inside itself,
+        # after `within_the_calendar` has bounded the number, and a `round()`
+        # out here raises on `cooldown_weeks: .inf` before `days_after` is ever
+        # entered — the same one-number-takes-the-page-down defect
+        # `Index.build_end` and `Config._resolve` both carried. `round(round(x))`
+        # is `round(x)` for everything finite, so no dated cycle's proposal moves.
+        ends_on = days_after(builds_until, index.cooldown_weeks * 7)
     else:
         starts_on = window[0]
         builds_until = build_end(number, window, config)
@@ -2352,10 +2488,8 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
                 "rate": rate,
                 "capacity": capacity,
                 "held": held.get(login, 0.0),
-                "over": capacity and held.get(login, 0.0) > capacity,
-                "percent": min(100, round(100 * held.get(login, 0.0) / capacity))
-                if capacity
-                else 0,
+                "over": _over(held.get(login, 0.0), capacity),
+                "percent": _percent(held.get(login, 0.0), capacity),
                 "unsized": len(unsized.get(login, [])),
                 "until": max(mine).isoformat() if mine else "—",
             }
@@ -2543,11 +2677,19 @@ def render_cycle(
         statuses=STATUSES,
         priorities=PRIORITIES,
         combobox=_combobox_html(index, live=base_commit is not None),
+        # Ungated, unlike the record page's and the table's: `#setup` draws its
+        # two date boxes whatever `base_commit` is — this page has no
+        # reading/editing toggle — so a reader has the boxes and would otherwise
+        # have no popup on them. The cycle page is not in the static export, so
+        # nothing carries these bytes to a memory stick either way.
+        calendar=_calendar_js(index),
     )
     return _page(
         f"openproj — cycle {number}",
         body,
-        _DETAIL_STYLE + _CYCLE_STYLE + _SUGGEST_STYLE,
+        # Last, because the calendar's cell rules win their ties on source order
+        # — see the ladder comment in `calendar.py`.
+        _DETAIL_STYLE + _CYCLE_STYLE + _SUGGEST_STYLE + _CALENDAR_STYLE,
         links,
         # `/cycle/37` is not `/cycles`, and one cycle is what the Cycles listing is
         # a listing of — so the item that got you here is the item that stays lit.
@@ -2617,8 +2759,8 @@ def _cycle_totals(index: Index, number: int) -> dict:
         "bet": bet,
         "unsized": len(unsized),
         "capacity": capacity,
-        "percent": min(100, round(100 * bet / capacity)) if capacity else 0,
-        "over": bool(capacity) and bet > capacity,
+        "percent": _percent(bet, capacity),
+        "over": _over(bet, capacity),
     }
 
 
@@ -2642,10 +2784,14 @@ def render_cycles(index: Index, links: Links = STATIC, base_commit: str | None =
     decided = set(index.plans) | set(index.cycles)
     top = max(decided) if decided else 0
     ends = index.cycles.get(top)
+    # Asked once, because it now decides the create form, the calendar and the
+    # calendar's sheet rather than only the first — the same reason `render_table`
+    # gives for hoisting its own.
+    editable = base_commit is not None
     body = _compiled(_CYCLES).render(
         cycles=rows,
         links=links,
-        editable=base_commit is not None,
+        editable=editable,
         base_commit=base_commit or "",
         # Whether there is a page per cycle to link a card to. Only the server
         # serves one; `render_static` writes six files and no cycle is among
@@ -2679,11 +2825,17 @@ def render_cycles(index: Index, links: Links = STATIC, base_commit: str | None =
             else {},
         },
         roster=last.availability if last else {},
+        # Only the "Start a cycle" form has a date box and it is inside the
+        # template's `{% if editable %}`, so the listing a reader gets — and the
+        # `cycles.html` the static export writes — has none and is not asked to
+        # carry 60 KB of picker.
+        calendar=_calendar_js(index) if editable else Markup(""),
     )
     return _page(
         "openproj — cycles",
         body,
-        _DETAIL_STYLE + _CYCLE_STYLE,
+        # Last, for the tie-on-order reason in `calendar.py`'s ladder comment.
+        _DETAIL_STYLE + _CYCLE_STYLE + (_CALENDAR_STYLE if editable else ""),
         links,
         "cycles",
         index.unreadable,
@@ -2736,8 +2888,8 @@ def _person_load(index: Index, logins: list[str]) -> dict:
             "held": held,
             "unsized": len(missing.get(login, [])),
             "capacity": capacity,
-            "over": bool(capacity) and held > capacity,
-            "percent": min(100, round(100 * held / capacity)) if capacity else 0,
+            "over": _over(held, capacity),
+            "percent": _percent(held, capacity),
             "elsewhere": elsewhere.get(login, 0.0),
         }
     return {"cycle": number, "recorded": plan is not None, "people": people}

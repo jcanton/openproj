@@ -7,6 +7,7 @@ from markupsafe import Markup
 from ..index import Index
 from ..model import KINDS as KIND_LADDER
 from ..model import PARENT_KINDS, required_at, unread_fields
+from .calendar import _CALENDAR_STYLE, _calendar_js
 from .controls import (
     _FILTER_JS,
     _NO_ASIDE,
@@ -369,6 +370,9 @@ _TABLE = """
 {% endif %}
 <script id="payload" type="application/json">{{ payload|tojson }}</script>
 {% if editable %}{{ combobox }}{% endif %}
+{#- Empty unless the cells can be edited — the gate is at `calendar=` below,
+    beside the one `{{ pop }}` already has. -#}
+{{ calendar }}
 {{ filters }}
 {#- Above the script below, and it has to be: these are classic scripts sharing
     one global scope, and a function in a later block is not hoisted into an
@@ -5197,6 +5201,13 @@ def render_table(
         ),
         filters=_FILTER_JS,
         combobox=_combobox_html(index, live=base_commit is not None),
+        # This page serves NO `input[type="date"]` in its markup at all — the
+        # date box is built by `openEditor` when a cell is opened, which is
+        # inside the `{% if editable %}` half. So the gate is `editable` and not
+        # "the document has a date field": a census of the rendered table finds
+        # none in either mode, and a rule written that way would have taken the
+        # calendar off the one page that makes date boxes for a living.
+        calendar=_calendar_js(index) if editable else Markup(""),
         # A function and not a constant, because the two things the menu's script
         # does not know for itself are where a record's page is — `/detail/` from
         # the server and `detail.html#` in the export — and what the write half is
@@ -5220,7 +5231,10 @@ def render_table(
         # stylesheet in common except the shell's, and the shell ships on all
         # twelve pages for a box three of them draw. `pop.py`'s own comment is
         # the argument.
-        _TABLE_STYLE + _SUGGEST_STYLE + _POP_STYLE,
+        # The calendar's sheet last, and only with the widget: its cell rules
+        # are written to win their ties on source order (see the ladder comment
+        # in `calendar.py`), so a sheet appended after them takes those ties.
+        _TABLE_STYLE + _SUGGEST_STYLE + _POP_STYLE + (_CALENDAR_STYLE if editable else ""),
         links,
         "table",
         index.unreadable,

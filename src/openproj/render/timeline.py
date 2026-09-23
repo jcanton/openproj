@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import date
 
 from ..index import Index
-from ..model import RUNG, Config, days_after, size_weeks
-from ..schedule import build_end
+from ..model import RUNG, days_after, size_weeks
+from .calendar import _CALENDAR_STYLE, _calendar_js
 from .controls import _FILTER_JS, _facets_html, _summary_html
 from .env import _compiled, _fragment
 from .pop import _POP_STYLE, _pop_js
@@ -302,21 +302,33 @@ def _timeline(
             "tip": why,
         }
     cycles = []
-    config = Config(cooldown_weeks=index.cooldown_weeks, plans=index.plans)
-    for number, (opens, closes) in sorted(index.cycles.items()):
+    # Where building stops is `Index.cycle_windows`, not worked out here. It is
+    # the date an overrun is measured against (`schedule._overrun`), and the
+    # chart used to draw its only rule at the end of the *window* — two weeks of
+    # cool-down further right, so a bar could finish visibly before the line and
+    # still be flagged amber. The calendar draws the same three dates, and an
+    # invariant written twice is guarded once: the copy that lived on `Index`
+    # had already lost both of the scheduler's guards.
+    for number, opens, builds_until, closes, alt in index.cycle_windows():
         if closes < origin or opens > last:
             continue
         left = x(max(opens, origin))
-        # Where building stops. This is the date an overrun is measured against
-        # (`schedule._overrun`), and the chart used to draw its only rule at the
-        # end of the *window* — two weeks of cool-down further right. A bar could
-        # finish visibly before the line and still be flagged amber, which is the
-        # kind of contradiction that ends a timeline's credit with a room.
-        builds_until = build_end(number, (opens, closes), config)
         cycles.append(
             {
                 "number": number,
                 "label": f"cycle {number}",
+                # Which of the two tints this band wears, so that two cycles
+                # running up against each other read as two things.
+                #
+                # `cycle_windows` keys it on the cycle's rank among the plan's
+                # cycles and the reason is in `CycleWindow` (`index.py`): this
+                # was the parity of the cycle's own NUMBER, which answers a
+                # different question and agrees with the right one only while the
+                # numbers run consecutively. A `config/cycles.yaml` holding 34,
+                # 36, 38, 40 back to back drew four bands in one uniform fill —
+                # the defect the alternation exists to remove — and one cancelled
+                # or renumbered cycle is the whole distance to it.
+                "tint": "alt" if alt else "main",
                 "x": left,
                 "width": round(max(1.0, x(min(closes, last), 1) - left), 1),
                 "build_x": x(builds_until) if origin <= builds_until <= last else None,
@@ -426,10 +438,17 @@ _TIMELINE = """
       the box are three rows of it. A wrapping `<label>` is one grid item and
       cannot put its own contents in three. `for`/`id` says the same thing to the
       accessibility tree that wrapping said. -#}
+  {#- `data-cycles="chips"` on both: these two pick a WINDOW TO LOOK AT and not a
+      date work happens on, so the calendar's bands — which say "the 14th is a
+      build day of cycle 3" — answer a question nobody is putting to them. The
+      chips stay, because "show me cycle 3" is the common thing a reader comes to
+      these boxes for. The attribute is here rather than two ids in
+      `calendar.py`, so that a seventh page growing a date field does not have to
+      be added to the widget by somebody who has no reason to open it. -#}
   <label class="facet" for="tl-from">from</label>
-  <input type="date" id="tl-from" name="from" value="{{ t.origin or '' }}">
+  <input type="date" id="tl-from" name="from" data-cycles="chips" value="{{ t.origin or '' }}">
   <label class="facet" for="tl-to">to</label>
-  <input type="date" id="tl-to" name="to" value="{{ t.last or '' }}">
+  <input type="date" id="tl-to" name="to" data-cycles="chips" value="{{ t.last or '' }}">
   <label class="facet" for="tl-zoom">zoom</label>
   <select id="tl-zoom" name="zoom">
     <option value="">fit to window</option>
@@ -545,25 +564,35 @@ _TIMELINE = """
       and a month label at y=18 inside one 26px strip, so a cycle closing near the
       first of a month wrote one word over the other. -#}
   {% for cycle in t.cycles %}
-  <rect class="cycle-band" x="{{ cycle.x }}" y="0"
-        width="{{ cycle.width }}" height="{{ t.band }}"/>
-  {#- The cool-down, shaded inside the band. Nothing is supposed to be built in
-      it, so the band cannot show one flat stretch for the whole window. -#}
-  {% if cycle.cool_x is not none %}
-  <rect class="cycle-cooldown" x="{{ cycle.cool_x }}" y="0"
-        width="{{ cycle.cool_width }}" height="{{ t.band }}"/>
-  {% endif %}
-  <text class="cycle-label" x="{{ cycle.x + 4 }}" y="12">{{ cycle.label }}</text>
-  {#- The solid rule is the end of BUILD, because that is the date an overrun is
-      measured against. The dashed one is the end of the window. -#}
-  {% if cycle.build_x is not none %}
-  <line class="build-rule" x1="{{ cycle.build_x }}" y1="0" x2="{{ cycle.build_x }}"
-        y2="{{ t.height }}"><title>cycle {{ cycle.number }} stops building here</title></line>
-  {% endif %}
-  {% if cycle.rule_x is not none %}
-  <line class="cycle-rule" x1="{{ cycle.rule_x }}" y1="0" x2="{{ cycle.rule_x }}"
-        y2="{{ t.height }}"/>
-  {% endif %}
+  {#- One group per cycle, because an SVG `<g>` is `:hover` whenever any
+      descendant is: that is what lets the wash below be one rule rather than a
+      listener that would have to know which marks belong to which cycle. -#}
+  <g class="cycle-band-group">
+    {#- First in the group, so it is painted UNDER the band, the rules and every
+        bar that comes after: it stands for "your pointer is here" and must not
+        take ink or meaning from the work it lies over. -#}
+    <rect class="cycle-hover" x="{{ cycle.x }}" y="0"
+          width="{{ cycle.width }}" height="{{ t.height }}"/>
+    <rect class="cycle-band{% if cycle.tint == 'alt' %} alt{% endif %}" x="{{ cycle.x }}" y="0"
+          width="{{ cycle.width }}" height="{{ t.band }}"/>
+    {#- The cool-down, shaded inside the band. Nothing is supposed to be built in
+        it, so the band cannot show one flat stretch for the whole window. -#}
+    {% if cycle.cool_x is not none %}
+    <rect class="cycle-cooldown" x="{{ cycle.cool_x }}" y="0"
+          width="{{ cycle.cool_width }}" height="{{ t.band }}"/>
+    {% endif %}
+    <text class="cycle-label" x="{{ cycle.x + 4 }}" y="12">{{ cycle.label }}</text>
+    {#- The solid rule is the end of BUILD, because that is the date an overrun is
+        measured against. The dashed one is the end of the window. -#}
+    {% if cycle.build_x is not none %}
+    <line class="build-rule" x1="{{ cycle.build_x }}" y1="0" x2="{{ cycle.build_x }}"
+          y2="{{ t.height }}"><title>cycle {{ cycle.number }} stops building here</title></line>
+    {% endif %}
+    {% if cycle.rule_x is not none %}
+    <line class="cycle-rule" x1="{{ cycle.rule_x }}" y1="0" x2="{{ cycle.rule_x }}"
+          y2="{{ t.height }}"/>
+    {% endif %}
+  </g>
   {% endfor %}
   <line class="band-rule" x1="0" y1="{{ t.band }}" x2="{{ t.width }}" y2="{{ t.band }}"/>
   {% for month in t.months %}
@@ -615,6 +644,11 @@ _TIMELINE = """
     not hoisted into an earlier one — the `popServes(…)` call below needs this
     block to have run. -#}
 {{ pop }}
+{#- Ungated: `#tl-from` and `#tl-to` set which slice of the calendar is drawn, so
+    they are here for a reader as well as for a writer — this page has no editing
+    mode to gate on, and `timeline.html` in the static export is the one exported
+    page that carries a date box. -#}
+{{ calendar }}
 <script>
 const scroller = document.querySelector('.scroll');
 const svg = scroller.querySelector('svg');
@@ -788,6 +822,12 @@ plot.addEventListener('contextmenu', event => {
 // drawing shrinks to what is left, and the rules that span the whole plot are
 // cut to the new height.
 const FULL_HEIGHT = svg.querySelectorAll('.cycle-rule, .build-rule, .month-rule, .today');
+// `.cycle-hover` spans the plot as well and is deliberately NOT in that list.
+// It is a <rect>, so it takes `height` where a <line> takes `y2`, and the loop
+// below would set an attribute a rect has no meaning for — but it needs neither:
+// the server draws it at the height of the UNFILTERED chart, filtering only ever
+// removes rows, and the outermost <svg> clips to its own viewBox. So the wash is
+// never short, and a taller one is not drawn.
 const TODAY_LABEL = svg.querySelector('.today-label');
 
 // Run on every keystroke, and unlike the graph's it stays that way. The graph
@@ -995,6 +1035,18 @@ svg { display: block; }
    behind a panel is a panel, but behind the page it is 1.07:1 and there is no
    band at all. Same token as the legend key, because they are the same band. */
 .cycle-band { fill: var(--band); }
+/* The cycle beside this one, in the second tint of the same ink. Two hues would
+   put the one distinction on this chart that a dichromat cannot make, which is
+   the mistake the status ladder exists to avoid. The parity is the cycle's own
+   number and not its position in the window, so scrolling past a neighbour does
+   not repaint the band you are looking at.
+
+   `--band-alt` stands further off the page than `--band`, and which side it is
+   on is a fact about THIS rule's neighbour below: `.cycle-cooldown` is `--line`
+   at half alpha over whichever band it lies in, and `--line` is between the page
+   and `--band` in every theme. A tint on that side collapses the cool-down —
+   measured at dE 2.12, under the just-noticeable difference. See `shell.py`. */
+.cycle-band.alt { fill: var(--band-alt); }
 .band-rule { stroke: var(--line); }
 /* Where a cycle closes — the one rule on this chart that is a fact about the
    plan rather than grid furniture, so it is drawn in the boundary token and not
@@ -1006,6 +1058,55 @@ svg { display: block; }
 .build-rule { stroke: var(--line-strong); }
 .cycle-cooldown { fill: var(--line); fill-opacity: .5; }
 .cycle-label { font-size: 10px; fill: var(--accent); font-weight: 600; }
+/* Which column belongs to the cycle under the pointer, on a chart twenty rows
+   tall. Pointer-only, and allowed to be: it says nothing that is not already
+   said, because the dashed rule and the cycle label are the record of where a
+   cycle ends and neither of them moves.
+
+   `--row-hover` and not a fill plus an alpha of this rule's own. That token is
+   the app's one wash — the table's row highlight — and two numbers standing for
+   the same strength are two numbers that drift apart. So `opacity` here is a
+   switch between drawn and not drawn, and how strong the wash is stays in the
+   one place it was decided.
+
+   **`pointer-events: auto`, and it was `none`, which answered the pointer in the
+   wrong place.** `:hover` reaches the group from a descendant that takes the
+   pointer, and with the wash transparent the only such descendants are the 18px
+   band strip, the label and two hairline rules — so the chart lit when the
+   pointer was on the strip and did nothing at all beside a bar. Measured with a
+   real pointer on the seed plan at 1400x900: at the band's centre `opacity` was
+   1, and at the same x 120px down it was 0. That is the reader sighting up to
+   the strip, which is the motion this rule was added to remove.
+
+   **The bar still wins, and that was measured rather than argued.** The wash is
+   the first child of its group and every bar is drawn after every group, so a
+   bar is painted over it and takes the pointer first: at a bar's centre, with
+   this set to `auto`, `rect[data-id]:hover` was still the bar, its hover card
+   still fetched, and a trusted right press still opened the record menu with
+   the same three items. The wash does not light while the pointer is ON a bar,
+   for that same reason — the bar is the thing being pointed at — and the column
+   answers everywhere else in it.
+
+   Written out rather than deleted, although `auto` is a `<rect>`'s initial
+   value: the declaration is where this reasoning hangs, and a property with no
+   line has nowhere to say why. Filtering does not turn the taller wash into a
+   hit target below the chart — the server draws it at the UNFILTERED height,
+   and `applyFilter` shrinks the `<svg>` and its `viewBox`, which clips it.
+   Measured at seven rows of twenty-three: a pointer 30px under the shortened
+   chart lit nothing.
+
+   **No transition.** `test_the_app_moves_in_two_places` is an inventory of this
+   app's two animated rules and a third has to justify itself; an opacity that
+   snaps needs no justification and no reduced-motion exemption.
+
+   `@media (hover: hover)` for the reason the shell gives for the row wash: a
+   touch device has no pointer to follow and keeps the last-tapped `:hover` until
+   something else is tapped, so a phone would be left with one cycle lit and no
+   way to move off it. */
+.cycle-hover { fill: var(--row-hover); opacity: 0; pointer-events: auto; }
+@media (hover: hover) {
+  .cycle-band-group:hover .cycle-hover { opacity: 1; }
+}
 .today { stroke: var(--danger); stroke-width: 1.5; }
 .today-label { font-size: 10px; fill: var(--danger); font-weight: 600; }
 rect.bar { rx: 3; }
@@ -1124,6 +1225,7 @@ def render_timeline(
         ),
         filters=_FILTER_JS,
         pop=_pop_js(links),
+        calendar=_calendar_js(index),
         # The rows the shared `matches()` reads, for the bars that were drawn. Not
         # the whole plan: a bar that is not on this window cannot be filtered onto it.
         bars={"rows": timeline["rows"], "human": HUMAN},
@@ -1133,7 +1235,9 @@ def render_timeline(
     # `_SUGGEST_STYLE` is the table's — and the shell's, which they do share,
     # ships on all twelve pages for a box three of them draw. Concatenated the way
     # `table.py` already writes `_TABLE_STYLE + _SUGGEST_STYLE`.
-    style = _timeline_css() + _POP_STYLE
+    # The calendar's sheet last, because its cell rules are written to win
+    # their ties on source order — see the ladder comment in `calendar.py`.
+    style = _timeline_css() + _POP_STYLE + _CALENDAR_STYLE
     return _page(
         "openproj — timeline",
         body,

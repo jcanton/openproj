@@ -44,6 +44,7 @@ from test_web import (
 )
 
 from openproj.auth import sign_session
+from openproj.render.cycles import _over, _percent
 from openproj.web import MAX_ASSET_BYTES, SESSION_COOKIE, create_app
 
 # Computed by the scheduler, never typed. If one of these ever gains an input,
@@ -935,6 +936,170 @@ def test_capacity_moves_while_the_rate_is_being_typed(client: TestClient):
     assert re.search(r"if \(event\.target\.matches\('input\.rate'\)\) recount\(\);", page)
     assert re.search(r"const BUILD_WEEKS = [0-9.]+;", page), "the server's own answer"
     assert "#setup input[type=date]" in page and "getElementById('stale')" in page
+
+
+# Every rate a person can actually type into that box, including the four the
+# arithmetic falls over on. It is a plain text input with no `type="number"` on
+# it, so `-1`, `1e-323`, `1e999` and a word are all reachable by typing them.
+TYPE_A_RATE = """
+  const row = document.querySelector('#roster tr');
+  // A known load, so the width expected of each rate is arithmetic here rather
+  // than a number copied off the page it is checking.
+  row.dataset.held = '1';
+  const rate = row.querySelector('input.rate');
+  const fill = row.querySelector('.bar > span');
+  // What a fill with no inline width does, measured once and not assumed: it is
+  // a block child of a 140px track and it fills it. That is the shape of the
+  // whole defect — an unusable width is not a narrow bar, it is no width.
+  fill.style.width = '';
+  const bare = Math.round(100 * fill.getBoundingClientRect().width
+                          / fill.parentNode.getBoundingClientRect().width);
+  const found = {};
+  for (const typed of ['1', '0.1', '-1', '0', '1e-323', '1e999', 'nonsense']) {
+    // A sentinel before each rate, so that every iteration is a question about
+    // what `recount` WROTE. CSSOM refuses a width it cannot use and leaves the
+    // last good one standing, so a run that took each rate as it came would
+    // report the previous rate's answer and pass or fail on the order of this
+    // list.
+    fill.style.width = '50%';
+    rate.value = typed;
+    rate.dispatchEvent(new Event('input', {bubbles: true}));
+    found[typed] = {
+      declared: fill.style.width,
+      // And the pixels, because a declaration is only a promise about them.
+      painted: Math.round(100 * fill.getBoundingClientRect().width
+                          / fill.parentNode.getBoundingClientRect().width),
+    };
+  }
+  return {found, bare, build: BUILD_WEEKS};
+"""
+
+
+def _as_a_number(typed: str) -> float:
+    """`Number(value) || 0`, which is what the script reads a rate box with."""
+    try:
+        got = float(typed)
+    except ValueError:
+        return 0.0
+    return got if got == got else 0.0
+
+
+def test_the_load_bar_is_the_same_width_in_the_browser_as_it_is_on_the_server(
+    client: TestClient, tmp_path: Path
+):
+    """The invariant is written in two languages — which copy is guarded?
+
+    `_percent` bounds the ratio at both ends before it rounds it. `recount`
+    bounded only the top — `Math.min(100, Math.round(100 * held / capacity))` —
+    and assigned that straight into `style.width`. A rate of `-1` therefore wrote
+    `width: "-25%"`, which is not a width: CSSOM refuses it and leaves the last
+    good one standing, so the bar stopped moving and went on drawing a load
+    nobody holds while the server, off the same two numbers, answered
+    `_percent(1.0, -4.0)` = 0 on the next page load. `span.bar > span`
+    (`shell.py`) declares no width of its own, so an unusable one is not a narrow
+    bar — `bare` measures what it is instead, and it is the whole 140px track.
+
+    So the claim is not "the width is sensible", it is "the two copies answer the
+    same thing", and it is asked of the shipped script rather than of its text.
+    In Chrome and not the node shim, for two reasons that each decide it alone:
+    the shim's matcher splits a selector on whitespace, so `.bar > span` finds
+    nothing and answers null rather than throwing, and the consequence here is a
+    painted width, which no shim has.
+
+    `Math.round(Infinity)` is `Infinity` and `Math.round(NaN)` is `NaN`, and CSS
+    refuses both exactly as it refuses `-25%` — so the browser's copy was right
+    about those two only by accident.
+    """
+    page = client.get("/cycle/37").text
+    answer = measured_in(chrome(), page, tmp_path / "cycle.html", 1280, TYPE_A_RATE)
+    build = answer["build"]
+
+    assert answer["found"], "the roster drew no bars, so nothing was measured"
+    assert answer["bare"] == 100, (
+        "a fill with no width of its own no longer fills its track, so a refused "
+        "declaration is no longer the defect this test is about"
+    )
+    for typed, drawn in answer["found"].items():
+        wanted = _percent(1.0, _as_a_number(typed) * build)
+        assert drawn["declared"] == f"{wanted}%", (
+            f"a rate of {typed!r} declares {drawn['declared']} in the browser and "
+            f"{wanted}% on the next page load"
+        )
+        assert drawn["painted"] == wanted, (
+            f"a rate of {typed!r} declares {drawn['declared']} and paints "
+            f"{drawn['painted']}% of the track"
+        )
+    # The one a reader reaches by typing a single character, named rather than
+    # left to the loop: an empty bar, and not the width it happened to have.
+    assert answer["found"]["-1"] == {"declared": "0%", "painted": 0}
+
+
+# The same rates, asked of the flag beside the bar rather than of the bar. The
+# row's ground and the "Over capacity" line under the table are the two things
+# this decides, and both come off one boolean on each side of the wire.
+TYPE_A_RATE_AND_READ_THE_FLAG = """
+  const row = document.querySelector('#roster tr');
+  row.dataset.held = '1';
+  const rate = row.querySelector('input.rate');
+  const found = {};
+  for (const typed of ['1', '0.1', '-1', '0', '1e-323', '1e999', 'nonsense']) {
+    rate.value = typed;
+    rate.dispatchEvent(new Event('input', {bubbles: true}));
+    const line = document.getElementById('over');
+    found[typed] = {
+      row: row.classList.contains('over'),
+      // The banner as well, because it is built from a second pass over the
+      // same condition and could be told something else by a copy of it.
+      named: !!line && !line.hidden && line.textContent.includes(row.dataset.login),
+    };
+  }
+  return {found, build: BUILD_WEEKS, login: row.dataset.login};
+"""
+
+
+def test_over_capacity_means_the_same_thing_in_the_browser_as_it_does_on_the_server(
+    client: TestClient, tmp_path: Path
+):
+    """The invariant is written in two languages — which copy is guarded? Again,
+    and two lines from the line that was fixed last time.
+
+    `recount` says `capacity > 0 && held > capacity`. The server said `capacity
+    and held > capacity`, in three places, and the two disagree on every negative
+    capacity. A rate box is a plain text input with no `type="number"` on it, so
+    `-1` is reachable by typing it and a hand-committed `availability: {someone:
+    -1}` puts it there without anybody typing at all: measured on a copy of the
+    frozen corpus, the served row came down as `<tr … class="over">` with that
+    person named under "Over capacity", and one character into the rate box took
+    both away. Commit 4e259a4 put the load BAR in step across the same wire — the
+    line above this one in `recount` — and left the flag.
+
+    Asked of the shipped script in Chrome, off the same rates the bar's test
+    uses, and compared against `_over` rather than against a number written here:
+    the claim is that the two copies answer the same thing, so restating either
+    of them in the test would be the test agreeing with itself.
+    """
+    page = client.get("/cycle/37").text
+    answer = measured_in(
+        chrome(), page, tmp_path / "cycle-flag.html", 1280, TYPE_A_RATE_AND_READ_THE_FLAG
+    )
+    build = answer["build"]
+
+    assert answer["found"], "the roster drew no rows, so nothing was measured"
+    for typed, drawn in answer["found"].items():
+        wanted = _over(1.0, _as_a_number(typed) * build)
+        assert drawn["row"] is wanted, (
+            f"a rate of {typed!r} marks the row {drawn['row']} in the browser and "
+            f"{wanted} on the next page load"
+        )
+        assert drawn["named"] is wanted, (
+            f"a rate of {typed!r} puts {answer['login']} under Over capacity "
+            f"{drawn['named']} in the browser and {wanted} on the next page load"
+        )
+    # The one a reader reaches by typing a single character, named rather than
+    # left to the loop: not over, because a capacity that is not a positive
+    # number of weeks is not a budget anybody can be over — and because the bar
+    # drawn beside it is empty, which is what `_percent(1.0, -4.0)` answers.
+    assert answer["found"]["-1"] == {"row": False, "named": False}
 
 
 def test_a_new_cycle_starts_from_the_last_one_s_roster(client: TestClient, repo_path: Path):

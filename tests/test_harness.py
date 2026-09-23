@@ -215,3 +215,41 @@ def test_no_test_asks_a_page_for_a_tag_by_searching_its_text():
         "instead, or name it in `_NOT_A_PAGE` with the reason it is not a page:\n  "
         + "\n  ".join(offenders)
     )
+
+
+def test_no_test_reaches_its_helpers_through_a_tests_package():
+    """`from tests.pages import ...` resolves on a laptop and not on CI, and the
+    whole gate goes down when one file does it.
+
+    `tests/` holds no `__init__.py`, so `tests.pages` is only ever an implicit
+    namespace package found because the repository root happens to be on
+    `sys.path` — which it is when pytest is started from a checkout the way a
+    person starts it, and is not on the runner. One file spelt it that way and
+    every one of the eight groups failed at collection in under thirty seconds,
+    for a defect no local run of any kind could reproduce: `1 error during
+    collection` is `Interrupted`, so nothing else ran and the eight failures said
+    nothing about the eight thousand tests they did not reach.
+
+    Every other file in here imports the helpers bare — `from pages import ...`,
+    `from browser import ...` — because `tests/` is the rootdir pytest inserts.
+    Asked as a property of the whole directory rather than fixed in the one file,
+    since the next person to add a test module will reach for the spelling their
+    editor completes.
+    """
+    offenders = {}
+    for path in sorted(Path(__file__).parent.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        said = [
+            f"{node.module}"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            and node.module is not None
+            and node.module.split(".")[0] == "tests"
+        ]
+        if said:
+            offenders[path.name] = said
+
+    assert not offenders, (
+        "these import their helpers through a `tests.` package, which exists on a "
+        f"laptop and not on the runner: {offenders}"
+    )

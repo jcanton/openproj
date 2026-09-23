@@ -101,6 +101,28 @@ def _library(name: str) -> Markup:
 
 
 @cache
+def _notice(name: str, banner: str) -> str:
+    """A licence file in `static/`, as the comment that goes ahead of the bytes.
+
+    Two libraries here arrive with their notice stripped by upstream's minifier —
+    Ace's BSD block and `vanillajs-datepicker`'s MIT one — and both are inlined
+    into pages this app renders. Every rendered page is a copy, which is the
+    reading Inter's OFL notice already gets in the `@font-face` block, so the
+    notice has to travel in the page and not only in the repository.
+
+    One function rather than the same two lines in two modules: the guard below
+    is the whole reason this is not an f-string at each call site.
+    """
+    notice = _inline(name)
+    # `*/` cannot appear in either licence and does not, but a licence is exactly
+    # the kind of file somebody edits, and a stray one would end the comment and
+    # leave the rest of the text as code.
+    if "*/" in notice:
+        raise ValueError(f"static/{name} would end the comment it is written into")
+    return f"/* {banner}\n\n{notice}*/\n"
+
+
+@cache
 def _ace() -> Markup:
     """Ace and its vim keymap, as the two classic scripts they already are.
 
@@ -153,14 +175,8 @@ def _ace() -> Markup:
     # inlines them and says nothing has redistributed the software without the
     # notice BSD-3 clause 2 asks for. Read from the file rather than typed here,
     # so a re-vendoring that changes the licence changes this too.
-    notice = _inline("ace-LICENSE.txt")
-    # `*/` cannot appear in it and does not, but a licence is exactly the kind of
-    # file somebody edits, and a stray one would end the comment and leave the
-    # rest of the text as code.
-    if "*/" in notice:
-        raise ValueError("static/ace-LICENSE.txt would end the comment it is written into")
     return Markup(
-        f"/* Ace 1.44.0 (ace.js and keybinding-vim.js), BSD-3-Clause.\n\n{notice}*/\n"
+        _notice("ace-LICENSE.txt", "Ace 1.44.0 (ace.js and keybinding-vim.js), BSD-3-Clause.")
         + _inline("ace.js")
         + "\n"
         + _inline("keybinding-vim.js")

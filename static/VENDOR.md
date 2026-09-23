@@ -28,6 +28,8 @@ of its own; "Mermaid, and why it is fetched," below.
 | `excalidraw-fonts-LICENSE.txt` | — | OFL-1.1 (6 families) + MIT (1) | seven sources, one per family, fetched 2026-08-26 — see "The font licences," below |
 | `mermaid.min.js` | 11.17.2 | MIT | `dist/mermaid.min.js` from https://registry.npmjs.org/mermaid/-/mermaid-11.17.2.tgz |
 | `mermaid-LICENSE.txt` | 11.17.2 | MIT | `LICENSE` from the same tarball |
+| `datepicker.min.js` | 1.3.4 | MIT | `dist/js/datepicker-full.min.js` from https://registry.npmjs.org/vanillajs-datepicker/-/vanillajs-datepicker-1.3.4.tgz |
+| `datepicker-LICENSE.txt` | 1.3.4 | MIT | `LICENSE` from the same tarball |
 
 Not a file: the colour schemes in `src/openproj/themes.py` are data rather than a
 library, and are copied from **tinted-theming/schemes**, spec 0.11, MIT, fetched
@@ -473,6 +475,68 @@ files opened over `file://`, where there is no server to fetch a bundle from —
 `_fence` (`markdown.py`) draws an ordinary code block there, exactly as it did before
 this was vendored, and an exported page's bytes do not move. The prefix decides, which is
 the same seam `_image` and `_link` already switch on.
+
+## The calendar, and the stylesheet that is deliberately not vendored with it
+
+jcanton, 2026-09-22: *"in the calendar date selectors, can we have cycles start and end
+dates somehow highlighted? possibly with a small font number of the cycle?"* — and the
+calendar a native `<input type="date">` opens is browser chrome. No stylesheet in this
+repository can reach a day cell inside it, so a band behind the 3rd of September is a widget
+or it is nothing. `design/cycle-calendar.md` holds the audit, the probe that measured the
+library rather than reasoning about it, and the three integration costs this was taken with.
+
+**`vanillajs-datepicker` 1.3.4 is upstream's own prebuilt file**, 35,055 B, MIT, and zero
+runtime dependencies. It is **inlined**, the way the graph libraries are and not the way
+mermaid is: every page that has a date field needs the popup before the first click, so
+there is no "only on a page that turned out to need it" to fetch on. Checked rather than
+assumed, because every one of these is a thing that would have made it a refusal: zero
+`</script`, zero `url(` — the wall `mode-markdown.js` and mermaid both hit, and the reason
+neither is on a page — zero `eval(`, zero `new Function`, zero dynamic `import(`, zero
+`cdn.`, and no absolute URL of any kind. It is one IIFE that assigns `window.Datepicker` and
+`window.DateRangePicker` and declares nothing at the top level, so it collides with no page
+script here.
+
+The bytes come out of the npm tarball's own `dist/`, on the precedent `ace.js` set rather
+than the one `cytoscape.min.js` set: a SHA256 over a directory upstream publishes identifies
+something a person can point at. Verified — `sha256(vanillajs-datepicker-1.3.4.tgz)` is
+`f73a2488920a3855c747140d0e53bf856690e13943d0c246e60b5312d9b9ee9f`, and
+`package/dist/js/datepicker-full.min.js` inside it is byte-identical to the file here and to
+what unpkg serves for the same version and path. `package/LICENSE` is byte-identical to
+`datepicker-LICENSE.txt`.
+
+**The minified bundle carries no notice at all** — zero occurrences of `Copyright`, zero of
+`MIT` — which is the same gap upstream's minifier left in Ace's BSD block, and MIT's own
+condition is that the notice travels with every copy. It is resolved the way Ace's is and
+not the way Yjs's is, because this file is inlined: `_calendar_js` (`render/calendar.py`)
+writes the licence into the page as a comment ahead of the bytes, through the same
+`vendor._notice` helper `_ace()` uses, so the notice travels in every copy rather than only
+in this directory. `datepicker-LICENSE.txt` is the source that comment is read from — a
+re-vendoring that changes the licence changes what the page carries, with nobody editing a
+string — and not the whole of the answer: a static export mailed to somebody carries the
+page and never this directory. `test_the_calendars_licence_travels_with_the_calendar`
+(`tests/test_calendar.py`) holds it there, and asserts the notice is ahead of the 35 KB
+rather than merely somewhere in the block, because a notice after that much minified script
+is a notice nobody finds.
+
+**The package's CSS is deliberately not vendored, and that is the row missing on purpose.**
+`dist/css/datepicker.css` is 5,938 B raw (4,938 B minified) — 60 declaration blocks over 71
+selectors, carrying 26 hardcoded colour literals: 20 hex, 14 of them distinct, and six
+`rgba()` — against a codebase where a colour is a token defined in four blocks. Taking the file would be 26 values that are right in one theme and wrong in the
+other three, which is the failure that rule exists to prevent, and it would be taken for
+rules this app does not draw: the package styles four framework variants and a range picker.
+So `render/calendar.py` carries a re-tokened stylesheet of its own — only the rules this app
+shows, every colour a `var(--…)`.
+
+Counted here rather than copied, and the count above is the one `design/cycle-calendar.md`
+now carries. It said "63 rules and 38 hardcoded hex values" until this was measured: 38 is
+`datepicker-bs5.css`, one of the four themed variants the package ships beside the plain
+build this app would have taken, and 63 is no file in the package at all — the plain build
+is 60 blocks and each of the four variants is 57. The argument is the same at either number
+and the number is worth being right, because it is the one a re-vendoring will check
+against. The measurement is `tar xzf` the 1.3.4 tarball whose SHA256 is above and count
+`{`, `#rrggbb` and `rgba(` in `package/dist/css/datepicker.css` with the comments stripped
+— which is where the wrong number came from in the first place, a figure read off a
+neighbouring file rather than taken again.
 
 ## The drawings button's mark, lifted out of the same bundle
 

@@ -14,7 +14,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Iterable
-from datetime import date, timedelta
+from datetime import date
+from functools import cached_property
+from typing import Any, NamedTuple
 
 from pydantic import BaseModel, model_validator
 
@@ -39,7 +41,7 @@ from .model import (
     workers_on,
 )
 from .query import QueryError, evaluate, parse, plain
-from .schedule import Explanation, Span, schedule
+from .schedule import Explanation, Span, build_end, schedule
 
 COMPUTED_PREDICATES = (
     "blocked",
@@ -203,6 +205,43 @@ def _progress_of(
         return None
     ticked, items = checklist(record.body)
     return Progress(done=ticked, total=items, unit="items") if items else None
+
+
+class CycleWindow(NamedTuple):
+    """A cycle's three dates, and which of the two tints it wears.
+
+    The timeline worked the dates out inside its own band loop and immediately
+    threw them away for pixels; the calendar needs the same three and no pixels.
+    Written once here rather than twice there, because the copy that stayed in
+    `Index.build_end` had already drifted — it was missing both guards the
+    scheduler's copy has.
+
+    `alt` is here for the same reason and it arrived the harder way round: the
+    two drawings each worked it out from the cycle's NUMBER, and each of them
+    was answering a different question from the one the alternation asks.
+    """
+
+    number: int
+    opens: date
+    builds_until: date
+    closes: date
+    # Whether this cycle wears the second of the two tints, on the timeline's
+    # band and in the calendar's grid.
+    #
+    # The claim the alternation makes is about ADJACENCY — two cycles running up
+    # against each other have to read as two — so it is keyed on the cycle's RANK
+    # among the plan's dated cycles. Parity of the NUMBER says the same thing
+    # only while the numbers run consecutively: a plan holding 34, 36, 38, 40
+    # with contiguous windows drew four bands in ONE uniform fill, which is the
+    # exact thing the tint was added to remove, and one cancelled or renumbered
+    # cycle is all it takes to get there.
+    #
+    # Rank over the PLAN's cycles and not over the ones a drawing happens to
+    # show, which is the property number parity was chosen for and is worth
+    # keeping: a band does not repaint when the timeline's window scrolls past
+    # the cycle before it, and the calendar's grid does not repaint when a reader
+    # pages into a month that holds one cycle instead of two.
+    alt: bool
 
 
 class Index(BaseModel):
@@ -414,21 +453,139 @@ class Index(BaseModel):
         return began <= window[1] and self.today >= window[0]
 
     def build_end(self, cycle: int | None) -> date | None:
-        """The last day of a cycle's build.
+        """The last day of a cycle's build, through the scheduler's own function.
 
         From the record where there is one — `with_plans` fills `builds_until` in
         from the two meeting dates — and otherwise from the window less the
         cool-down. Asked through the index rather than by rebuilding a `Config`,
         which would substitute the default cool-down for the repository's own and
         leave a filter quietly disagreeing with the timeline it explains.
+
+        This used to repeat the arithmetic — `window[1] - timedelta(days=round(
+        self.cooldown_weeks * 7))` — and repeating it meant repeating it without
+        the two guards `schedule.build_end` carries: `days_after`, which bounds
+        before it rounds because `round()` raises on infinity, and the clamp that
+        stops a cool-down longer than the window putting the end of build before
+        the start of it. A `cooldown_weeks` of `.inf` in one config file was nine
+        routes down, from one number.
         """
         window = self.cycles.get(cycle) if cycle is not None else None
-        if window is None:
+        if window is None or cycle is None:
             return None
-        plan = self.plans.get(cycle)
-        if plan is not None and plan.builds_until is not None:
-            return plan.builds_until
-        return window[1] - timedelta(days=round(self.cooldown_weeks * 7))
+        return build_end(cycle, window, self._config)
+
+    @cached_property
+    def _config(self) -> Config:
+        """The narrow Config the scheduler's date functions ask for.
+
+        Built from what the index carries rather than passed in, for the reason
+        the windows are carried at all: a renderer is handed an index and never a
+        Config, and a rebuilt one-field Config substitutes the default cool-down
+        for the repository's own — which leaves a filter quietly disagreeing with
+        the timeline that explains it.
+
+        Cached because `build_end` above is called once per record by the
+        `overrun` predicate inside `apply_filters`, and before this it built a
+        fresh pydantic model — two field validations — on every one of those
+        calls; the same rebuild is why `cycle_windows` below hoisted it out of
+        its loop by hand, and caching here is that hoist made general.
+
+        The cache is sound because an Index is built once, in `build_index`, and
+        never written to afterwards: nothing in `src/` assigns a field on one or
+        mutates a field's dict in place. Two threads racing this compute the same
+        Config twice and one wins, which is the same value either way.
+
+        `model_copy` was cited here as the safe alternative to assigning through,
+        and it is not — it copies the instance `__dict__`, which is where a
+        `cached_property` puts its answer, so a copy that replaces
+        `cooldown_weeks` keeps the Config built from the old one. That is
+        answered below, in code, because a docstring is not a guard.
+
+        `build_end` itself is the other candidate and cannot be this: it is
+        keyed by a cycle, so caching it means a dict per index rather than a
+        property, and the cost being paid is the Config and not the arithmetic.
+        Threading an optional pre-built config through instead was the third —
+        it loses because `overrun` reaches `build_end` through a predicate
+        signature that carries only a record and an index, so the one caller
+        that needs it is the one caller with nowhere to put it.
+        """
+        return Config(cooldown_weeks=self.cooldown_weeks, plans=self.plans)
+
+    # A copy of an index must not carry a cache computed off the original's
+    # fields. `model_copy` copies `__dict__` wholesale, and a `cached_property`
+    # lives in there beside the fields — pydantic's own docstring warns that it
+    # "might have unexpected side effects if you store anything in it, on top of
+    # the model fields (e.g. the value of cached properties)". Measured on
+    # pydantic 2.13.4: `index.model_copy(update={"cooldown_weeks": 5.0})` gave a
+    # copy whose `cooldown_weeks` was 5.0 and whose `_config.cooldown_weeks` was
+    # still 2.0, so every `build_end` off that copy answered with the cool-down
+    # the caller had just replaced — silently, and on the one number the whole
+    # function exists to get from the repository rather than from a default.
+    #
+    # Nothing copies an index with that field today. `/api/slide/preview` in
+    # `web.py` copies a RECORD, and the one place that copies an index —
+    # `tests/test_render.py`, updating `plan` and `children` — happens to update
+    # fields the cached Config does not read. That is the entire distance between
+    # sound and wrong, and it is a field name, which is why this is a line of
+    # code and not another sentence in the docstring above.
+    #
+    # Evicted by TYPE and not by name, so a second `cached_property` added to
+    # this class is guarded by having been added rather than by somebody
+    # remembering this comment. Both dunders, because `model_copy` is one of
+    # these two plus the update, and `copy.copy` and `copy.deepcopy` are the
+    # other callers: overriding `model_copy` alone would leave those carrying a
+    # stale cache for the same reason.
+    def _uncached(self) -> Index:
+        for name, attribute in vars(type(self)).items():
+            if isinstance(attribute, cached_property):
+                self.__dict__.pop(name, None)
+        return self
+
+    def __copy__(self) -> Index:
+        return super().__copy__()._uncached()
+
+    def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Index:
+        return super().__deepcopy__(memo)._uncached()
+
+    def cycle_windows(self) -> list[CycleWindow]:
+        """Every dated cycle, as the three dates a drawing of one needs.
+
+        Unclamped: the timeline clips to its own window and the calendar shows
+        whatever month a reader is on, and a helper that clipped for one of them
+        would be wrong for the other.
+
+        Sorted, and the order is load-bearing rather than tidy: `alt` is the rank
+        in this list, so the alternation both drawings make is a statement about
+        which cycle comes NEXT and not about how the numbers happen to be spelt.
+
+        **By the day it opens, and not by its number.** Keying the tint on the
+        number was the first defect here — a plan that skips one draws two
+        touching bands in a single fill, which is the thing the alternation
+        exists to prevent. Ranking by number instead of by `% 2` narrowed that
+        assumption without removing it: it still needs the numbers to run in the
+        same order as the dates, and `with_plans` lets a cycle record override
+        its own window, so one `starts_on` typed into `cycles/0036.md` is enough
+        to put 36 after 38 in time and beside it in tint. The date is the thing
+        the drawing is actually about.
+
+        Ranking over the PLAN's cycles rather than over the drawn window is the
+        other half, and it is why this is not computed in the timeline: a band
+        that repaints because an earlier cycle scrolled out of view is a band
+        whose colour a reader cannot learn anything from.
+        """
+        config = self._config
+        return [
+            CycleWindow(
+                number,
+                opens,
+                build_end(number, (opens, closes), config),
+                closes,
+                alt=bool(rank % 2),
+            )
+            for rank, (number, (opens, closes)) in enumerate(
+                sorted(self.cycles.items(), key=lambda cycle: (cycle[1][0], cycle[0]))
+            )
+        ]
 
     def load(self, cycle: int) -> dict[str, float]:
         """Person-weeks each person is holding in this cycle.

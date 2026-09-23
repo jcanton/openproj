@@ -524,6 +524,27 @@ function makeDocument(inlined, markup) {
     createElement(tag) { return new Element(tag, document); },
     createTextNode(text) { return {textContent: text}; },
     createDocumentFragment() { return new Element('fragment', document); },
+    // **`const E = document.createRange()` is the third statement of the
+    // vendored datepicker.** It runs at the top of that bundle rather than
+    // inside a function, so without this the library throws before it defines
+    // anything and every page with a date field came back with one more error
+    // than it has — which is four tests in `tests/test_editor.py` asserting
+    // `not answer["errors"]`, red for a reason that is not theirs.
+    //
+    // Parsed with this file's own parser and not stubbed: the library builds its
+    // whole popup through `createContextualFragment`, and a fragment that always
+    // comes back empty is a shim that would report a working calendar as a card
+    // with nothing in it.
+    createRange() {
+      return {
+        createContextualFragment(html) {
+          const fragment = new Element('fragment', document);
+          fragment.children = parseFragment(html, document);
+          for (const child of fragment.children) child.parentNode = fragment;
+          return fragment;
+        },
+      };
+    },
     getElementById(id) {
       // Asked of the page every time, and never remembered. A script that writes
       // to `innerHTML` replaces the elements inside it, and a remembered answer
@@ -871,6 +892,23 @@ async function run(html, expression, options) {
     // the page degrades to exactly what it was. Asked for, it is `DriverSocket`
     // above and the test moves every frame itself.
     matchMedia: () => ({matches: false, addEventListener() {}, addListener() {}}),
+    // **The datepicker takes its two listener methods off `EventTarget.prototype`
+    // and calls them with `.call(element, …)`**, at the top of the bundle rather
+    // than inside a function, so without a class here the whole library throws
+    // on line 25 and every page with a date field came back with one more error
+    // than it has.
+    //
+    // Written here and NOT handed in from node's own realm, which does have an
+    // `EventTarget`: the methods would then be the real ones, `this` would be
+    // one of this file's `Element`s rather than a real EventTarget, and every
+    // call would throw `Illegal invocation` — the realm mistake this file's
+    // header is about, arriving by a door nobody had used yet. These two work
+    // on an `Element`, because `_listeners` is where `Element` keeps them and
+    // `dispatchEvent` is what reads it back.
+    EventTarget: class {
+      addEventListener(type, handler) { ((this._listeners ||= {})[type] ||= []).push(handler); }
+      removeEventListener() {}
+    },
     // The deck's rail marks which slide the reader has scrolled to, and it does
     // that by observing the sheets. A no-op recorder rather than nothing at all:
     // a bare identifier the sandbox has not got is a ReferenceError that stops

@@ -742,7 +742,24 @@ class Config(BaseModel):
         ends_on = (
             days_after(after[0], -1)
             if after
-            else days_after(reviews_on, round(self.cooldown_weeks * 7) - 1)
+            # Bounded before it is rounded, through `within_the_calendar`, for
+            # the reason `schedule.build_end` and `Index.build_end` both are:
+            # `round()` raises on infinity, and `cooldown_weeks: .inf` in one
+            # config file reached this `round` from `with_plans`, which
+            # `load_repo` calls OUTSIDE every `readable()` wrapper — so the
+            # raise escaped `load_repo` itself. Every route 500ed before an
+            # Index existed and `openproj check` died with a traceback, off one
+            # number in one file. The third copy of the same arithmetic, and the
+            # last one without the guard.
+            #
+            # The rounding stays OUTSIDE the subtraction, rather than handing
+            # `cooldown_weeks * 7 - 1` to `days_after` and letting it round.
+            # `round()` is banker's, so it does not distribute over the `- 1`:
+            # a cool-down of 1.5 weeks is `round(10.5) - 1 = 9` here and
+            # `round(9.5) = 10` the other way, and half-week cool-downs would
+            # every one of them shift by a day. A guard may not move a date on a
+            # plan whose numbers are fine.
+            else days_after(reviews_on, round(within_the_calendar(self.cooldown_weeks * 7)) - 1)
         )
         return plan.model_copy(
             update={

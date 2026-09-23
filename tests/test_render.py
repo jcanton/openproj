@@ -92,6 +92,25 @@ def contrast(a: str, b: str) -> float:
     return (high + 0.05) / (low + 0.05)
 
 
+def over(fg: str, bg: str, alpha: float) -> str:
+    """`fg` painted on `bg` at `alpha`, as a browser composites `fill-opacity`.
+
+    A token on its own says nothing about a translucent fill: `.cycle-cooldown`
+    is `--line` at half alpha over whichever band it lies in, so the colour a
+    reader actually meets is this mix and comparing the two tokens compares two
+    colours that are never next to each other on the page.
+    """
+    top, ground = (_rgb(fg), _rgb(bg))
+    return "#" + "".join(
+        f"{round(top[i] * alpha + ground[i] * (1 - alpha)):02x}" for i in range(3)
+    )
+
+
+def _rgb(colour: str) -> list[int]:
+    value = colour.lstrip("#")
+    return [int(value[i : i + 2], 16) for i in (0, 2, 4)]
+
+
 def tokens(page: str) -> dict[str, dict[str, str]]:
     """Every colour token, per theme, read out of a page that actually rendered.
 
@@ -227,7 +246,7 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(
     inlined = sorted(
         path.name for path in static.iterdir() if path.suffix == ".js" and path.name not in FETCHED
     )
-    assert len(inlined) == 4, inlined
+    assert len(inlined) == 5, inlined
 
     # **"Exactly once, into the page that uses it" — which is not the same claim
     # as "exactly once, into the graph".** It was, when every vendored script was
@@ -237,13 +256,23 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(
     # named beside the files, and a file nobody claims fails the last line rather
     # than passing quietly.
     editing = editable_page(seed_index, editor="ace")[1]
+    # **`datepicker.min.js` is the first vendored script that belongs to more
+    # than one page.** Every page with a date field inlines it — the record page
+    # and the create form, the table, both cycle pages and the timeline — so
+    # "the page that uses it" names the editing surface here, and the graph
+    # stays the counter-example it already was: a graph has no date field
+    # anywhere on it, and neither has `/help` or `/people`. Which pages carry it
+    # and which must not is asked properly in `tests/test_calendar.py`; what
+    # this line is for is the older claim beside it, that the bytes are inlined
+    # ONCE into the page that has them.
+    ON_AN_EDITING_PAGE = ("ace.js", "keybinding-vim.js", "datepicker.min.js")
     for name in inlined:
         # 200 and not 120: two of these are webpack bundles whose first 120
         # characters are the same UMD preamble, so the shorter signature found
         # each of them twice and called one of them a defect. Same length as the
         # sibling check in test_injection.py, which is where that was learnt.
         signature = (static / name).read_text(encoding="utf-8")[:200]
-        wanted = editing if name in ("ace.js", "keybinding-vim.js") else graph
+        wanted = editing if name in ON_AN_EDITING_PAGE else graph
         other = graph if wanted is editing else editing
         assert wanted.count(signature) == 1, name
         assert other.count(signature) == 0, f"{name} is in a page that does not use it"
@@ -1043,6 +1072,190 @@ def test_a_cycle_gets_a_band_of_its_own_above_the_months(rendered: Path):
     assert cycle_label < band < month_label
     assert month_rule == band
     assert re.search(r'<text class="today-label"[^>]*>today</text>', body)
+
+
+@pytest.fixture
+def cycles_that_touch(seed_root: Path) -> Index:
+    """The corpus under a `config/cycles.yaml` that skips numbers and whose cycles
+    genuinely run back to back.
+
+    Neither corpus in this repository can ask the question the tint is named for.
+    Their windows are held apart by a weekend and by a month —
+    `seed/config/cycles.yaml` says the month is the conference window and is
+    deliberate — so no two bands on either chart ever meet in x, which is the
+    whole arrangement the feature is named after. A corpus that does not hold the
+    one case that matters proves nothing.
+
+    It is the touching that is missing and only that. An earlier version of this
+    docstring also said both corpora number their cycles consecutively, so that
+    a cycle's number and its rank could not come apart in them; that is true of
+    `seed/` and false of the frozen fixture corpus, which runs 28, 34, 35, 36,
+    37, 38 — five of its six bands changed tint when the rank landed. It is
+    written down because it was wrong in the direction that tells the next
+    reader not to look.
+
+    34, 36, 38, 40 is what one cancelled cycle and one renumbering look like, and
+    each window here opens the day after the one before it closes. `plans` goes
+    with the dates because a `Cycle` record is keyed by number and the records for
+    35 and 37 are about cycles this config no longer has.
+    """
+    records, config, _ = load_repo(seed_root)
+    touching = {
+        34: (date(2026, 2, 2), date(2026, 3, 27)),
+        36: (date(2026, 3, 28), date(2026, 5, 22)),
+        38: (date(2026, 5, 23), date(2026, 7, 17)),
+        40: (date(2026, 7, 18), date(2026, 9, 11)),
+    }
+    updated = config.model_copy(update={"cycles": touching, "plans": {}})
+    return build_index(records, updated, date(2026, 8, 17))
+
+
+def test_two_cycles_running_up_against_each_other_read_as_two(cycles_that_touch: Index):
+    """They were one fill with a dashed rule between them, so a reader looking for
+    where one ends found a line and the same colour either side of it.
+
+    **The property, and not the palette.** This asserted that the set of tints
+    drawn was exactly `{"", "alt"}`, which is satisfied by any plan holding one
+    odd-numbered cycle anywhere on the chart — including a plan drawing four
+    touching bands in a single fill, as long as the odd one is somewhere else.
+    The claim a reader can check is that no two bands which MEET share a tint,
+    and that is what is asked here.
+
+    Stated as narrowly as it is true: over the bands this page draws, in x order,
+    and only between two that actually touch. "Every cycle in the plan
+    alternates" would be a claim about cycles clipped out of the window, which
+    this page does not draw and a reader cannot see.
+    """
+    from openproj.render import render_timeline
+
+    page = render_timeline(cycles_that_touch)
+    bands = sorted(
+        (
+            float(one.attrs["x"]),
+            float(one.attrs["width"]),
+            " ".join(sorted(set(one.attrs["class"].split()) - {"cycle-band"})),
+        )
+        for one in elements(page)
+        if one.tag == "rect" and "cycle-band" in one.attrs.get("class", "").split()
+    )
+
+    assert len(bands) > 1, "one cycle on the chart proves nothing about two"
+    assert len(bands) == len(cycles_that_touch.cycles), "a band was clipped out of this window"
+    for (left, width, tint), (right, _, next_tint) in zip(bands, bands[1:], strict=False):
+        # The fixture's guard, first. Two bands with a gap between them are told
+        # apart by the gap, and asserting alternation across one would be the
+        # loose property that flakes and gets deleted by whoever meets it.
+        assert round(left + width, 1) == right, f"the bands at {left} and {right} do not meet"
+        assert tint != next_tint, f"two cycles meeting at x={right} wear one fill"
+
+    assert ".cycle-band { fill: var(--band); }" in page
+    assert ".cycle-band.alt { fill: var(--band-alt); }" in page
+
+
+def test_a_cycle_numbered_out_of_order_still_alternates_with_the_one_beside_it(
+    seed_root: Path,
+) -> None:
+    """The rank fixed the tint for a plan that SKIPS a number and left it broken
+    for a plan whose numbers do not run in the same order as its dates.
+
+    That is one `starts_on` away rather than hypothetical: a `Cycle` record
+    overrides its own window through `with_plans`, so moving 36 after 38 is a
+    single hand-edit, and ranking by number then puts two touching cycles next to
+    each other in the list and beside each other in tint. The rank is over the day
+    a cycle opens for exactly this reason, and the assertion is the same property
+    the fixture above asks — no two bands that meet may share a fill.
+    """
+    from openproj.render import render_timeline
+
+    records, config, _ = load_repo(seed_root)
+    # 34, then 38, then 36: contiguous in time, out of order by number.
+    out_of_order = {
+        34: (date(2026, 2, 2), date(2026, 3, 27)),
+        38: (date(2026, 3, 28), date(2026, 5, 22)),
+        36: (date(2026, 5, 23), date(2026, 7, 17)),
+    }
+    index = build_index(
+        records,
+        config.model_copy(update={"cycles": out_of_order, "plans": {}}),
+        date(2026, 8, 17),
+    )
+
+    bands = sorted(
+        (
+            float(one.attrs["x"]),
+            float(one.attrs["width"]),
+            " ".join(sorted(set(one.attrs["class"].split()) - {"cycle-band"})),
+        )
+        for one in elements(render_timeline(index))
+        if one.tag == "rect" and "cycle-band" in one.attrs.get("class", "").split()
+    )
+
+    assert len(bands) == 3
+    for (left, width, tint), (right, _, next_tint) in zip(bands, bands[1:], strict=False):
+        assert round(left + width, 1) == right, f"the bands at {left} and {right} do not meet"
+        assert tint != next_tint, f"two cycles meeting at x={right} wear one fill"
+
+    # Second, and only as the explanation: the list is in date order, so the rank
+    # the tint is taken from means "which cycle comes next" for this plan too.
+    assert [window.number for window in index.cycle_windows()] == [34, 38, 36]
+
+
+def test_the_second_band_tint_is_defined_in_every_theme(rendered: Path):
+    """A colour defined only in `[data-theme="dark"]` is wrong for every reader who
+    has never touched the toggle, which is most of them."""
+    themes = tokens(read(rendered, "timeline.html"))
+
+    for block in ("light", "dark", "dark-by-system"):
+        assert "--band-alt" in themes[block], block
+        assert "--band-edge" in themes[block], block
+    assert themes["dark"]["--band-alt"] == themes["dark-by-system"]["--band-alt"]
+    assert themes["dark"]["--band-edge"] == themes["dark-by-system"]["--band-edge"]
+
+
+def test_the_cooldown_survives_the_tint_the_second_band_is_drawn_in(rendered: Path):
+    """`.cycle-cooldown` is `--line` at half alpha, and that alpha was chosen
+    against ONE flat band. It is now layered over two.
+
+    The question is not which way round the two tints are but which SIDE of
+    `--band` the second one is on, and the answer is forced: `--line` lies between
+    the page and `--band` in every theme here, so an alternate tint on the page's
+    side walks into the cool-down and takes it with it. Measured at the value this
+    branch first used — #d3e2e8 light, #223037 dark — the cool-down over an odd
+    cycle was dL* 0.56 and 0.80, under the just-noticeable difference: half the
+    cycles on the chart had no cool-down at all, and nothing said so.
+
+    Asserted as a comparison and not as a floor, because the floor is not mine to
+    move: what the cool-down manages over `--band` is what the alpha and `--line`
+    between them allow, and `--line` is the legend's boundary key and the grid's
+    hairline as well. So the claim is that the second tint costs the cool-down
+    nothing — and that is exactly the claim that fails if `--band-alt` is put back
+    on the page's side of `--band`.
+
+    **`second >= main` does not say that both are legible, and `main` is the one
+    that is not.** Over `--band` in the dark theme — the tint a cycle at EVEN rank
+    wears, so half the bands on the chart — the cool-down measures contrast 1.046,
+    dE 1.90 and dL* 1.36, which is under the just-noticeable difference. Over
+    `--band-alt` in the same theme it is 1.126, dE 4.02, dL* 3.46. The number that
+    is not mine to move is the one this test passes over, and it is written down
+    so nobody reads the assertion as evidence the cool-down can be seen. Moving it
+    means moving `--line` or the alpha, and `--line` is the grid and the legend.
+    """
+    themes = tokens(read(rendered, "timeline.html"))
+
+    for block in ("light", "dark", "dark-by-system"):
+        page, line = themes[block]["--bg"], themes[block]["--line"]
+        band, alt = themes[block]["--band"], themes[block]["--band-alt"]
+
+        assert contrast(alt, page) > contrast(band, page), (
+            f"{block}: --band-alt is nearer the page than --band, which is the side "
+            f"--line is on, so an odd cycle's cool-down collapses into its band"
+        )
+        main = contrast(over(line, band, 0.5), band)
+        second = contrast(over(line, alt, 0.5), alt)
+        assert second >= main, (
+            f"{block}: the cool-down is {second:.3f} over --band-alt against {main:.3f} "
+            f"over --band, so the second tint cost it visibility"
+        )
 
 
 def test_a_bar_carries_what_it_is_holding(rendered: Path, seed_index: Index):
@@ -1852,8 +2065,17 @@ def test_the_date_boxes_hold_the_window_on_screen(seed_index: Index):
     from openproj.render import render_timeline
 
     whole = render_timeline(seed_index)
-    origin = re.search(r'name="from" value="([\d-]+)"', whole).group(1)
-    last = re.search(r'name="to" value="([\d-]+)"', whole).group(1)
+    # Parsed, not matched. This read `name="from" value="([\d-]+)"` off the text
+    # and went to `None.group(1)` the day the box gained `data-cycles`, which is
+    # an attribute between the two it was pattern-matching and changes nothing
+    # about the claim. A regex over markup asserts the order somebody wrote the
+    # attributes in; the claim is that the control holds the date being drawn.
+    boxes = {
+        one.attrs["name"]: one.attrs.get("value")
+        for one in elements(whole)
+        if one.tag == "input" and one.attrs.get("type") == "date"
+    }
+    origin, last = boxes["from"], boxes["to"]
 
     assert origin and last, "the boxes hold the window the chart is drawing"
     assert "Showing the whole plan" not in " ".join(whole.split()), (
@@ -1862,7 +2084,11 @@ def test_the_date_boxes_hold_the_window_on_screen(seed_index: Index):
     assert "Drag sideways or scroll" in " ".join(whole.split())
 
     windowed = render_timeline(seed_index, window=(date(2026, 9, 1), date(2026, 9, 30)))
-    assert 'name="from" value="2026-09-01"' in windowed
+    assert {
+        one.attrs["name"]: one.attrs.get("value")
+        for one in elements(windowed)
+        if one.tag == "input" and one.attrs.get("type") == "date"
+    }["from"] == "2026-09-01"
     assert "a window of the plan" in " ".join(windowed.split())
     # Apply was a button and Reset a bare link, which reads as one control and one
     # afterthought.
@@ -2870,12 +3096,19 @@ def test_the_cycle_band_is_one_token_and_it_can_be_seen(rendered: Path):
     assert ".cycle-band { fill: var(--band); }" in body
     assert ".legend .swatch.band { background: var(--band); }" in body
     assert "--surface-2" not in re.search(r"\.cycle-band \{[^}]*\}", body).group(0)
+    # Both tints, since the ladder gained a second one: an odd-numbered cycle's
+    # band is `--band-alt` and it carries a cycle number exactly the way this one
+    # does. Asking only about `--band` would have let the alternate tint be drawn
+    # anywhere at all, and the first value tried for it was 1.33 against the page
+    # — under the floor this test exists to hold.
     for name in ("light", "dark"):
-        page, band = themes[name]["--bg"], themes[name]["--band"]
-        assert contrast(band, page) >= 1.45, (name, contrast(band, page))
-        # It carries the cycle number, and that number is 10px text.
-        accent = themes[name]["--accent"]
-        assert contrast(band, accent) >= 4.5, (name, contrast(band, accent))
+        page = themes[name]["--bg"]
+        for tint in ("--band", "--band-alt"):
+            band = themes[name][tint]
+            assert contrast(band, page) >= 1.45, (name, tint, contrast(band, page))
+            # It carries the cycle number, and that number is 10px text.
+            accent = themes[name]["--accent"]
+            assert contrast(band, accent) >= 4.5, (name, tint, contrast(band, accent))
 
 
 def test_the_legend_draws_a_cycle_boundary_the_way_the_plot_does(rendered: Path):
@@ -7080,6 +7313,264 @@ def test_a_touch_screen_gets_no_wash_at_all(rendered: Path, tmp_path: Path):
         f"{got['washed']} of {got['cells']} cells are washed on a touch screen, which "
         f"would leave one row lit with no pointer to move off it"
     )
+
+
+def test_hovering_a_cycle_lights_the_chart_under_it(rendered: Path):
+    """Which bar belongs to which cycle was a question answered by sighting down
+    from a dashed rule at the top of a chart twenty rows tall.
+
+    `--row-hover` and not a fill plus an alpha written here: that token is the
+    app's one wash and two numbers standing for one strength are two numbers that
+    drift apart, so `opacity` is a switch between drawn and not drawn. And the
+    rule that draws it is inside `@media (hover: hover)` for the reason the shell
+    gives for the table's row wash — a touch device keeps the last-tapped
+    `:hover`, so a phone would be left with one cycle lit and no pointer to move
+    off it.
+    """
+    body = read(rendered, "timeline.html")
+
+    assert '<g class="cycle-band-group">' in body
+    assert '<rect class="cycle-hover"' in body
+    assert ".cycle-hover { fill: var(--row-hover); opacity: 0; pointer-events: auto; }" in body
+    # Whole, so the query and the rule cannot drift apart: a rule left outside it
+    # and a rule inside a query that never matches look identical to every other
+    # assertion, which is why `test_a_touch_screen_gets_no_cycle_wash_either`
+    # resolves the same claim in a browser that says it has no pointer.
+    assert (
+        "@media (hover: hover) {\n  .cycle-band-group:hover .cycle-hover { opacity: 1; }\n}"
+    ) in body
+    # The inventory the floor's comment claims. An opacity that snaps needs no
+    # reduced-motion exemption, and `test_the_app_moves_in_two_places` is what
+    # would notice a third animated rule — this keeps the two claims beside the
+    # rule that could break one.
+    assert "transition" not in re.search(r"\.cycle-hover \{[^}]*\}", body).group(0)
+
+
+def test_the_hover_wash_gates_nothing(rendered: Path):
+    """It is pointer-only, and allowed to be: what it says is already said another
+    way. The dashed rule is where a cycle closes and the label is which cycle it
+    is, and neither of them moved to make room for the wash."""
+    body = read(rendered, "timeline.html")
+
+    assert '<line class="cycle-rule"' in body
+    assert '<text class="cycle-label"' in body
+    assert ".cycle-rule { stroke: var(--line-strong); stroke-dasharray: 3 3; }" in body
+
+
+def _hovered_cycle(
+    browser: str,
+    page: str,
+    where: Path,
+    flags: tuple[str, ...] = _A_MOUSE,
+    at: str = "band",
+) -> dict:
+    """Lay the timeline out, put a real pointer somewhere in a cycle's column, and
+    report what the wash under it resolved to before and after.
+
+    A real pointer and not `dispatchEvent`, for the reason `_hovered` gives: a
+    synthetic event is `isTrusted: false`, sets no `:hover`, and would report a
+    resting wash about a rule that works. And the box is measured as well as the
+    opacity, because a resolved value is a promise about pixels that a stylesheet
+    cannot keep on its own — this repository's unpainted `box-shadow` resolved to
+    exactly the value every test asserted on exactly the element they asserted it
+    on, and Chrome drew nothing.
+
+    **`at` is the whole of why this takes a parameter, and it is a defect's
+    name.** `band` is the 18px strip at the top of the chart; `plot` is the same
+    column well down among the rows, on none of them; `bar` is a bar in that
+    column. Asked only at `band`, this helper reported a wash that worked while
+    the chart beside every bar did nothing at all — which is where a reader's
+    pointer actually is. The three points are found in one pass because they have
+    to be the same cycle's column: picked separately they could be two.
+    """
+    import shutil
+    import time
+
+    from browser import _devtools, _evaluated
+
+    assert at in ("band", "bar", "plot"), f"`at` must name a point; it was {at!r}"
+    where.write_text(page)
+    profile = where.parent / f"{where.stem}-profile"
+    shutil.rmtree(profile, ignore_errors=True)
+    # A window, for the reason `pressed_in` gives: without one Chrome takes its
+    # own default and the chart is a horizontally scrolled box, so the first
+    # cycle's band is half off the left edge and under the frozen label column.
+    with _devtools(browser, where.as_uri(), profile, ("--window-size=1400,900", *flags)) as (
+        call,
+        _said,
+    ):
+        time.sleep(2.0)
+        found = _evaluated(
+            call,
+            """(() => {
+          // A cycle that is actually on screen, and that has a bar in its column:
+          // the plot scrolls sideways and the label column is drawn over its left
+          // edge, so cycle 34's band is at a point the pointer cannot reach, and a
+          // cycle with nothing bet in it has no `bar` point to offer.
+          const labels = document.querySelector('.labels').getBoundingClientRect();
+          const reachable = (x, y) =>
+            x > labels.right + 4 && x < innerWidth - 4 && y > 0 && y < innerHeight;
+          for (const group of document.querySelectorAll('.cycle-band-group')) {
+            const band = group.querySelector('.cycle-band').getBoundingClientRect();
+            const y = Math.round(band.top + band.height / 2);
+            const bar = [...document.querySelectorAll('rect[data-id]')]
+              .map((rect) => [rect, rect.getBoundingClientRect()])
+              .find(([, b]) => b.width > 12 && b.height > 4
+                    && b.left >= band.left && b.right <= band.right
+                    && reachable(Math.round(b.left + b.width / 2),
+                                 Math.round(b.top + b.height / 2)));
+            if (!bar) continue;
+            const box = bar[1];
+            const x = Math.round(box.left + box.width / 2);
+            if (!reachable(x, y)) continue;
+            // Off every bar AND off every rule, in the same column: the row gap
+            // under the bar just found. A bar is painted over the wash and takes
+            // the pointer first, which is the property the `bar` point exists to
+            // hold — so `plot` has to be somewhere no bar is, or it would be
+            // asking that question a second time instead of this one.
+            //
+            // The month rules and the today line span the whole plot and are drawn
+            // after every cycle group, so they take the pointer over the wash the
+            // way a bar does. Measured: the first bar found had its centre within
+            // a pixel of a month rule, and the point picked under it reported the
+            // chart dead on a chart that works. A hairline is not what this asks
+            // about, so the scan steps sideways until the ground under the pointer
+            // is the chart's own — which is the `<svg>` with the wash transparent
+            // and the wash itself without, and therefore not a criterion that
+            // decides the answer.
+            let gapX = 0;
+            const gap = Math.round(box.bottom + 5);
+            for (let step = 0; step <= Math.floor(box.width / 2) && !gapX; step += 3) {
+              for (const candidate of [x - step, x + step]) {
+                if (!reachable(candidate, gap)) continue;
+                const under = document.elementFromPoint(candidate, gap);
+                if (!under || under.tagName === 'line' || under.hasAttribute('data-id')) continue;
+                gapX = candidate;
+                break;
+              }
+            }
+            if (!gapX) continue;
+            const wash = group.querySelector('.cycle-hover');
+            const seen = wash.getBoundingClientRect();
+            return {
+              before: getComputedStyle(wash).opacity,
+              height: seen.height, width: seen.width,
+              id: bar[0].dataset.id,
+              band: [x, y], bar: [x, Math.round(box.top + box.height / 2)], plot: [gapX, gap],
+            };
+          }
+          return null;
+        })()""",
+        )
+        assert found, "no cycle band with a bar under it was on screen to point at"
+        # Reported back as `at`, so a failure message says where the pointer went
+        # as well as what it found there.
+        x, y = found["at"] = found[at]
+        call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y})
+        # A second later, and the reason is the hover card: the bar's own hover
+        # opens one on a delay this page owns, so an answer taken immediately
+        # would report the card missing on a page where it arrives.
+        time.sleep(1.2)
+        return found | _evaluated(
+            call,
+            """(() => {
+          const group = [...document.querySelectorAll('.cycle-band-group')]
+            .find(g => g.matches(':hover'));
+          const bar = document.querySelector('rect[data-id]:hover');
+          const answer = {barHovered: bar ? bar.dataset.id : null};
+          if (!group) return Object.assign(answer, {hovered: false, during: '0', fill: 'none'});
+          const wash = group.querySelector('.cycle-hover');
+          return Object.assign(answer, {hovered: true, during: getComputedStyle(wash).opacity,
+                  fill: getComputedStyle(wash).fill});
+        })()""",
+        )
+
+
+def test_the_hover_wash_is_actually_painted(rendered: Path, tmp_path: Path):
+    """The pixel half of the question. Two things have to be true at once and a
+    stylesheet can only say one of them: that the opacity moves, and that there is
+    a box with real height for it to move in. An SVG `<rect>` whose `height`
+    attribute never reached it resolves `opacity: 1` on nothing at all."""
+    from browser import chrome
+
+    got = _hovered_cycle(chrome(), read(rendered, "timeline.html"), tmp_path / "cycles.html")
+
+    assert got["hovered"], "the pointer did not land on a cycle group"
+    assert float(got["before"]) == 0, f"the wash is drawn before anything is hovered: {got}"
+    assert float(got["during"]) == 1, f"the wash did not come up under the pointer: {got}"
+    # The band strip is 18px; the wash spans the whole plot, which on the seed
+    # corpus is twenty-odd rows. A wash the height of the band would be a
+    # highlight on the header and not on the columns under it.
+    assert got["height"] > 100, f"the wash has no height to be seen in: {got['height']}px"
+    assert got["width"] > 20, f"the wash is drawn on no width at all: {got['width']}px"
+    assert got["fill"] != "none", "the wash resolved to no fill, so nothing is painted"
+
+
+def test_the_wash_answers_the_pointer_where_the_bars_are(rendered: Path, tmp_path: Path):
+    """The band strip is 18px and the chart under it is twenty-odd rows, and the
+    pointer is in the rows.
+
+    `.cycle-hover` was `pointer-events: none`, so the only descendants that could
+    put `:hover` on the group were the band, the label and two hairline rules —
+    every one of them in that strip. Measured with a real pointer: at the band's
+    centre the wash resolved to 1, and at the SAME x a few pixels below a bar it
+    resolved to 0. So the reader went on sighting up to the strip to find out
+    which cycle a bar was in, which is the motion the wash exists to remove, and
+    every test written for it asked at the one point where it worked.
+    """
+    from browser import chrome
+
+    got = _hovered_cycle(
+        chrome(), read(rendered, "timeline.html"), tmp_path / "cycles-plot.html", at="plot"
+    )
+
+    assert got["hovered"], (
+        "no cycle lit with the pointer in its column among the rows, so the wash is "
+        "still a highlight on the 18px strip at the top of the chart"
+    )
+    assert float(got["during"]) == 1, f"the wash did not come up under the pointer: {got}"
+
+
+def test_a_bar_keeps_the_pointer_the_wash_now_takes(rendered: Path, tmp_path: Path):
+    """The price of giving the wash `pointer-events: auto`, asked rather than
+    argued.
+
+    The wash is the first child of its group and every bar is drawn after every
+    group, so a bar is painted over it and hit-testing gives the bar the pointer.
+    That is what keeps the bar's hover card and its right-click menu working, and
+    it is a fact about document ORDER — move the wash to the end of its group, or
+    give the bars a `z-index`, and the wash silently swallows every bar on the
+    chart while the chart still lights.
+
+    The consequence is also asserted, because it is the honest half: with the
+    pointer on a bar the wash does NOT light, since the bar is the thing being
+    pointed at. The column answers everywhere else in it.
+    """
+    from browser import chrome
+
+    got = _hovered_cycle(
+        chrome(), read(rendered, "timeline.html"), tmp_path / "cycles-bar.html", at="bar"
+    )
+
+    assert got["barHovered"] == got["id"], (
+        f"the wash took the pointer from the bar: {got['barHovered']} hovered, "
+        f"{got['id']} pointed at"
+    )
+    assert not got["hovered"], "the wash lit through a bar, so the bar is not on top after all"
+
+
+def test_a_touch_screen_gets_no_cycle_wash_either(rendered: Path, tmp_path: Path):
+    """The other side of `@media (hover: hover)`. A tap sets `:hover` and there is
+    no pointer to move off it, so a phone would be left with one cycle lit — which
+    is a highlight meaning the opposite of what this one means."""
+    from browser import chrome
+
+    got = _hovered_cycle(
+        chrome(), read(rendered, "timeline.html"), tmp_path / "cycles-touch.html", _A_TOUCHSCREEN
+    )
+
+    assert got["hovered"], "the press did not land, so this proves nothing"
+    assert float(got["during"]) == 0, "a cycle stayed lit on a screen with nothing to unhover it"
 
 
 def test_the_wash_does_not_take_away_the_ground_it_is_drawn_over(

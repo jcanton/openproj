@@ -21,6 +21,7 @@ from ..model import (
     workers_on,
 )
 from ..vendor import _ace, _yjs
+from .calendar import _CALENDAR_STYLE, _calendar_js
 from .controls import _REQUIRED_JS, _combobox_html, _control_html
 from .editor import (
     _ACE_SURFACE,
@@ -1756,6 +1757,9 @@ grip.ondblclick = () => {
 {{ acesurface }}{% endif %}
 {% if editable %}{{ combobox }}{% endif %}
 {% if editable %}<script>{{ required }}</script><script>{{ hill }}</script>{% endif %}
+{#- Empty unless this page drew a date box — the gate is at `calendar=` below,
+    where the reason is, the way `{{ pop }}` on the table is gated at `pop=`. -#}
+{{ calendar }}
 {% if editable %}<script>
 // Only what changed travels. Serialising the whole form would send back every
 // field as this tab last saw it, overwriting whatever somebody else changed while
@@ -3961,6 +3965,15 @@ def render_detail(
         combobox=_combobox_html(index, linkable=True, live=base_commit is not None),
         required=_REQUIRED_JS,
         hill=_HILL_JS,
+        # The popup every date box here opens, and only where there is a box to
+        # open it. `_control_html` draws a date as text for a reader, so this
+        # page in read mode — which is what the static export writes to
+        # `detail.html` — has no `input[type="date"]` anywhere on it, and the
+        # block is 60 KB — 53 of script and 7 of stylesheet. The same gate the
+        # table already makes at `pop=`, and the same one `/help` and `/people`
+        # are kept out by: the criterion is "has a date field", and a page in
+        # read mode has not got one.
+        calendar=_calendar_js(index) if base_commit is not None else Markup(""),
         viewbar=_viewbar(_editing_possible(base_commit, may_write)),
         # Empty while creating, where there is no record yet to have a slide of
         # — the template already guards it, and passing the control anyway would
@@ -4001,6 +4014,15 @@ def render_detail(
             _COEDIT if base_commit is not None and may_write and creating is None else Markup("")
         ),
     )
+    # Beside the widget and under the same gate, and LAST in the concatenation:
+    # the calendar's own rules are written to win their ties on source order —
+    # see the ladder comment in `calendar.py` — and a sheet appended after them
+    # takes those ties instead. A plain `str` on both sides, deliberately:
+    # `str + Markup` would take markupsafe's `__radd__` and escape every `>` in
+    # the two sheets in front of it.
+    style = _DETAIL_STYLE + _SUGGEST_STYLE
+    if base_commit is not None:
+        style += _CALENDAR_STYLE
     if creating is not None:
         # No nav item marked, deliberately: `aria-current="page"` claims a page
         # within the set, and pressing Table from this form abandons it rather
@@ -4008,7 +4030,7 @@ def render_detail(
         return _page(
             f"openproj — new {creating}",
             body,
-            _DETAIL_STYLE + _SUGGEST_STYLE,
+            style,
             links,
             unreadable=index.unreadable,
             fills=True,
@@ -4016,7 +4038,7 @@ def render_detail(
     return _page(
         "openproj — detail",
         body,
-        _DETAIL_STYLE + _SUGGEST_STYLE,
+        style,
         links,
         "detail",
         index.unreadable,

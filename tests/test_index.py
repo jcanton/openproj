@@ -12,14 +12,17 @@ there is: facet values and filter values are always strings, and `apply_filters`
 returns ids sorted by id so that a shared URL renders identically twice.
 """
 
+import shutil
 from datetime import date
 from pathlib import Path
 
 import pytest
+from pages import elements
 
 from openproj.index import (
     COMPUTED_PREDICATES,
     NO_VALUE,
+    CycleWindow,
     Index,
     _matches_predicate,
     apply_filters,
@@ -1780,6 +1783,182 @@ def test_the_build_end_a_predicate_uses_is_the_one_the_timeline_uses(seed_index:
     odd = Config(cycles={9: (date(2026, 1, 5), date(2026, 3, 1))}, cooldown_weeks=1.0)
     assert build_index([], odd, date(2026, 1, 5)).cooldown_weeks == 1.0
     assert isinstance(seed_index.plans.get(37), (Cycle, type(None)))
+
+
+def test_cycle_windows_is_the_one_place_the_three_dates_come_from(seed_index: Index):
+    """The timeline computed these itself and the calendar needs the same three.
+    An invariant written twice is guarded once."""
+    windows = seed_index.cycle_windows()
+
+    assert windows == sorted(windows, key=lambda w: w.number)
+    assert [w.number for w in windows] == sorted(seed_index.cycles)
+    for window in windows:
+        assert isinstance(window, CycleWindow)
+        opens, closes = seed_index.cycles[window.number]
+        assert window.opens == opens
+        assert window.closes == closes
+        assert opens <= window.builds_until <= closes
+        # The same date the predicates and the timeline are drawn against: two
+        # answers to "when does this cycle stop building" is one of them wrong.
+        assert window.builds_until == seed_index.build_end(window.number)
+
+
+def test_a_plan_that_has_dated_no_cycle_has_no_windows_rather_than_an_error(seed_root: Path):
+    """Empty must not look like broken. Every consumer degrades to a plain
+    calendar; none of them may meet an exception."""
+    records, config, _ = load_repo(seed_root)
+    config = config.model_copy(update={"cycles": {}, "plans": {}})
+    index = build_index(records, config, TODAY)
+
+    assert index.cycle_windows() == []
+
+
+def test_an_absurd_cooldown_costs_that_cycles_flag_and_not_every_page(
+    seed_root: Path, tmp_path: Path
+):
+    """`round()` raises on infinity, and `cooldown_weeks` is a float a person
+    types into `config/defaults.yaml`. Three places multiplied it by seven and
+    rounded: `Index.build_end`, `Config._resolve` and `_proposed` on the cycle
+    page — and two of them rounded BEFORE `days_after` could bound anything, so
+    one number in one committed file was nine routes down.
+
+    Entered where a person's commit enters it, through a copy of the corpus with
+    the bad line appended and `load_repo` run over that. The earlier version of
+    this test built the config with `model_copy(update=...)` AFTER `load_repo`
+    had already run with the corpus's real 2.0, so `with_plans` — the copy that
+    raises first, and OUTSIDE every `readable()` wrapper, meaning the raise
+    escapes `load_repo` itself — was never reached at all. The test passed over a
+    live defect, which is what a fixture edited after the fact buys you.
+
+    So there are two claims and the first is the bigger one: the plan still
+    LOADS. Then the flag: the cycle whose cool-down swallowed its own window
+    reports a build that ends on the day it opened, rather than before it.
+    """
+    root = tmp_path / "plan"
+    shutil.copytree(seed_root, root)
+    defaults = root / "config" / "defaults.yaml"
+    defaults.write_text(defaults.read_text() + "\ncooldown_weeks: .inf\n")
+
+    records, config, unreadable = load_repo(root)
+
+    assert config.cooldown_weeks == float("inf")
+    assert unreadable == []
+    assert len(records) == len(load_repo(seed_root)[0])
+
+    index = build_index(records, config, TODAY)
+    number = sorted(index.cycles)[0]
+    opens, _ = index.cycles[number]
+
+    assert index.build_end(number) == opens
+    assert all(w.builds_until >= w.opens for w in index.cycle_windows())
+
+    # The third copy, on the branch of `_proposed` that nothing else reaches: a
+    # cycle number nobody has dated at all, where the cool-down is added to the
+    # cadence instead of read off a window. It lives in the renderer and is
+    # imported here rather than left to the render suite, because what is being
+    # pinned is this arithmetic in every place it is written, and a copy tested
+    # in a different file is the copy that gets the guard last.
+    from openproj.render.cycles import _proposed
+
+    undated = _proposed(index, max(index.cycles) + 1, None)
+    assert undated.ends_on >= undated.builds_until
+
+
+def test_an_absurd_appetite_draws_a_full_bar_and_not_a_500_on_three_pages(
+    seed_root: Path, tmp_path: Path
+):
+    """The same question as the cool-down above, asked of the other number a
+    person types — and it had the same answer on three more routes.
+
+    `person_weeks` is a float in a record file, and a load bar is
+    `min(100, round(100 * held / capacity))`. `round()` raises on infinity, so
+    one `person_weeks: .inf` in one committed task made /people, /cycles and
+    /cycle/<its cycle> answer 500 — permanently, on a protected branch, off a
+    file that parses, validates and loads without a word. `openproj check`
+    reported the same blocker and warning counts as a clean corpus and never
+    mentioned the file; `openproj render` died with a traceback after writing
+    some of the pages and not the rest.
+
+    Three copies of the expression, so nothing guarded it: the cycle page's
+    roster, the cycles index's card and the people page's per-cycle load each
+    wrote it out. `_percent` is the one copy, and it bounds before it rounds,
+    which is the order `days_after` and `within_the_calendar` (`model.py`)
+    already settled on for the same reason.
+
+    Entered where a person's commit enters it — the number goes into the file
+    and `load_repo` reads it — for the reason the cool-down test gives: a fixture
+    edited after the load is a fixture that never crosses the path the defect
+    lives on. It renders rather than asking `_percent` directly, because a helper
+    that answers correctly while two of the three call sites still spell the
+    arithmetic out is exactly the state this defect was already in.
+
+    Beside the cool-down test rather than in the render suite, because what is
+    pinned is one number against the pages that draw a load bar, and a page
+    tested in another file is the page that gets the guard last.
+
+    **Three pages, and that is the whole of what this pins.** It is not every
+    page that divides by something, and the difference is two live defects rather
+    than a nicety of wording: `availability: .inf` reaches `_CYCLE`'s roster row
+    as `(row.rate * 100)|round|int` and answers OverflowError on /cycle/<n>, and
+    `person_weeks: .nan` reaches `round(100 * counted.fraction)` (`detail.py`)
+    and answers ValueError on the parent's record page and on the static
+    `detail.html`. Both measured the way this test measures, through the file.
+    They are a branch of their own — jcanton, 2026-09-23 — and the reason they
+    are written down in a passing test is that a docstring claiming more than its
+    assertions is how the next reader concludes the sweep is finished.
+
+    The bar is full and not empty. A ratio nobody can read is drawn as "as much
+    as it can hold", the same direction `_cycle_totals` keeps its own sum in: a
+    bar drawn empty is a cycle that looks free to bet into.
+    """
+    from openproj.render import render_cycle, render_cycles, render_people
+
+    root = tmp_path / "plan"
+    shutil.copytree(seed_root, root)
+    bet = root / "tasks" / "task-6a5c02--lower-the-scan-operator.md"
+    bet.write_text(bet.read_text().replace("person_weeks: 1.5", "person_weeks: .inf"))
+
+    records, config, unreadable = load_repo(root)
+
+    # The file is a record and stays one. The defect is downstream of every
+    # gate there is, which is why nothing upstream is allowed to notice it here.
+    assert unreadable == []
+    assert len(records) == len(load_repo(seed_root)[0])
+
+    dated = build_index(records, config, TODAY)
+    holder = dated.plan["task-6a5c02"].assignees[0]
+    cycle = cycle_of(dated.plan["task-6a5c02"], dated.plan)
+
+    # Built a second time, for a day inside the cycle the bet is in. The people
+    # page draws a load bar only for somebody on the CURRENT cycle's roster, and
+    # the module's TODAY sits in the cycle before this one — so at that date the
+    # page has no bar to get wrong and the test would pass over the site it is
+    # here for. Read off the window rather than written down, because a date
+    # typed in beside a corpus that is allowed to grow is a date that stops
+    # meaning "during the bet".
+    opens, closes = dated.cycles[cycle]
+    index = build_index(records, config, opens + (closes - opens) / 2)
+    assert index.load(cycle)[holder] == float("inf")
+
+    pages = {
+        "people": render_people(index),
+        "cycles": render_cycles(index),
+        f"cycle/{cycle}": render_cycle(index, cycle),
+    }
+
+    # Every width a bar is given, off the parsed document rather than out of the
+    # page's characters: the stylesheet is inlined into all three of these, and
+    # `width: 100%` is a string it contains whatever the data says.
+    for name, page in pages.items():
+        widths = [
+            element.attrs["style"]
+            for element in elements(page)
+            if element.attrs.get("style", "").startswith("width:")
+        ]
+        assert widths, f"{name} drew no bar at all"
+        drawn = [float(width.removeprefix("width:").removesuffix("%").strip()) for width in widths]
+        assert all(0 <= one <= 100 for one in drawn), f"{name}: {widths}"
+        assert 100 in drawn, f"{name} drew nothing full for a bet of infinite weeks"
 
 
 def test_a_record_in_progress_with_nothing_linked_is_a_question_not_a_rule(seed_index: Index):
