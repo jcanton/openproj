@@ -21,6 +21,7 @@ the `Dockerfile`.
 | `drawings.md`        | the drawing subsystem: the spike, the five helpers, and why a PNG never touches the merge |
 | `deferred-push.md`   | why a commit lands locally before it goes out, and what the page says while it has not    |
 | `context-menus.md`   | the right-click menu and the popup it opens: two boxes, one host contract, five cuts      |
+| `cycle-calendar.md`  | why the date picker is a widget and not a rule, the library audit behind it, and the timeline's half |
 | `hackmd-observed.md` | what the team's HackMD actually contained, measured before this tool existed              |
 | `QUEUE.md`           | the work queue: what is next, and what was accepted as a gap                              |
 | `probes/`            | measurements — CI timings, load runs, the concurrency audit                               |
