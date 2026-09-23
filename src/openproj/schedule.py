@@ -204,14 +204,25 @@ def _first_working_day(day: date, config: Config) -> date:
 def _working_days(weeks: float) -> int:
     """Whole working days in `weeks`.
 
-    Rounded to six decimals first: 1.2 * 5 is 6.000000000000001 in binary
-    floating point, and a naive ceil would buy a seventh day. Bounded before the
-    ceil, because `math.ceil` raises on infinity: `person_weeks: Infinity` is
-    valid JSON to Python's parser and one PATCH away, and it raised here —
-    inside `_runs_past_the_calendar`, so the guard was the thing that fell over
-    and every page 500'd on a value already committed.
+    Bounded first, because `math.ceil` raises on infinity: `person_weeks:
+    Infinity` is valid JSON to Python's parser and one PATCH away, and it raised
+    here — inside `_runs_past_the_calendar`, so the guard was the thing that fell
+    over and every page 500'd on a value already committed.
+
+    Then rounded to six decimals: 1.2 * 5 is 6.000000000000001 in binary floating
+    point, and a naive ceil would buy a seventh day.
+
+    That order is the fix and not a tidy-up. This line used to round before it
+    bounded, and it survived on an accident of the builtin: two-argument
+    `round(inf, 6)` returns `inf`, where one-argument `round(inf)` raises. So the
+    only thing standing between a committed `.inf` and nine 500ing routes was the
+    `, 6` — an argument that is here for a floating-point artefact and reads like
+    it, and which the next person to tidy this expression deletes. Bounded first,
+    the ceil is handed a finite number no matter what the plan file says, which
+    is what `days_after` and `within_the_calendar` (`model.py`) already promise
+    and what this file's own commits claim twice.
     """
-    return max(1, math.ceil(within_the_calendar(round(weeks * _WORKING_DAYS_PER_WEEK, 6))))
+    return max(1, math.ceil(round(within_the_calendar(weeks * _WORKING_DAYS_PER_WEEK), 6)))
 
 
 def _budget_weeks(duration: float | None) -> float | None:
