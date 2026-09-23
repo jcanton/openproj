@@ -58,6 +58,14 @@ def _percent(part: float, whole: float) -> int:
     So an unreadable ratio draws a full bar rather than an empty one. That is the
     direction this number must never be wrong in: the cycles index says so about
     its own sum, and a bar drawn empty is a cycle that looks free to bet into.
+
+    **There is a second copy, in the browser, and it is called `percent`.** The
+    cycle page's `recount` redraws the roster's bars while a rate is being typed,
+    so the same ratio is taken in JavaScript — and it was taken there with only
+    the upper bound, which made `-1` in a rate box freeze the bar at whatever it
+    was last showing where a reload drew an empty one. Whoever changes this
+    changes that, and the comment above `percent` says which of the two rules
+    here does not survive the translation.
     """
     if not whole:
         return 0
@@ -793,6 +801,40 @@ for (const pick of document.querySelectorAll('#bets select.pick')) {
   };
 }
 
+// **The browser's copy of `_percent` (`cycles.py`), and it has to stay one.**
+// Whoever changes either of these is changing an invariant written in two
+// languages, which is this repository's characteristic way of guarding half of
+// one. The server bounds the ratio at both ends; this bounded only the top —
+// `Math.min(100, Math.round(100 * held / capacity))` — so the same two numbers
+// gave two different bars. A rate box takes any text, and `-1` in one assigned
+// `width: "-25%"`, which is not a width: CSSOM refuses it and leaves the last
+// good one standing, so the bar stopped following the rate and went on drawing
+// a load nobody holds, while a reload drew `_percent(1.0, -4.0)` = 0.
+//
+// A stale bar rather than a full one only because the server always writes an
+// inline width to be stale AT. `span.bar > span` (`shell.py`) declares no width
+// of its own, so a fill that ever loses one is a block child filling the whole
+// 140px track — measured, and asserted as `bare` in
+// `test_the_load_bar_is_the_same_width_in_the_browser_as_it_is_on_the_server`.
+//
+// The bound goes BEFORE the round for the reason the Python says: `Math.round`
+// hands back the `Infinity` it was given, and a rate of `1e-323` makes the
+// ratio infinite. `Infinity%` and `NaN%` are refused exactly as `-25%` is, so
+// the JavaScript copy was only ever right about those two by accident.
+//
+// **NaN is where the two languages part and the translation is not literal.**
+// Python puts the constants first so that NaN loses every comparison and an
+// unreadable ratio draws a FULL bar — the direction this number must never be
+// wrong in, because a bar drawn empty is a cycle that looks free to bet into.
+// `Math.min` propagates NaN whichever side it is on, so the ordering trick does
+// nothing here and the case is named instead.
+function percent(part, whole) {
+  if (!whole) return 0;
+  const ratio = 100 * part / whole;
+  if (Number.isNaN(ratio)) return 100;
+  return Math.round(Math.max(0, Math.min(100, ratio)));
+}
+
 // Capacity is what a rate BUYS, so it has to move while the rate is being typed.
 // Left to the next page load, the number somebody is setting is invisible at the
 // moment they are setting it — which is most of the moment that matters.
@@ -804,8 +846,7 @@ function recount() {
     const held = Number(row.dataset.held) || 0;
     const capacity = rate * build;
     row.querySelector('.capacity').textContent = capacity.toFixed(1) + ' wk';
-    row.querySelector('.bar > span').style.width =
-      capacity ? Math.min(100, Math.round(100 * held / capacity)) + '%' : '0%';
+    row.querySelector('.bar > span').style.width = percent(held, capacity) + '%';
     row.classList.toggle('over', capacity > 0 && held > capacity);
     if (capacity > 0 && held > capacity) over.push(row.dataset.login);
   }
