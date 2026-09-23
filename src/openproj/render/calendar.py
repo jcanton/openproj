@@ -241,6 +241,61 @@ function dayInCycle(day) {
   };
 }
 
+// The semantics the library does not have. Counted rather than assumed: zero
+// `aria-*` attributes and zero `role`s in the whole 35 KB. The grid is a div, the
+// selected day announces nothing, and a month change is silent.
+//
+// **Re-applied on every redraw, and the reason is not the one it looks like.**
+// The library reuses its forty-two cells — `renderCell` rewrites `className`,
+// `textContent` and `dataset.date` on the same `<span>` — so an attribute set
+// here SURVIVES a month change. That is worse than losing it: `role` and
+// `aria-selected` and the name are then last month's, on this month's day, and a
+// reader is told the 14th of August while looking at the 14th of September. A
+// test that asked only whether `role` was still there after Next would pass
+// against a widget that had never re-run this at all.
+function describeGrid(picker) {
+  const root = picker.picker.element;
+  const grid = root.querySelector('.datepicker-grid');
+  if (!grid) return;
+  grid.setAttribute('role', 'grid');
+  for (const cell of grid.querySelectorAll('.datepicker-cell')) {
+    cell.setAttribute('role', 'gridcell');
+    // `dataset.date` is the cell's own timestamp and the library sets it on the
+    // day view alone; the month and year views have none, and a name read off
+    // their text is the right name there.
+    const iso = cell.dataset.date ? isoOf(new Date(Number(cell.dataset.date))) : null;
+    const found = iso ? cycleOf(iso) : null;
+    // Written rather than left to the cell's contents: the contents are a day
+    // number and a badge, and the badge is hidden precisely so it is not read —
+    // which leaves "14" as the whole of what the cell would otherwise announce.
+    const said = iso
+      ? new Date(`${iso}T00:00`).toLocaleDateString(undefined,
+          { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+      : cell.textContent;
+    cell.setAttribute('aria-label', found
+      ? `${said}, cycle ${found.number}${found.phase === 'cool' ? ' cool-down' : ''}`
+      : said);
+    cell.setAttribute('aria-selected', cell.classList.contains('selected') ? 'true' : 'false');
+  }
+  // The popup's own region, and not the page's `announce()`. That one writes into
+  // `#state` where a page has one, which is the save bar — so a month change
+  // would blank "Saved" on the record page, in the one place a reader looks to
+  // find out whether their edit landed.
+  let live = root.querySelector('[aria-live="polite"]');
+  if (!live) {
+    live = document.createElement('p');
+    live.setAttribute('aria-live', 'polite');
+    // `sr-only` is the shell's own name for this and its rule is already on every
+    // page that will carry this widget. A second name for it would be a class
+    // nothing defines, which is not an invisible region — it is the month drawn
+    // twice, once in the header and once underneath it.
+    live.className = 'sr-only';
+    root.appendChild(live);
+  }
+  const title = root.querySelector('.datepicker-controls .view-switch');
+  if (title) live.textContent = title.textContent;
+}
+
 function calendarFor(box) {
   let picker = CALENDARS.get(box);
   if (picker) return picker;
@@ -254,12 +309,28 @@ function calendarFor(box) {
     beforeShowDay: dayInCycle,
   });
   CALENDARS.set(box, picker);
+  // The six events this library has, counted out of the bundle rather than taken
+  // from a list: `show`, `hide`, `changeView`, `changeYear`, `changeMonth`,
+  // `changeDate`. There is no `refresh` — a listener for one would be a line that
+  // never runs, which is worse than no line because it reads as cover. `hide` is
+  // left out on its own merits: nothing needs describing on the way down.
+  //
+  // They are dispatched on the INPUT and not on the picker, and — measured, by
+  // reading the grid from inside the handler — AFTER the render they describe,
+  // so this sees the days it is naming. A layer applied once at construction is
+  // a layer that is gone the first time anybody presses Next.
+  for (const when of ['show', 'changeView', 'changeYear', 'changeMonth', 'changeDate']) {
+    box.addEventListener(when, () => describeGrid(picker));
+  }
   return picker;
 }
 
 function openCalendar(box) {
   const picker = calendarFor(box);
   picker.show();
+  // `show` fires only when the picker was hidden, and this is also the path a
+  // second open takes on a picker that is already up. Cheap and idempotent.
+  describeGrid(picker);
   return picker;
 }
 

@@ -441,9 +441,13 @@ def _page_with_a_date_field(index: Index, value: date) -> str:
 # as.
 CENSUS = """
   const grid = document.querySelector('.datepicker-grid');
+  const live = document.querySelector('.datepicker [aria-live]');
   return {
     opened: !!document.querySelector('.datepicker.active'),
     shown: document.querySelector('.view-switch').textContent,
+    gridRole: grid.getAttribute('role'),
+    live: live ? live.textContent : null,
+    liveClass: live ? live.className : null,
     cells: [...grid.querySelectorAll('.datepicker-cell')].map((cell) => {
       const badge = cell.querySelector('.cyc-n');
       return {
@@ -455,6 +459,9 @@ CENSUS = """
         day: cell.firstChild ? cell.firstChild.nodeValue : null,
         text: cell.textContent,
         classes: cell.className.split(/\\s+/).filter(Boolean),
+        role: cell.getAttribute('role'),
+        name: cell.getAttribute('aria-label'),
+        selected: cell.getAttribute('aria-selected'),
         badge: badge ? badge.textContent : null,
         badgeHidden: badge ? badge.getAttribute('aria-hidden') : null,
       };
@@ -466,6 +473,13 @@ OPEN_IT = """
   const box = document.getElementById('start');
   openCalendar(box);
 """ + CENSUS
+
+OPEN_IT_AND_STEP_A_MONTH = """
+  const box = document.getElementById('start');
+  openCalendar(box);
+  document.querySelector('.datepicker-controls .next-btn').click();
+""" + CENSUS
+
 
 def _stepped(year: int, month: int, by: int) -> tuple[int, int]:
     moved = year * 12 + (month - 1) + by
@@ -584,6 +598,68 @@ def test_the_cycles_number_sits_on_the_day_it_opens_and_behind_the_day_number(
         assert cell["badgeHidden"] == "true", "the number is read out beside the day it labels"
 
 
+def test_the_calendar_says_what_it_is_although_its_library_does_not(opened: dict):
+    """Counted rather than assumed: zero `aria-*` attributes and zero `role`s in
+    the whole 35 KB bundle. The grid is a div, the selected day announces nothing,
+    and the band that tells a sighted reader which cycle a day is in tells a
+    reader who is not looking at it nothing whatever.
+    """
+    assert opened["gridRole"] == "grid"
+    assert opened["live"] == opened["shown"], "the month the popup is on is announced to nobody"
+
+    for day, cell in zip(_days_of(opened), opened["cells"], strict=True):
+        assert cell["role"] == "gridcell"
+        assert cell["name"], f"a day with no name at all: {cell['text']}"
+        # The whole date and not just the day number, which the month spelled out
+        # underneath it would supply on its own: "2" is inside "2026". The name is
+        # written rather than left to the cell's contents, which are a day number
+        # and a badge hidden precisely so it is not read — leaving "14" as the
+        # whole of what this cell would otherwise announce.
+        assert str(day.day) in cell["name"]
+        assert _library_months()[day.month - 1] in cell["name"]
+        assert str(day.year) in cell["name"], f"{day} is announced as {cell['name']!r}"
+        assert cell["selected"] == ("true" if "selected" in cell["classes"] else "false")
+
+    named = [cell for cell in opened["cells"] if "cyc" in cell["classes"]]
+    assert named, "no day in this month is in a cycle, so nothing here was tested"
+    assert all("cycle" in cell["name"] for cell in named)
+    cooled = [cell for cell in named if "cyc-cool" in cell["classes"]]
+    assert cooled and all("cool-down" in cell["name"] for cell in cooled)
+
+
+def test_the_month_change_rebuilds_the_names_the_library_leaves_behind(
+    seed_index: Index, tmp_path: Path
+):
+    """The redraw, and the reason it is not asked about with `role`.
+
+    The library reuses its forty-two cells — `renderCell` rewrites `className`,
+    `textContent` and `dataset.date` on the same `<span>` — so an attribute set
+    once at construction SURVIVES a month change. Measured with the redraw hook
+    deleted: `role` comes back `grid`, every cell still says `gridcell`, and both
+    assertions pass over a widget that has never re-described anything. What is
+    wrong is everything that was about the days themselves — the first cell
+    announces "Monday, 27 July 2026, cycle 36" on September's grid, a cell that
+    is no longer selected still says `aria-selected="true"`, and the live region
+    says August while the header says September.
+
+    So those three are the assertions, and `role` is here only to show it is not.
+    """
+    page = _page_with_a_date_field(seed_index, _a_month_holding_more_than_build_days(seed_index))
+    found = measured_in(
+        chrome(), page, tmp_path / "calendar.html", 1280, OPEN_IT_AND_STEP_A_MONTH
+    )
+    windows = seed_index.cycle_windows()
+
+    assert found["gridRole"] == "grid"
+    assert found["live"] == found["shown"]
+    for day, cell in zip(_days_of(found), found["cells"], strict=True):
+        assert str(day.year) in cell["name"], f"{day} is announced as {cell['name']!r}"
+        assert _library_months()[day.month - 1] in cell["name"]
+        assert cell["selected"] == ("true" if "selected" in cell["classes"] else "false")
+        found_in = _bands_for(day, windows)
+        assert ("cycle" in cell["name"]) == bool(found_in)
+
+
 def test_a_date_box_made_after_the_page_loaded_gets_the_calendar_too(
     seed_index: Index, tmp_path: Path
 ):
@@ -644,6 +720,18 @@ def test_the_keyboard_opens_the_calendar_as_well_as_the_pointer(
     assert found["onFocus"], "tabbing into the field opened nothing"
     assert found["shut"], "this test cannot say anything about reopening a popup that is up"
     assert found["reopened"], "Alt+Down did not bring it back"
+
+
+def test_the_popups_live_region_wears_a_name_the_shell_actually_defines():
+    """`.sr-only` is the shell's own name for "in the document and off the
+    screen", and its rule ships on every page that will carry this widget. A
+    second name for it — `visually-hidden`, say — is not an invisible region: it
+    is a class nothing defines, which draws the month a second time underneath
+    the header that already says it.
+    """
+    shell = next(path for path in render_paths() if path.name == "shell.py")
+    assert ".sr-only {" in shell.read_text(encoding="utf-8")
+    assert 'live.className = \'sr-only\';' in calendar_module._GLUE
 
 
 def test_the_widget_turns_no_value_into_markup():
