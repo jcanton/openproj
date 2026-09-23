@@ -445,6 +445,13 @@ CENSUS = """
   return {
     opened: !!document.querySelector('.datepicker.active'),
     shown: document.querySelector('.view-switch').textContent,
+    // Which language the DAY NAMES came out in. The popup's own furniture — the
+    // header, the days-of-week row, Today and Clear — is the library's `en`
+    // table and is English for everybody; a cell's name is
+    // `toLocaleDateString(undefined, …)`, which is the reader's locale and is
+    // the right default for a date. So the month-name assertions below are
+    // asked only where they can be answered, and say so when they are not.
+    locale: Intl.DateTimeFormat().resolvedOptions().locale,
     gridRole: grid.getAttribute('role'),
     live: live ? live.textContent : null,
     liveClass: live ? live.className : null,
@@ -504,6 +511,25 @@ def _days_of(found: dict) -> list[date]:
         at_year, at_month = _stepped(shown_year, shown_month, step)
         days.append(date(at_year, at_month, int(cell["day"])))
     return days
+
+
+def _in_english(found: dict) -> bool:
+    """Whether a day's name can be checked against a month name at all.
+
+    A cell's name is `toLocaleDateString(undefined, …)` — the reader's own
+    locale, which is the right default for a date and is not a thing a Chrome
+    flag will move: `--lang=de-DE` leaves `Intl` resolving to whatever the
+    machine is set to. Everything these tests actually rest on is
+    language-independent — the day number, the year, the cycle, `aria-selected`
+    and the live region — and every one of them fails under the redraw mutation
+    on its own. The month name is the belt beside those braces, so it is asked
+    where it can be answered rather than making the suite depend on the locale of
+    the machine that runs it.
+    """
+    english = str(found["locale"]).startswith("en")
+    if not english:  # pragma: no cover - depends on the machine, not on the code
+        print(f"the browser formats dates as {found['locale']}: month names not checked")
+    return english
 
 
 def _bands_for(day: date, windows: list) -> set[str]:
@@ -616,8 +642,9 @@ def test_the_calendar_says_what_it_is_although_its_library_does_not(opened: dict
         # and a badge hidden precisely so it is not read — leaving "14" as the
         # whole of what this cell would otherwise announce.
         assert str(day.day) in cell["name"]
-        assert _library_months()[day.month - 1] in cell["name"]
         assert str(day.year) in cell["name"], f"{day} is announced as {cell['name']!r}"
+        if _in_english(opened):
+            assert _library_months()[day.month - 1] in cell["name"]
         assert cell["selected"] == ("true" if "selected" in cell["classes"] else "false")
 
     named = [cell for cell in opened["cells"] if "cyc" in cell["classes"]]
@@ -653,8 +680,13 @@ def test_the_month_change_rebuilds_the_names_the_library_leaves_behind(
     assert found["gridRole"] == "grid"
     assert found["live"] == found["shown"]
     for day, cell in zip(_days_of(found), found["cells"], strict=True):
+        # The day number is the one that catches it and needs no language: with
+        # the wiring gone the 31st of August is still announced as the 27th of
+        # July, and "31" is not in that sentence in any locale.
+        assert str(day.day) in cell["name"], f"{day} is announced as {cell['name']!r}"
         assert str(day.year) in cell["name"], f"{day} is announced as {cell['name']!r}"
-        assert _library_months()[day.month - 1] in cell["name"]
+        if _in_english(found):
+            assert _library_months()[day.month - 1] in cell["name"]
         assert cell["selected"] == ("true" if "selected" in cell["classes"] else "false")
         found_in = _bands_for(day, windows)
         assert ("cycle" in cell["name"]) == bool(found_in)
