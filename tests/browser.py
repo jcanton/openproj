@@ -530,9 +530,10 @@ def measured_on_a_phone(
     for a mouse — which is a pass for the wrong reason.
 
     Nothing in this app's stylesheets reads `hover` or `pointer` for a layout,
-    so the seven read surfaces already measured here answer exactly as before;
-    the one `@media (hover: hover)` block is the table's row wash, which paints
-    a background on a row nothing here hovers.
+    so the seven read surfaces already measured here answer exactly as before.
+    The `@media (hover: hover)` blocks are two, and both switch off a wash that
+    stands for "your pointer is here": the shell's row highlight, and the
+    timeline's cycle column. Neither paints on anything this helper hovers.
     """
     import shutil as _shutil
 

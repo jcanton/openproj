@@ -550,25 +550,35 @@ _TIMELINE = """
       and a month label at y=18 inside one 26px strip, so a cycle closing near the
       first of a month wrote one word over the other. -#}
   {% for cycle in t.cycles %}
-  <rect class="cycle-band{% if cycle.tint == 'alt' %} alt{% endif %}" x="{{ cycle.x }}" y="0"
-        width="{{ cycle.width }}" height="{{ t.band }}"/>
-  {#- The cool-down, shaded inside the band. Nothing is supposed to be built in
-      it, so the band cannot show one flat stretch for the whole window. -#}
-  {% if cycle.cool_x is not none %}
-  <rect class="cycle-cooldown" x="{{ cycle.cool_x }}" y="0"
-        width="{{ cycle.cool_width }}" height="{{ t.band }}"/>
-  {% endif %}
-  <text class="cycle-label" x="{{ cycle.x + 4 }}" y="12">{{ cycle.label }}</text>
-  {#- The solid rule is the end of BUILD, because that is the date an overrun is
-      measured against. The dashed one is the end of the window. -#}
-  {% if cycle.build_x is not none %}
-  <line class="build-rule" x1="{{ cycle.build_x }}" y1="0" x2="{{ cycle.build_x }}"
-        y2="{{ t.height }}"><title>cycle {{ cycle.number }} stops building here</title></line>
-  {% endif %}
-  {% if cycle.rule_x is not none %}
-  <line class="cycle-rule" x1="{{ cycle.rule_x }}" y1="0" x2="{{ cycle.rule_x }}"
-        y2="{{ t.height }}"/>
-  {% endif %}
+  {#- One group per cycle, because an SVG `<g>` is `:hover` whenever any
+      descendant is: that is what lets the wash below be one rule rather than a
+      listener that would have to know which marks belong to which cycle. -#}
+  <g class="cycle-band-group">
+    {#- First in the group, so it is painted UNDER the band, the rules and every
+        bar that comes after: it stands for "your pointer is here" and must not
+        take ink or meaning from the work it lies over. -#}
+    <rect class="cycle-hover" x="{{ cycle.x }}" y="0"
+          width="{{ cycle.width }}" height="{{ t.height }}"/>
+    <rect class="cycle-band{% if cycle.tint == 'alt' %} alt{% endif %}" x="{{ cycle.x }}" y="0"
+          width="{{ cycle.width }}" height="{{ t.band }}"/>
+    {#- The cool-down, shaded inside the band. Nothing is supposed to be built in
+        it, so the band cannot show one flat stretch for the whole window. -#}
+    {% if cycle.cool_x is not none %}
+    <rect class="cycle-cooldown" x="{{ cycle.cool_x }}" y="0"
+          width="{{ cycle.cool_width }}" height="{{ t.band }}"/>
+    {% endif %}
+    <text class="cycle-label" x="{{ cycle.x + 4 }}" y="12">{{ cycle.label }}</text>
+    {#- The solid rule is the end of BUILD, because that is the date an overrun is
+        measured against. The dashed one is the end of the window. -#}
+    {% if cycle.build_x is not none %}
+    <line class="build-rule" x1="{{ cycle.build_x }}" y1="0" x2="{{ cycle.build_x }}"
+          y2="{{ t.height }}"><title>cycle {{ cycle.number }} stops building here</title></line>
+    {% endif %}
+    {% if cycle.rule_x is not none %}
+    <line class="cycle-rule" x1="{{ cycle.rule_x }}" y1="0" x2="{{ cycle.rule_x }}"
+          y2="{{ t.height }}"/>
+    {% endif %}
+  </g>
   {% endfor %}
   <line class="band-rule" x1="0" y1="{{ t.band }}" x2="{{ t.width }}" y2="{{ t.band }}"/>
   {% for month in t.months %}
@@ -798,6 +808,12 @@ plot.addEventListener('contextmenu', event => {
 // drawing shrinks to what is left, and the rules that span the whole plot are
 // cut to the new height.
 const FULL_HEIGHT = svg.querySelectorAll('.cycle-rule, .build-rule, .month-rule, .today');
+// `.cycle-hover` spans the plot as well and is deliberately NOT in that list.
+// It is a <rect>, so it takes `height` where a <line> takes `y2`, and the loop
+// below would set an attribute a rect has no meaning for — but it needs neither:
+// the server draws it at the height of the UNFILTERED chart, filtering only ever
+// removes rows, and the outermost <svg> clips to its own viewBox. So the wash is
+// never short, and a taller one is not drawn.
 const TODAY_LABEL = svg.querySelector('.today-label');
 
 // Run on every keystroke, and unlike the graph's it stays that way. The graph
@@ -1028,6 +1044,30 @@ svg { display: block; }
 .build-rule { stroke: var(--line-strong); }
 .cycle-cooldown { fill: var(--line); fill-opacity: .5; }
 .cycle-label { font-size: 10px; fill: var(--accent); font-weight: 600; }
+/* Which column belongs to the cycle under the pointer, on a chart twenty rows
+   tall. Pointer-only, and allowed to be: it says nothing that is not already
+   said, because the dashed rule and the cycle label are the record of where a
+   cycle ends and neither of them moves.
+
+   `--row-hover` and not a fill plus an alpha of this rule's own. That token is
+   the app's one wash — the table's row highlight — and two numbers standing for
+   the same strength are two numbers that drift apart. So `opacity` here is a
+   switch between drawn and not drawn, and how strong the wash is stays in the
+   one place it was decided. `pointer-events: none` so the bar under it is still
+   what you hover and what a right-click finds.
+
+   **No transition.** `test_the_app_moves_in_two_places` is an inventory of this
+   app's two animated rules and a third has to justify itself; an opacity that
+   snaps needs no justification and no reduced-motion exemption.
+
+   `@media (hover: hover)` for the reason the shell gives for the row wash: a
+   touch device has no pointer to follow and keeps the last-tapped `:hover` until
+   something else is tapped, so a phone would be left with one cycle lit and no
+   way to move off it. */
+.cycle-hover { fill: var(--row-hover); opacity: 0; pointer-events: none; }
+@media (hover: hover) {
+  .cycle-band-group:hover .cycle-hover { opacity: 1; }
+}
 .today { stroke: var(--danger); stroke-width: 1.5; }
 .today-label { font-size: 10px; fill: var(--danger); font-weight: 600; }
 rect.bar { rx: 3; }

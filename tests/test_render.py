@@ -7176,6 +7176,148 @@ def test_a_touch_screen_gets_no_wash_at_all(rendered: Path, tmp_path: Path):
     )
 
 
+def test_hovering_a_cycle_lights_the_chart_under_it(rendered: Path):
+    """Which bar belongs to which cycle was a question answered by sighting down
+    from a dashed rule at the top of a chart twenty rows tall.
+
+    `--row-hover` and not a fill plus an alpha written here: that token is the
+    app's one wash and two numbers standing for one strength are two numbers that
+    drift apart, so `opacity` is a switch between drawn and not drawn. And the
+    rule that draws it is inside `@media (hover: hover)` for the reason the shell
+    gives for the table's row wash — a touch device keeps the last-tapped
+    `:hover`, so a phone would be left with one cycle lit and no pointer to move
+    off it.
+    """
+    body = read(rendered, "timeline.html")
+
+    assert '<g class="cycle-band-group">' in body
+    assert '<rect class="cycle-hover"' in body
+    assert ".cycle-hover { fill: var(--row-hover); opacity: 0; pointer-events: none; }" in body
+    # Whole, so the query and the rule cannot drift apart: a rule left outside it
+    # and a rule inside a query that never matches look identical to every other
+    # assertion, which is why `test_a_touch_screen_gets_no_cycle_wash_either`
+    # resolves the same claim in a browser that says it has no pointer.
+    assert (
+        "@media (hover: hover) {\n  .cycle-band-group:hover .cycle-hover { opacity: 1; }\n}"
+    ) in body
+    # The inventory the floor's comment claims. An opacity that snaps needs no
+    # reduced-motion exemption, and `test_the_app_moves_in_two_places` is what
+    # would notice a third animated rule — this keeps the two claims beside the
+    # rule that could break one.
+    assert "transition" not in re.search(r"\.cycle-hover \{[^}]*\}", body).group(0)
+
+
+def test_the_hover_wash_gates_nothing(rendered: Path):
+    """It is pointer-only, and allowed to be: what it says is already said another
+    way. The dashed rule is where a cycle closes and the label is which cycle it
+    is, and neither of them moved to make room for the wash."""
+    body = read(rendered, "timeline.html")
+
+    assert '<line class="cycle-rule"' in body
+    assert '<text class="cycle-label"' in body
+    assert ".cycle-rule { stroke: var(--line-strong); stroke-dasharray: 3 3; }" in body
+
+
+def _hovered_cycle(browser: str, page: str, where: Path, flags: tuple[str, ...] = _A_MOUSE) -> dict:
+    """Lay the timeline out, put a real pointer on a cycle's band, and report what
+    the wash under it resolved to before and after.
+
+    A real pointer and not `dispatchEvent`, for the reason `_hovered` gives: a
+    synthetic event is `isTrusted: false`, sets no `:hover`, and would report a
+    resting wash about a rule that works. And the box is measured as well as the
+    opacity, because a resolved value is a promise about pixels that a stylesheet
+    cannot keep on its own — this repository's unpainted `box-shadow` resolved to
+    exactly the value every test asserted on exactly the element they asserted it
+    on, and Chrome drew nothing.
+    """
+    import shutil
+    import time
+
+    from browser import _devtools, _evaluated
+
+    where.write_text(page)
+    profile = where.parent / f"{where.stem}-profile"
+    shutil.rmtree(profile, ignore_errors=True)
+    # A window, for the reason `pressed_in` gives: without one Chrome takes its
+    # own default and the chart is a horizontally scrolled box, so the first
+    # cycle's band is half off the left edge and under the frozen label column.
+    with _devtools(browser, where.as_uri(), profile, ("--window-size=1400,900", *flags)) as (
+        call,
+        _said,
+    ):
+        time.sleep(2.0)
+        found = _evaluated(
+            call,
+            """(() => {
+          // The band that is actually on screen, not the first in the document:
+          // the plot scrolls sideways and the label column is drawn over its left
+          // edge, so cycle 34's band is at a point the pointer cannot reach.
+          const labels = document.querySelector('.labels').getBoundingClientRect();
+          for (const group of document.querySelectorAll('.cycle-band-group')) {
+            const band = group.querySelector('.cycle-band').getBoundingClientRect();
+            const x = Math.round(band.left + band.width / 2);
+            const y = Math.round(band.top + band.height / 2);
+            if (x < labels.right + 4 || x > innerWidth - 4 || y < 0 || y > innerHeight) continue;
+            const box = group.querySelector('.cycle-hover').getBoundingClientRect();
+            return {before: getComputedStyle(group.querySelector('.cycle-hover')).opacity,
+                    height: box.height, width: box.width, at: [x, y]};
+          }
+          return null;
+        })()""",
+        )
+        assert found, "no cycle band was on screen to point at"
+        call(
+            "Input.dispatchMouseEvent",
+            {"type": "mouseMoved", "x": found["at"][0], "y": found["at"][1]},
+        )
+        time.sleep(0.3)
+        return found | _evaluated(
+            call,
+            """(() => {
+          const group = [...document.querySelectorAll('.cycle-band-group')]
+            .find(g => g.matches(':hover'));
+          if (!group) return {hovered: false, during: '0', fill: 'none'};
+          const wash = group.querySelector('.cycle-hover');
+          return {hovered: true, during: getComputedStyle(wash).opacity,
+                  fill: getComputedStyle(wash).fill};
+        })()""",
+        )
+
+
+def test_the_hover_wash_is_actually_painted(rendered: Path, tmp_path: Path):
+    """The pixel half of the question. Two things have to be true at once and a
+    stylesheet can only say one of them: that the opacity moves, and that there is
+    a box with real height for it to move in. An SVG `<rect>` whose `height`
+    attribute never reached it resolves `opacity: 1` on nothing at all."""
+    from browser import chrome
+
+    got = _hovered_cycle(chrome(), read(rendered, "timeline.html"), tmp_path / "cycles.html")
+
+    assert got["hovered"], "the pointer did not land on a cycle group"
+    assert float(got["before"]) == 0, f"the wash is drawn before anything is hovered: {got}"
+    assert float(got["during"]) == 1, f"the wash did not come up under the pointer: {got}"
+    # The band strip is 18px; the wash spans the whole plot, which on the seed
+    # corpus is twenty-odd rows. A wash the height of the band would be a
+    # highlight on the header and not on the columns under it.
+    assert got["height"] > 100, f"the wash has no height to be seen in: {got['height']}px"
+    assert got["width"] > 20, f"the wash is drawn on no width at all: {got['width']}px"
+    assert got["fill"] != "none", "the wash resolved to no fill, so nothing is painted"
+
+
+def test_a_touch_screen_gets_no_cycle_wash_either(rendered: Path, tmp_path: Path):
+    """The other side of `@media (hover: hover)`. A tap sets `:hover` and there is
+    no pointer to move off it, so a phone would be left with one cycle lit — which
+    is a highlight meaning the opposite of what this one means."""
+    from browser import chrome
+
+    got = _hovered_cycle(
+        chrome(), read(rendered, "timeline.html"), tmp_path / "cycles-touch.html", _A_TOUCHSCREEN
+    )
+
+    assert got["hovered"], "the press did not land, so this proves nothing"
+    assert float(got["during"]) == 0, "a cycle stayed lit on a screen with nothing to unhover it"
+
+
 def test_the_wash_does_not_take_away_the_ground_it_is_drawn_over(
     views: dict[str, str], tmp_path: Path
 ):
