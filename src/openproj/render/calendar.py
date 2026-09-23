@@ -68,9 +68,32 @@ _CALENDAR_STYLE = """
   align-items: center; border-radius: 3px; cursor: pointer; display: flex;
   height: 2rem; justify-content: center; position: relative; width: 14.2857%;
 }
+
+/* The ink on a cell is a ladder of three rungs, every one of them (0,2,0) and
+   resolved by source order alone: a day spilled over from the neighbouring
+   month is muted, a day outside the allowed range is fainter still, and the
+   selected day — last block in this sheet — takes the accent's ink to sit on
+   the accent's fill.
+
+   The muting used to be `.next:not(.disabled)`, which is (0,3,0), and that is
+   the bug this ladder replaces. `:not()` forwards its argument's weight, so
+   those two selectors outranked every rule in the `.selected` block below;
+   the library's `renderCell` adds `selected` to a spill-over cell as readily
+   as to an in-month one, so the day the popup was opened to show rendered
+   `var(--muted)` on `var(--accent)` — 1.36:1 in the light theme, 1.12:1 in
+   dark, against 7.6:1 for the `--on-accent` it was meant to have. The number
+   was there and effectively not drawn. Reachable by opening the picker on any
+   record dated mid-month and pressing Next.
+
+   Order now does what the `:not()` did — `.disabled` follows and beats it for
+   a spill-over day that is also out of range — and the weakening is the point
+   rather than a side effect: a rule that wins only on order can lose ground
+   to a rule below it and can never take ground from one, so what this now
+   beats is a subset of what it beat before, and the `.selected` block is
+   below it. */
+.datepicker-cell.next, .datepicker-cell.prev { color: var(--muted); }
 .datepicker-cell.disabled { color: var(--empty); }
 .datepicker-cell:not(.day) { width: 25%; }
-.datepicker-cell.next:not(.disabled), .datepicker-cell.prev:not(.disabled) { color: var(--muted); }
 
 /* A cycle, drawn the way the timeline draws one: the band under the days it runs
    for, the dimmer fill under its cool-down, and an edge on the two days that are
@@ -106,10 +129,22 @@ _CALENDAR_STYLE = """
 .datepicker-cell.focused:not(.selected) { outline: 2px solid var(--focus); outline-offset: -2px; }
 
 /* Last, and it has to be: the selected day is the answer to the question the
-   popup was opened to ask, and `.cyc-alt.cyc-cool` is (0,3,0) too, so only order
-   puts the accent on top of a banded day. Without this the selected day inside a
-   cycle kept the band as its ground and took `--on-accent` as its ink — white on
-   pale blue in the light theme. */
+   popup was opened to ask, so it takes the ground from whatever is under it.
+
+   Three of the four band fills are (0,2,0), and order alone would beat those —
+   a bare `.datepicker-cell.selected` here wins them because it is written
+   after. The fourth is `.cyc-alt.cyc-cool` at (0,3,0), which order cannot
+   reach, so the combinations are spelled out to meet it at (0,3,0) and take
+   the tie on order. Without them the one day that broke was an odd cycle's
+   cool-down day: it kept the band as its ground and took `--on-accent` as its
+   ink — white on pale blue in the light theme.
+
+   The list is the ground and not the ink. A cell's colour is settled by the
+   three-rung ladder at the top of this sheet, which is why `.next` and `.prev`
+   are absent here and need no entry: they lost their `:not()` weight so that
+   `.datepicker-cell.selected` outranks them on order, the way it outranks
+   `.cyc`. Anything the library adds to a cell in future is the same case — it
+   earns a line here only if it sets a background at (0,3,0). */
 .datepicker-cell.selected,
 .datepicker-cell.selected.cyc,
 .datepicker-cell.selected.cyc-alt,
