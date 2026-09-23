@@ -97,9 +97,14 @@ only caller — it turns `index.cycles` plus the cool-down into the three dates 
 into pixels. The picker needs the same three dates and none of the pixels.
 
 So it becomes one helper, `cycle_windows` on `Index`, returning per cycle `{number, opens,
-builds_until, closes}`, sorted, unclamped, in dates. The timeline's loop reads it and keeps its own
-`x()`; the picker serialises it into the page as a template variable. An invariant written twice is
-guarded once, and this one is currently written once by luck rather than by design.
+builds_until, closes, alt}`, sorted, unclamped, in dates. The timeline's loop reads it and keeps its
+own `x()`; the picker serialises it into the page as a template variable. An invariant written twice
+is guarded once, and this one is currently written once by luck rather than by design.
+
+`alt` — which of the two tints a cycle wears — is on that list because the branch put it in both
+drawings first and got it wrong in both. It is the RANK in the sorted list, and the sort is why it
+belongs here: "which cycle comes next" is a question about the order, and neither a band loop nor a
+day cell is where the order is decided.
 
 A plan that has dated no cycle returns `[]`, and every consumer below degrades to a plain calendar
 rather than to an exception. That is the same rule as everywhere else here: empty must not look like
@@ -115,7 +120,8 @@ number.
 **Adjacent cycles alternate two tints of one ink, and do not take hues.** Fifteen cycles in fifteen
 colours re-introduces exactly the failure the status ladder was built to avoid: hue is the channel a
 dichromat loses. Alternating tints separate the cycle you are looking at from the one beside it,
-which is the entire question a reader asks of two touching bands.
+which is the entire question a reader asks of two touching bands — and therefore *adjacent* is the
+word that has to be implemented, not *odd*.
 
 Band is not the only channel either. The first build day and the closing day each carry a hairline
 edge, so a boundary survives a monochrome screen and survives a band that is one tint away from its
@@ -269,6 +275,19 @@ argument that is there for a floating-point artefact and is the first thing a ti
 hoisting the Config into a `cached_property` bought its own defect: `model_copy` copies the instance
 `__dict__`, which is exactly where a `cached_property` puts its answer, so a copy carried a Config
 built from the field the copy had just replaced.
+
+**Both drawings alternated on the wrong fact, and the words were right the whole time.** The
+timeline wrote `"alt" if number % 2 else "main"` and the calendar's `dayInCycle` wrote
+`found.number % 2`, so each of them tested the parity of a cycle's NUMBER while the commit subject,
+this section and the comment beside the line all said ADJACENCY. The two agree only while the numbers
+run consecutively, which both corpora here do, so nothing on any page and nothing in the suite ever
+put them side by side: a `config/cycles.yaml` holding 34, 36, 38, 40 with contiguous windows drew
+four bands in ONE uniform fill — the exact defect the tint was added to remove — and one cancelled or
+renumbered cycle is the whole distance to it. The test could not see it either. It asserted that the
+SET of tints drawn was `{"", "alt"}`, which any plan with one odd-numbered cycle anywhere satisfies,
+including that one. It asserts the property now: over the bands the page draws, in x order, two that
+MEET never share a tint, with the meeting asserted first so that alternation is never claimed across
+a gap.
 
 **The phone harness was making the claim it was written to test.** `measured_on_a_phone` set the
 viewport and nothing else: a page under it reported `innerWidth` 390 with `(pointer: fine)` true,
