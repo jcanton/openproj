@@ -88,6 +88,33 @@ def _percent(part: float, whole: float) -> int:
     return round(max(0.0, min(100.0, 100 * part / whole)))
 
 
+def _over(held: float, capacity: float) -> bool:
+    """Whether somebody is holding more weeks than their capacity buys.
+
+    **The browser has the second copy, inside `recount`, and it is spelled
+    `capacity > 0 && held > capacity`.** This one was `capacity and held >
+    capacity`, written out three times, and the two shapes disagree on every
+    negative number — which a rate box takes, because it is a plain text input.
+    With a hand-committed `availability: {someone: -1}` the served row came down
+    wearing `class="over"` with that person named under "Over capacity", and one
+    character typed into the rate box took both away. Commit 4e259a4 fixed the
+    BAR two lines above this line in `recount` and left the flag beside it.
+
+    `capacity > 0` and not `bool(capacity)`, and the browser's is the shape that
+    is right rather than merely the one that won: a capacity is a number of
+    weeks, so a capacity that is not positive is not a budget somebody can be
+    over. It also keeps this flag agreeing with the bar drawn next to it —
+    `_percent(1.0, -4.0)` is 0, so the alternative was an empty bar in a row
+    coloured for being full. NaN loses `> 0` as well, which is the same direction
+    `_percent` puts its constants first for.
+
+    Whoever changes either of these changes an invariant written in two
+    languages, which is this repository's characteristic way of guarding half of
+    one.
+    """
+    return capacity > 0 and held > capacity
+
+
 _CYCLE = """
 {#- The same header the detail page and the create form wear: a way back, then
     the name, then the meta line. `.back` and not `.editbar` — this is one link
@@ -863,8 +890,15 @@ function recount() {
     const capacity = rate * build;
     row.querySelector('.capacity').textContent = capacity.toFixed(1) + ' wk';
     row.querySelector('.bar > span').style.width = percent(held, capacity) + '%';
-    row.classList.toggle('over', capacity > 0 && held > capacity);
-    if (capacity > 0 && held > capacity) over.push(row.dataset.login);
+    // **The browser's copy of `_over` (`cycles.py`), and it has to stay one.**
+    // The server spelled this `capacity and held > capacity` in all three of the
+    // places it asks, which disagrees with the line below on every negative
+    // number — and a rate box is a plain text input, so `-1` is one keystroke.
+    // The served row came down wearing `class="over"` and this took it off. The
+    // bar on the line above was put in step by 4e259a4; the flag was not.
+    const beyond = capacity > 0 && held > capacity;
+    row.classList.toggle('over', beyond);
+    if (beyond) over.push(row.dataset.login);
   }
   const line = document.getElementById('over');
   if (line) {
@@ -2455,7 +2489,7 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
                 "rate": rate,
                 "capacity": capacity,
                 "held": held.get(login, 0.0),
-                "over": capacity and held.get(login, 0.0) > capacity,
+                "over": _over(held.get(login, 0.0), capacity),
                 "percent": _percent(held.get(login, 0.0), capacity),
                 "unsized": len(unsized.get(login, [])),
                 "until": max(mine).isoformat() if mine else "—",
@@ -2727,7 +2761,7 @@ def _cycle_totals(index: Index, number: int) -> dict:
         "unsized": len(unsized),
         "capacity": capacity,
         "percent": _percent(bet, capacity),
-        "over": bool(capacity) and bet > capacity,
+        "over": _over(bet, capacity),
     }
 
 
@@ -2855,7 +2889,7 @@ def _person_load(index: Index, logins: list[str]) -> dict:
             "held": held,
             "unsized": len(missing.get(login, [])),
             "capacity": capacity,
-            "over": bool(capacity) and held > capacity,
+            "over": _over(held, capacity),
             "percent": _percent(held, capacity),
             "elsewhere": elsewhere.get(login, 0.0),
         }

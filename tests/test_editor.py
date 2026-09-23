@@ -44,7 +44,7 @@ from test_web import (
 )
 
 from openproj.auth import sign_session
-from openproj.render.cycles import _percent
+from openproj.render.cycles import _over, _percent
 from openproj.web import MAX_ASSET_BYTES, SESSION_COOKIE, create_app
 
 # Computed by the scheduler, never typed. If one of these ever gains an input,
@@ -1032,6 +1032,74 @@ def test_the_load_bar_is_the_same_width_in_the_browser_as_it_is_on_the_server(
     # The one a reader reaches by typing a single character, named rather than
     # left to the loop: an empty bar, and not the width it happened to have.
     assert answer["found"]["-1"] == {"declared": "0%", "painted": 0}
+
+
+# The same rates, asked of the flag beside the bar rather than of the bar. The
+# row's ground and the "Over capacity" line under the table are the two things
+# this decides, and both come off one boolean on each side of the wire.
+TYPE_A_RATE_AND_READ_THE_FLAG = """
+  const row = document.querySelector('#roster tr');
+  row.dataset.held = '1';
+  const rate = row.querySelector('input.rate');
+  const found = {};
+  for (const typed of ['1', '0.1', '-1', '0', '1e-323', '1e999', 'nonsense']) {
+    rate.value = typed;
+    rate.dispatchEvent(new Event('input', {bubbles: true}));
+    const line = document.getElementById('over');
+    found[typed] = {
+      row: row.classList.contains('over'),
+      // The banner as well, because it is built from a second pass over the
+      // same condition and could be told something else by a copy of it.
+      named: !!line && !line.hidden && line.textContent.includes(row.dataset.login),
+    };
+  }
+  return {found, build: BUILD_WEEKS, login: row.dataset.login};
+"""
+
+
+def test_over_capacity_means_the_same_thing_in_the_browser_as_it_does_on_the_server(
+    client: TestClient, tmp_path: Path
+):
+    """The invariant is written in two languages — which copy is guarded? Again,
+    and two lines from the line that was fixed last time.
+
+    `recount` says `capacity > 0 && held > capacity`. The server said `capacity
+    and held > capacity`, in three places, and the two disagree on every negative
+    capacity. A rate box is a plain text input with no `type="number"` on it, so
+    `-1` is reachable by typing it and a hand-committed `availability: {someone:
+    -1}` puts it there without anybody typing at all: measured on a copy of the
+    frozen corpus, the served row came down as `<tr … class="over">` with that
+    person named under "Over capacity", and one character into the rate box took
+    both away. Commit 4e259a4 put the load BAR in step across the same wire — the
+    line above this one in `recount` — and left the flag.
+
+    Asked of the shipped script in Chrome, off the same rates the bar's test
+    uses, and compared against `_over` rather than against a number written here:
+    the claim is that the two copies answer the same thing, so restating either
+    of them in the test would be the test agreeing with itself.
+    """
+    page = client.get("/cycle/37").text
+    answer = measured_in(
+        chrome(), page, tmp_path / "cycle-flag.html", 1280, TYPE_A_RATE_AND_READ_THE_FLAG
+    )
+    build = answer["build"]
+
+    assert answer["found"], "the roster drew no rows, so nothing was measured"
+    for typed, drawn in answer["found"].items():
+        wanted = _over(1.0, _as_a_number(typed) * build)
+        assert drawn["row"] is wanted, (
+            f"a rate of {typed!r} marks the row {drawn['row']} in the browser and "
+            f"{wanted} on the next page load"
+        )
+        assert drawn["named"] is wanted, (
+            f"a rate of {typed!r} puts {answer['login']} under Over capacity "
+            f"{drawn['named']} in the browser and {wanted} on the next page load"
+        )
+    # The one a reader reaches by typing a single character, named rather than
+    # left to the loop: not over, because a capacity that is not a positive
+    # number of weeks is not a budget anybody can be over — and because the bar
+    # drawn beside it is empty, which is what `_percent(1.0, -4.0)` answers.
+    assert answer["found"]["-1"] == {"row": False, "named": False}
 
 
 def test_a_new_cycle_starts_from_the_last_one_s_roster(client: TestClient, repo_path: Path):
