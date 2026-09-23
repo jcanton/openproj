@@ -516,6 +516,23 @@ def measured_on_a_phone(
     `measured_in` has one: filter state is read off `location.search` and a script
     cannot change the search without navigating, which loses the script. It is
     how a test asks what a folded filter bar says when something is set.
+
+    **And the pointer is coarse, because a phone's is.** The metrics override
+    alone sets the viewport and nothing else: measured here, a page under it
+    reported `innerWidth` 390 and `(pointer: fine)` true, `(hover: hover)` true
+    and `maxTouchPoints` 0 — a desktop wearing a phone's name, which is the one
+    thing this helper exists not to be. `Emulation.setTouchEmulationEnabled` and
+    `setEmitTouchEventsForMouse` are what move it: coarse, no hover, one touch
+    point. `--blink-settings=primaryPointerType=1` is NOT the way, although the
+    hover wash's own flags in `test_render.py` use it for a hover question: 1 is
+    `none` rather than `coarse`, so under it `(pointer: coarse)` is false too,
+    and a rule written for a thumb would be switched off beside the rule written
+    for a mouse — which is a pass for the wrong reason.
+
+    Nothing in this app's stylesheets reads `hover` or `pointer` for a layout,
+    so the seven read surfaces already measured here answer exactly as before;
+    the one `@media (hover: hover)` block is the table's row wash, which paints
+    a background on a row nothing here hovers.
     """
     import shutil as _shutil
 
@@ -541,6 +558,12 @@ def measured_on_a_phone(
             "Emulation.setDeviceMetricsOverride",
             {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": True},
         )
+        # Both, and in this order, because they answer different halves: the
+        # first is what `(pointer: coarse)` and `maxTouchPoints` read, the second
+        # is what stops `(hover: hover)` being true on a device with no pointer
+        # to hover with.
+        call("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
+        call("Emulation.setEmitTouchEventsForMouse", {"enabled": True, "configuration": "mobile"})
         call("Page.enable")
         call("Page.reload", {"ignoreCache": True})
         found[first] = _drawn(call, first, script, patience)

@@ -14,7 +14,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
-from browser import chrome, measured_in
+from browser import chrome, measured_in, measured_on_a_phone
 from cascade import El, Sheet, el
 
 import openproj.render.calendar as calendar_module
@@ -1543,4 +1543,143 @@ def test_a_real_page_paints_the_ladder_in_five_colours_and_not_in_none(
 
     assert seen["record"]["grounds"] == seen["timeline"]["grounds"], (
         "the calendar is painted differently on two pages that carry the same sheet"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Under a thumb
+# --------------------------------------------------------------------------- #
+
+def _a_bare_date_box(index: Index) -> str:
+    """One date box and the whole widget, with nothing sizing the box.
+
+    It is here because the app's own boxes are all given a width — 350, 192, 147
+    and 146 pixels on the four pages below — and a box whose width is written
+    down cannot show whether the native indicator is taking room inside it. The
+    viewport tag is not decoration: without one Chrome lays a `mobile` override
+    out at 980px, which is the first thing `measured_on_a_phone` asserts.
+    """
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width">'
+        f"<style>{calendar_module._CALENDAR_STYLE}</style></head>"
+        '<body><input type="date" value="2026-08-17">'
+        f"{_calendar_js(index)}</body></html>"
+    )
+
+
+# **`getComputedStyle(box, '::-webkit-calendar-picker-indicator')` cannot answer
+# this.** Measured: on a bare page it reports `display: inline-block` and a width
+# of 120px for an input 125px wide — it is handing back the ORIGINATING element's
+# style, not the pseudo-element's. The first version of this test read `display`
+# off it, got `none` on the record page, and what it had actually read was the
+# record page hiding its own boxes until the page is put into editing mode.
+#
+# So the indicator is measured the way a reader meets it: as room inside the box.
+# Chrome's default date box is 125.3px wide and 108px with the indicator hidden.
+_UNDER_A_THUMB = """
+  const all = [...document.querySelectorAll('input[type="date"]')];
+  const box = all.find(one => one.getClientRects().length);
+  if (!box) return {missing: true, boxes: all.length};
+  box.focus();
+  box.dispatchEvent(new KeyboardEvent('keydown',
+    {key: 'ArrowDown', altKey: true, bubbles: true}));
+  const declined = !document.querySelector('.datepicker.active');
+  // And then it is told to open, which is what makes the line above a refusal
+  // rather than a page with no widget on it. A synthetic `keydown` is
+  // `isTrusted: false` and runs no default action — which is wanted, since the
+  // listener is a plain `addEventListener` and fires either way.
+  let told = null;
+  if (typeof openCalendar === 'function') {
+    openCalendar(box);
+    told = !!document.querySelector('.datepicker.active');
+  }
+  return {
+    width: innerWidth,
+    fine: matchMedia('(pointer: fine)').matches,
+    coarse: matchMedia('(pointer: coarse)').matches,
+    box: Math.round(box.getBoundingClientRect().width * 100) / 100,
+    declined: declined,
+    told: told,
+  };
+"""
+
+# 4 is POINTER_FINE and 2 is HOVER_HOVER, said at launch because
+# `Emulation.setEmulatedMedia` ignores both features outright — the same flags
+# and the same measurement `test_render.py` records for the hover wash. Not
+# `primaryPointerType=1`, which is `none` rather than `coarse`: under it both
+# `(pointer: fine)` and `(pointer: coarse)` are false, so a rule written for a
+# thumb is switched off beside the rule written for a mouse.
+_A_MOUSE = (
+    "--blink-settings=primaryHoverType=2,availableHoverTypes=2,"
+    "primaryPointerType=4,availablePointerTypes=4",
+)
+
+
+def test_a_phone_keeps_the_native_picker_and_our_popup_stays_shut(
+    seed_index: Index, tmp_path: Path
+):
+    """The first `pointer: coarse` rule in this codebase, asked through
+    `measured_on_a_phone` and not through a narrow window.
+
+    `--window-size` floors at 500px and 500px is above the one narrow breakpoint
+    these pages have, so a phone claim asked any other way is a claim about a
+    desktop wearing a phone's name. The metrics override has no floor — and, as
+    of the same commit as this test, it emulates touch as well, because on its
+    own it left the page reporting `(pointer: fine)`, `(hover: hover)` and
+    `maxTouchPoints` 0 at a width of 390.
+
+    Two halves and both are asserted, because hiding the native indicator
+    without shutting our popup — or shutting it without leaving the indicator —
+    is a date field with no picker at all, which is worse than either alone.
+    The script half is asked on the four pages whose boxes are on screen, both
+    through `focusin` and through Alt+Down, which are two `FINE.matches` gates
+    and not one; and each page is then told to open the calendar, so that a
+    refusal is told apart from a page that has no calendar to refuse with.
+
+    The record page is not among them and the create form stands in for it: a
+    record somebody is only READING draws its dates as text and its boxes are
+    `display: none`, so a focus there refuses for a reason that has nothing to do
+    with a thumb. Same template, same stylesheet, editing mode already on — the
+    argument `tests/test_cascade.py` makes for the same substitution.
+    """
+    head = "0123456789abcdef0123456789abcdef01234567"
+    number = max(seed_index.cycles)
+    host = _a_bare_date_box(seed_index)
+    pages = {
+        "new": render_detail(seed_index, ROUTES, base_commit=head, may_write=True, creating="task"),
+        "cycle": render_cycle(seed_index, number, ROUTES, base_commit=head),
+        "cycles": render_cycles(seed_index, ROUTES, base_commit=head),
+        "timeline": render_timeline(seed_index, ROUTES),
+        "a bare box": host,
+    }
+    on_a_phone = measured_on_a_phone(chrome(), pages, tmp_path / "phone", _UNDER_A_THUMB)
+
+    for page, found in on_a_phone.items():
+        assert not found.get("missing"), f"{page} has no date box on screen: {found}"
+        assert found["width"] == 390, f"{page} laid out at {found['width']}, not at a phone's width"
+        assert found["coarse"] and not found["fine"], (
+            f"{page}: the emulated phone reports {found} — the harness is the thing under test"
+        )
+        assert found["declined"] is True, f"{page}: our popup opened under a thumb"
+        assert found["told"] is True, (
+            f"{page} could not open the calendar when told to, so it never had one to decline"
+        )
+
+    # The stylesheet's half, in the only unit a hidden indicator has: the room it
+    # is not taking. Against the same box under a mouse rather than against a
+    # number written down here, so what is asserted is the difference the media
+    # query makes and not Chrome's default metrics.
+    with_a_mouse = measured_in(
+        chrome(), host, tmp_path / "mouse.html", 1280, _UNDER_A_THUMB, flags=_A_MOUSE
+    )
+    assert with_a_mouse["fine"] and not with_a_mouse["coarse"], with_a_mouse
+    assert with_a_mouse["told"] is True, "the widget did not open for a mouse either"
+    assert with_a_mouse["declined"] is False, (
+        "Alt+Down did not open the popup for a mouse, so the keyboard has no door"
+    )
+    assert with_a_mouse["box"] < on_a_phone["a bare box"]["box"], (
+        f"the same box is {with_a_mouse['box']}px under a mouse and "
+        f"{on_a_phone['a bare box']['box']}px under a thumb — the native indicator is "
+        f"taking the same room in both, so one of the two readers has two pickers or none"
     )
