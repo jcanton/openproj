@@ -34,9 +34,15 @@ and never opens ours. The OS wheel beats a hand-rolled grid under a thumb, and t
 
 Required by `AGENTS.md`, and it came out *yes*, which is the rarer answer here.
 
-**`vanillajs-datepicker` 1.3.4** — MIT, zero runtime dependencies, 35 KB of minified JS and 4.9 KB
-of CSS in 63 rules, shipped as a prebuilt file that can be vendored, checksummed and inlined under
-the no-npm rule. Its `beforeShowDay(date) → {classes, content}` hook is precisely the thing this
+**`vanillajs-datepicker` 1.3.4** — MIT, zero runtime dependencies, 35 KB of minified JS and, in the
+plain build this app would have taken, 5,938 B of CSS (4,938 B minified) in 60 declaration blocks
+over 71 selectors, shipped as a prebuilt file that can be vendored, checksummed and inlined under
+the no-npm rule. Those two CSS figures were "4.9 KB of CSS in 63 rules" and "63 rules and 38
+hardcoded hex values" below until they were measured again: 38 hex literals is
+`dist/css/datepicker.css`'s neighbour `datepicker-bs5.css`, one of four themed variants the package
+also ships, and nothing in the package has 63 of anything. Neither number changed the decision, and
+that is the reason a wrong one survives — `static/VENDOR.md` records where 38 came from, and how to
+take the count again, because a re-vendoring checks against it. Its `beforeShowDay(date) → {classes, content}` hook is precisely the thing this
 feature needs and precisely the thing that is otherwise impossible.
 
 What was bought is not the grid. It is the *keyboard* — arrows, month navigation, Enter to commit,
@@ -131,7 +137,8 @@ The cycle JSON reaches the page as a template variable. Never a substitution —
 `web.py` are parsed as syntax to keep `.replace(` out of them, and this is the rule that test exists
 for.
 
-Re-tokening the library's stylesheet is 63 rules and 38 hardcoded hex values, and the result has to
+Re-tokening the library's stylesheet is 60 declaration blocks and 26 hardcoded colour literals — 20
+hex, 14 of them distinct, and six `rgba()` — and the result has to
 be defined in all three colour blocks — bare `:root`, `:root[data-theme="dark"]`, and the media
 query guarded by `:root:not([data-theme="light"])`. A value right in one block and wrong in another
 is wrong for most of the people who will ever see it, because most readers never touch the toggle.

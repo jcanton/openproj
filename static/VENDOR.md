@@ -506,27 +506,37 @@ what unpkg serves for the same version and path. `package/LICENSE` is byte-ident
 
 **The minified bundle carries no notice at all** — zero occurrences of `Copyright`, zero of
 `MIT` — which is the same gap upstream's minifier left in Ace's BSD block, and MIT's own
-condition is that the notice travels with every copy. It is resolved here the way Yjs's
-identical gap is resolved and not the way Ace's is: the text ships beside the bytes as
-`datepicker-LICENSE.txt`. Whoever decides that this repository's "every rendered page is a
-copy" reading — which it already applies to Inter's face and to Ace's stripped notice —
-covers an inlined script too will find the change is one line in `render/calendar.py`, in
-the shape `_ace()` already has.
+condition is that the notice travels with every copy. It is resolved the way Ace's is and
+not the way Yjs's is, because this file is inlined: `_calendar_js` (`render/calendar.py`)
+writes the licence into the page as a comment ahead of the bytes, through the same
+`vendor._notice` helper `_ace()` uses, so the notice travels in every copy rather than only
+in this directory. `datepicker-LICENSE.txt` is the source that comment is read from — a
+re-vendoring that changes the licence changes what the page carries, with nobody editing a
+string — and not the whole of the answer: a static export mailed to somebody carries the
+page and never this directory. `test_the_calendars_licence_travels_with_the_calendar`
+(`tests/test_calendar.py`) holds it there, and asserts the notice is ahead of the 35 KB
+rather than merely somewhere in the block, because a notice after that much minified script
+is a notice nobody finds.
 
 **The package's CSS is deliberately not vendored, and that is the row missing on purpose.**
-`dist/css/datepicker.css` is 60 rules carrying 26 hardcoded colour literals — 20 hex, 14 of
-them distinct, and six `rgba()` — against a codebase where a colour is a token defined in
-four blocks. Taking the file would be 26 values that are right in one theme and wrong in the
+`dist/css/datepicker.css` is 5,938 B raw (4,938 B minified) — 60 declaration blocks over 71
+selectors, carrying 26 hardcoded colour literals: 20 hex, 14 of them distinct, and six
+`rgba()` — against a codebase where a colour is a token defined in four blocks. Taking the file would be 26 values that are right in one theme and wrong in the
 other three, which is the failure that rule exists to prevent, and it would be taken for
 rules this app does not draw: the package styles four framework variants and a range picker.
 So `render/calendar.py` carries a re-tokened stylesheet of its own — only the rules this app
 shows, every colour a `var(--…)`.
 
-Counted here rather than copied: `design/cycle-calendar.md` says "63 rules and 38 hardcoded
-hex values", and 38 is `datepicker-bs5.css`, one of the four themed variants the package also
-ships beside the plain build this app would have used. The argument is the same at either
-number and the number is worth being right, because it is the one a re-vendoring will check
-against.
+Counted here rather than copied, and the count above is the one `design/cycle-calendar.md`
+now carries. It said "63 rules and 38 hardcoded hex values" until this was measured: 38 is
+`datepicker-bs5.css`, one of the four themed variants the package ships beside the plain
+build this app would have taken, and 63 is no file in the package at all — the plain build
+is 60 blocks and each of the four variants is 57. The argument is the same at either number
+and the number is worth being right, because it is the one a re-vendoring will check
+against. The measurement is `tar xzf` the 1.3.4 tarball whose SHA256 is above and count
+`{`, `#rrggbb` and `rgba(` in `package/dist/css/datepicker.css` with the comments stripped
+— which is where the wrong number came from in the first place, a figure read off a
+neighbouring file rather than taken again.
 
 ## The drawings button's mark, lifted out of the same bundle
 
