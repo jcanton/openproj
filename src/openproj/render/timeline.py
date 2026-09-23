@@ -431,10 +431,17 @@ _TIMELINE = """
       the box are three rows of it. A wrapping `<label>` is one grid item and
       cannot put its own contents in three. `for`/`id` says the same thing to the
       accessibility tree that wrapping said. -#}
+  {#- `data-cycles="chips"` on both: these two pick a WINDOW TO LOOK AT and not a
+      date work happens on, so the calendar's bands — which say "the 14th is a
+      build day of cycle 3" — answer a question nobody is putting to them. The
+      chips stay, because "show me cycle 3" is the common thing a reader comes to
+      these boxes for. The attribute is here rather than two ids in
+      `calendar.py`, so that a seventh page growing a date field does not have to
+      be added to the widget by somebody who has no reason to open it. -#}
   <label class="facet" for="tl-from">from</label>
-  <input type="date" id="tl-from" name="from" value="{{ t.origin or '' }}">
+  <input type="date" id="tl-from" name="from" data-cycles="chips" value="{{ t.origin or '' }}">
   <label class="facet" for="tl-to">to</label>
-  <input type="date" id="tl-to" name="to" value="{{ t.last or '' }}">
+  <input type="date" id="tl-to" name="to" data-cycles="chips" value="{{ t.last or '' }}">
   <label class="facet" for="tl-zoom">zoom</label>
   <select id="tl-zoom" name="zoom">
     <option value="">fit to window</option>

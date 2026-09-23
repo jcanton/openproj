@@ -1220,6 +1220,91 @@ def test_a_plan_with_no_dated_cycle_gets_a_calendar_and_no_chip_row(
     assert found["rows"] == 0, "an empty chip row was drawn"
 
 
+A_WINDOW_FIELD = """
+  const box = document.getElementById('tl-from');
+  const form = box.closest('form');
+  // The timeline's controls are a real form pointed at a real route, so a chip
+  // that submitted it would navigate away and the measurement would come back
+  // as a page that never laid out rather than as a defect with a name.
+  let submitted = 0;
+  form.addEventListener('submit', (event) => { submitted += 1; event.preventDefault(); });
+
+  openCalendar(box);
+  const cells = [...document.querySelectorAll('.datepicker-cell.day')];
+  const row = document.querySelector('.cyc-chips');
+  const chips = row ? [...row.querySelectorAll('button')] : [];
+  const answer = {
+    opened: !!document.querySelector('.datepicker.active'),
+    days: cells.length,
+    banded: cells.filter((cell) => cell.classList.contains('cyc')).length,
+    badges: cells.filter((cell) => cell.querySelector('.cyc-n')).length,
+    // The name is where a band is said to a reader who is not looking at the
+    // screen, so it has to go with the band or the two readers are told
+    // different things about one control.
+    named: cells.filter(
+      (cell) => (cell.getAttribute('aria-label') || '').includes('cycle')).length,
+    // And every cell still HAS a name, because "no cell says cycle" is also true
+    // of a grid whose names were never written.
+    unnamed: cells.filter((cell) => !cell.getAttribute('aria-label')).length,
+    // What this month WOULD have drawn with the bands on, asked of the same
+    // `cycleOf` the bands use. Without it, every count above is satisfied by a
+    // popup that opened on a month no cycle runs through — or by one that never
+    // opened at all.
+    inCycle: cells.filter((cell) => cell.dataset.date
+      && cycleOf(isoOf(new Date(Number(cell.dataset.date))))).length,
+    chips: chips.length,
+    names: chips.map((chip) => chip.getAttribute('aria-label')),
+  };
+  if (chips.length) chips[0].click();
+  answer.value = box.value;
+  answer.submitted = submitted;
+  return answer;
+"""
+
+
+def test_the_timelines_window_fields_get_the_chips_and_not_the_bands(
+    seed_index: Index, tmp_path: Path
+):
+    """`tl-from` and `tl-to` pick a window to LOOK AT, not a date work happens on.
+
+    "Is the 14th a build day of cycle 3" is not a question anybody puts to a
+    window control, and a band drawn behind the days answers it anyway. "Show me
+    cycle 3" is the question they do ask, and that is exactly what the chips are,
+    so the row stays and the bands go.
+
+    The claim is asked with its own control inside the measurement rather than
+    against a second page: `inCycle` is what the SAME month would have banded
+    with the hook on, counted by the same `cycleOf`. Without it, `banded == 0`
+    is a sentence a popup that never opened also satisfies — and this widget has
+    a `FINE.matches` gate that can decline to open for reasons of its own.
+    """
+    page = render_timeline(seed_index, ROUTES)
+    found = measured_in(chrome(), page, tmp_path / "timeline.html", 1280, A_WINDOW_FIELD)
+    windows = seed_index.cycle_windows()
+
+    assert found["opened"], "the window field opened no calendar at all"
+    assert found["days"] == 42, "the grid did not draw"
+    assert found["inCycle"] > 0, (
+        "no day of the month this opened on belongs to any cycle, so nothing here "
+        "could have been banded and the assertions below prove nothing"
+    )
+    assert found["banded"] == 0, "a window control drew the cycles work happens in"
+    assert found["badges"] == 0, "a window control drew a cycle's number on a day"
+    assert found["named"] == 0, (
+        "the bands are gone from the screen and still in the accessible name, so a "
+        "reader who is not looking at them is told about cycles a reader who is cannot see"
+    )
+    assert found["unnamed"] == 0, "the day cells lost their names along with their bands"
+
+    # The chips are the half that stays, and they are live: a row that is drawn
+    # and does nothing is worse than no row.
+    assert found["chips"] == len(windows)
+    assert found["value"] == windows[0].opens.isoformat()
+    assert found["submitted"] == 0, "pressing a chip submitted the timeline's own form"
+    for cycle, name in zip(windows, found["names"], strict=True):
+        assert f"cycle {cycle.number}" in name, name
+
+
 # --------------------------------------------------------------------------- #
 # On the pages
 # --------------------------------------------------------------------------- #

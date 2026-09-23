@@ -224,6 +224,24 @@ function spelled(iso) {
     { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 
+// Which of the two jobs this box has, asked of the box itself.
+//
+// `tl-from` and `tl-to` on the timeline pick a WINDOW TO LOOK AT and not a date
+// work happens on, so a band behind the days of cycle 3 answers a question
+// nobody is putting to them. The chips stay there — "show me cycle 3" is the
+// common ask on exactly those two fields, and it is the whole reason a reader
+// touches them.
+//
+// An attribute the renderer sets, and not two ids written in here: a calendar
+// that knows the timeline exists is a calendar that has to be edited when a
+// seventh page grows a date field, by somebody who has no reason to open this
+// file. Opt OUT rather than in, so a box that says nothing gets the bands — the
+// five hosts that had them before this existed say nothing, and a default that
+// needed an attribute would have taken the bands off all of them at once.
+function drawsCycleBands(box) {
+  return box.dataset.cycles !== 'chips';
+}
+
 // What `beforeShowDay` gives back per day: the band classes, the edges, and the
 // cycle's number on the day it opens.
 //
@@ -271,7 +289,14 @@ function dayInCycle(day) {
 // reader is told the 14th of August while looking at the 14th of September. A
 // test that asked only whether `role` was still there after Next would pass
 // against a widget that had never re-run this at all.
-function describeGrid(picker) {
+//
+// **The box is passed in because the name is the band's other half.** A day's
+// accessible name is where the band is said to a reader who is not looking at
+// the screen, so a window field that draws no bands must not announce any
+// either — otherwise the two readers are told different things about the same
+// control, which is the failure the band was taken off it to avoid.
+function describeGrid(picker, box) {
+  const banded = drawsCycleBands(box);
   const root = picker.picker.element;
   const grid = root.querySelector('.datepicker-grid');
   if (!grid) return;
@@ -282,7 +307,7 @@ function describeGrid(picker) {
     // day view alone; the month and year views have none, and a name read off
     // their text is the right name there.
     const iso = cell.dataset.date ? isoOf(new Date(Number(cell.dataset.date))) : null;
-    const found = iso ? cycleOf(iso) : null;
+    const found = iso && banded ? cycleOf(iso) : null;
     // Written rather than left to the cell's contents: the contents are a day
     // number and a badge, and the badge is hidden precisely so it is not read —
     // which leaves "14" as the whole of what the cell would otherwise announce.
@@ -377,7 +402,10 @@ function calendarFor(box) {
     format: 'yyyy-mm-dd',
     weekStart: 1,
     autohide: true,
-    beforeShowDay: dayInCycle,
+    // `null` is upstream's own default for this option and is what it checks
+    // for — `typeof … == 'function' ? … : undefined` — so a window field gets
+    // the library's plain grid rather than a hook that returns nothing.
+    beforeShowDay: drawsCycleBands(box) ? dayInCycle : null,
   });
   CALENDARS.set(box, picker);
   // The six events this library has, counted out of the bundle rather than taken
@@ -391,7 +419,7 @@ function calendarFor(box) {
   // so this sees the days it is naming. A layer applied once at construction is
   // a layer that is gone the first time anybody presses Next.
   for (const when of ['show', 'changeView', 'changeYear', 'changeMonth', 'changeDate']) {
-    box.addEventListener(when, () => describeGrid(picker));
+    box.addEventListener(when, () => describeGrid(picker, box));
   }
   // **The widget writes the box and the page hears nothing.** Measured, by
   // counting what a `<form>` saw when a day was clicked: the box went to
@@ -435,7 +463,7 @@ function openCalendar(box) {
   picker.show();
   // `show` fires only when the picker was hidden, and this is also the path a
   // second open takes on a picker that is already up. Cheap and idempotent.
-  describeGrid(picker);
+  describeGrid(picker, box);
   return picker;
 }
 
@@ -478,7 +506,7 @@ function syncCalendar(box) {
   // `setFocusedDate` renders, and the library reuses its forty-two cells — so
   // the names `update()`'s own `changeDate` just wrote are last month's on this
   // month's days. The same reason `describeGrid` runs on every redraw.
-  describeGrid(picker);
+  describeGrid(picker, box);
 }
 
 // **The event arrives on the FORM and not on the box, and that is measured too.**
