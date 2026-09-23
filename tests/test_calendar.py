@@ -974,3 +974,203 @@ def test_replacing_a_tbody_takes_its_calendars_with_it(seed_index: Index, tmp_pa
     assert found["left"] == 1, "a calendar outlived the row it was anchored to"
     assert found["threw"] is None
     assert found["alive"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# The chip row
+# --------------------------------------------------------------------------- #
+
+CHIPS = """
+  const box = document.getElementById('start');
+  const form = document.getElementById('edit');
+  // A form that answers `submit` at all, because the claim is that nothing here
+  // ever asks it to. A bare <button> inside a form is a submit button, and the
+  // library puts this popup inside whatever form the box is in.
+  let submitted = 0;
+  form.addEventListener('submit', (event) => { submitted += 1; event.preventDefault(); });
+  const heard = [];
+  form.addEventListener('change', (event) => heard.push('change:' + event.target.id));
+
+  openCalendar(box);
+  // `null` rather than a throw when there is no row, because a script that dies
+  // on the missing thing reports nothing at all — and "the page reported
+  // nothing" is the harness's sentence for a page that never laid out. A row
+  // that stopped being drawn has to arrive as the assertion below.
+  const row = document.querySelector('.cyc-chips');
+  const chips = row ? [...row.querySelectorAll('button')] : [];
+  const chosen = () => [...document.querySelectorAll('.datepicker-cell.selected')].map(
+    (cell) => [cell.firstChild.nodeValue, cell.getAttribute('aria-label'),
+               cell.getAttribute('aria-selected')]);
+
+  // Nothing below can be asked of a row that is not there, and the assertion
+  // that says so is `drawn`.
+  if (chips.length) {
+    chips[0].focus();
+    chips[0].click();
+  }
+
+  return {
+    drawn: !!row,
+    // Where the row sits in the popup's own tree. `.datepicker` is only the
+    // dropdown's positioning box; the card is `.datepicker-picker`, and a row
+    // appended to the outer one floats beside the calendar rather than under it.
+    inCard: row ? row.parentElement.className === 'datepicker-picker' : null,
+    last: row ? row.parentElement.lastElementChild === row : null,
+    insideForm: row ? !!row.closest('form') : null,
+    count: chips.length,
+    labels: chips.map((chip) => chip.textContent),
+    names: chips.map((chip) => chip.getAttribute('aria-label')),
+    types: chips.map((chip) => chip.getAttribute('type')),
+    tabbable: chips.every((chip) => chip.tabIndex >= 0),
+    // The row is inside a popup as wide as the grid, so a row wider than the
+    // card is a row drawn outside the box it belongs to.
+    fits: row ? row.getBoundingClientRect().width
+      <= row.parentElement.getBoundingClientRect().width : null,
+    value: box.value,
+    submitted: submitted,
+    heard: heard,
+    shown: document.querySelector('.view-switch').textContent,
+    live: document.querySelector('.datepicker [aria-live]').textContent,
+    selected: chosen(),
+    open: !!document.querySelector('.datepicker.active'),
+    // Where a reader's focus is after the press, and whether they can see it.
+    focusHidden: document.activeElement
+      ? !document.activeElement.getClientRects().length : null,
+  };
+"""
+
+
+def test_a_chip_per_cycle_sets_the_date_to_the_day_that_cycle_opens(
+    seed_index: Index, tmp_path: Path
+):
+    """The day a cycle opens is the date most of these fields are being set to,
+    and the gesture this replaces is pressing Next eleven times to reach it.
+
+    Every claim the row makes is asked here at once because they are one control:
+    it is a real button rather than a hint, it carries a name a reader who is not
+    looking at it can find, it is `type="button"` because the library puts this
+    popup inside the form the box is in and a bare `<button>` in a form submits
+    it, and pressing it writes the date and tells the page — which nothing in
+    this widget did until the same commit that taught the day cells to.
+    """
+    page = _page_with_a_date_field(seed_index, date(2026, 8, 17))
+    found = measured_in(chrome(), page, tmp_path / "calendar.html", 1280, CHIPS)
+    windows = seed_index.cycle_windows()
+
+    assert found["drawn"], "the popup carries no chip row at all"
+    assert found["inCard"] and found["last"], "the chips are not inside the popup's card"
+    assert found["insideForm"], "the popup did not open inside a form, so `type` proves nothing"
+    assert found["fits"], "the chip row is wider than the popup it is drawn in"
+
+    assert found["count"] == len(windows)
+    assert found["labels"] == [f"C{window.number}" for window in windows]
+    assert found["types"] == ["button"] * len(windows)
+    assert found["tabbable"], "a control a pointer can reach and a keyboard cannot"
+    # A name, and the right one: a `<button>` falls back to its own text, so
+    # `assert name` alone passes on "C34" — three glyphs, which is not a name.
+    for window, name in zip(windows, found["names"], strict=True):
+        assert f"cycle {window.number}" in name, name
+        assert name != f"C{window.number}"
+
+    assert found["submitted"] == 0, "pressing a chip submitted the form it opened inside"
+    assert found["value"] == windows[0].opens.isoformat()
+    assert found["heard"] == ["change:start"], "the page was not told the date had moved"
+
+    # What the press looks like, which is the only confirmation it happened.
+    year = windows[0].opens.year
+    assert str(year) in found["shown"] and str(year) in found["live"]
+    assert [cell[0] for cell in found["selected"]] == [str(windows[0].opens.day)]
+    # And the names were rebuilt for the month it moved to: the library reuses
+    # its forty-two cells, so a name left alone is the old month's name on the
+    # new month's day.
+    assert str(year) in found["selected"][0][1], found["selected"][0][1]
+    assert found["selected"][0][2] == "true"
+
+    # The popup stays up, and the reason is the reader's focus: a chip is a
+    # focusable control inside the popup, unlike the day cell it stands for, so
+    # closing on the press strands `document.activeElement` on a `display: none`
+    # button. Measured — that is what it did.
+    assert found["open"], "the popup shut itself under the control that was just pressed"
+    assert found["focusHidden"] is False, "focus was left on something nobody can see"
+
+
+def test_a_chip_moves_the_grid_even_when_it_names_the_date_already_chosen(
+    seed_index: Index, tmp_path: Path
+):
+    """The library skips the re-render when the new date equals the selection, so
+    without `forceRefresh` a chip pressed from three months away moved nothing at
+    all — and moved the grid when pressed from anywhere else.
+
+    A control that works on some presses and not others is one nobody can learn,
+    and this is the press where it fails: the reader is looking at a month, the
+    chip names the cycle they already chose, and the answer to "take me there" is
+    the grid standing still.
+    """
+    page = _page_with_a_date_field(seed_index, date(2026, 8, 17))
+    found = measured_in(chrome(), page, tmp_path / "calendar.html", 1280, """
+      const box = document.getElementById('start');
+      // The form answers `submit` by refusing, and that is not politeness. A
+      // chip that lost its `type="button"` submits this form, the page reloads,
+      // the injected script runs again and presses the chip again — measured,
+      // and it does not stop: Chrome's virtual clock restarts on the
+      // navigation, so the run never ends and nothing is ever reported. A
+      // regression has to fail as an assertion and not as a hung CI leg.
+      document.getElementById('edit').addEventListener('submit',
+        (event) => event.preventDefault());
+      openCalendar(box);
+      const chip = document.querySelector('.cyc-chips button');
+      // Same reason as in CHIPS: a script that throws on the missing row
+      // reports nothing at all, and nothing at all is what the harness says
+      // when a page never laid out.
+      if (!chip) return {missing: true};
+      chip.click();
+      const arrived = document.querySelector('.view-switch').textContent;
+      // Three months away, by the popup's own control.
+      for (let step = 0; step < 3; step += 1) {
+        document.querySelector('.datepicker-controls .next-btn').click();
+      }
+      const wandered = document.querySelector('.view-switch').textContent;
+      chip.click();
+      return {
+        arrived, wandered,
+        back: document.querySelector('.view-switch').textContent,
+        live: document.querySelector('.datepicker [aria-live]').textContent,
+        value: box.value,
+      };
+    """)
+    opens = seed_index.cycle_windows()[0].opens
+
+    assert not found.get("missing"), "the popup carries no chip row at all"
+    assert found["wandered"] != found["arrived"], "the grid did not move, so nothing was tested"
+    assert found["back"] == found["arrived"], "the chip did nothing the second time"
+    # The live region as well as the header: the month a reader hears has to be the
+    # month a reader sees, and a re-render that skipped `describeGrid` would
+    # leave the two disagreeing.
+    assert found["live"] == found["back"]
+    assert found["value"] == opens.isoformat()
+
+
+def test_a_plan_with_no_dated_cycle_gets_a_calendar_and_no_chip_row(
+    seed_root: Path, tmp_path: Path
+):
+    """A chip row with no chips is a border and a gap saying nothing, under a
+    calendar that is otherwise exactly a calendar. Empty must not look like
+    broken — and the popup that opens here is the plain one, not a missing one.
+    """
+    records, config, _ = load_repo(seed_root)
+    index = build_index(records, config.model_copy(update={"cycles": {}}), TODAY)
+    page = _page_with_a_date_field(index, date(2026, 8, 17))
+    found = measured_in(chrome(), page, tmp_path / "calendar.html", 1280, """
+      openCalendar(document.getElementById('start'));
+      return {
+        rows: document.querySelectorAll('.cyc-chips').length,
+        opened: !!document.querySelector('.datepicker.active'),
+        days: document.querySelectorAll('.datepicker-cell.day').length,
+        banded: document.querySelectorAll('.datepicker-cell.cyc').length,
+      };
+    """)
+
+    assert found["opened"], "a plan with no dated cycle got no calendar at all"
+    assert found["days"] == 42, "the grid did not draw"
+    assert found["banded"] == 0
+    assert found["rows"] == 0, "an empty chip row was drawn"

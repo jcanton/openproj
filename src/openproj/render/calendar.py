@@ -311,6 +311,62 @@ function describeGrid(picker) {
   if (title) live.textContent = title.textContent;
 }
 
+// The fastest path to the date somebody actually wants. The day a cycle opens is
+// what most of these fields are being set to, and the gesture this replaces is
+// pressing Next eleven times to reach it.
+//
+// **`type="button"`, and it is not belt and braces.** The library inserts its
+// popup with `inputField.after()`, so the whole widget lands inside whatever form
+// the box is in — the record form on one page, the create form on the other — and
+// a bare `<button>` inside a form is a submit button. Pressing a chip would have
+// submitted the record form. The library's own prev, next, Today and Clear carry
+// the same attribute for the same reason.
+//
+// **Nodes and `textContent`**, like `dayInCycle` and for the same reason: this
+// widget has no place where markup is built from data, and a row built out of a
+// template string would be the first.
+function chipsFor(picker) {
+  const row = document.createElement('div');
+  row.className = 'cyc-chips';
+  // `cycle` and not `window`, which is the global this file already reads
+  // `matchMedia` off: a loop variable that shadows it is a trap left for whoever
+  // next writes a line inside this function.
+  for (const cycle of CYCLE_WINDOWS) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.textContent = `C${cycle.n}`;
+    // `C37` is three glyphs, which is what fits in a row as wide as the grid and
+    // is not a name. The name says what pressing it will do, spelled with the
+    // same formatter the day cells use — a reader who meets both hears one
+    // sentence about the date and not two shapes of it.
+    chip.setAttribute('aria-label',
+      `Set the date to ${spelled(cycle.opens)}, the day cycle ${cycle.n} opens`);
+    // The value is written and `changeDate` is dispatched, which is what tells
+    // the page — see `calendarFor`. The two options are the whole of the
+    // difference between a chip and the day cell it stands for, and both were
+    // measured rather than chosen.
+    //
+    // **It does not close.** `autohide` is on, so `setDate` would hide the popup
+    // — and a chip, unlike a day cell, is a focusable control INSIDE that popup:
+    // measured, `document.activeElement` was still the chip after the popup went
+    // to `display: none`, which is a reader's focus left on nothing. The grid
+    // jumping to that cycle's opening month with the day selected under its band
+    // is also the only confirmation the press has happened, and hiding it is
+    // hiding the answer.
+    //
+    // **`forceRefresh`, because the same date is not the same view.** The
+    // library skips the re-render when the new date equals the selection, so
+    // pressing the chip for the cycle you are already on after paging three
+    // months away moved nothing whatever: a control that does nothing on some
+    // presses and not others is one nobody can learn. This re-renders from the
+    // selection, which is the month the chip names.
+    chip.addEventListener('click', () =>
+      picker.setDate(cycle.opens, { autohide: false, forceRefresh: true }));
+    row.appendChild(chip);
+  }
+  return row;
+}
+
 function calendarFor(box) {
   let picker = CALENDARS.get(box);
   if (picker) return picker;
@@ -358,6 +414,19 @@ function calendarFor(box) {
     box.dispatchEvent(new Event('input', { bubbles: true }));
     box.dispatchEvent(new Event('change', { bubbles: true }));
   });
+  // No row at all when the plan has dated no cycle: a chip row with no chips is
+  // a border and a gap saying nothing, under a calendar that is otherwise
+  // exactly a calendar. Empty must not look like broken, and this is the shape
+  // that rule takes here.
+  //
+  // Inside `.datepicker-picker` and not on `.datepicker`, which is only the
+  // dropdown's positioning box: the card — the surface, the border, the shadow —
+  // is the inner element, so a row appended to the outer one is a row of
+  // controls floating beside the calendar with `.cyc-chips`'s own `border-top`
+  // as the only thing drawn near it.
+  if (CYCLE_WINDOWS.length) {
+    picker.picker.element.querySelector('.datepicker-picker').appendChild(chipsFor(picker));
+  }
   return picker;
 }
 
