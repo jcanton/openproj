@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 from datetime import date
+from functools import cached_property
 from typing import NamedTuple
 
 from pydantic import BaseModel, model_validator
@@ -450,8 +451,9 @@ class Index(BaseModel):
         window = self.cycles.get(cycle) if cycle is not None else None
         if window is None or cycle is None:
             return None
-        return build_end(cycle, window, self._config())
+        return build_end(cycle, window, self._config)
 
+    @cached_property
     def _config(self) -> Config:
         """The narrow Config the scheduler's date functions ask for.
 
@@ -460,6 +462,28 @@ class Index(BaseModel):
         Config, and a rebuilt one-field Config substitutes the default cool-down
         for the repository's own — which leaves a filter quietly disagreeing with
         the timeline that explains it.
+
+        Cached because `build_end` above is called once per record by the
+        `overrun` predicate inside `apply_filters`, and before this it built a
+        fresh pydantic model — two field validations — on every one of those
+        calls; the same rebuild is why `cycle_windows` below hoisted it out of
+        its loop by hand, and caching here is that hoist made general.
+
+        The cache is sound because an Index is built once, in `build_index`, and
+        never written to afterwards: nothing in `src/` assigns a field on one or
+        mutates a field's dict in place, and the one place that was tempted says
+        so — `/api/slide/preview` in `web.py` takes a `model_copy` rather than
+        assigning through, because the index is shared by every request in the
+        process. Two threads racing this compute the same Config twice and one
+        wins, which is the same value either way.
+
+        `build_end` itself is the other candidate and cannot be this: it is
+        keyed by a cycle, so caching it means a dict per index rather than a
+        property, and the cost being paid is the Config and not the arithmetic.
+        Threading an optional pre-built config through instead was the third —
+        it loses because `overrun` reaches `build_end` through a predicate
+        signature that carries only a record and an index, so the one caller
+        that needs it is the one caller with nowhere to put it.
         """
         return Config(cooldown_weeks=self.cooldown_weeks, plans=self.plans)
 
@@ -470,7 +494,7 @@ class Index(BaseModel):
         whatever month a reader is on, and a helper that clipped for one of them
         would be wrong for the other.
         """
-        config = self._config()
+        config = self._config
         return [
             CycleWindow(number, opens, build_end(number, (opens, closes), config), closes)
             for number, (opens, closes) in sorted(self.cycles.items())
