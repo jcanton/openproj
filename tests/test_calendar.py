@@ -1404,6 +1404,33 @@ def test_the_export_carries_the_calendar_on_the_one_page_that_has_a_date_box(
 # The same five the isolated resolution above asks about, because the claim here
 # is not that the ladder is right — that is settled — but that nothing a real
 # page brings with it gets in front of the answer.
+# The surfaces whose date boxes exist only once a script has run, beside the
+# ancestry a popup on one really hangs off.
+#
+# **This is the page this test's docstring is about, and it was the page the
+# test skipped.** `_where_the_box_is` parses the served markup, and the table
+# serves no `input[type="date"]` at all: every cell is drawn by `draw()` and the
+# box is built inside `td.edit` by `openEditor`. So the `td.edit` ancestry named
+# above was never resolved against — delete every calendar rule from
+# `_CALENDAR_STYLE` and the table leg still passed, because there was no table
+# leg.
+#
+# Written out rather than parsed off anything, because there is nothing to parse
+# it off. A `tr` carries no class in its resting state, and `cell()` writes
+# `data-col` on the `td` — left out on purpose: the frozen-column rules select
+# on it, and what this asks is whether the popup wins where the plainest cell
+# puts it. A cell with more attributes can only bring more rules to lose.
+_BUILT_BY_A_SCRIPT = {
+    "table": [
+        el("div", "table-scroll"),
+        el("table", "", "rows"),
+        el("tbody"),
+        el("tr"),
+        el("td", "edit"),
+    ],
+}
+
+
 _ON_A_REAL_PAGE = [
     ("an even cycle", "cyc", ".datepicker-cell.cyc"),
     ("an odd cycle", "cyc cyc-alt", ".datepicker-cell.cyc-alt"),
@@ -1431,12 +1458,32 @@ def test_the_calendars_cells_still_win_against_the_page_they_were_put_on(
     cells, the chip row and the header's buttons — the three places the widget
     borrows a class name (`.button`, `button`, `.day`) that these pages already
     use for something else.
+
+    That ancestry is parsed off the served markup where there is one to parse,
+    and taken from `_BUILT_BY_A_SCRIPT` where the boxes are built at runtime —
+    which is the table, the one page of the five whose `td.edit` this docstring
+    has always named. It served no date box, so it fell out of the loop and was
+    never resolved against at all.
     """
     for name, (page, wanted) in surfaces.items():
-        if not wanted or not _boxes_in(page):
+        if not wanted:
             continue
         sheet = _sheet_of_everything(page)
-        above = _where_the_box_is(page)
+        above = _BUILT_BY_A_SCRIPT.get(name)
+        if above is None:
+            # **A surface that cannot be resolved against must not drop out of
+            # this census in silence.** The skip this replaces read `if not
+            # wanted or not _boxes_in(page): continue`, and a page that stopped
+            # drawing a date box would have stopped being asked the question
+            # instead of failing it.
+            assert _boxes_in(page), (
+                f"{name} is marked as carrying the calendar and its markup holds "
+                "no date box. Either it stopped drawing one — in which case the "
+                "table above is wrong — or its boxes are now built by a script, "
+                "and it belongs in `_BUILT_BY_A_SCRIPT` beside the ancestry they "
+                "are built into."
+            )
+            above = _where_the_box_is(page)
         for what, classes, selector in _ON_A_REAL_PAGE:
             path = above + day(classes)
             won, value = decided_by(sheet, path, "background")
