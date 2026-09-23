@@ -847,7 +847,19 @@ RESET = """
   document.getElementById('edit').dispatchEvent(new Event('input', {bubbles: true}));
   const cleared = reading();
 
-  return {before, after, cleared, open: !!document.querySelector('.datepicker.active')};
+  // The same emptiness, reached the way a person reaches it: a native date box
+  // reports `''` the instant ANY segment is cleared, and that fires `input` on
+  // the BOX. So this is the keystroke path rather than the Reset path, and it is
+  // the one the defect was measured on.
+  box.value = '2027-02-17';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  const typed = reading();
+  box.value = '';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  const backspaced = reading();
+
+  return {before, after, cleared, typed, backspaced,
+          open: !!document.querySelector('.datepicker.active')};
 """
 
 
@@ -891,6 +903,24 @@ def test_a_reset_moves_the_calendar_with_the_box_it_belongs_to(
     assert found["cleared"]["picker"] is None
     assert found["cleared"]["value"] == "", "the widget wrote a date back into a cleared box"
     assert found["cleared"]["selected"] == []
+    # **And the month it is cleared ON, which is half the claim and was missing.**
+    # `update()` forces `viewDate: undefined`, so an empty input field sends the
+    # library to `defaultViewDate` — today — and the grid left the month the
+    # reader was looking at. A test that asked only whether the selection went
+    # passed against a widget that threw the reader out of December on its way.
+    assert found["cleared"]["shown"] == "December 2026", (
+        "clearing the box moved the grid off the month it was drawing"
+    )
+    assert found["cleared"]["live"] == "December 2026"
+
+    # The keystroke path, which is where this costs somebody something: every
+    # half-typed date reads `''`, so a backspace in the year is a clear.
+    assert found["typed"]["shown"] == "February 2027", "the grid did not follow what was typed"
+    assert found["backspaced"]["picker"] is None
+    assert found["backspaced"]["shown"] == "February 2027", (
+        "one backspace in the year threw the reader out of the month they were on"
+    )
+    assert found["backspaced"]["live"] == "February 2027"
 
 
 PICK_A_DAY = """

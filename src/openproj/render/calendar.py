@@ -451,9 +451,34 @@ function openCalendar(box) {
 // `autohide` is forced off because it defaults to `config.autohide`, which is
 // true here, and a popup that shut itself on a Reset would be the widget
 // answering a question nobody asked.
+//
+// **An empty box clears the selection and must not move the month.** A native
+// date box reports `value === ''` the instant ANY segment is cleared, so this
+// runs on a keystroke and not only on a Reset — and `update()` forces
+// `viewDate: undefined`, which makes the library fall back to `defaultViewDate`,
+// which is today. Measured through CDP with real key events: a popup open on
+// 2026-08-17, typing 2-0-2-7 into the year, and the grid correctly follows to
+// February 2027; one Backspace and the header said "September 2026" — neither
+// the record's date nor the month that was on screen a keystroke earlier. Before
+// this widget nothing synced and the grid stayed where it was put, so throwing
+// the reader out of the month they are reading is ours.
+//
+// The view is read before and put back after rather than the render being
+// skipped, because the two halves of `update()` are wanted separately: the
+// selection has to go — a cleared box that keeps a day drawn as chosen is the
+// widget disagreeing with the box again — and the view has to stay.
+// `getFocusedDate`/`setFocusedDate` are the library's own names for it.
 function syncCalendar(box) {
   const picker = CALENDARS.get(box);
-  if (picker) picker.update({ autohide: false });
+  if (!picker) return;
+  const held = box.value ? null : picker.getFocusedDate();
+  picker.update({ autohide: false });
+  if (held === null) return;
+  picker.setFocusedDate(held);
+  // `setFocusedDate` renders, and the library reuses its forty-two cells — so
+  // the names `update()`'s own `changeDate` just wrote are last month's on this
+  // month's days. The same reason `describeGrid` runs on every redraw.
+  describeGrid(picker);
 }
 
 // **The event arrives on the FORM and not on the box, and that is measured too.**
