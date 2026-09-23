@@ -412,8 +412,33 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
      ladder rather than five colours, and fifteen cycles in fifteen colours is
      that same mistake at fifteen times the size. The only question a reader
      asks of two bands running up against each other is whether they are one
-     thing or two, and a second tint answers exactly that and nothing more. */
-  --band-alt: #d3e2e8;
+     thing or two, and a second tint answers exactly that and nothing more.
+
+     **Further off the page's ground than `--band`, and it used to be nearer.**
+     The cool-down is `--line` at 50% over the band it sits in, and `--line` is
+     between the page and `--band` in every theme here — so an alternate tint on
+     the ground side walks towards the cool-down and takes it with it. Measured:
+     at #d3e2e8 the cool-down over an odd cycle was dE 2.12 and dL* 0.56, which
+     is below the just-noticeable difference, so half the cycles on the chart had
+     no cool-down at all. There is no room on that side either way: `--band` is
+     already 1.50 against a white page and the floor for "there is a band here"
+     is 1.45, so a lighter tint is not a band. This value is dE 3.53 from
+     `--band` and gives the cool-down dE 5.74 over it — more than it gets over
+     `--band` itself. What bounds it the other way is the cycle number, which is
+     10px `--accent` text on this tint: 4.64:1, and 4.5 is the floor.
+
+     **Three separations are wanted and only two are available, so say which two
+     were bought.** The band, its cool-down, the alternate band and ITS cool-down
+     are four tones strung along one lightness axis, and a search over every tint
+     of this ink that keeps the cycle number at 4.5:1 tops out at dL* 1.72 in the
+     light theme and 0.91 in the dark for the worst of the four gaps — under the
+     JND whichever tint is chosen. So the two that are bought are the ones the
+     tint exists for: a cycle against its neighbour, and a cool-down against the
+     band it is inside. The one left over is one cycle's cool-down against the
+     NEXT cycle's band, and that junction is the one place on the chart that
+     already has a mark on it — the dashed `.cycle-rule`, held at 3:1 against the
+     page, with the cycle number starting just after it. */
+  --band-alt: #b7ced8;
   /* The edge on the day a cycle opens and the day it closes. A band one tint
      away from its neighbour is not a boundary on a monochrome screen, and the
      two dates that are facts rather than tints deserve a channel that survives
@@ -499,10 +524,14 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
     --pri-high: #e08a5a; --pri-very-high: #e0796a;
     --waiting: #34291a;
     --band: #2a3941;
-    /* Darker than `--band` here and lighter than it in the light theme: in both,
-       the alternate tint is the one nearer the page's own ground, so the cycle
-       you are pointing at is the one that stands further off it. */
-    --band-alt: #223037;
+    /* Lighter than `--band` here and darker than it in the light theme: in both,
+       the alternate tint is the one standing FURTHER off the page's own ground,
+       for the reason written beside the light theme's copy — `--line` lies
+       between the page and `--band`, so the ground side is where the cool-down
+       goes. #223037 put it there: dE 2.26 and dL* 0.80, which is no cool-down.
+       dE 3.99 from `--band` here, dE 4.02 for the cool-down over it, and the
+       cycle number is 4.61:1 on it. */
+    --band-alt: #30424b;
     --band-edge: #5d7a85;
   }
 }
@@ -536,7 +565,7 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
   /* The same two values as the media query above, and they have to be: a reader
      who never touches the toggle matches only that block, and a reader who has
      chosen dark matches only this one. */
-  --band-alt: #223037;
+  --band-alt: #30424b;
   --band-edge: #5d7a85;
   --pri-very-low: #6fc095; --pri-low: #8fc772; --pri-medium: #d9a557;
   --pri-high: #e08a5a; --pri-very-high: #e0796a;
@@ -589,8 +618,14 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
   /* One ink, three strengths. Derived from the same base0C the band is, so a
      scheme that moves the band moves its neighbour and its edge with it — three
      hand-picked values here would be three that can disagree with each other in
-     twenty palettes at once. */
-  --band-alt: color-mix(in oklab, var(--base0C) 18%, var(--bg));
+     twenty palettes at once.
+
+     42% and not the 18% it was, for the reason the two literal themes give: the
+     cool-down is `--line` at 50% over the band, and 18% is on the page's side of
+     30% — the side `--line` is on — so an odd cycle's cool-down collapsed into
+     its band in every scheme at once. Above `--band` and well under the edge's
+     65%, so the three strengths stay in the order they are named in. */
+  --band-alt: color-mix(in oklab, var(--base0C) 42%, var(--bg));
   --band-edge: color-mix(in oklab, var(--base0C) 65%, var(--bg));
   --waiting: color-mix(in oklab, var(--base09) 18%, var(--bg));
   /* The ladder the meter counts: green, green-yellow, yellow, orange, red. `low`

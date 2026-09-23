@@ -550,7 +550,7 @@ _TIMELINE = """
       and a month label at y=18 inside one 26px strip, so a cycle closing near the
       first of a month wrote one word over the other. -#}
   {% for cycle in t.cycles %}
-  <rect class="cycle-band" x="{{ cycle.x }}" y="0"
+  <rect class="cycle-band{% if cycle.tint == 'alt' %} alt{% endif %}" x="{{ cycle.x }}" y="0"
         width="{{ cycle.width }}" height="{{ t.band }}"/>
   {#- The cool-down, shaded inside the band. Nothing is supposed to be built in
       it, so the band cannot show one flat stretch for the whole window. -#}
@@ -1005,6 +1005,18 @@ svg { display: block; }
    behind a panel is a panel, but behind the page it is 1.07:1 and there is no
    band at all. Same token as the legend key, because they are the same band. */
 .cycle-band { fill: var(--band); }
+/* The cycle beside this one, in the second tint of the same ink. Two hues would
+   put the one distinction on this chart that a dichromat cannot make, which is
+   the mistake the status ladder exists to avoid. The parity is the cycle's own
+   number and not its position in the window, so scrolling past a neighbour does
+   not repaint the band you are looking at.
+
+   `--band-alt` stands further off the page than `--band`, and which side it is
+   on is a fact about THIS rule's neighbour below: `.cycle-cooldown` is `--line`
+   at half alpha over whichever band it lies in, and `--line` is between the page
+   and `--band` in every theme. A tint on that side collapses the cool-down —
+   measured at dE 2.12, under the just-noticeable difference. See `shell.py`. */
+.cycle-band.alt { fill: var(--band-alt); }
 .band-rule { stroke: var(--line); }
 /* Where a cycle closes — the one rule on this chart that is a fact about the
    plan rather than grid furniture, so it is drawn in the boundary token and not

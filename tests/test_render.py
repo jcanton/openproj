@@ -92,6 +92,25 @@ def contrast(a: str, b: str) -> float:
     return (high + 0.05) / (low + 0.05)
 
 
+def over(fg: str, bg: str, alpha: float) -> str:
+    """`fg` painted on `bg` at `alpha`, as a browser composites `fill-opacity`.
+
+    A token on its own says nothing about a translucent fill: `.cycle-cooldown`
+    is `--line` at half alpha over whichever band it lies in, so the colour a
+    reader actually meets is this mix and comparing the two tokens compares two
+    colours that are never next to each other on the page.
+    """
+    top, ground = (_rgb(fg), _rgb(bg))
+    return "#" + "".join(
+        f"{round(top[i] * alpha + ground[i] * (1 - alpha)):02x}" for i in range(3)
+    )
+
+
+def _rgb(colour: str) -> list[int]:
+    value = colour.lstrip("#")
+    return [int(value[i : i + 2], 16) for i in (0, 2, 4)]
+
+
 def tokens(page: str) -> dict[str, dict[str, str]]:
     """Every colour token, per theme, read out of a page that actually rendered.
 
@@ -1053,6 +1072,72 @@ def test_a_cycle_gets_a_band_of_its_own_above_the_months(rendered: Path):
     assert cycle_label < band < month_label
     assert month_rule == band
     assert re.search(r'<text class="today-label"[^>]*>today</text>', body)
+
+
+def test_two_cycles_running_up_against_each_other_read_as_two(rendered: Path):
+    """They were one fill with a dashed rule between them, so a reader looking for
+    where one ends found a line and the same colour either side of it.
+
+    The parity is the cycle's own number, so the set of tints drawn is exactly the
+    two — a band whose tint came from its position in the window would change
+    colour when the window scrolled past the cycle before it.
+    """
+    body = read(rendered, "timeline.html")
+    bands = re.findall(r'<rect class="cycle-band([^"]*)"', body)
+
+    assert len(bands) > 1, "one cycle on the chart proves nothing about two"
+    assert {band.strip() for band in bands} == {"", "alt"}, "every band wears the same tint"
+    assert ".cycle-band { fill: var(--band); }" in body
+    assert ".cycle-band.alt { fill: var(--band-alt); }" in body
+
+
+def test_the_second_band_tint_is_defined_in_every_theme(rendered: Path):
+    """A colour defined only in `[data-theme="dark"]` is wrong for every reader who
+    has never touched the toggle, which is most of them."""
+    themes = tokens(read(rendered, "timeline.html"))
+
+    for block in ("light", "dark", "dark-by-system"):
+        assert "--band-alt" in themes[block], block
+        assert "--band-edge" in themes[block], block
+    assert themes["dark"]["--band-alt"] == themes["dark-by-system"]["--band-alt"]
+    assert themes["dark"]["--band-edge"] == themes["dark-by-system"]["--band-edge"]
+
+
+def test_the_cooldown_survives_the_tint_the_second_band_is_drawn_in(rendered: Path):
+    """`.cycle-cooldown` is `--line` at half alpha, and that alpha was chosen
+    against ONE flat band. It is now layered over two.
+
+    The question is not which way round the two tints are but which SIDE of
+    `--band` the second one is on, and the answer is forced: `--line` lies between
+    the page and `--band` in every theme here, so an alternate tint on the page's
+    side walks into the cool-down and takes it with it. Measured at the value this
+    branch first used — #d3e2e8 light, #223037 dark — the cool-down over an odd
+    cycle was dL* 0.56 and 0.80, under the just-noticeable difference: half the
+    cycles on the chart had no cool-down at all, and nothing said so.
+
+    Asserted as a comparison and not as a floor, because the floor is not mine to
+    move: what the cool-down manages over `--band` is what the alpha and `--line`
+    between them allow, and `--line` is the legend's boundary key and the grid's
+    hairline as well. So the claim is that the second tint costs the cool-down
+    nothing — and that is exactly the claim that fails if `--band-alt` is put back
+    on the page's side of `--band`.
+    """
+    themes = tokens(read(rendered, "timeline.html"))
+
+    for block in ("light", "dark", "dark-by-system"):
+        page, line = themes[block]["--bg"], themes[block]["--line"]
+        band, alt = themes[block]["--band"], themes[block]["--band-alt"]
+
+        assert contrast(alt, page) > contrast(band, page), (
+            f"{block}: --band-alt is nearer the page than --band, which is the side "
+            f"--line is on, so an odd cycle's cool-down collapses into its band"
+        )
+        main = contrast(over(line, band, 0.5), band)
+        second = contrast(over(line, alt, 0.5), alt)
+        assert second >= main, (
+            f"{block}: the cool-down is {second:.3f} over --band-alt against {main:.3f} "
+            f"over --band, so the second tint cost it visibility"
+        )
 
 
 def test_a_bar_carries_what_it_is_holding(rendered: Path, seed_index: Index):
@@ -2872,12 +2957,19 @@ def test_the_cycle_band_is_one_token_and_it_can_be_seen(rendered: Path):
     assert ".cycle-band { fill: var(--band); }" in body
     assert ".legend .swatch.band { background: var(--band); }" in body
     assert "--surface-2" not in re.search(r"\.cycle-band \{[^}]*\}", body).group(0)
+    # Both tints, since the ladder gained a second one: an odd-numbered cycle's
+    # band is `--band-alt` and it carries a cycle number exactly the way this one
+    # does. Asking only about `--band` would have let the alternate tint be drawn
+    # anywhere at all, and the first value tried for it was 1.33 against the page
+    # — under the floor this test exists to hold.
     for name in ("light", "dark"):
-        page, band = themes[name]["--bg"], themes[name]["--band"]
-        assert contrast(band, page) >= 1.45, (name, contrast(band, page))
-        # It carries the cycle number, and that number is 10px text.
-        accent = themes[name]["--accent"]
-        assert contrast(band, accent) >= 4.5, (name, contrast(band, accent))
+        page = themes[name]["--bg"]
+        for tint in ("--band", "--band-alt"):
+            band = themes[name][tint]
+            assert contrast(band, page) >= 1.45, (name, tint, contrast(band, page))
+            # It carries the cycle number, and that number is 10px text.
+            accent = themes[name]["--accent"]
+            assert contrast(band, accent) >= 4.5, (name, tint, contrast(band, accent))
 
 
 def test_the_legend_draws_a_cycle_boundary_the_way_the_plot_does(rendered: Path):
