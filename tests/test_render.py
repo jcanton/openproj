@@ -1079,14 +1079,20 @@ def cycles_that_touch(seed_root: Path) -> Index:
     """The corpus under a `config/cycles.yaml` that skips numbers and whose cycles
     genuinely run back to back.
 
-    Neither corpus in this repository can ask the question the tint is named for,
-    and they fail it in both directions at once. Both are numbered consecutively,
-    so the cycle's own number and its position in the plan agree in them whatever
-    the code does. And their windows are held apart by a weekend and by a month
-    — `seed/config/cycles.yaml` says the month is the conference window and is
+    Neither corpus in this repository can ask the question the tint is named for.
+    Their windows are held apart by a weekend and by a month —
+    `seed/config/cycles.yaml` says the month is the conference window and is
     deliberate — so no two bands on either chart ever meet in x, which is the
     whole arrangement the feature is named after. A corpus that does not hold the
     one case that matters proves nothing.
+
+    It is the touching that is missing and only that. An earlier version of this
+    docstring also said both corpora number their cycles consecutively, so that
+    a cycle's number and its rank could not come apart in them; that is true of
+    `seed/` and false of the frozen fixture corpus, which runs 28, 34, 35, 36,
+    37, 38 — five of its six bands changed tint when the rank landed. It is
+    written down because it was wrong in the direction that tells the next
+    reader not to look.
 
     34, 36, 38, 40 is what one cancelled cycle and one renumbering look like, and
     each window here opens the day after the one before it closes. `plans` goes
@@ -1144,6 +1150,54 @@ def test_two_cycles_running_up_against_each_other_read_as_two(cycles_that_touch:
 
     assert ".cycle-band { fill: var(--band); }" in page
     assert ".cycle-band.alt { fill: var(--band-alt); }" in page
+
+
+def test_a_cycle_numbered_out_of_order_still_alternates_with_the_one_beside_it(
+    seed_root: Path,
+) -> None:
+    """The rank fixed the tint for a plan that SKIPS a number and left it broken
+    for a plan whose numbers do not run in the same order as its dates.
+
+    That is one `starts_on` away rather than hypothetical: a `Cycle` record
+    overrides its own window through `with_plans`, so moving 36 after 38 is a
+    single hand-edit, and ranking by number then puts two touching cycles next to
+    each other in the list and beside each other in tint. The rank is over the day
+    a cycle opens for exactly this reason, and the assertion is the same property
+    the fixture above asks — no two bands that meet may share a fill.
+    """
+    from openproj.render import render_timeline
+
+    records, config, _ = load_repo(seed_root)
+    # 34, then 38, then 36: contiguous in time, out of order by number.
+    out_of_order = {
+        34: (date(2026, 2, 2), date(2026, 3, 27)),
+        38: (date(2026, 3, 28), date(2026, 5, 22)),
+        36: (date(2026, 5, 23), date(2026, 7, 17)),
+    }
+    index = build_index(
+        records,
+        config.model_copy(update={"cycles": out_of_order, "plans": {}}),
+        date(2026, 8, 17),
+    )
+
+    bands = sorted(
+        (
+            float(one.attrs["x"]),
+            float(one.attrs["width"]),
+            " ".join(sorted(set(one.attrs["class"].split()) - {"cycle-band"})),
+        )
+        for one in elements(render_timeline(index))
+        if one.tag == "rect" and "cycle-band" in one.attrs.get("class", "").split()
+    )
+
+    assert len(bands) == 3
+    for (left, width, tint), (right, _, next_tint) in zip(bands, bands[1:], strict=False):
+        assert round(left + width, 1) == right, f"the bands at {left} and {right} do not meet"
+        assert tint != next_tint, f"two cycles meeting at x={right} wear one fill"
+
+    # Second, and only as the explanation: the list is in date order, so the rank
+    # the tint is taken from means "which cycle comes next" for this plan too.
+    assert [window.number for window in index.cycle_windows()] == [34, 38, 36]
 
 
 def test_the_second_band_tint_is_defined_in_every_theme(rendered: Path):

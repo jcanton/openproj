@@ -557,6 +557,21 @@ class Index(BaseModel):
         Sorted, and the order is load-bearing rather than tidy: `alt` is the rank
         in this list, so the alternation both drawings make is a statement about
         which cycle comes NEXT and not about how the numbers happen to be spelt.
+
+        **By the day it opens, and not by its number.** Keying the tint on the
+        number was the first defect here — a plan that skips one draws two
+        touching bands in a single fill, which is the thing the alternation
+        exists to prevent. Ranking by number instead of by `% 2` narrowed that
+        assumption without removing it: it still needs the numbers to run in the
+        same order as the dates, and `with_plans` lets a cycle record override
+        its own window, so one `starts_on` typed into `cycles/0036.md` is enough
+        to put 36 after 38 in time and beside it in tint. The date is the thing
+        the drawing is actually about.
+
+        Ranking over the PLAN's cycles rather than over the drawn window is the
+        other half, and it is why this is not computed in the timeline: a band
+        that repaints because an earlier cycle scrolled out of view is a band
+        whose colour a reader cannot learn anything from.
         """
         config = self._config
         return [
@@ -567,7 +582,9 @@ class Index(BaseModel):
                 closes,
                 alt=bool(rank % 2),
             )
-            for rank, (number, (opens, closes)) in enumerate(sorted(self.cycles.items()))
+            for rank, (number, (opens, closes)) in enumerate(
+                sorted(self.cycles.items(), key=lambda cycle: (cycle[1][0], cycle[0]))
+            )
         ]
 
     def load(self, cycle: int) -> dict[str, float]:

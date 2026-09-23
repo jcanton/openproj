@@ -299,15 +299,28 @@ written here is that this branch's own commits read like a finished sweep and ar
 **Both drawings alternated on the wrong fact, and the words were right the whole time.** The
 timeline wrote `"alt" if number % 2 else "main"` and the calendar's `dayInCycle` wrote
 `found.number % 2`, so each of them tested the parity of a cycle's NUMBER while the commit subject,
-this section and the comment beside the line all said ADJACENCY. The two agree only while the numbers
-run consecutively, which both corpora here do, so nothing on any page and nothing in the suite ever
-put them side by side: a `config/cycles.yaml` holding 34, 36, 38, 40 with contiguous windows drew
-four bands in ONE uniform fill — the exact defect the tint was added to remove — and one cancelled or
-renumbered cycle is the whole distance to it. The test could not see it either. It asserted that the
-SET of tints drawn was `{"", "alt"}`, which any plan with one odd-numbered cycle anywhere satisfies,
-including that one. It asserts the property now: over the bands the page draws, in x order, two that
-MEET never share a tint, with the meeting asserted first so that alternation is never claimed across
-a gap.
+this section and the comment beside the line all said ADJACENCY. A `config/cycles.yaml` holding 34,
+36, 38, 40 with contiguous windows drew four bands in ONE uniform fill — the exact defect the tint
+was added to remove — and one cancelled or renumbered cycle is the whole distance to it. The test
+could not see it either. It asserted that the SET of tints drawn was `{"", "alt"}`, which any plan
+with one odd-numbered cycle anywhere satisfies, including that one. It asserts the property now: over
+the bands the page draws, in x order, two that MEET never share a tint, with the meeting asserted
+first so that alternation is never claimed across a gap.
+
+Nothing caught it because **no corpus here holds two cycles that touch** — a weekend separates two of
+`seed/`'s and a conference month separates another pair — so no chart this repository can draw has
+ever put two bands side by side at all. This paragraph said something else first, and said it of both
+corpora: that their numbers run consecutively, so number and rank could not come apart. That is true
+of `seed/` and false of `tests/fixtures/corpus`, which runs 28, 34, 35, 36, 37, 38 — five of its six
+bands changed tint the moment the rank landed. The wrong reason is recorded rather than quietly
+replaced, because it is the kind that tells the next reader there is nothing to check.
+
+**And ranking by number only narrowed the assumption.** It needs the numbers to run in the same order
+as the dates, and `with_plans` lets a cycle record override its own window, so one `starts_on` typed
+into `cycles/0036.md` puts 36 after 38 in time and beside it in tint — two touching bands in one fill
+again, by a different route. `cycle_windows` ranks by the day a cycle opens. The rank stays over the
+plan's cycles rather than over the drawn window, because a band that repaints when an earlier cycle
+scrolls out of view is a band whose colour says nothing.
 
 **The phone harness was making the claim it was written to test.** `measured_on_a_phone` set the
 viewport and nothing else: a page under it reported `innerWidth` 390 with `(pointer: fine)` true,
