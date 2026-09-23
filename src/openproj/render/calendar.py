@@ -180,11 +180,116 @@ _CALENDAR_STYLE = """
 }
 """
 
-# Nothing yet, and deliberately: attaching the widget to a date box is the next
-# commit on this branch, and the module is landed first so the cycles, the
-# stylesheet and the tokens can be asked of a page before anything depends on
-# them. An empty fragment renders as nothing rather than as a hole.
-_GLUE = Markup("")
+# The glue: what turns a date box into this widget, and what the widget says to a
+# reader who is not looking at it.
+#
+# `Markup` and not a plain `str`, because it is rendered into `_CALENDAR_JS`
+# through `{{ glue }}`: an autoescaped template hands a `str` back with every `<`
+# and `&` spelled out, and a script whose `&&` has become `&amp;&amp;` is a
+# script that throws on its first line.
+_GLUE = Markup("""
+// Every picker this page has made, keyed by the box it belongs to. Weak, so that
+// the table — which replaces its whole tbody on every `draw()` — drops the
+// pickers belonging to the rows it threw away, without this file having to know
+// that the table does that.
+const CALENDARS = new WeakMap();
+
+// The picker hands `beforeShowDay` a LOCAL-midnight Date. `toISOString()` on one
+// of those prints the day BEFORE anywhere east of Greenwich, so every cell is
+// judged as its own predecessor and every edge lands a day late: measured at
+// UTC+2, a cycle opening on the 17th drew its edge and its number on the 18th.
+// One cell out for every reader in Europe, exactly right for every reader in
+// London, and no reader can tell which of the two they are. So the date is read
+// in local parts — the same three numbers the picker used to build the cell.
+function isoOf(day) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`;
+}
+
+// What `beforeShowDay` gives back per day: the band classes, the edges, and the
+// cycle's number on the day it opens.
+//
+// **Nodes and not a string.** `content` may be a fragment, a string of HTML or
+// anything with `forEach` — the library appends the last as it stands. A string
+// would make this the one place in the widget where markup is built from data,
+// which is a third escaping boundary in a language that has two here (`esc` and
+// `textContent`); six injection sites existed at once because six places each
+// decided for themselves. Nothing here is typed by a person today, and that is
+// an argument for the cheap boundary rather than against it.
+//
+// **Day number first, badge second, badge `aria-hidden`.** `content` replaces the
+// cell's WHOLE contents — `textContent` was set to the day number a line earlier
+// and is thrown away — so the day has to be back in it or the calendar draws a
+// month of cycle numbers. With the badge in front, day 3 of cycle 3 read "3 3".
+function dayInCycle(day) {
+  const iso = isoOf(day);
+  const found = cycleOf(iso);
+  if (!found) return null;
+  const classes = ['cyc'];
+  if (found.number % 2) classes.push('cyc-alt');
+  if (found.phase === 'cool') classes.push('cyc-cool');
+  if (iso === found.window.opens) classes.push('cyc-opens');
+  if (iso === found.window.closes) classes.push('cyc-closes');
+  if (iso !== found.window.opens) return { classes: classes.join(' ') };
+  const badge = document.createElement('span');
+  badge.className = 'cyc-n';
+  badge.setAttribute('aria-hidden', 'true');
+  badge.textContent = String(found.number);
+  return {
+    classes: classes.join(' '),
+    content: [document.createTextNode(String(day.getDate())), badge],
+  };
+}
+
+function calendarFor(box) {
+  let picker = CALENDARS.get(box);
+  if (picker) return picker;
+  picker = new Datepicker(box, {
+    // The native value format, because `input.value` stays the only channel
+    // between this widget and the rest of the app: a picker writing `25/12/2026`
+    // into a date box writes nothing at all, since the element refuses it.
+    format: 'yyyy-mm-dd',
+    weekStart: 1,
+    autohide: true,
+    beforeShowDay: dayInCycle,
+  });
+  CALENDARS.set(box, picker);
+  return picker;
+}
+
+function openCalendar(box) {
+  const picker = calendarFor(box);
+  picker.show();
+  return picker;
+}
+
+// The native indicator is hidden under a fine pointer and left alone under a
+// coarse one, so this asks the stylesheet's own question. A phone keeps the OS
+// wheel, which beats any grid this size under a thumb.
+const FINE = window.matchMedia('(pointer: fine)');
+
+// One delegated listener and not a hook per host. Three of the places a date box
+// appears are built at runtime — the table's cells, its draft row and the `#pop`
+// form's third face — and none of them exists when this script first runs, so a
+// per-host hook is three places for one to be forgotten and a fourth host to
+// arrive with none.
+document.addEventListener('focusin', (event) => {
+  const box = event.target;
+  if (box.matches && box.matches('input[type="date"]') && FINE.matches) openCalendar(box);
+});
+
+// The keyboard's own way in, which is what a combobox uses and what this needs
+// for the reader who tabs to the field rather than clicking it: focus alone
+// opens the popup, and Alt+Down opens it again after an Escape closed it.
+document.addEventListener('keydown', (event) => {
+  const box = event.target;
+  if (event.altKey && event.key === 'ArrowDown' && box.matches
+      && box.matches('input[type="date"]') && FINE.matches) {
+    event.preventDefault();
+    openCalendar(box);
+  }
+});
+""")
 
 _CALENDAR_JS = """
 <script>{{ library }}</script>

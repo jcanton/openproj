@@ -13,6 +13,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+from browser import chrome, measured_in
 from cascade import El, Sheet, el
 
 import openproj.render.calendar as calendar_module
@@ -357,3 +358,306 @@ def test_the_selected_day_takes_the_ground_from_every_band_including_the_heavies
             f"a selected day on `{classes}` does not take the accent's ink:\n"
             f"{losers(calendar_style, path, 'color')}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# The widget itself, driven
+# --------------------------------------------------------------------------- #
+#
+# **Chrome, and not `tests/js/drive.js`.** The cells exist in no rendered file —
+# the library builds all forty-two of them when the popup opens — so the question
+# has to be put to the script that builds them, and the way this repository
+# usually does that is the node shim. Measured, not assumed: the bundle does not
+# run in it. Its first statement is `const E = document.createRange()`, which the
+# shim has not got, so it throws before `Datepicker` is ever defined and every
+# assertion after that is a claim about an empty page.
+#
+# Handing the shim a `createRange` is not the end of it. The library builds its
+# whole picker by parsing a template string and then walks the result with
+# `firstChild`, `childNodes`, `replaceChild`, `getRootNode` and
+# `previousElementSibling` — and the shim answers the last of those `null` for
+# every element, deliberately and with a comment saying so. A shim extended far
+# enough to get this library running would be a shim whose wrong answers land
+# inside somebody else's layout code, where they read as "the calendar drew
+# nothing unusual". That is the vacuous green `drive.js` has already produced
+# three times, and two of those rounds were about this repository's own editor.
+# So the question goes to a real browser, which is the medium the answer lives in.
+#
+# **The host page is built here, and that is the caveat.** No served page carries
+# the calendar yet: wiring it into the six pages that have a date field is its own
+# commit, so a test that drove `served["record"]` would find no `.datepicker` in
+# it and pass by finding nothing. What is synthesised is only the HOST — the
+# library, the cycles and the glue are `_calendar_js(index)` exactly as a page
+# will be handed it, and the box is the `<input type="date">` the record form
+# already writes. When the wiring lands, the host becomes the served page and
+# none of these scripts changes.
+
+
+def _library_months() -> list[str]:
+    """The month names the popup's header is built from, read out of the bundle.
+
+    The header's text is this file's one anchor on *which days the grid is
+    showing* that does not go through the code under test. A list typed in here
+    would be a second copy of the library's `locales.en`, and a second copy goes
+    stale on the commit that re-vendors.
+    """
+    bundle = (_static_dir() / "datepicker.min.js").read_text(encoding="utf-8")
+    found = re.search(r'months:\["January"((?:,"[A-Za-z]+"){11})\]', bundle)
+    assert found, "the vendored bundle no longer carries the month table this reads"
+    return ["January", *re.findall(r'"([A-Za-z]+)"', found.group(1))]
+
+
+def _a_month_holding_more_than_build_days(index: Index) -> date:
+    """The day to open the popup on: a month that holds an opening edge, a
+    closing edge, a cool-down and days in no cycle at all.
+
+    Picked out of the corpus rather than typed in, and the census below asserts
+    every one of those is really there. A run over a month where every day is a
+    plain build day would agree with the code about almost nothing — which is the
+    same trap as a corpus with no emoji in it.
+    """
+    windows = index.cycle_windows()
+    for window in windows:
+        month = (window.opens.year, window.opens.month)
+        if any((other.closes.year, other.closes.month) == month for other in windows
+               if other.number != window.number):
+            return window.opens
+    raise AssertionError("no cycle in this corpus opens in a month another one closes in")
+
+
+def _page_with_a_date_field(index: Index, value: date) -> str:
+    """One date box and the real widget, with nothing else on the page."""
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        f"<style>{calendar_module._CALENDAR_STYLE}</style></head><body>"
+        '<label for="start">Starts on</label>'
+        f'<input type="date" id="start" name="start_date" value="{value.isoformat()}">'
+        f"{_calendar_js(index)}</body></html>"
+    )
+
+
+# Every cell of the open grid, as the four things a claim here is made about:
+# which days they are, what bands they wear, what they say, and what they read
+# as.
+CENSUS = """
+  const grid = document.querySelector('.datepicker-grid');
+  return {
+    opened: !!document.querySelector('.datepicker.active'),
+    shown: document.querySelector('.view-switch').textContent,
+    cells: [...grid.querySelectorAll('.datepicker-cell')].map((cell) => {
+      const badge = cell.querySelector('.cyc-n');
+      return {
+        // `firstChild` and not `textContent`, because the reading ORDER is the
+        // claim: the badge is a child of the cell, so the 17th of cycle 37
+        // reads "1737" and its first child is the text "17". A badge written in
+        // front of the day number would leave this null, which is the "3 3"
+        // defect stated as an assertion rather than as a comment.
+        day: cell.firstChild ? cell.firstChild.nodeValue : null,
+        text: cell.textContent,
+        classes: cell.className.split(/\\s+/).filter(Boolean),
+        badge: badge ? badge.textContent : null,
+        badgeHidden: badge ? badge.getAttribute('aria-hidden') : null,
+      };
+    }),
+  };
+"""
+
+OPEN_IT = """
+  const box = document.getElementById('start');
+  openCalendar(box);
+""" + CENSUS
+
+def _stepped(year: int, month: int, by: int) -> tuple[int, int]:
+    moved = year * 12 + (month - 1) + by
+    return moved // 12, moved % 12 + 1
+
+
+def _days_of(found: dict) -> list[date]:
+    """Which calendar day each cell stands for, worked out from the header and
+    the cell's own text.
+
+    Deliberately NOT from `dataset.date`, and not from anything `isoOf` touched:
+    the whole question in the timezone case below is whether the widget put the
+    band on the day the grid is drawing, and a test that asked the widget which
+    day that was could only ever agree with itself.
+    """
+    name, year = found["shown"].split()
+    shown_year, shown_month = int(year), _library_months().index(name) + 1
+    days = []
+    for cell in found["cells"]:
+        assert cell["day"], f"a cell with no day number in it: {cell}"
+        step = -1 if "prev" in cell["classes"] else 1 if "next" in cell["classes"] else 0
+        at_year, at_month = _stepped(shown_year, shown_month, step)
+        days.append(date(at_year, at_month, int(cell["day"])))
+    return days
+
+
+def _bands_for(day: date, windows: list) -> set[str]:
+    """What the band classes on that day have to be.
+
+    The rule and not a recording of the output: a cycle runs from the day it
+    opens to the day it closes, alternates tint by its own number so that two
+    touching cycles read as two, wears the cool-down fill after the last build
+    day, and carries an edge on each of the two days that are facts. Written here
+    in Python against `cycle_windows()` so that the browser's copy has something
+    to disagree with.
+    """
+    for window in windows:
+        if window.opens <= day <= window.closes:
+            bands = {"cyc"}
+            if window.number % 2:
+                bands.add("cyc-alt")
+            if day > window.builds_until:
+                bands.add("cyc-cool")
+            if day == window.opens:
+                bands.add("cyc-opens")
+            if day == window.closes:
+                bands.add("cyc-closes")
+            return bands
+    return set()
+
+
+@pytest.fixture
+def opened(seed_index: Index, tmp_path: Path) -> dict:
+    """The popup, opened on a month worth looking at, in a real browser."""
+    page = _page_with_a_date_field(seed_index, _a_month_holding_more_than_build_days(seed_index))
+    return measured_in(chrome(), page, tmp_path / "calendar.html", 1280, OPEN_IT)
+
+
+# UTC first and on purpose: it is the CONTROL, and it passes with the defect in
+# place. The picker hands `beforeShowDay` a local-midnight Date, so
+# `toISOString()` on one prints the day before at every positive offset and the
+# right day at zero — which is why a suite run on a UTC machine can watch a band
+# sit one cell to the right of where it belongs for every reader in Europe and
+# report nothing at all. Zurich is the offset the widget was written at.
+@pytest.mark.parametrize("zone", ["UTC", "Europe/Zurich"])
+def test_every_day_wears_the_band_of_the_cycle_it_is_really_in(
+    seed_index: Index, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, zone: str
+):
+    """Forty-two days, each checked against `cycle_windows()` by the rule rather
+    than against a recording.
+
+    Measured with `toISOString()` in place of the local read: under Zurich the
+    opening edge and the cycle's number both move to the 18th while the grid goes
+    on drawing the 17th, and under UTC nothing moves at all.
+    """
+    monkeypatch.setenv("TZ", zone)
+    page = _page_with_a_date_field(seed_index, _a_month_holding_more_than_build_days(seed_index))
+    found = measured_in(chrome(), page, tmp_path / "calendar.html", 1280, OPEN_IT)
+    windows = seed_index.cycle_windows()
+
+    assert found["opened"], "the popup did not open, so nothing below was measured"
+    days = _days_of(found)
+    worn = [{name for name in cell["classes"] if name.startswith("cyc")}
+            for cell in found["cells"]]
+
+    # The corpus guard, first: a month of plain build days would agree with the
+    # code about almost nothing, so the month under test has to hold each kind.
+    seen = set().union(*worn)
+    assert {"cyc", "cyc-alt", "cyc-cool", "cyc-opens", "cyc-closes"} <= seen, seen
+    assert any(not bands for bands in worn), "every day in this month is in some cycle"
+
+    for day, bands in zip(days, worn, strict=True):
+        assert bands == _bands_for(day, windows), f"{zone}: {day} is drawn as {bands or 'no cycle'}"
+
+
+def test_the_cycles_number_sits_on_the_day_it_opens_and_behind_the_day_number(
+    opened: dict, seed_index: Index
+):
+    """`beforeShowDay`'s content replaces the cell's WHOLE contents — the day
+    number the library wrote a line earlier is thrown away — so the day has to be
+    back in it, and it has to come first: with the badge in front, day 3 of cycle
+    3 read "3 3" to a screen reader.
+    """
+    days = _days_of(opened)
+    opens = {window.opens: window.number for window in seed_index.cycle_windows()}
+    badged = {day: cell for day, cell in zip(days, opened["cells"], strict=True) if cell["badge"]}
+
+    assert badged, "no day in this month carries a cycle number"
+    assert set(badged) == {day for day in days if day in opens}
+    for day, cell in badged.items():
+        assert cell["badge"] == str(opens[day])
+        # The order, said three ways: the day number is the cell's first child,
+        # the badge follows it, and the two read as one string in that order.
+        assert cell["day"] == str(day.day)
+        assert cell["text"] == f"{day.day}{opens[day]}"
+        assert cell["badgeHidden"] == "true", "the number is read out beside the day it labels"
+
+
+def test_a_date_box_made_after_the_page_loaded_gets_the_calendar_too(
+    seed_index: Index, tmp_path: Path
+):
+    """One delegated listener and not a hook per host. Three of the places a date
+    box appears are built at runtime — the table's cells, its draft row and the
+    `#pop` form's third face — and none of them exists when a page's script first
+    runs, so a per-host hook is three places for one to be forgotten and a fourth
+    host to arrive with none.
+    """
+    page = _page_with_a_date_field(seed_index, _a_month_holding_more_than_build_days(seed_index))
+    found = measured_in(chrome(), page, tmp_path / "calendar.html", 1280, """
+      const before = document.querySelectorAll('.datepicker').length;
+      const made = document.createElement('input');
+      made.type = 'date';
+      made.id = 'later';
+      document.body.appendChild(made);
+      made.focus();
+      // The last grid on the page, and `null` rather than a throw when there is
+      // none: a script that dies on the missing popup reports nothing at all,
+      // and "the page reported nothing" is the harness's sentence for a page
+      // that never laid out. The defect has to arrive as the assertion below.
+      const grid = [...document.querySelectorAll('.datepicker-grid')].pop();
+      return {
+        before: before,
+        active: document.querySelectorAll('.datepicker.active').length,
+        banded: grid ? [...grid.querySelectorAll('.datepicker-cell.cyc')].length : null,
+      };
+    """)
+
+    # Nothing is built until a box is focused: the picker is the cost of using a
+    # date field and not the cost of loading a page that has one.
+    assert found["before"] == 0
+    assert found["active"] == 1, "focusing a box made after load opened no calendar"
+    assert found["banded"] > 0, "the new box got a calendar with no cycles in it"
+
+
+def test_the_keyboard_opens_the_calendar_as_well_as_the_pointer(
+    seed_index: Index, tmp_path: Path
+):
+    """Every editable surface has a keyboard path beside the pointer one. Focus
+    opens the popup, and Alt+Down is what reopens it after an Escape — which is
+    the gesture a native date field and every combobox on these pages already
+    answer to, so it is the one a reader will try.
+    """
+    page = _page_with_a_date_field(seed_index, _a_month_holding_more_than_build_days(seed_index))
+    found = measured_in(chrome(), page, tmp_path / "calendar.html", 1280, """
+      const box = document.getElementById('start');
+      box.focus();
+      const onFocus = !!document.querySelector('.datepicker.active');
+      calendarFor(box).hide();
+      const shut = !document.querySelector('.datepicker.active');
+      box.dispatchEvent(new KeyboardEvent('keydown',
+        {key: 'ArrowDown', altKey: true, bubbles: true}));
+      return {onFocus: onFocus, shut: shut,
+              reopened: !!document.querySelector('.datepicker.active')};
+    """)
+
+    assert found["onFocus"], "tabbing into the field opened nothing"
+    assert found["shut"], "this test cannot say anything about reopening a popup that is up"
+    assert found["reopened"], "Alt+Down did not bring it back"
+
+
+def test_the_widget_turns_no_value_into_markup():
+    """The day cells are the one place in this widget where a cell's contents are
+    built from data, and `beforeShowDay` will take a string of HTML — so this is
+    where a third escaping boundary would be invented, in a language that has two
+    here. It takes nodes instead: a text node for the day and a `<span>` whose
+    number goes in through `textContent`.
+
+    Six injection sites existed at once because six places each decided for
+    themselves, and the fix is the seam rather than the escape.
+    """
+    glue = str(calendar_module._GLUE)
+
+    assert "createTextNode" in glue and "textContent" in glue
+    for markup in ("innerHTML", "insertAdjacentHTML", "outerHTML"):
+        assert markup not in glue, f"the calendar's glue builds markup with {markup}"
