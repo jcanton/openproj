@@ -3225,10 +3225,11 @@ def test_every_cycle_the_plan_names_is_on_the_index(client: TestClient, repo_pat
     cards = re.findall(r'<h2><a href="/cycle/(\d+)">Cycle \d+</a></h2>', page)
 
     assert cards == ["48", "47"], "newest first, record or not"
-    # 2.5: bo's two weeks plus the half-week sibling task under the same pitch.
-    # A cycle with no record still says what it is holding, which is the whole
-    # reason it is on this list.
-    assert re.search(r">2\.5</b> weeks bet against\s+no roster", page), "48 holds work"
+    # 2.0: bo's two weeks. The half-week sibling task under the same pitch has an
+    # owner and nobody assigned, so it charges nobody (2026-09-23). A cycle with
+    # no record still says what it is holding, which is the whole reason it is on
+    # this list.
+    assert re.search(r">2\.0</b> weeks bet against\s+no roster", page), "48 holds work"
 
 
 def test_a_cycle_card_says_the_bet_against_the_capacity(client: TestClient, repo_path: Path):
@@ -3252,10 +3253,11 @@ def test_a_cycle_card_says_the_bet_against_the_capacity(client: TestClient, repo
         re.S,
     ).group(0)
 
-    # 3.5, not 3.0: betting the pitch bets everything under it, so cy's three
-    # weeks and bo's half-week sibling task both land in the cycle. That is what
-    # "the pitch is the unit of the bet" means for a capacity sum.
-    assert '<b class="num">3.5</b> of' in card, "cy is not on the roster and still counts"
+    # cy's three weeks, although cy is not on the roster: betting the pitch bets
+    # everything under it, which is what "the pitch is the unit of the bet" means
+    # for a capacity sum. The half-week sibling is bo's to answer for and nobody's
+    # to do — owner, no assignees — so it charges nobody (2026-09-23).
+    assert '<b class="num">3.0</b> of' in card, "cy is not on the roster and still counts"
     assert '<b class="num">2.0</b> weeks bet' in card, "ann at half of four weeks"
     assert re.search(r'<span class="bar"><span style="width: 100%">', card)
     assert card.startswith('<li class="card over">'), "3.0 bet against 2.0 of capacity"

@@ -14,7 +14,7 @@ that looks plausible and is wrong:
   divided; D1 was wrong about how the team estimates, and with a single assignee
   at full availability the two readings agree, which is why it went unnoticed.)
 * Only leaves consume a worker's capacity. A parent's span is a rollup of work its
-  children already booked; booking the parent too double-books its owner.
+  children already booked; booking the parent too double-books its assignees.
 
 A size is the one input with no substitute. There is no default appetite, so a
 record nobody has sized is not scheduled at all — no span, exactly as a childless

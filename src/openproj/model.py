@@ -2019,22 +2019,26 @@ def size_weeks(record: Record) -> float | None:
 
 
 def workers_on(record: Record) -> list[str]:
-    """Everyone on the hook for this record, each counted once.
+    """The people doing the work on this record: its assignees, each counted once.
 
-    An owner who is also an assignee — which is most of them — was counted twice,
-    so they were booked twice and, now that the workers divide the size, would
-    have halved it on their own.
+    **The owner is not one of them unless they are also assigned.** An owner's job
+    is to see the work done, and that is not a claim on their weeks — jcanton,
+    2026-09-23. It used to be `[owner] + assignees`, which booked the owner of
+    every record as a worker: an owner reviewing somebody else's task was told the
+    task could not start until they were free, their capacity on the betting table
+    carried a share of it, and the size was divided by one more person than was
+    actually on it. The ready gate already asks for `assignees` separately from
+    `owner` for exactly this reason, so the two now mean the same thing on both
+    sides of the check.
 
     Here rather than in `schedule.py`, where it was written, because two things
-    now ask it. The scheduler divides a size by these people's availabilities to
-    get a duration; `staffing_of` below names how many of them there are in the
-    sentence three pages print, since "the 4.0 the bet buys" is unreadable
-    without them. Both readings have to come off the same list or the sentence
-    explains a number computed from a different set of names than the one it
-    counts.
+    ask it. The scheduler divides a size by these people's availabilities to get a
+    duration; `staffing_of` below names how many of them there are in the sentence
+    three pages print, since "the 4.0 the bet buys" is unreadable without them.
+    Both readings have to come off the same list or the sentence explains a number
+    computed from a different set of names than the one it counts.
     """
-    named = ([record.owner] if record.owner else []) + list(record.assignees)
-    return list(dict.fromkeys(named))
+    return list(dict.fromkeys(record.assignees))
 
 
 def staffing_of(record: Record, staffed_at: float | None) -> str:
