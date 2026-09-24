@@ -483,9 +483,18 @@ def test_the_footer_marks_where_you_are_even_on_a_link_you_have_already_used(ind
     `#build a, #build a:visited { color: inherit }`, which is (1,0,1) and (1,1,1).
     The nav's rule alone reaches no link in the footer, so without a footer twin
     the mark would be in the accessibility tree and nowhere on screen — Help
-    drawn in the same muted ink as the version beside it. The twins are (1,1,1)
-    and (1,2,1), and written above the footer's rules in the sheet, so a tie
-    would have gone to the footer on order; this asks that they win on weight.
+    drawn in the same muted ink as the version beside it. And `#build a:hover`,
+    (1,1,1), underlines whatever is under the pointer. The mark is written above
+    all three, so every tie goes to the footer on order; this asks that the mark
+    win on weight instead, which takes three selectors: the plain one at
+    (1,1,1), and a `:visited` and a `:hover` twin at (1,2,1).
+
+    The `:hover` twin is the one that was missing, and this test passed without
+    it. It asked only the visited states, and `tests/cascade.py` then let the
+    `:visited` twin carry `text-decoration: none`. A browser takes nothing but
+    colours from `:visited`, so Chrome, hovered with a trusted pointer, drew the
+    underline on the Help page's own Help link whether it was visited or not.
+    The engine answers `:visited` the way Chrome does now.
 
     Both themes, as far as this engine can see them. The toggle's
     `:root[data-theme="dark"]` is a selector and is asked here, through a root
@@ -529,19 +538,22 @@ def test_the_footer_marks_where_you_are_even_on_a_link_you_have_already_used(ind
                 assert sheet.value(here, "background") == "var(--surface-2)", said
                 assert sheet.value(here, "text-decoration") == "none", said
 
-            # Heavier than everything it beats, and not merely later — the claim
-            # the `:visited` twin exists for. A link to the page you are on is
-            # nearly always visited, and hovered is the one state left in which
-            # `#build a:hover` reaches it, with an underline the mark does not have.
-            for states in ("visited", "visited hover"):
+            # Heavier than everything it beats, and not merely later, in every
+            # state a pointer and a history can put it in. `#build a:hover` is
+            # (1,1,1) and writes an underline, so it ties the plain mark, and the
+            # underline is decided in the unvisited pass on a visited link too —
+            # a browser takes only colours from `:visited` — so the `:visited`
+            # twin cannot settle it. Only the `:hover` twin can. "hover" was the
+            # state this loop left out, and it is the one Chrome drew wrong.
+            # Two selectors of one rule tying each other is not a fight: they
+            # are one block, written once.
+            for states in ("hover", "visited", "visited hover"):
                 here = help_at + [el("a", states=states, aria_current="page")]
                 for prop, wanted in (("color", "var(--accent)"), ("text-decoration", "none")):
                     won = sheet.winner(here, prop)
                     assert won and won.value == wanted, f"{where} ({states}) {prop}: {won}"
                     for rule in sheet.selectors_reaching(here, prop):
-                        assert (
-                            rule.selector == won.selector or rule.specificity < won.specificity
-                        ), (
+                        assert rule.block == won.block or rule.specificity < won.specificity, (
                             f"{where} ({states}) {prop}: `{won.selector}` only beats "
                             f"`{rule.selector}` on source order — both are {won.specificity}"
                         )

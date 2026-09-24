@@ -730,16 +730,27 @@ nav a, nav a:visited { color: var(--muted); }
    The footer's Help link wears the same mark on the Help page, which left the
    nav for the footer and took its you-are-here with it. One rule and not a copy
    of it, because two copies of a mark are two marks that drift. In the footer it
-   is fighting `#build a, #build a:visited`, which is (1,0,1) and (1,1,1), and it
-   wins both on weight at (1,1,1) and (1,2,1) — it is written above them, so a
-   tie would have gone to them on order. The `:visited` twin also outweighs
-   `#build a:hover` (1,1,1), and a link to the page you are on is nearly always
-   visited. The link sits inside a `<span>` in the footer — see the template —
-   so it is an inline box there and not a flex item, and the padding widens the
+   is fighting `#build a, #build a:visited`, (1,0,1) and (1,1,1), and
+   `#build a:hover`, (1,1,1), which underlines. It is written above all three, so
+   every tie goes to them on order, and it wins each on weight instead: (1,1,1)
+   and the `:visited` twin at (1,2,1) against the first two, and the `:hover`
+   twin at (1,2,1) against the third. The `:hover` twin is not redundant beside
+   the `:visited` one, however surely a link to the page you are on is visited.
+   A browser takes only colours from a rule matched through `:visited`, so that
+   a reader's history cannot be read back out of the layout, and it decides every
+   other property as though the link were unvisited. So the `:visited` twin
+   carries the accent and nothing else, and without the `:hover` twin the Help
+   page's own Help link was underlined under the pointer, visited or not —
+   measured in Chrome with a trusted hover, while `tests/cascade.py`, which then
+   let `:visited` reach every property, said it was not. The nav has no twin of
+   this kind because it has no hover rule to fight: nothing styles a hovered nav
+   link. The link sits inside a `<span>` in the footer — see the template — so
+   it is an inline box there and not a flex item, and the padding widens the
    mark without making the row taller: measured in Chrome, the footer is 26.3px
    on the Help page and on the Table alike, where as a flex item it was 31.5. */
 nav a[aria-current="page"], nav a[aria-current="page"]:visited,
-#build a[aria-current="page"], #build a[aria-current="page"]:visited {
+#build a[aria-current="page"], #build a[aria-current="page"]:visited,
+#build a[aria-current="page"]:hover {
   color: var(--accent); font-weight: 600; text-decoration: none;
   background: var(--surface-2); border: 1px solid var(--accent);
   border-radius: 3px; padding: .1rem .45rem; }

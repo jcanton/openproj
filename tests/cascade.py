@@ -24,12 +24,17 @@ Two deliberate limits, both stated rather than hidden:
   combinators work and the sibling ones cannot. `+` and `~` raise rather than
   silently failing to match — a matcher that answers "no" to a question it does
   not understand is a matcher that reports every rule as losing.
+
+And one place where it is deliberately not naive, because being naive there
+made a test pass while Chrome drew the defect it was written against: a rule
+matched through `:visited` can set colours and nothing else. See
+`_VISITED_MAY_SET`.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 _COMMENT = re.compile(r"/\*.*?\*/", re.S)
 _STYLE = re.compile(r"<style>(.*?)</style>", re.S)
@@ -47,6 +52,8 @@ class El:
     `states` is how a pseudo-class is answered: an element is `:hover` only if it
     was described as hovered. That makes the resting state the default — which is
     the state a page is in — and lets a test ask about the other one on purpose.
+    `visited` is the one state that does not reach every property; see
+    `_VISITED_MAY_SET`.
     """
 
     tag: str
@@ -268,6 +275,50 @@ def _matches(selector: str, path: list[El]) -> bool:
     return bool(parts) and _walk(parts, len(parts) - 1, path, len(path) - 1)
 
 
+# A browser styles a link twice: once as though it were unvisited, where
+# `:visited` matches nothing, and once as though it were visited. It takes these
+# properties from the second pass and every other property from the first, so
+# that a page cannot read a reader's history back out of its own layout. So a
+# `:visited` rule that says `text-decoration: none` says it to nobody.
+#
+# This engine used to let `:visited` reach every property, and a test leaned on
+# exactly that: it found the footer's `:visited` twin keeping the underline off
+# the Help page's own hovered Help link, while Chrome, asked with a trusted
+# hover, underlined it — visited or not, because the underline was decided in the
+# unvisited pass, where `#build a:hover` tied the mark and won on order.
+#
+# Longhands only. A shorthand that is partly a colour — `border`, `background`,
+# `outline` — is answered from the unvisited pass, since this engine does not
+# expand shorthands and most of each is not a colour. That errs the one safe way:
+# a test here can lean on a `:visited` rule for a colour asked by name and for
+# nothing else.
+_VISITED_MAY_SET = frozenset(
+    {
+        "color",
+        "background-color",
+        "border-color",
+        "border-top-color",
+        "border-right-color",
+        "border-bottom-color",
+        "border-left-color",
+        "outline-color",
+        "column-rule-color",
+        "text-decoration-color",
+        "text-emphasis-color",
+        "caret-color",
+        "fill",
+        "stroke",
+    }
+)
+
+
+def _as_styled_for(path: list[El], prop: str) -> list[El]:
+    """The path in the pass a browser takes `prop` from."""
+    if prop in _VISITED_MAY_SET:
+        return path
+    return [replace(one, states=one.states - {"visited"}) for one in path]
+
+
 # --------------------------------------------------------------------------- #
 # The sheet
 # --------------------------------------------------------------------------- #
@@ -281,6 +332,7 @@ class Won:
     value: str
     specificity: tuple[int, int, int]
     order: int
+    block: int
 
     def __str__(self) -> str:
         return f"{self.selector} {{ … : {self.value} }}  [{self.specificity}]"
@@ -288,10 +340,15 @@ class Won:
 
 @dataclass(frozen=True)
 class Rule:
+    """One selector of a selector list, with the block it shares. `block` says
+    which rule it came from: two selectors of one list that tie each other are
+    one set of declarations written once, and nothing is settled by their order."""
+
     selector: str
     specificity: tuple[int, int, int]
     order: int
     declarations: dict[str, tuple[str, bool]]
+    block: int
 
 
 def _declarations(body: str) -> dict[str, tuple[str, bool]]:
@@ -314,17 +371,20 @@ class Sheet:
     def __init__(self, css: str) -> None:
         css = _COMMENT.sub(" ", css)
         self.rules: list[Rule] = []
-        for prelude, body in _blocks(css):
+        for block, (prelude, body) in enumerate(_blocks(css)):
             if prelude.startswith("@"):
                 continue  # a different condition; see the module docstring
             declarations = _declarations(body)
             if not declarations:
                 continue
             for one in split_list(prelude):
-                self.rules.append(Rule(one, specificity(one), len(self.rules), declarations))
+                self.rules.append(
+                    Rule(one, specificity(one), len(self.rules), declarations, block)
+                )
 
     def winner(self, path: list[El], prop: str) -> Won | None:
         """The declaration a browser would use, or None if nothing sets it."""
+        path = _as_styled_for(path, prop)
         best: Won | None = None
         rank = None
         for rule in self.rules:
@@ -335,7 +395,8 @@ class Sheet:
             value, important = rule.declarations[prop]
             here = (important, rule.specificity, rule.order)
             if rank is None or here > rank:
-                rank, best = here, Won(rule.selector, value, rule.specificity, rule.order)
+                rank = here
+                best = Won(rule.selector, value, rule.specificity, rule.order, rule.block)
         return best
 
     def value(self, path: list[El], prop: str) -> str | None:
@@ -345,6 +406,7 @@ class Sheet:
     def selectors_reaching(self, path: list[El], prop: str) -> list[Rule]:
         """Every rule that sets `prop` on this element, heaviest last. For saying
         what a losing rule lost to."""
+        path = _as_styled_for(path, prop)
         reaching = [
             rule
             for rule in self.rules
