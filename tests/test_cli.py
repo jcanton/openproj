@@ -86,6 +86,34 @@ def test_render_writes_the_three_pages(seed_root: Path, tmp_path: Path):
         assert (tmp_path / name).is_file()
 
 
+def test_render_writes_and_names_only_the_views_the_plan_has(
+    seed_root: Path, tmp_path: Path, capsys
+):
+    """`views` in `config/defaults.yaml` reaches the export through the resolver,
+    and the line `render` prints names the files it wrote and no others.
+
+    Any `views:` the corpus already carries is dropped before this one is written:
+    a second key is a DuplicateKeyError, which loses the whole file as Unreadable
+    and would export every view while looking like it had read the setting.
+    """
+    import shutil
+
+    root, out = tmp_path / "plan", tmp_path / "out"
+    shutil.copytree(seed_root, root)
+    defaults = root / "config" / "defaults.yaml"
+    kept = [
+        line
+        for line in defaults.read_text(encoding="utf-8").splitlines()
+        if not line.startswith("views:")
+    ]
+    defaults.write_text("\n".join([*kept, "views: [cycles, graph, timeline]", ""]), "utf-8")
+
+    assert main(["render", str(root), str(out)]) == 0
+    written = "index.html, detail.html, cycles.html, graph.html, timeline.html, help.html"
+    assert capsys.readouterr().out.splitlines() == [f"wrote {written} to {out}"]
+    assert sorted(path.name for path in out.glob("*.html")) == sorted(written.split(", "))
+
+
 def test_schedule_json_round_trips(seed_root: Path, capsys):
     assert main(["schedule", str(seed_root), "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)

@@ -176,6 +176,43 @@ def test_the_export_carries_drawings_as_well_as_assets(seed_index, tmp_path: Pat
     assert (out / "drawings" / "draw-a1b2c3.png").is_file()
 
 
+def test_the_export_writes_only_the_views_the_plan_has(seed_index: Index, tmp_path: Path):
+    """A plan with three views exports those three, the landing, the record page
+    and Help — and no written page links to a file that was not written.
+
+    The export wrote all ten files whatever the plan said, and drew every page
+    with the bare `STATIC`, whose nav is every view. Cutting the files without the
+    links would leave `table.html` named in the nav of every page it did write, so
+    the links are read out of the parsed pages rather than trusted: a page drawn
+    with the wrong `Links` fails here on its first nav item.
+    """
+    views = ("cycles", "graph", "timeline")
+    written = render_static(seed_index.model_copy(update={"views": views}), tmp_path)
+
+    assert written == (
+        "index.html",
+        "detail.html",
+        "cycles.html",
+        "graph.html",
+        "timeline.html",
+        "help.html",
+    )
+    assert sorted(path.name for path in tmp_path.iterdir()) == sorted(written)
+    linked: set[str] = set()
+    for page in written:
+        for one in elements(read(tmp_path, page)):
+            for name in ("href", "action"):
+                target = one.attrs.get(name, "")
+                path = target.partition("#")[0].partition("?")[0]
+                if "://" in target or not path.endswith(".html"):
+                    continue
+                assert path in written, f"{page} links to {target}, which was not written"
+                linked.add(path)
+    # Not vacuous: every view that is on was found as a link somewhere, so the
+    # parse above read the nav it was meant to be reading.
+    assert {f"{view}.html" for view in views} <= linked, linked
+
+
 def fetches_nothing(body: str, where: str) -> None:
     """Every way a page can ask the network for a file, in one place.
 
