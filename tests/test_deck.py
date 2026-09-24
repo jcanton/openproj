@@ -703,9 +703,23 @@ def test_the_deck_is_not_in_the_nav_and_lights_the_cycle_it_is_of(deck: str):
 def test_the_cycle_page_offers_the_deck_only_where_there_is_one(index: Index):
     """`links.deck` is empty in a static export for the reason `links.new` is:
     the export writes one file per view of the whole plan and has nowhere to put
-    a cycle number. A link to a file nobody wrote is worse than no link."""
-    assert "/deck/37" in render_cycle(index, 37, ROUTES, base_commit="deadbee")
-    assert "deck" not in re.findall(r'href="([^"]*)"', render_cycle(index, 37, STATIC))
+    a cycle number. A link to a file nobody wrote is worse than no link.
+
+    Asked of the link's words and not of its href. The href of a link whose guard
+    was dropped is the blank field plus the number — `href="37"` — and a check
+    that no href *was* "deck" passed with the guard gone.
+    """
+    from pages import elements
+
+    def offered(page: str) -> list[str]:
+        return [
+            one.attrs.get("href", "")
+            for one in elements(page)
+            if one.tag == "a" and one.text == "Review deck →"
+        ]
+
+    assert offered(render_cycle(index, 37, ROUTES, base_commit="deadbee")) == ["/deck/37"]
+    assert offered(render_cycle(index, 37, STATIC)) == []
 
 
 def test_no_slide_in_the_shipped_demo_is_a_heading_over_an_empty_page(demo_index: Index):

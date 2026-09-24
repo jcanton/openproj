@@ -7068,6 +7068,14 @@ def _dead_ends(client: TestClient, url: str, page: str, views, kinds) -> list[st
     `SWITCHED_BY_QUERY` is read by what each of its two rows means, and held to
     being exactly those two, so a third query-gated page fails here until this
     has been taught to read it.
+
+    **Resolving is also what hides a blanked field.** A view that is off has its
+    `Links` field set to `""`, so a link site that forgot its guard draws the
+    suffix alone — `<a href="37">Review deck →</a>` on `/cycle/37` — and that
+    joins to `/cycle/37`, which is on. So a target that is empty, or relative
+    without being a query or a fragment, is a dead end by its shape: that is
+    what `{{ links.X }}{{ suffix }}` writes when `X` is off, and no page this
+    server draws writes one on purpose.
     """
     from fastapi.routing import APIRoute
 
@@ -7078,6 +7086,9 @@ def _dead_ends(client: TestClient, url: str, page: str, views, kinds) -> list[st
     for one in elements(page):
         target = one.attrs.get({"a": "href", "form": "action"}.get(one.tag, ""))
         if target is None:
+            continue
+        if not re.match(r"[/?#]|[a-zA-Z][a-zA-Z0-9+.-]*:", target):
+            found.append(f"<{one.tag}> {target!r} on {url} is a blanked link")
             continue
         where = urlparse(urljoin(f"http://testserver{url}", target))
         if where.netloc != "testserver":
@@ -7176,6 +7187,13 @@ def test_a_view_that_is_off_is_off_everywhere(tmp_path: Path, view: str):
                 for one in elements(record)
                 if one.tag == "a" and "slide-view" in one.attrs.get("class", "").split()
             ], "the record page offers a slide in a plan with no deck"
+        if "deck" in off and "cycles" in views:
+            # By its words as well as by where it leads: the sweep above would
+            # see a guard dropped as a blanked link, and this says which one.
+            cycle = elements(client.get("/cycle/37").text)
+            assert not [one for one in cycle if one.tag == "a" and "deck" in one.text.lower()], (
+                "/cycle/37 offers a Review deck in a plan with no deck"
+            )
 
 
 @pytest.mark.parametrize("kind", OPTIONAL_KINDS)
@@ -7261,6 +7279,7 @@ def test_a_kind_that_is_off_is_refused_at_every_door(tmp_path: Path, kind: str):
             if one.tag == "tr" and "data-id" in one.attrs
         ]
         assert record_id in listed, listed
+
 
     # The create form asks the switch after the word and before the sign-in: a
     # signed-out reader told to sign in would sign in and then be told the kind
