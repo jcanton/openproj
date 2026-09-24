@@ -662,6 +662,20 @@ const CAN_HIDE_THE_NATIVE_BUTTON =
 // date box becomes this widget at all, and the wrapper is the same decision.
 function wrapForClipping(box) {
   if (CAN_HIDE_THE_NATIVE_BUTTON || COARSE.matches) return;
+  // **Only a box that wears `.field`, because that class is exactly what the
+  // rule carrying the wrapper's border names.** The wrapper takes the box over
+  // and the input inside it is stripped of its own, so wrapping a box whose
+  // border this app never drew leaves a field with no border at all — which is
+  // worse than the second calendar this is here to remove.
+  //
+  // The table is the case, and it is not hypothetical: its date box is built by
+  // `openEditor` with no class on it, wearing the browser's own border, and two
+  // rules reach it as a DIRECT child — `td.edit:has(> input[type="date"])` and
+  // `td.edit > input[type="date"]`. A span between them and the cell breaks both
+  // structurally, on Firefox only, on the one page that makes date boxes for a
+  // living. So a date cell in the table keeps Firefox's button and its two ways
+  // in; that is what it had before this, and it is not made worse here.
+  if (!box.classList.contains('field')) return;
   const parent = box.parentNode;
   if (!parent || (parent.classList && parent.classList.contains('datewrap'))) return;
   const wrap = document.createElement('span');

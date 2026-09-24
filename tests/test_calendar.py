@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 from browser import chrome, measured_in, measured_on_a_phone
 from cascade import El, Sheet, el
+from marionette import driving
 from pages import elements, render_paths, tags
 
 import openproj.render.calendar as calendar_module
@@ -455,7 +456,11 @@ def _page_with_a_date_field(index: Index, value: date) -> str:
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         f"<style>{calendar_module._CALENDAR_STYLE}</style></head><body>"
         '<form id="edit"><label for="start">Starts on</label>'
-        f'<input type="date" id="start" name="start_date" data-type="date"'
+        # `class="field"` because that is what a date box wears everywhere this
+        # app draws one into markup, and because the Firefox wrapper is only put
+        # around a box that has it — see `wrapForClipping`. Without it this page
+        # stopped being the record page's box and became the table's.
+        f'<input type="date" id="start" name="start_date" data-type="date" class="field"'
         f' value="{value.isoformat()}"></form>'
         f"{_calendar_js(index)}</body></html>"
     )
@@ -2093,3 +2098,131 @@ def test_a_browser_that_can_hide_its_own_button_is_left_alone(
     assert found["canHide"] is True, "this browser cannot hide it either, so the claim is untested"
     assert found["wrapped"] is False and found["wrappers"] == 0, found
     assert found["opened"] is True, "and the popup this is all for still opens"
+
+
+def test_firefox_is_left_with_one_calendar_and_a_whole_field(
+    seed_index: Index, tmp_path: Path
+):
+    """The engine the defect was reported from, asked in the engine.
+
+    **This test should have existed before the fix did.** The fix was checked by
+    rendering pages into headless Firefox and reading screenshots, and shipped
+    with a note saying Firefox is not in CI — which was simply wrong.
+    `tests/marionette.py` has driven Firefox here since 2026-09-03, for a card
+    defect Chrome could not see, and its docstring says it is for exactly this:
+    the questions Chrome answers wrongly. Chrome cannot answer this one at all,
+    because on Chrome there is no wrapper and nothing to clip.
+
+    **The real record page and not this file's one-box harness**, which is the
+    other half of what the screenshots missed. That harness inlines
+    `_CALENDAR_STYLE` and nothing else, so the rule carrying the wrapper's border
+    — which lives beside `input.field` in `_DETAIL_STYLE` — is not on it. Written
+    against the harness this passed on three claims and failed on the border, and
+    the failure was not the harness being unrealistic: it was the table's
+    situation exactly, a bare date box on a page with no field rule. A page
+    assembled for a test is a page whose stylesheet nobody composed.
+
+    Four claims, because three of them hold with the field visibly broken:
+
+    - the gate is the capability and not a name, so this browser is here because
+      it cannot hide the button rather than because it is called Firefox;
+    - the box is wrapped, which is the script's half;
+    - the WRAPPER carries the border and the input carries none, which is the
+      stylesheet's half — an input still owning its border under the clip is the
+      version that leaves a box open on the right, and that measures perfectly
+      well in every unit except the one a person uses;
+    - and the clipped strip does not answer a click, which is the whole point: a
+      button that is only invisible is still a second calendar.
+    """
+    rid = next(i for i, r in seed_index.plan.items() if r.kind == "task")
+    page = render_detail(seed_index, only=rid, base_commit="deadbee", may_write=True)
+
+    with driving(page, tmp_path / "firefox-calendar.html") as browser:
+        found = browser.js("""(() => {
+          const box = document.querySelector('input.field[type="date"]');
+          if (!box) return {missing: true};
+          box.scrollIntoView({block: 'center'});
+          const wrap = box.parentNode;
+          const seen = getComputedStyle(box), around = getComputedStyle(wrap);
+          const r = box.getBoundingClientRect();
+          const over = document.elementFromPoint(r.right - 6, r.top + r.height / 2);
+          return {
+            missing: false,
+            canHide: CSS.supports('selector(::-webkit-calendar-picker-indicator)'),
+            wrapped: wrap.classList.contains('datewrap'),
+            wrapBorder: around.borderRightWidth,
+            wrapDisplay: around.display,
+            boxBorder: seen.borderRightWidth,
+            clipped: seen.clipPath !== 'none',
+            overTheStrip: over === box ? 'the box' : 'something else',
+          };
+        })()""")
+
+    assert found["missing"] is False, "the record page drew no date field, so nothing was asked"
+    assert found["canHide"] is False, (
+        "this Firefox hides the native button after all, so the wrapper is no "
+        "longer the fix and this test measures a thing that need not exist"
+    )
+    assert found["wrapped"] is True, found
+    assert found["wrapDisplay"] == "block", f"the wrapper draws no box: {found}"
+    assert found["wrapBorder"] == "1px" and found["boxBorder"] == "0px", (
+        f"the border is on the clipped element, so the field loses a side: {found}"
+    )
+    assert found["clipped"] is True, found
+    assert found["overTheStrip"] == "something else", (
+        "the native button is still under the pointer, so it still opens a second calendar"
+    )
+
+
+def test_a_date_box_with_no_field_rule_behind_it_is_not_wrapped(
+    seed_index: Index, tmp_path: Path
+):
+    """The table builds its date box with no class on it, wearing the browser's
+    own border, and reaches it with two DIRECT-child selectors —
+    `td.edit:has(> input[type="date"])` and `td.edit > input[type="date"]`.
+
+    A span between that box and its cell breaks both structurally, and the
+    wrapper would carry no border either, because the rule that draws one names
+    `input.field`. So the result of wrapping it is a date cell with no box at all
+    and its column rules switched off, on Firefox only, on the one page that
+    makes date boxes for a living.
+
+    Which is why the wrapper asks for `.field` rather than for a date box. This
+    is the negative half and it is the one that would have caught the defect:
+    written against a page that HAS the field rule, every claim above passes
+    while the table is broken.
+    """
+    page = _page_with_a_date_box_that_is_not_a_field(seed_index)
+
+    with driving(page, tmp_path / "firefox-bare.html") as browser:
+        found = browser.js("""(() => {
+          const box = document.getElementById('bare');
+          return {
+            canHide: CSS.supports('selector(::-webkit-calendar-picker-indicator)'),
+            wrapped: box.parentNode.classList.contains('datewrap'),
+            parentTag: box.parentNode.tagName,
+            clipped: getComputedStyle(box).clipPath !== 'none',
+          };
+        })()""")
+
+    assert found["canHide"] is False, "not the browser this is about"
+    assert found["wrapped"] is False, f"a classless date box was wrapped: {found}"
+    assert found["parentTag"] == "TD", f"something was inserted around it: {found}"
+    assert found["clipped"] is False, "and it keeps its own border, uncut"
+
+
+def _page_with_a_date_box_that_is_not_a_field(index: Index) -> str:
+    """A date box shaped the way the table's is: no class, inside a `td.edit`.
+
+    The cell is real because the claim is about a direct-child selector; a box in
+    a `<div>` would be wrapped or not wrapped without saying anything about the
+    rules the table actually carries.
+    """
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        f"<style>{calendar_module._CALENDAR_STYLE}</style></head><body>"
+        '<table><tbody><tr><td class="edit">'
+        '<input type="date" id="bare" data-type="date" value="2026-09-18">'
+        "</td></tr></tbody></table>"
+        f"{_calendar_js(index)}</body></html>"
+    )
