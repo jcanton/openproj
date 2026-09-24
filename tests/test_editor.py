@@ -45,6 +45,7 @@ from test_web import (
 )
 
 from openproj.auth import sign_session
+from openproj.render import preview_html
 from openproj.render.tokens import _over, _percent
 from openproj.web import MAX_ASSET_BYTES, SESSION_COOKIE, create_app
 
@@ -4208,6 +4209,85 @@ def test_the_two_panes_scroll_to_the_same_line(client: TestClient, tmp_path: Pat
     assert abs(got["settled"]["pane"] - got["blockOfEightyTwo"]) < 2
 
 
+# A list whose points are nothing like each other in height: the first wraps for
+# a screenful and the other eight are two words each, then enough paragraphs
+# below for both panes to scroll. The rendered side is the real renderer's, not a
+# stub's, because what is under test is which blocks it stamps.
+_LISTED_BODY = "\n".join(
+    ["1. " + ("alpha " * 400).strip()]
+    + [f"{n}. point {n}" for n in range(2, 10)]
+    + [""]
+    + [f"filler {n}\n" for n in range(1, 101)]
+)
+
+_LISTING = (
+    f"const LISTED_BODY = {json.dumps(_LISTED_BODY)};"
+    + "window.fetch = async () => ({ok: true, json: async () => ({html: "
+    + json.dumps(preview_html(_LISTED_BODY))
+    + "})});"
+    + """
+const area = document.querySelector('textarea[name=body]');
+const pane = document.getElementById('body-preview');
+const settle = ms => new Promise(go => setTimeout(go, ms));
+
+flipEditing();
+area.value = LISTED_BODY;
+area.dispatchEvent(new Event('input', {bubbles: true}));
+document.getElementById('view-both').click();
+await settle(500);
+
+// The source side's ground truth off the textarea itself, as the test above
+// does it: every line is one row except the first, so the box's own
+// scrollHeight says how many rows that one took.
+const style = getComputedStyle(area);
+const step = parseFloat(style.lineHeight);
+const padTop = parseFloat(style.paddingTop);
+const lines = LISTED_BODY.split('\\n').length;
+const rows = Math.round(
+  (area.scrollHeight - padTop - parseFloat(style.paddingBottom)) / step);
+const longRows = rows - (lines - 1);
+// Line 5 is the fifth point: the long one above it and three short ones.
+area.scrollTop = padTop + (longRows + 3) * step;
+area.dispatchEvent(new Event('scroll'));
+await settle(90);
+
+const five = [...pane.querySelectorAll('li')].find(li => li.textContent.trim() === 'point 5');
+return {longRows, whereIsFive: five.getBoundingClientRect().top - pane.getBoundingClientRect().top};
+"""
+)
+
+
+def test_a_long_list_scrolls_point_by_point(client: TestClient, tmp_path: Path):
+    """Each point of a list is a place the two panes meet, not only the list.
+
+    jcanton, 2026-09-24, on a record whose `## Problems` is nine numbered points:
+    the heading under the list was 180px lower in the preview than in the source.
+    The renderer stamped source lines on top-level blocks only, so the whole list
+    was one interval and the sync interpolated across it by line number — while
+    the points themselves wrap to different heights on the two sides, which is
+    what prose in a half-width box always does.
+
+    Here the fifth point is on line 5 and below a first point that is most of the
+    list. Interpolated across the list it is put four ninths of the way down, a
+    screenful from where it is drawn. Measured off two rects, so this is what a
+    reader sees and not what either side of the sync computed.
+    """
+    got = measured_in(
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "listed.html",
+        1400,
+        _LISTING,
+        patience=1800,
+    )
+
+    assert got["longRows"] > 5, "the first point did not wrap, so no height here differs"
+    assert abs(got["whereIsFive"]) < 2, (
+        f"the fifth point is {got['whereIsFive']:.0f}px from the top of the pane after "
+        "the source was scrolled to it: the sync is interpolating across the list"
+    )
+
+
 _LIVE = (
     _STUB_PREVIEW
     + """
@@ -4618,8 +4698,8 @@ def test_a_session_never_takes_the_page_away_and_cancel_lands_on_the_landing(
 
 # The same question as `_LEAVING`, asked at the door Cancel is not: a bare
 # `showEditing(false)`, the call every door out of a session ends in. The
-# room's own save reloads nowadays — the test above pins that — so what this
-# drives is the shared ending itself, not a door invented for a test.
+# room's own save ends nothing nowadays — the test above pins that — so what
+# this drives is the shared ending itself, not a door invented for a test.
 _SAVED_IN_A_ROOM = (
     _STUB_PREVIEW
     + """
@@ -4671,14 +4751,21 @@ _SAVING_FROM_A_VIEW = """
   box.value = 'A paragraph typed in the split view.\\n';
   box.dispatchEvent(new Event('input', {bubbles: true}));
   await save();
-  return {view: VIEW, reloads: __reloads()};
+  const kept = {
+    view: VIEW, reloads: __reloads(), base: BASE.value,
+    editing: document.querySelector('article.record').classList.contains('editing'),
+    counter: document.getElementById('unsaved').textContent,
+  };
+  // And out of the session, which is when the read view under it is looked at.
+  chooseView('view');
+  return {kept, left: __reloads()};
 })()
 """
 
-# What the page does with the word the save before it left behind. Through `VIEW`
-# and `classList.contains`, which is what the page itself writes and reads: the
-# shim has no `click()` on an element and its `classList` is not iterable, and a
-# test that needs either is a test about the harness.
+# What the page does with the word a reload left behind. Through `VIEW` and
+# `classList.contains`, which is what the page itself writes and reads: the shim
+# has no `click()` on an element and its `classList` is not iterable, and a test
+# that needs either is a test about the harness.
 _WHERE_IT_LANDS = """
 (() => {
   const article = document.querySelector('article.record');
@@ -4688,49 +4775,307 @@ _WHERE_IT_LANDS = """
 """
 
 
-def test_saving_keeps_the_view_it_was_saved_from(client: TestClient):
-    """jcanton, 2026-08-25: "currently clicking save in the editor exits edit
-    mode and sends you back to preview, let's change that and stay in whatever
-    mode the user is in (edit or side-by-side)".
+def test_a_save_stays_where_it_was_made(client: TestClient):
+    """jcanton, 2026-09-24: *"`:w` with vim keys works and saves the record,
+    however it also removes the cursor from the editor and reloads the page,
+    effectively interrupting editing."*
 
-    The reload itself is not the thing to remove — the read view under the box is
-    HTML the server rendered at the commit the page loaded at, and a save that
-    does not reload leaves the document and the facts as they were. What the
-    reload threw away was the mode, and this drives both halves of carrying it
-    across: the save writes the word, and the page that comes up reads it.
+    Save used to end in `location.reload()`, with the view and the top line
+    carried across it and the caret, the focus and the undo history lost to it.
+    It commits in place now: the page's base moves to the commit the answer
+    names, the counter goes back to nothing, and the session and the view are
+    the ones the press was made in.
 
-    Driven rather than read off the source, because the two halves are in two
-    script blocks that never run in the same order they are written in, and a
-    grep for `keepView` would pass on a page where nothing calls it.
+    What the reload was FOR is paid on the way out instead: the read view under
+    the box is the server's rendering of the commit the page loaded at (jcanton,
+    2026-08-20: "it shows the un-edited text until I refresh"), so leaving the
+    session after a save reloads — and with nothing unsaved, that is the whole
+    of what it has to do.
 
     `chooseView` rather than a click on the segment: the node shim has no
-    `click()` on an element, and the segment is not what this is about —
-    `test_opening_a_session_moves_nothing_above_the_document` drives the buttons
-    in a real browser. What this needs is a live session in a named view, which
-    is what the function the button calls does.
+    `click()` on an element, and the segment is not what this is about.
     """
     from test_injection import run_js
 
     page = client.get(f"/detail/{TASK}{PLAIN}").text
-
     saving = run_js(
         page,
         _SAVING_FROM_A_VIEW,
         page=True,
-        replies=[{"status": 200, "json": {"commit": "0" * 40}}],
+        replies=[{"status": 200, "json": {"commit": "0" * 40, "outcome": "committed"}}],
     )
     assert not saving["errors"], saving["errors"]
-    assert saving["value"]["reloads"] == 1, (
-        f"the save did not reload, so this test drove nothing: {saving['value']}"
+    assert [call["method"] for call in saving["calls"]] == ["PATCH"], (
+        f"the save never went out, so this test drove nothing: {saving['calls']}"
     )
-    assert saving["tabbed"].get("openproj:resumed") == "both", (
-        "a save from the split view left nothing behind saying so, so the page "
-        f"it reloads into cannot come back to it: {saving['tabbed']}"
+    assert saving["value"]["kept"] == {
+        "view": "both",
+        "reloads": 0,
+        "base": "0" * 40,
+        "editing": True,
+        "counter": "Nothing changed yet",
+    }, f"the save did not land where it was made: {saving['value']['kept']}"
+    assert "openproj:resumed" not in saving["tabbed"], (
+        "a save that does not reload left a word for a reload in the tab, so the "
+        "next page this tab opens will open as an editor"
+    )
+    assert saving["value"]["left"] == 1, (
+        "leaving the session after a save did not reload, so the read view under "
+        "it is the body as it was before the save"
     )
 
-    # And the page that comes up. Not the same run — a reload is a new document
-    # with a new script, which is the whole reason this goes through the tab's
-    # own store rather than through a variable.
+
+# Saved, then typed some more, then left.
+_LEFT_WITH_MORE_TYPED = """
+(async () => {
+  chooseView('edit');
+  const box = document.querySelector('[name=body]');
+  box.value = 'The paragraph that was saved.\\n';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  await save();
+  box.value = 'The paragraph that was saved.\\nAnd a line that was not.\\n';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  chooseView('view');
+  return {reloads: __reloads(), base: BASE.value};
+})()
+"""
+
+
+def test_leaving_with_unsaved_work_carries_it_across_the_reload(client: TestClient):
+    """The one way out that used to lose a reader to the editor. The read view is
+    behind the save, and a reload is the only thing that redraws all of it — the
+    diagrams' loader runs once, at load — but a draft forces a session on load,
+    so a plain reload would put somebody who asked to read straight back into
+    the editor.
+
+    So the draft is written NOW, on the commit just made — not on the draft
+    timer's next tick, which a reload would never reach — and a one-shot lands
+    the next page on the read view. The second half is that next page: the draft
+    back in the box, the session closed, and the bar saying there is work in it.
+    """
+    from test_injection import run_js
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    left = run_js(
+        page, _LEFT_WITH_MORE_TYPED, page=True,
+        replies=[{"status": 200, "json": {"commit": "0" * 40, "outcome": "committed"}}],
+    )
+    assert not left["errors"], left["errors"]
+    assert left["value"]["reloads"] == 1, "leaving after a save did not redraw the read view"
+    assert left["tabbed"].get("openproj:resumed") == "view", (
+        f"nothing says the next page is the read view, so the draft opens the editor: "
+        f"{left['tabbed']}"
+    )
+    draft = json.loads(left["stored"][f"openproj:draft:2:{TASK}"])
+    assert draft == {
+        "base": "0" * 40,
+        "text": "The paragraph that was saved.\nAnd a line that was not.\n",
+    }, f"the draft that goes across the reload is not the box on the new commit: {draft}"
+
+    landed = run_js(
+        page, _WHERE_IT_LANDS, page=True,
+        storage={f"openproj:draft:2:{TASK}": json.dumps(draft)},
+        session={"openproj:resumed": "view"},
+    )
+    assert not landed["errors"], landed["errors"]
+    assert landed["value"] == {"view": "view", "editing": False, "split": False}, (
+        f"the reload the reader left for did not land on the read view: {landed['value']}"
+    )
+
+
+def test_leaving_where_no_draft_can_be_kept_reloads_nothing(client: TestClient):
+    """A browser that keeps no drafts — a private window, a blocked store — would
+    lose the unsaved line to that reload. So there is no reload, and the page
+    says why the text under the box is older than the save it just made."""
+    from test_injection import run_js
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    got = run_js(
+        page, _LEFT_WITH_MORE_TYPED, page=True, storage="denied",
+        replies=[{"status": 200, "json": {"commit": "0" * 40, "outcome": "committed"}}],
+    )
+    assert not got["errors"], got["errors"]
+    assert got["value"]["reloads"] == 0, "a reload threw away writing that exists nowhere else"
+
+
+# Saved, then a FIELD changed, then left.
+_LEFT_WITH_A_FIELD_CHANGED = """
+(async () => {
+  chooseView('edit');
+  const box = document.querySelector('[name=body]');
+  box.value = 'Saved.\\n';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  await save();
+  const tags = document.querySelector('[name=tags]');
+  tags.value = 'changed-after-the-save';
+  tags.dispatchEvent(new Event('input', {bubbles: true}));
+  chooseView('view');
+  return {reloads: __reloads(), said: document.getElementById('state').textContent};
+})()
+"""
+
+
+def test_leaving_with_a_field_changed_after_a_save_reloads_nothing(client: TestClient):
+    """Found in the second review. A draft is the body and nothing else, so a
+    reload after a changed title, status or tag throws the change away without a
+    word — the draft text equals the server's and nothing is restored. No reload,
+    and the page says why the text under the box is older than the save."""
+    from test_injection import run_js
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    got = run_js(
+        page, _LEFT_WITH_A_FIELD_CHANGED, page=True,
+        replies=[{"status": 200, "json": {"commit": "0" * 40, "outcome": "committed"}}],
+    )
+    assert not got["errors"], got["errors"]
+    assert got["value"]["reloads"] == 0, "a reload threw away a field nobody saved"
+    assert "before the last save" in got["value"]["said"], got["value"]
+
+
+# Saved into a merge, with a line typed while the request was in the air.
+_TYPED_WHILE_A_MERGE_WAS_IN_THE_AIR = """
+(async () => {
+  chooseView('both');
+  const box = document.querySelector('[name=body]');
+  const base = BASE.value;
+  box.value = 'Mine.\\n';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  const pressed = save();
+  box.value = 'Mine.\\nTyped while it was saving.\\n';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  await pressed;
+  return {base, reloads: __reloads()};
+})()
+"""
+
+
+def test_a_line_typed_during_a_merged_save_crosses_the_reload(client: TestClient):
+    """The merge reloads, and a keystroke made while the save was in the air is
+    in no commit. It goes across as a draft on the base it was TYPED on — not on
+    the merge — so saving it again merges with the paragraph that landed instead
+    of writing over it."""
+    from test_injection import run_js
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    got = run_js(
+        page, _TYPED_WHILE_A_MERGE_WAS_IN_THE_AIR, page=True,
+        replies=[{"status": 200, "json": {"commit": "0" * 40, "outcome": "merged"}}],
+    )
+    assert not got["errors"], got["errors"]
+    assert got["value"]["reloads"] == 1, got["value"]
+    draft = json.loads(got["stored"].get(f"openproj:draft:2:{TASK}", "null") or "null")
+    assert draft == {
+        "base": got["value"]["base"],
+        "text": "Mine.\nTyped while it was saving.\n",
+    }, f"the line typed during the save did not cross the reload on its own base: {draft}"
+
+
+# Opened by a link that says `?edit`, saved, and left.
+_LEFT_A_LINKED_EDITOR = """
+(async () => {
+  const replaced = [];
+  history.replaceState = (state, title, url) => replaced.push(url);
+  const box = document.querySelector('[name=body]');
+  box.value = 'Saved.\\n';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  await save();
+  chooseView('view');
+  return {reloads: __reloads(), replaced};
+})()
+"""
+
+
+def test_leaving_an_editor_a_link_opened_does_not_reload_back_into_it(client: TestClient):
+    """`?edit` beats every one-shot on load and a reload keeps the query string,
+    so leaving after a save would reload straight back into the editor. The flag
+    comes out of the address first; the rest of the query stays."""
+    from test_injection import run_js
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    got = run_js(
+        page, _LEFT_A_LINKED_EDITOR, page=True, here=f"/detail/{TASK}?edit&keep=1",
+        replies=[{"status": 200, "json": {"commit": "0" * 40, "outcome": "committed"}}],
+    )
+    assert not got["errors"], got["errors"]
+    assert got["value"]["reloads"] == 1, got["value"]
+    assert got["value"]["replaced"] == [f"/detail/{TASK}?keep=1"], got["value"]
+
+
+# A save the store had to merge: somebody else's paragraph is in the commit and
+# not in the box.
+_SAVED_INTO_A_MERGE = """
+(async () => {
+  chooseView('both');
+  const box = document.querySelector('[name=body]');
+  box.value = 'Mine.\\n';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  await save();
+  return {reloads: __reloads()};
+})()
+"""
+
+
+def test_a_save_that_merged_reloads_to_show_what_it_merged(client: TestClient):
+    """Found in review of the save that stays put. A merged commit holds a
+    paragraph this page has never seen, and keeping the box as the baseline would
+    make the next save — against this very commit, so no conflict — write the
+    box verbatim and take that paragraph out of the file. The reload is what
+    brings it into the box, so a merge still reloads, into the same view."""
+    from test_injection import run_js
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    got = run_js(
+        page, _SAVED_INTO_A_MERGE, page=True,
+        replies=[{"status": 200, "json": {"commit": "0" * 40, "outcome": "merged"}}],
+    )
+    assert not got["errors"], got["errors"]
+    assert got["value"]["reloads"] == 1, (
+        "a merged save stayed in place, so somebody else's paragraph is in the file "
+        "and not in the box, and the next save deletes it"
+    )
+    assert got["tabbed"].get("openproj:resumed") == "both", got["tabbed"]
+
+
+# Saved, and the session left before the answer came back.
+_LEFT_BEFORE_THE_ANSWER = """
+(async () => {
+  chooseView('edit');
+  const box = document.querySelector('[name=body]');
+  box.value = 'Saved on the way out.\\n';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  const pressed = save();
+  chooseView('view');
+  const before = __reloads();
+  await pressed;
+  return {before, after: __reloads()};
+})()
+"""
+
+
+def test_a_save_that_lands_after_the_session_was_left_still_redraws(client: TestClient):
+    """Save, then Escape before the answer: `freshen` ran on the way out while
+    there was nothing to freshen yet, and the read view on the screen is from
+    before the save — jcanton's report of 2026-08-20, by another road."""
+    from test_injection import run_js
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    got = run_js(
+        page, _LEFT_BEFORE_THE_ANSWER, page=True,
+        replies=[{"status": 200, "json": {"commit": "0" * 40, "outcome": "committed"}}],
+    )
+    assert not got["errors"], got["errors"]
+    assert got["value"] == {"before": 0, "after": 1}, got["value"]
+
+
+def test_a_reload_comes_back_into_the_view_it_left(client: TestClient):
+    """The shell's "the plan changed — reload" link reloads a page somebody may be
+    writing in, and `keepView` carries the session across it — the job that was
+    Save's until Save stopped reloading. The page that comes up reads the word
+    and spends it; the control is every load that did not come from a reload,
+    which lands on the page."""
+    from test_injection import run_js
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
     landed = run_js(page, _WHERE_IT_LANDS, page=True, session={"openproj:resumed": "both"})
     assert not landed["errors"], landed["errors"]
     assert landed["value"] == {"view": "both", "editing": True, "split": True}, (
@@ -4741,12 +5086,9 @@ def test_saving_keeps_the_view_it_was_saved_from(client: TestClient):
         "opens will open as an editor"
     )
 
-    # The control, and it is what every load that did not just save gets: no
-    # word, no session, the landing. Without this the test above passes on a
-    # page that opens the split for everybody.
     ordinary = run_js(page, _WHERE_IT_LANDS, page=True)
     assert ordinary["value"] == {"view": "view", "editing": False, "split": False}, (
-        f"a page nobody saved from opened in a session: {ordinary['value']}"
+        f"a page nobody reloaded into opened in a session: {ordinary['value']}"
     )
 
 
@@ -4757,7 +5099,7 @@ def test_a_link_beats_the_view_a_save_left_behind_and_still_spends_it(
 
     `?view` is somebody handing you a way of looking at this document and it wins
     — that rule is older than this key. What the rule cannot be allowed to do is
-    leave the word in the tab: a save whose landing was overruled by a link would
+    leave the word in the tab: a reload whose landing was overruled by a link would
     otherwise open an editor over the NEXT record this tab visits, which is the
     sticky-at-load behaviour the load branch is written to avoid.
     """
@@ -4780,33 +5122,30 @@ def test_a_link_beats_the_view_a_save_left_behind_and_still_spends_it(
     )
 
 
-def test_the_room_s_own_save_ends_the_session_by_leaving_the_page():
-    """How a room's save ends the session, read out of the product.
+def test_the_room_s_own_save_lands_in_place_and_leaves_nobody():
+    """How a room's save ends, read out of the product.
 
     It was `showEditing(false)` — the door that had no `showView` and was the
-    reason the surface stayed up — and it is a reload now, for a defect one layer
-    further out: the read view under the editor is HTML the server rendered at the
-    commit the page LOADED at, so closing the editor onto it showed the body as it
-    was until somebody refreshed (jcanton, 2026-08-20). A reload takes the surface
-    down on its way past, which is the same ending the path without a room has
-    always had.
-
-    The claim below — that ending a session by any door leaves the surface — is
-    unchanged and still worth driving: Cancel and the view toggle are doors too.
-
-    Since 2026-08-25 the reload is no longer how the session ENDS: `keepView`
-    carries the mode across it, so a save from the split view comes back into the
-    split (`test_saving_keeps_the_view_it_was_saved_from`). What this test says is
-    narrower than its name and always was — the branch reloads, and it does not
-    grow a fourth copy of leaving the surface — and both are still true.
+    reason the surface stayed up — then a reload, for a defect one layer further
+    out: the read view under the editor is HTML the server rendered at the
+    commit the page LOADED at (jcanton, 2026-08-20). The reload threw away the
+    caret, the focus and the undo history of the tab that pressed Save (jcanton,
+    2026-09-24, on `:w`), so the branch now reloads nobody and grows no copy of
+    leaving the surface: it hands the fields the press sent to `savedHere`, and
+    the read view is redrawn on the way out of the session instead
+    (`test_a_save_stays_where_it_was_made`).
     """
     from openproj.render import _COEDIT
 
     saved = re.search(r"if \(message\.t === 'saved'\) \{.*?\n    \}", str(_COEDIT), re.S)
     assert saved, "the room's `saved` branch is not where this test thinks it is"
-    assert "location.reload()" in saved.group(0), (
-        "a room's save no longer ends by leaving the page, so the read view under "
-        "the editor is whatever the server rendered before the save"
+    assert "location.reload()" not in saved.group(0), (
+        "a room's save reloads the page again, and takes the caret and the undo "
+        "history of whoever pressed it"
+    )
+    assert "savedHere(sent)" in saved.group(0), (
+        "the fields the press sent are not recorded as committed, so the counter "
+        "goes on counting them after the save"
     )
     assert "showView" not in saved.group(0), (
         "the `saved` branch has grown its own copy of leaving the surface — that "
@@ -4821,9 +5160,9 @@ def test_ending_a_session_leaves_the_surface_by_every_door(client: TestClient, t
     Three copies of `showView(null)` existed — `flipEditing`, the issue page's
     toggle, the note page's — and a fourth door had none: a Save in a room ended
     the session with a bare `showEditing(false)` and did not reload, leaving the
-    reader inside the full-page surface of the day. (It reloads now, for a
-    different defect — see the test above — so the door driven here is the one
-    Cancel and the view toggle use.) The surface itself is gone since
+    reader inside the full-page surface of the day. (It ends nothing now — see
+    the test above — so the door driven here is the one Cancel and the view
+    toggle use.) The surface itself is gone since
     2026-08-24, which retires the trap structurally; what this still pins is
     that the one `openproj:session` listener answers a door no click opened —
     end a session any way at all, and the page lands on the landing with its
@@ -6428,9 +6767,10 @@ def _with_a_long_body(page: str, lines: int = 400) -> str:
     )
 
 
-# And the tab as a save leaves it. A reload is a new document with a new script,
-# so the only way to ask what the page does with what the save wrote down is to
-# write it down and open the page — which is exactly what the product does.
+# And the tab as a reload leaves it. A reload is a new document with a new
+# script, so the only way to ask what the page does with what `keepView` wrote
+# down is to write it down and open the page — which is exactly what the product
+# does.
 def _as_if_a_save_had_just_reloaded(page: str, line: int | None) -> str:
     seed = "<script>sessionStorage.setItem('openproj:resumed', 'edit');"
     if line is not None:
@@ -6452,7 +6792,7 @@ _KEEPS_THE_LINE = r"""
   // given its document; a cached column of zeroes would make this a test about
   // the cache.
   sourcePoints = null;
-  // The call the two save paths make, and the whole of what this half is about.
+  // The call the reload link makes, and the whole of what this half is about.
   keepView();
   return {
     wrote: sessionStorage.getItem('openproj:resumed-at'),
@@ -6480,20 +6820,20 @@ _LANDED_WHERE_IT_LEFT = r"""
 """
 
 
-def test_a_save_comes_back_to_the_line_it_was_saved_from(client: TestClient, tmp_path: Path):
+def test_a_reload_comes_back_to_the_line_it_left_from(client: TestClient, tmp_path: Path):
     """jcanton, 2026-09-18: *"for some reason clicking save on editing a record
     resets the scroll to the top line of the editor box (while I'd prefer if it
     didn't)"*.
 
-    Save reloads — the read view under the box, the history and the base are all
-    the server's rendering of the commit the page loaded at — and a reload is a
-    new document with a new editor in it, scrolled where a new editor starts. The
-    view already crossed that gap in `openproj:resumed`; this is the other half
-    of "stay where you are", and it crosses the same way.
+    Save reloaded then, and a reload is a new document with a new editor in it,
+    scrolled where a new editor starts. Save no longer reloads
+    (`test_a_save_stays_where_it_was_made`); the plan-changed banner's reload
+    link still does, and it carries the view in `openproj:resumed` and the line
+    beside it. This is that second half, and it crosses the same way.
 
     Both halves, in two runs, because a reload is two page loads and a test that
     did it in one would be a test about a variable. The write is `keepView()`,
-    the call every save path makes; the read is a page opened with the tab in the
+    the call the reload link makes; the read is a page opened with the tab in the
     state that call leaves it in.
 
     **A line and not a pixel**, which is what the second assertion is really
@@ -6930,9 +7270,10 @@ def test_the_banners_reload_lands_back_in_the_view_it_was_pressed_from(
 
     `href=""` is the current address without its fragment, so it keeps `?edit`
     and `?both` for somebody who arrived by link. A session opened by pressing
-    Write is in no address at all: the mode lives in the page, and Save already
-    knows that — it calls `keepView()` before the reload IT needs, which puts the
-    mode in `sessionStorage` for `RESUMING` to pick up on the way back.
+    Write is in no address at all: the mode lives in the page, and Save knew that
+    — it called `keepView()` before the reload it needed then, which puts the
+    mode in `sessionStorage` for `RESUMING` to pick up on the way back. (Save
+    reloads only after a merge now; `test_a_save_stays_where_it_was_made`.)
 
     The banner's reload is the other reload on this page and it did not, so
     pressing it over an open editor closed the editor.
@@ -7093,6 +7434,50 @@ def test_colon_w_presses_save_and_says_so_when_there_is_nothing_to_press(
         f"{got['said']!r}"
     )
 
+
+
+# The other way into vim: the page is built with the default keymap and vim is
+# chosen in the status bar while it is open, through the surface's own
+# `setKeymap` — which is what that control calls.
+_WRITE_AFTER_CHOOSING_VIM = r"""
+  flipEditing();
+  await new Promise(r => setTimeout(r, 300));
+  const editor = SURFACE.editor;
+  SURFACE.setKeymap('vim');
+  const Vim = ace.require('ace/keyboard/vim').CodeMirror.Vim;
+  let presses = 0;
+  document.getElementById('save').addEventListener('click', event => {
+    presses++;
+    event.stopImmediatePropagation();
+    event.preventDefault();
+  }, true);
+  Vim.handleEx(editor.state.cm, 'w');
+  return {handler: String(editor.getKeyboardHandler().$id), presses};
+"""
+
+
+def test_colon_w_presses_save_when_vim_is_chosen_in_the_status_bar(
+    client: TestClient, tmp_path: Path
+):
+    """Found on 2026-09-24 while checking `:w` for the save that stays put: the
+    two ways into vim each carried their own list of what this page changes about
+    it, and the status bar's had two of the three. Choosing vim there gave `j`,
+    `k` and the clipboard, and `:w` went on logging "not implemented" until the
+    next reload."""
+    page = client.get(f"/detail/{TASK}?editor=ace").text
+    got = measured_in(
+        chrome(),
+        page,
+        tmp_path / "vim-chosen.html",
+        1400,
+        _WRITE_AFTER_CHOOSING_VIM,
+        query="?editor=ace",
+        patience=6800,
+    )
+    assert got["handler"] == "ace/keyboard/vim", "the keymap did not come on"
+    assert got["presses"] == 1, (
+        "`:w` in a keymap chosen from the status bar did not reach Save"
+    )
 
 _STICKY_EDITOR = r"""
   return {search: location.search, editor: EDITOR.editor,

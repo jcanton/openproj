@@ -3934,11 +3934,12 @@ function showMoved(message) {
   // and into the reading view with their draft folded away. Reported by jcanton
   // beside the banner itself.
   //
-  // `keepView` is the record page's, and it is the same call Save makes before
-  // the reload IT needs: the mode goes into `sessionStorage` and `RESUMING` puts
-  // it back. Guarded on the function rather than on a page name, because the
-  // shell is on every page and only one of them has a view to keep — the same
-  // shape `aceSurface` uses for the preferences block it cannot assume.
+  // `keepView` is the record page's: the mode goes into `sessionStorage` and
+  // `RESUMING` puts it back. Save made the same call before its own reload
+  // until it stopped reloading at all. Guarded on the function rather than on a
+  // page name, because the shell is on every page and only one of them has a
+  // view to keep — the same shape `aceSurface` uses for the preferences block it
+  // cannot assume.
   document.getElementById('movedgo').onclick = () => {
     if (typeof keepView === 'function') keepView();
   };
