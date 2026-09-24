@@ -3656,10 +3656,16 @@ def test_a_rendered_block_carries_the_source_line_it_came_from(seed_index: Index
     # for the browser's half to disagree with.
     assert ("ul", "3", "5") in at, "the list runs from line 3 to the blank line that ends it"
     assert ("p", "6", "6") in at, "and the paragraph under it is line 6"
-    # Only the blocks a reader scrolls past. Every paragraph inside every list
-    # item stamped too would be bytes on every page for a resolution nothing
-    # wants, and the one thing a scroll position interpolates between is these.
-    assert not [e for e in elements(page) if e.tag == "li" and "data-startline" in e.attrs]
+    # Every block that begins a line of its own, at any depth — the second point
+    # is a point of its own, because a list is not one interval to a reader
+    # scrolling through it. The first point begins on its list's line and at its
+    # list's pixel, so it is not stamped a second time, and nor is the paragraph
+    # inside either point.
+    assert ("li", "4", "5") in at, "the second point begins line 4"
+    stamped = [e for e in elements(page) if "data-startline" in e.attrs]
+    items = {e.attrs["data-startline"] for e in stamped if e.tag == "li"}
+    assert items == {"4"}, f"only the point that begins a line of its own: {items}"
+    assert not [e for e in stamped if e.tag == "p" and e.attrs["data-startline"] in ("3", "4")]
 
 
 def test_an_editable_page_reaches_the_network_no_more_than_a_read_only_one(seed_index: Index):

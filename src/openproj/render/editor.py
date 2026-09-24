@@ -381,6 +381,17 @@ function vimWritesThroughSave() {
   });
 }
 
+// Everything this page changes about vim, in one call, because there are two
+// ways into vim and each had its own list: the keymap a page is built with, and
+// the one chosen in the status bar while it is open. The second list had two of
+// the three, so choosing vim in the bar gave `j`, `k` and the clipboard and left
+// `:w` logging "not implemented" to nobody until the next reload.
+function vimAsHere() {
+  vimWalksTheScreen();
+  vimYanksToTheClipboard();
+  vimWritesThroughSave();
+}
+
 // Everything between this banner and the one that closes it is the only code on
 // these pages that knows the document may be being written in Ace. It builds the
 // same ten members `textareaSurface` does, so `applyMark`, `indentLines`,
@@ -550,11 +561,7 @@ function aceSurface(area, seeded) {
   const KEPT = typeof EDITOR === 'undefined' ? {keymap: 'default'} : EDITOR;
   if (KEPT.keymap !== 'default') {
     editor.setKeyboardHandler(KEPT.keymap === 'vim' ? 'ace/keyboard/vim' : null);
-    if (KEPT.keymap === 'vim') {
-      vimWalksTheScreen();
-      vimYanksToTheClipboard();
-      vimWritesThroughSave();
-    }
+    if (KEPT.keymap === 'vim') vimAsHere();
   }
 
   // **Ace measures its container when it is told to and never on its own.**
@@ -916,7 +923,7 @@ function aceSurface(area, seeded) {
     keymaps: typeof KEYMAPS === 'undefined' ? ['default'] : KEYMAPS,
     setKeymap(name) {
       editor.setKeyboardHandler(name === 'vim' ? 'ace/keyboard/vim' : null);
-      if (name === 'vim') { vimWalksTheScreen(); vimYanksToTheClipboard(); }
+      if (name === 'vim') vimAsHere();
       // And the claimed keys go back on, which is not a courtesy: Ace's
       // `setKeyboardHandler` pops every handler above its default one before
       // adding the new keymap, so a keymap change takes the link popup's keys
@@ -1185,7 +1192,7 @@ _COEDIT = Markup(r"""
 const COEDIT = (() => {
   // What every refusal returns: an object that says it is not live, so `save()`
   // above takes the path it took before any of this existed.
-  const asleep = {live: () => false, save: () => {}};
+  const asleep = {live: () => false, joined: () => false, save: () => {}};
   if (typeof YJS === 'undefined' || typeof WebSocket === 'undefined') return asleep;
 
   const doc = new YJS.Doc();
@@ -1269,6 +1276,7 @@ const COEDIT = (() => {
   // is not a reason to reload the page in front of you." That was the contract;
   // this flag is what makes the code keep it.
   let asked = false;    // THIS tab pressed Save, as against the room writing
+  let sent = null;      // the fields that press sent, for the `saved` that answers it
   let arrived = false;  // the socket has worked at least once
   let attempts = 0;
 
@@ -2021,30 +2029,19 @@ const COEDIT = (() => {
       // commit holds text that is already in every one of these editors, so the
       // shell's "somebody else changed this" banner is wrong about all of them.
       dispatchEvent(new CustomEvent('openproj:ours', {detail: message.commit}));
-      // And the tab that pressed Save reloads, exactly as the path without a
-      // room does. Only the tab that asked: everybody else in the room is still
-      // typing, and a commit somebody else made is not a reason to reload the
-      // page in front of you.
+      // The committed text moved for every member, so every member's read view
+      // is now behind — see `STALE` in `_VIEWS`. Only the tab that pressed Save
+      // knows which FIELDS went with it, because they came from its form.
       //
-      // The reload used to be how the editor CLOSED as well, and it is not any
-      // more: `keepView` below carries the mode across it, so Save commits and
-      // leaves you where you were writing. Pressing Save is a statement about
-      // the document and never about whether you are finished with it.
-      //
-      // This used to close the editor without reloading, on the grounds that the
-      // document is already what everybody in the room has. That was right about
-      // the document and wrong about the page: the read view underneath is HTML
-      // the server rendered at the commit this page LOADED at, so the editor
-      // closed onto the body as it was and the facts as they were, and it stayed
-      // that way until somebody refreshed. The text being in every editor in the
-      // room says nothing about the one part of the page that is not an editor.
-      if (mine) {
-        remembered.set(SAID, said);
-        // And it comes back into the view it left from, which is the one thing
-        // the reload used to throw away. See `keepView` in `_VIEWS`.
-        keepView();
-        location.reload();
-      }
+      // **Nobody reloads.** The tab that asked used to, to redraw the read view
+      // under the editor (jcanton, 2026-08-20: "it shows the un-edited text until
+      // I refresh"), and the reload took the caret, the focus and the undo
+      // history with it (jcanton, 2026-09-24: "`:w` ... reloads the page,
+      // effectively interrupting editing"). The read view is redrawn on the way
+      // out of the session now, by `freshen`, which is when anybody can see it.
+      if (mine) savedHere(sent);
+      else STALE = true;
+      sent = null;
       return;
     }
     if (message.t === 'refused') {
@@ -2190,7 +2187,11 @@ const COEDIT = (() => {
     wanted = true;
     connect();
   }
-  return {live, save(fields) {
+  // Whether this page has a room's document under the box that a save made
+  // without the room would leave behind: it was seeded by a room and the room
+  // may come back. A room that has stopped does not reconnect.
+  const joined = () => seed !== null && !dead;
+  return {live, joined, save(fields) {
     // Anything typed since the last input event, then one commit over the
     // socket: the fields from this form, the body from the room, one
     // `store.write` against the room's base.
@@ -2199,6 +2200,7 @@ const COEDIT = (() => {
     // Set HERE and nowhere else: this is the one line in this file that runs
     // because a person pressed the button, which is exactly what `asked` means.
     asked = true;
+    sent = fields;
     announce('saving…');
     send({t: 'save', fields});
   }};

@@ -200,6 +200,8 @@ const GROUND = LANDING ? 'view' : null;
 let VIEW = GROUND;
 
 function showView(mode) {
+  // Out of a session and onto the read view, which a save in place left behind.
+  if (mode === 'view' && VIEW !== 'view' && freshen()) return;
   VIEW = mode;
   for (const name of VIEWS) {
     VIEW_ARTICLE.classList.toggle('view-' + name, mode === name);
@@ -556,7 +558,8 @@ async function askPreview() {
 // Both sides of the split are a list of (source line, pixel top), so both
 // directions are one interpolation read the other way round. The rendered side
 // gets its lines from `data-startline`, which the renderer stamps on every
-// top-level block from markdown-it's own token map; the source side gets its
+// block that begins a source line — list items and table rows included — from
+// markdown-it's own token map; the source side gets its
 // pixels from `lineTops`, which measures rather than assuming that one line is
 // one row — in a pane half a window wide most lines wrap, and `scrollTop /
 // lineHeight` is only right for a document in which none of them do.
@@ -646,11 +649,15 @@ function previewMap() {
     // staying put; this arithmetic asks the question that is actually being
     // asked.
     const zero = VIEW_PANE.getBoundingClientRect().top - VIEW_PANE.scrollTop;
+    // Later in the source AND no higher on the screen, because the points are
+    // nested now and a nested block need not be drawn where its line suggests:
+    // one inside something collapsed measures 0, and a map whose tops go back
+    // up is a map `lineOfPixel` walks off the wrong end of.
     for (const block of VIEW_PANE.querySelectorAll('[data-startline]')) {
       const line = Number(block.dataset.startline);
-      if (line > previewPoints[previewPoints.length - 1].line) {
-        previewPoints.push({line, top: block.getBoundingClientRect().top - zero});
-      }
+      const top = block.getBoundingClientRect().top - zero;
+      const last = previewPoints[previewPoints.length - 1];
+      if (line > last.line && top >= last.top) previewPoints.push({line, top});
     }
     // The foot of the rendered document, and then the foot of the room below it
     // — the same two points the source side ends with, so the two empty spaces
@@ -841,16 +848,16 @@ BODY.addEventListener('openproj:escaped', event => {
 const VIEW_ASKED = new URLSearchParams(location.search);
 const VIEW_LINKED = VIEWS.find(name => VIEW_ASKED.has(name)) || null;
 
-// --- the view a Save comes back into -----------------------------------------
+// --- the view a reload comes back into ---------------------------------------
 //
-// Both save paths end in `location.reload()`, and they have to: the read view
-// under the box is HTML the server rendered at the commit this page LOADED at,
-// so closing the editor without reloading leaves the document and the facts as
-// they were until somebody refreshes. What the reload cost was the mode —
-// nothing in the reloaded page says a session was open, so every Save landed on
-// the preview. jcanton, 2026-08-25: "currently clicking save in the editor exits
-// edit mode and sends you back to preview, let's change that and stay in
-// whatever mode the user is in (edit or side-by-side)".
+// **Save does not reload any more** — see `STALE` below — and this is what is
+// left of the machinery that carried a session across the reload it used to
+// end in: the shell's "the plan changed — reload" link still reloads a page
+// somebody may be writing in, and it comes back into the view and onto the line
+// it left from by the same two keys. jcanton, 2026-08-25, when it was Save's:
+// "currently clicking save in the editor exits edit mode and sends you back to
+// preview, let's change that and stay in whatever mode the user is in (edit or
+// side-by-side)".
 //
 // **A one-shot handed across the reload, not the stored preference.**
 // `EDITOR.mode` is what a session opens in and is deliberately not applied at
@@ -861,15 +868,15 @@ const VIEW_LINKED = VIEWS.find(name => VIEW_ASKED.has(name)) || null;
 //
 // **In `forThisTab` and not in `remembered`.** The reload is this tab's; a save
 // here must not open an editor in the other tab that happens to load a record
-// next. That is the one thing this key does differently from `SAID` beside it.
+// next.
 const RESUMED = 'openproj:resumed';
 
 // And where in the document it was, which is the second half of "stay where you
 // are". jcanton, 2026-09-18: "for some reason clicking save on editing a record
 // resets the scroll to the top line of the editor box (while I'd prefer if it
-// didn't)". The reason is that Save reloads — a commit changes the page's base,
-// its history and its rendered copy — and a reload is a new document with a new
-// editor in it, scrolled where a new editor starts.
+// didn't)". The reason was that Save reloaded, and a reload is a new document
+// with a new editor in it, scrolled where a new editor starts. Save no longer
+// does; the reload link beside the plan-changed banner still does.
 //
 // **A line number and not a pixel.** The page comes back at the same width today
 // and need not: a window resized between the press and the paint, a different
@@ -883,9 +890,11 @@ const RESUMED_AT = 'openproj:resumed-at';
 const RESUMING = (() => {
   const held = forThisTab.get(RESUMED);
   forThisTab.forget(RESUMED);
-  // Only the two session views. `view` is the landing and is what a page does
-  // anyway, and anything else is a hand-edited entry.
-  return held === 'edit' || held === 'both' ? held : null;
+  // The two session views, and `view` from `freshen`: a page with a draft in
+  // it opens a session on load, and one that was left for the read view goes
+  // back to it with the draft still in the box. Anything else is a hand-edited
+  // entry.
+  return held === 'edit' || held === 'both' || held === 'view' ? held : null;
 })();
 
 // Read and forgotten in the same breath, for the reason above it: a one-shot
@@ -896,11 +905,10 @@ const RESUMING_AT = (() => {
   return Number.isFinite(held) && held > 1 ? held : 0;
 })();
 
-// Called by both save paths immediately before their reload, and by nothing
-// else. Declared here, beside the key and the branch that reads it, so the two
-// halves of this cannot drift; the scripts that call it run earlier on the page
-// and later in time, which is the same arrangement `SAID` already has with the
-// room's save.
+// Called by the shell's reload link immediately before the reload, and by
+// nothing else. Declared here, beside the key and the branch that reads it, so
+// the two halves of this cannot drift; the script that calls it runs earlier on
+// the page and later in time.
 //
 // The create form is deliberately not a caller. Its Save navigates to a record
 // that did not exist a moment ago rather than reloading the page you were on,
@@ -912,6 +920,80 @@ function keepView() {
   // scrolls by — so a wrapped line counts as the one line it is rather than as
   // the three rows it draws.
   forThisTab.set(RESUMED_AT, String(Math.round(lineOfPixel(sourceMap(), SURFACE.scrolled()))));
+}
+
+// --- a save that lands where you are -----------------------------------------
+//
+// jcanton, 2026-09-24: "`:w` with vim keys works and saves the record, however
+// it also removes the cursor from the editor and reloads the page, effectively
+// interrupting editing." Both save paths ended in `location.reload()`, and
+// `keepView` above carried the view and the top line across it — but not the
+// caret, not the focus, not vim's mode and not the undo history, which is a
+// reload's to throw away and nobody's to carry. A save is a statement about the
+// document and never about whether you are finished writing it.
+//
+// So a save moves the page's own idea of what is committed — the base, the
+// body, the fields — and leaves the editor alone. That is what the room has
+// always done for every member who did NOT press the button; the tab that did
+// is now one more of them.
+//
+// **What it costs is the read view, and it is paid when you leave.** The
+// document under the box and the facts beside it (Scheduled, Blocks) are the
+// server's rendering of the commit this page loaded at, which is the reason the
+// reload was there at all (jcanton, 2026-08-20: "it shows the un-edited text
+// until I refresh"). They are not on screen while a session is open, so
+// `freshen` brings them up to date on the way out rather than on every save.
+let STALE = false;
+
+// The read view, brought up to the last save before anybody reads it — by a
+// reload, because it is the only thing that redraws all of it: the facts, the
+// title, the Progress section, and the diagrams, whose loader runs once at load.
+// True when the page is going away.
+//
+// **What is unsaved decides whether it may.** A changed FIELD cannot cross a
+// reload — a draft is the body and nothing else — so with one in the form there
+// is no reload, and the page says why the text under the box is older than the
+// save. Nor with an unsaved body in a LIVE ROOM: that text is the room's, as
+// much somebody else's typing as this tab's, and reloading would bring it back
+// as this tab's "restored draft". The room commits it — its quiet window, or the
+// last member out, which leaving this session makes this tab — and the next
+// load of the page shows it. Out of a room an unsaved body is this tab's, and it goes
+// across as a draft written now rather than on the draft timer's next tick, with
+// a one-shot landing the reload on the read view: a restored draft otherwise
+// opens a session, and a reload would put somebody who asked to read straight
+// back into the editor. Where this browser keeps no drafts there is no reload.
+function freshen() {
+  // The create form has no read view and never reaches the flag.
+  if (!LANDING || !STALE) return false;
+  let fields = true;
+  // A number typed as a word throws in `read`, and that is unsaved too.
+  try { fields = Object.keys(changed()).length > 0; } catch (error) { fields = true; }
+  if (fields) return stillBehind();
+  if (SURFACE.text() !== ORIGINAL_BODY) {
+    if (COEDIT.live()) return stillBehind();
+    writeDraft();
+    if (!draftWritten) return stillBehind();
+    forThisTab.set(RESUMED, 'view');
+  }
+  STALE = false;
+  // And out of the address, the flag that opened this session: `?edit` and
+  // `?both` beat any one-shot on load, and a reload keeps the query string, so
+  // leaving would reload straight back into the editor.
+  try {
+    const flags = new URLSearchParams(location.search);
+    for (const name of VIEWS) flags.delete(name);
+    const query = flags.toString();
+    history.replaceState(history.state, '', location.pathname + (query ? '?' + query : '')
+                         + (location.hash || ''));
+  } catch (error) { /* the reload still happens; it lands in the linked view */ }
+  location.reload();
+  return true;
+}
+
+function stillBehind() {
+  announce('The page under the editor is from before the last save. It is redrawn '
+           + 'once nothing in the editor is unsaved.');
+  return false;
 }
 
 // And then the remembered one, which is the second half of the preference this
@@ -933,8 +1015,8 @@ if (VIEW_LINKED) {
   // re-adds the flag when it reloads so the session survives the navigation.
   showView(VIEW_LINKED);
 } else if (RESUMING) {
-  // This tab saved and reloaded itself a moment ago. It goes back into the view
-  // it was in, which is the whole of what `keepView` above wrote down.
+  // This tab reloaded itself out of a session a moment ago. It goes back into
+  // the view it was in, which is the whole of what `keepView` above wrote down.
   showView(RESUMING);
   // And back to the line it was on. **After `showView`**, because the editor is
   // laid out by it and `lineCoords` off a box with no size is a column of
@@ -1842,24 +1924,6 @@ const BASE = FORM.querySelector('[name=base_commit]');
 // Bumped rather than parsed loosely, so a body that happens to be valid JSON
 // cannot be mistaken for the new shape.
 const DRAFT = `openproj:draft:2:${FORM.dataset.id}`;
-// One sentence, handed from the page that saved to the page that comes back.
-// A save in a room reloads, and "saved, and somebody else's change to this file
-// was merged in" is news — it means the file holds a paragraph this person has
-// not read — announced to a page that is already on its way out. Not scoped to
-// the record: it is read and dropped by the first page that loads, which is the
-// one that was reloaded.
-const SAID = 'openproj:said';
-
-// Whatever the page before the reload was told. Read once and forgotten, so a
-// reload of the reload is silent rather than saying "saved" again.
-{
-  const before = remembered.get(SAID);
-  if (before) {
-    remembered.forget(SAID);
-    announce(before);
-  }
-}
-
 function read(control) {
   const type = control.dataset.type;
   // `!!`, so a bool is always a bool rather than whatever the DOM happens to
@@ -2501,6 +2565,21 @@ function stillNeeded(fields) {
   return true;
 }
 
+// What both save paths do with the fields a commit took, and the flag that says
+// the read view is now behind: see `STALE` in `_VIEWS`. The fields the request
+// SENT and not what the form holds now, for the reason the body is: a field
+// changed while the save was in the air is still unsaved.
+function savedHere(fields) {
+  for (const [name, value] of Object.entries(fields || {})) {
+    ORIGINAL[name] = JSON.stringify(value);
+  }
+  STALE = true;
+  dirty();
+  // The session was left while this was in the air, so the read view is on the
+  // screen already and `freshen` ran before there was anything to freshen.
+  if (VIEW === 'view') freshen();
+}
+
 async function save() {
   // One button, two verbs: a record that exists is PATCHed with what changed;
   // a record that does not exist yet is POSTed whole. The branch is the entire
@@ -2556,10 +2635,40 @@ async function save() {
     }
     if (!response.ok) { announce(refusal(answer, response.status)); return; }
     committed = answer.commit;
-    forgetDraft();
-    // The mode survives the reload the commit needs. See `keepView` in `_VIEWS`.
-    keepView();
-    location.reload();
+    // **In place only when this page already holds what was committed**, and
+    // there are two ways it may not. A MERGE wrote somebody else's paragraph
+    // into the file beside ours, and it is not in the box: taking what was sent
+    // as the baseline would make the next save, against this very commit,
+    // write the box verbatim and take their paragraph out without a conflict.
+    // And a page that has been in a ROOM keeps a document of its own under the
+    // box, which this commit went round; on the next reconnect the room adds
+    // HEAD to a document that already holds the same lines, and commits both
+    // copies. Both are what the reload was quietly curing, so both still reload
+    // — into the view and onto the line, which is what `keepView` is for.
+    if (answer.outcome === 'merged' || COEDIT.joined()) {
+      // A keystroke made while this was in the air goes across as a draft on
+      // the base it was typed on, so saving it merges it with what landed
+      // instead of writing over the paragraph that did.
+      if (SURFACE.text() === (body === null ? ORIGINAL_BODY : body)) forgetDraft();
+      else writeDraft();
+      keepView();
+      location.reload();
+      return;
+    }
+    // Where you are, and no reload: see `STALE` in `_VIEWS`. The base and the
+    // body move together, as `BASELINE`'s comment requires, and the body is the
+    // one this request SENT — a keystroke made while it was in the air is not
+    // committed, and the counter has to go on saying so.
+    BASE.value = committed;
+    BASELINE = committed;
+    if (body !== null) ORIGINAL_BODY = body;
+    // And a draft of that keystroke is rewritten on the new base, or restoring
+    // it later would say somebody else had changed the record — this person did.
+    if (SURFACE.text() === ORIGINAL_BODY) forgetDraft();
+    else writeDraft();
+    box.hidden = true;
+    savedHere(fields);
+    announce('saved');
   } catch (error) {
     // The same missing `catch` as the uploader's, and worse, because this is the
     // path everybody walks. `announce('saving…')` above puts a word in the live
@@ -4129,7 +4238,10 @@ _PROMOTE = """
         body: JSON.stringify({
           source: {{ source|tojson }},
           kind: INTO ? INTO.value : {{ only|tojson }},
-          base_commit: {{ base_commit|tojson }},
+          // The newest commit this page knows the note's body at: a save no
+          // longer reloads, so the commit the page was rendered at can be one
+          // that is missing what was just saved.
+          base_commit: typeof BASELINE !== 'undefined' ? BASELINE : {{ base_commit|tojson }},
         }),
       });
       // `answerOf` and not a bare `response.json()`: a 500 answers in

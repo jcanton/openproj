@@ -5035,7 +5035,7 @@ def test_the_history_buttons_answer_the_keyboard_and_say_when_a_stack_is_empty(
 def test_saving_in_a_room_leaves_the_read_view_showing_what_was_saved(
     client: TestClient, plan: Path
 ):
-    """Press Save in a room and the editor closes onto the *server's* HTML.
+    """Press Save in a room and the read view must not be the *server's* HTML.
 
     That HTML was rendered when the page loaded, at the commit before this one,
     so the article under the editor is the body as it was and the fact rows are
@@ -5043,10 +5043,10 @@ def test_saving_in_a_room_leaves_the_read_view_showing_what_was_saved(
     and saving works, the view goes back out of editing, but it shows the
     un-edited text until I refresh."
 
-    The room's own reasoning was right about the document and wrong about the
-    page: the text really is already in every editor in the room, and the read
-    view is not an editor. The path without a room reloads and lands in read
-    mode by doing so, and this is now the same ending arrived at the same way.
+    The save reloaded the page to fix that, and the reload took the caret and the
+    undo history with it (jcanton, 2026-09-24, on `:w`). So Save reloads nothing
+    and the editor stays open; leaving the session afterwards is what reloads,
+    because that is the moment the read view is on the screen.
     """
     # `?editor=plain`, as every driven test on this page does: the address that
     # says nothing has been Ace since 2026-08-20, and Ace does not run against
@@ -5073,29 +5073,127 @@ def test_saving_in_a_room_leaves_the_read_view_showing_what_was_saved(
         "  if (!COEDIT.live()) return 'the room never came up';"
         "  await save();"
         f" __socket.hear({json.dumps(saved)});"
-        "  return __reloads() + ' reloads';"
+        "  const saving = __reloads() + ' reloads, editing '"
+        "    + document.querySelector('article.record').classList.contains('editing');"
+        "  flipEditing();"
+        "  return saving + '; left: ' + __reloads() + ' reloads';"
         "})()",
         page=True,
         socket=True,
     )
     assert not answer["errors"], answer["errors"]
-    # The reload is the whole claim: landing in read mode follows from it, and
-    # node has no page to replace, so asking whether the class came off would be
-    # asking the harness a question only a browser can answer.
-    assert answer["value"] == "1 reloads", (
-        "the editor closed onto the article the server rendered before this save, "
-        f"so what is on the screen is the old body: {answer['value']}"
+    # Reloads rather than a class on the read view: node has no page to replace,
+    # so asking what the article shows after a reload would be asking the harness
+    # a question only a browser can answer.
+    assert answer["value"] == "0 reloads, editing true; left: 1 reloads", (
+        "a save in a room either reloaded under the editor or left the read view "
+        f"showing the body from before it: {answer['value']}"
     )
 
 
-def test_what_the_room_said_about_a_save_survives_the_reload(client: TestClient, plan: Path):
-    """A merge is the one thing worth saying and the only tab that can say it is
-    the one that goes away.
+def test_a_save_made_without_the_room_it_left_reloads(client: TestClient, plan: Path):
+    """Found in review of the save that stays put, and reproduced against a real
+    `Room`. A page that was in a room keeps the room's document under the box.
+    The socket drops (Cloud Run closes every one at five minutes), a line is
+    typed, and Save goes by PATCH. On reconnect the warm room absorbs HEAD — the
+    line — into a document whose other copy of it is this tab's own insert, and
+    the quiet window commits both. The reload used to throw that document away,
+    so a page that has been in a room still reloads after a save made without it.
+    """
+    page = client.get(f"/detail/{TASK}?editor=plain").text
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = {
+        "t": "welcome",
+        "seed": room.seed,
+        "base": room.base,
+        "you": "ann",
+        "sv": base64.b64encode(room.state()).decode(),
+        "update": base64.b64encode(room.since(None)).decode(),
+    }
+    answer = run_js(
+        page,
+        "(async () => {"
+        "  flipEditing();"
+        "  __socket.opened();"
+        f" __socket.hear({json.dumps(welcome)});"
+        "  if (!COEDIT.live()) return 'the room never came up';"
+        "  __socket.refused(1006, '');"
+        "  if (COEDIT.live()) return 'the socket did not drop';"
+        "  const box = document.querySelector('[name=body]');"
+        "  box.value = box.value + 'Typed offline.\\n';"
+        "  box.dispatchEvent(new Event('input', {bubbles: true}));"
+        "  await save();"
+        "  return __reloads() + ' reloads';"
+        "})()",
+        page=True,
+        socket=True,
+        replies=[{"status": 200, "json": {"commit": "d" * 40, "outcome": "committed"}}],
+    )
+    assert not answer["errors"], answer["errors"]
+    assert answer["value"] == "1 reloads", (
+        "a save made by PATCH from a page that was in a room stayed in place, so the "
+        f"room's document under the box doubles the line on reconnect: {answer['value']}"
+    )
+
+
+def test_leaving_a_room_with_its_text_uncommitted_reloads_nothing(
+    client: TestClient, plan: Path
+):
+    """Found in the second review. A room commit nobody here pressed marks the
+    read view behind, and the box then differs from the committed body by
+    whatever the room is still typing — somebody else's words as often as this
+    tab's. Reloading would bring that back as this tab's "unsaved draft
+    restored". So leaving reloads nothing while the room holds uncommitted text:
+    the room commits it, and the page says why the read view is behind."""
+    page = client.get(f"/detail/{TASK}?editor=plain").text
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = {
+        "t": "welcome",
+        "seed": room.seed,
+        "base": room.base,
+        "you": "ann",
+        "sv": base64.b64encode(room.state()).decode(),
+        "update": base64.b64encode(room.since(None)).decode(),
+    }
+    theirs = {"t": "saved", "commit": "e" * 40, "outcome": "committed", "pushed": True}
+    answer = run_js(
+        page,
+        "(async () => {"
+        "  flipEditing();"
+        "  __socket.opened();"
+        f" __socket.hear({json.dumps(welcome)});"
+        "  if (!COEDIT.live()) return 'the room never came up';"
+        f" __socket.hear({json.dumps(theirs)});"
+        "  const box = document.querySelector('[name=body]');"
+        "  box.value = box.value + 'Still being typed in the room.\\n';"
+        "  box.dispatchEvent(new Event('input', {bubbles: true}));"
+        "  flipEditing();"
+        "  return {reloads: __reloads(), said: document.getElementById('state').textContent};"
+        "})()",
+        page=True,
+        socket=True,
+    )
+    assert not answer["errors"], answer["errors"]
+    assert answer["value"]["reloads"] == 0, (
+        "leaving reloaded over the room's uncommitted text, which comes back as a draft"
+    )
+    assert "before the last save" in answer["value"]["said"], answer["value"]
+    assert "openproj:resumed" not in answer["tabbed"], answer["tabbed"]
+
+
+def test_what_the_room_said_about_a_save_is_said_where_you_are(
+    client: TestClient, plan: Path
+):
+    """A merge is the one thing worth saying about a save.
 
     "saved, and somebody else's change to this file was merged in" is news: it
-    means the file now holds a paragraph this person has not read. Announced into
-    a page that reloads a millisecond later, it is announced to nobody — so it is
-    handed to the page that comes back.
+    means the file now holds a paragraph this person has not read. It used to be
+    handed across the reload that followed, because announced into a page on its
+    way out it was announced to nobody. There is no reload now, so it goes into
+    the live region of the page it happened on — and nothing is left in the
+    browser for some later page to say again.
     """
     page = client.get(f"/detail/{TASK}?editor=plain").text
     shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
@@ -5117,15 +5215,17 @@ def test_what_the_room_said_about_a_save_survives_the_reload(client: TestClient,
         f" __socket.hear({json.dumps(welcome)});"
         "  await save();"
         f" __socket.hear({json.dumps(merged)});"
-        "  return localStorage.getItem('openproj:said');"
+        "  return document.getElementById('state').textContent;"
         "})()",
         page=True,
         socket=True,
     )
     assert not answer["errors"], answer["errors"]
     assert answer["value"] and "merged in" in answer["value"], (
-        f"the one sentence worth keeping was announced to a page on its way out: "
-        f"{answer['value']!r}"
+        f"the one sentence worth saying about this save was not said: {answer['value']!r}"
+    )
+    assert "openproj:said" not in answer["stored"], (
+        "the sentence was also left in the browser, so the next page opened says it again"
     )
 
 
