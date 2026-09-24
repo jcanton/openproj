@@ -4718,6 +4718,55 @@ def test_a_record_page_offers_no_slide_view_when_the_deck_is_off(seed_index: Ind
         assert slide_buttons(slide) == wanted, links.deck
 
 
+def test_people_links_land_on_records_when_there_is_no_table(seed_index: Index):
+    """A name on the People page, and each count beside it, is a filter link:
+    `?owner=ann` on the Table. In a plan without a Table that was `?owner=ann`
+    relative to People itself — a link to the page it is on, which reads no such
+    filter and changes nothing.
+
+    Records reads every filter these links carry, so without a Table they land
+    there, and the title says which page it is rather than "in the table". In
+    both modes, because the export writes People and Records too.
+    """
+    from openproj.model import VIEWS
+    from openproj.render import render_people
+
+    roles = ("owner=", "assignees=", "reviewers=")
+    no_table = tuple(one for one in VIEWS if one != "table")
+    for links, lands, where in (
+        (ROUTES, "/table?", ", in the table"),
+        (links_for(no_table, ROUTES), "/?", ", on Records"),
+        (links_for(no_table, STATIC), "index.html?", ", on Records"),
+    ):
+        anchors = [
+            one
+            for one in elements(render_people(seed_index, links))
+            if one.tag == "a" and one.attrs.get("href", "").partition("?")[2].startswith(roles)
+        ]
+        names = [one for one in anchors if one.attrs.get("class") == "who"]
+        assert names and len(anchors) > len(names), "no name and no count links, so nothing asked"
+        hrefs = [one.attrs["href"] for one in anchors]
+        assert [href for href in hrefs if not href.startswith(lands)] == []
+        titles = [one.attrs["title"] for one in names]
+        assert [title for title in titles if not title.endswith(where)] == []
+
+
+def test_a_cycle_page_offers_all_cycles_only_while_there_are_some(seed_index: Index):
+    """The per-cycle pages go with Cycles, so the router never draws this one with
+    `links.cycles` blank — and if anything ever did, "← all cycles" with an empty
+    href would be a link back to the page it is on. Asked the way the deck link
+    under it already is."""
+    from openproj.render import render_cycle
+
+    def back(links: Links) -> list[str]:
+        page = render_cycle(seed_index, 37, links, base_commit="deadbee")
+        found = elements(page)
+        return [one.attrs["href"] for one in found if one.tag == "a" and one.text == "← all cycles"]
+
+    assert back(ROUTES) == ["/cycles"]
+    assert back(links_for((), ROUTES)) == []
+
+
 def test_every_page_carries_a_skip_link_and_a_live_region(rendered: Path):
     """Two shell obligations, because a page cannot opt out of either.
 

@@ -44,7 +44,10 @@ _CYCLE = """
     thing is, and this heading is "Cycle 37": the kind is already its first word,
     so a CYCLE chip above it would be the restatement the id column's kind chip
     was. -#}
-<p class="back"><a href="{{ links.cycles }}">← all cycles</a></p>
+{#- Asked, the way the deck link below is: the per-cycle pages go with Cycles,
+    so this is never drawn blank in practice, and a link whose href is empty is
+    a link back to the page it is on. -#}
+{% if links.cycles %}<p class="back"><a href="{{ links.cycles }}">← all cycles</a></p>{% endif %}
 <h1>Cycle {{ c.number }}</h1>
 {#- The one link off this page that is not a record: the deck for the review
     meeting, which is the other thing `reviews_on` is a date for. Drawn only where
@@ -1724,7 +1727,7 @@ _PEOPLE = """
         <span class="avatar">{{ person.art }}</span>
         {%- endif %}
         {%- if person.link %}
-        <a class="who" href="{{ links.table }}?{{ person.link.field }}={{ person.login|urlencode }}"
+        <a class="who" href="{{ lands }}?{{ person.link.field }}={{ person.login|urlencode }}"
            title="{{ person.link.says }}">{{ person.login }}</a>
         {%- else %}
         <span class="who">{{ person.login }}</span>
@@ -1757,10 +1760,11 @@ _PEOPLE = """
         {%- endif %}
         {#- The counts keep their old job and take on the way in: three of the
             four roles are a filter the table has, so a count is a link to the
-            rows it counts. -#}
+            rows it counts. `lands` is the Table, or Records in a plan without
+            one — see `render_people`. -#}
         <span class="tally">
           {%- for t in person.tally -%}
-            {%- if t.field %}<a href="{{ links.table }}?{{ t.field }}={{ person.login|urlencode
+            {%- if t.field %}<a href="{{ lands }}?{{ t.field }}={{ person.login|urlencode
               }}">{{ t.n }} as {{ t.role }}</a>{% else %}{{ t.n }} as {{ t.role }}{% endif -%}
             {{- ' · ' if not loop.last else '' -}}
           {%- endfor -%}
@@ -2895,6 +2899,11 @@ def render_people(index: Index, links: Links = STATIC, editable: bool = False, m
         rows_for_person.sort(key=lambda r: (_ROLE_ORDER.index(r["role"]), r["title"]))
 
     load = _person_load(index, list(held))
+    # Where a name and a count lead: the Table, and Records in a plan that has
+    # switched the Table off. Records reads every filter these links carry
+    # (`_record_row` says why), so it lands on the same rows, and the title says
+    # which page that is rather than promising a table that is not there.
+    lands, where = (links.table, "in the table") if links.table else (links.records, "on Records")
     people = []
     # Case-folded, or every capitalised login sorts ahead of the lowercase ones and
     # "alphabetical" means ASCII to the page and nothing to the reader.
@@ -2930,7 +2939,7 @@ def render_people(index: Index, links: Links = STATIC, editable: bool = False, m
                 "tally": tally,
                 "link": {
                     "field": _ROLE_FILTER[opens][0],
-                    "says": f"Everything {login} {_ROLE_FILTER[opens][1]}, in the table",
+                    "says": f"Everything {login} {_ROLE_FILTER[opens][1]}, {where}",
                 }
                 if opens
                 else None,
@@ -2946,6 +2955,7 @@ def render_people(index: Index, links: Links = STATIC, editable: bool = False, m
     body = _compiled(_PEOPLE).render(
         people=people,
         links=links,
+        lands=lands,
         # Every icon, drawn once, for the picker. In `ICONS` order, which is the
         # sky, then the world, then the creatures: a list ordered by nothing is a
         # list a reader has to search rather than scan.
