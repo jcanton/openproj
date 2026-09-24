@@ -25,9 +25,11 @@ from openproj.render import (
     STATIC,
     STATUS_GLYPH,
     STATUSES,
+    links_for,
     preview_html,
     render_detail,
     render_static,
+    render_switched_off,
 )
 from openproj.render.shell import Links
 
@@ -4330,6 +4332,136 @@ def test_a_cycle_card_links_to_its_page_wherever_a_server_serves_one(seed_index:
     assert headings_linked(STATIC.model_copy(update={"cycle": "/cycle/"})) == []
 
 
+def test_a_view_that_is_off_is_not_in_the_nav_and_the_nav_keeps_the_plans_order(
+    seed_index: Index,
+):
+    """`views` is the nav, in the order the plan wrote it — jcanton chose the list
+    over a fixed order ("do B") — after Records, which is always first.
+
+    And a view that is off is a blank field, the convention `deck` already had in
+    the export, so every template that asks the field before it draws a link asks
+    the same question the nav does. Cycles owns two fields: a cycle number that
+    stayed a link would lead to a per-cycle page, which is Cycles too.
+
+    A plan that writes nothing is today's links exactly, in both modes — or the
+    upgrade that introduced the key would have moved every existing plan's nav.
+    """
+    from pages import nav_of
+
+    from openproj.model import VIEWS
+    from openproj.render import render_records
+
+    links = links_for(("timeline", "cycles"), ROUTES)
+    drawn = nav_of(render_records(seed_index, links))
+    assert [(label, href) for label, href, _ in drawn] == [
+        ("Records", "/"),
+        ("Timeline", "/timeline"),
+        ("Cycles", "/cycles"),
+    ]
+    assert (links.table, links.graph, links.people, links.deck) == ("", "", "", "")
+    assert (links.cycles, links.cycle) == ("/cycles", "/cycle/")
+    assert links_for(("cycles", "graph"), ROUTES).nav == ("records", "cycles", "graph")
+
+    nothing = links_for((), ROUTES)
+    assert nothing.nav == ("records",)
+    assert (nothing.cycles, nothing.cycle) == ("", "")
+    # What is never a view stays: Records, the record pages, Help, and the create
+    # form, which is gated by kind and not by a link.
+    assert (nothing.records, nothing.record, nothing.help, nothing.new) == (
+        "/",
+        "/detail/",
+        "/help",
+        "/new",
+    )
+
+    assert links_for(VIEWS, ROUTES) == ROUTES
+    assert links_for(VIEWS, STATIC) == STATIC
+
+
+def test_the_switched_off_page_names_the_setting_and_the_way_out(seed_index: Index):
+    """What `/table` answers in a plan without a Table: the ordinary shell and this
+    plan's nav, one sentence naming the setting and the file, and one way out.
+
+    The way out carries the address's own query to Records, which honours the same
+    filters, and that query is text somebody typed into an address bar — so the
+    hostile ones are here and asked of the parsed page. A percent-encoded one has
+    nothing in it to escape and proves little on its own; the literal quote, the
+    angle brackets and the single quote are the ones that would break out of the
+    attribute if the one escaping boundary were bypassed.
+    """
+    from pages import nav_of
+
+    from openproj.model import KIND_NAMES, OPTIONAL_KINDS, VIEWS, kind_refusal
+
+    links = links_for(("cycles",), ROUTES)
+    way = "Show the same filters on Records"
+
+    def said(page: str) -> tuple[list[str], list[str], list[tuple[str, str]]]:
+        found = elements(page)
+        return (
+            [one.text for one in found if one.tag == "code"],
+            [one.text for one in found if one.tag == "p"],
+            [(one.text, one.attrs.get("href", "")) for one in found if one.tag == "a"],
+        )
+
+    page = render_switched_off(seed_index, links, view="table", query="owner=ann")
+    codes, paragraphs, anchors = said(page)
+    assert codes == ["views", "config/defaults.yaml"]
+    assert (
+        "The Table is turned off for this plan. views in config/defaults.yaml decides "
+        "which views it has." in paragraphs
+    ), paragraphs
+    assert [href for text, href in anchors if text == way] == ["/?owner=ann"]
+    assert [text for _, text in headings(page)] == ["Table"]
+    assert [label for label, _, _ in nav_of(page)] == ["Records", "Cycles"]
+    # Nothing lit (D8): a page that marked Table would stamp itself as the tab's
+    # origin, and the next record's back link would come straight back here.
+    assert lit(page) == []
+
+    scripts = sum(one.tag == "script" for one in elements(page))
+    for hostile in (
+        "q=%22%3E%3Cscript%3E",
+        'q="><script>alert(1)</script>',
+        "q=' onmouseover='alert(1)",
+    ):
+        found = elements(render_switched_off(seed_index, links, view="table", query=hostile))
+        assert sum(one.tag == "script" for one in found) == scripts, hostile
+        out = [one.attrs for one in found if one.tag == "a" and one.text == way]
+        assert out == [{"href": f"/?{hostile}"}], hostile
+
+    # Every view has its sentence, derived from `VIEWS` so a ninth cannot be the one
+    # whose address answers a KeyError.
+    for view in VIEWS:
+        _, paragraphs, _ = said(render_switched_off(seed_index, links, view=view))
+        assert [p for p in paragraphs if p.endswith("decides which views it has.")], view
+
+    # A kind that is off says `kind_refusal`'s sentence — the one the CLI and the
+    # 422 say — with the setting and the file marked up.
+    planned = Config(kinds=frozenset(KIND_NAMES) - set(OPTIONAL_KINDS))
+    for kind in OPTIONAL_KINDS:
+        page = render_switched_off(seed_index, links, off_kind=kind, query=f"kind={kind}")
+        codes, paragraphs, anchors = said(page)
+        assert codes == ["kinds", "config/defaults.yaml"]
+        assert kind_refusal(kind, planned).replace("`", "") in paragraphs, paragraphs
+        assert [href for text, href in anchors if text == way] == [f"/?kind={kind}"]
+        assert [text for _, text in headings(page)] == [f"New {kind}"]
+
+    # The slide view is one record's view, so its way out is that record.
+    one = next(iter(seed_index.plan))
+    slide = render_switched_off(seed_index, links, view="deck", record_id=one)
+    _, paragraphs, anchors = said(slide)
+    assert "The review deck is turned off for this plan." in " ".join(paragraphs)
+    assert [href for text, href in anchors if text == "Open the record"] == [f"/detail/{one}"]
+    # And with no query there is nothing to carry.
+    _, _, anchors = said(render_switched_off(seed_index, links, view="people"))
+    assert [href for text, href in anchors if text == "Go to Records"] == ["/"]
+
+    # The file named is the one that wrote the key (D12), not the one it usually is.
+    moved = seed_index.model_copy(update={"switches_from": {"views": "config/local.yaml"}})
+    codes, _, _ = said(render_switched_off(moved, links, view="graph"))
+    assert codes == ["views", "config/local.yaml"]
+
+
 # --------------------------------------------------------------------------- #
 # Where "back" goes
 # --------------------------------------------------------------------------- #
@@ -4499,6 +4631,55 @@ def test_every_record_in_the_export_carries_the_link_back(rendered: Path):
     articles = [one for one in elements(read(rendered, "detail.html")) if one.tag == "article"]
     assert len(got) == len(articles)
     assert set(got) == {f"{here} ← Table"}
+
+
+def test_a_back_link_to_a_view_that_was_switched_off_goes_to_records(seed_index: Index):
+    """A tab sat on `/table?owner=ann` while somebody committed `views` without the
+    Table. Every record it opens afterwards would have sent its reader back to a
+    page that answers 404 — so a stamp is honoured only while the page it names is
+    one this plan still has.
+
+    The nav's hrefs are not the whole answer, which is why the cases are these:
+    `/cycle/37` and `/deck/37` are stamped and are no nav href, so each is judged
+    by its prefix and goes with its switch; Records is never off; and the export's
+    stamp is an absolute path on disk, judged by the file at the end of it — a
+    whole file name, so `mytable.html` is not `table.html`.
+    """
+    from test_injection import run_js
+
+    from openproj.model import VIEWS
+
+    one = next(iter(seed_index.plan))
+    everything, cycles = links_for(VIEWS, ROUTES), links_for(("cycles",), ROUTES)
+    home = ["/", "← all records"]
+    for links, href, label, back in (
+        (everything, "/table?owner=ann", "Table", ["/table?owner=ann", "← Table"]),
+        (cycles, "/table?owner=ann", "Table", home),
+        (cycles, "/cycle/37", "Cycles", ["/cycle/37", "← Cycles"]),
+        (links_for((), ROUTES), "/cycle/37", "Cycles", home),
+        (links_for((), ROUTES), "/cycles", "Cycles", home),
+        (links_for(("cycles", "deck"), ROUTES), "/deck/37", "deck 37", ["/deck/37", "← deck 37"]),
+        (cycles, "/deck/37", "deck 37", home),
+        (links_for((), ROUTES), "/?owner=ann", "all records", ["/?owner=ann", "← all records"]),
+    ):
+        page = render_detail(seed_index, links, only=one, base_commit="deadbee")
+        got = run_js(page, BACK, page=True, session=stamp(href, label))
+        assert got["value"] == back, (links.nav, href)
+
+    exported = "/home/ann/plan/table.html"
+    for links, href, back in (
+        (links_for(VIEWS, STATIC), exported, [exported, "← Table"]),
+        (links_for(("cycles",), STATIC), exported, ["index.html", "← all records"]),
+        (links_for(VIEWS, STATIC), "/home/ann/plan/mytable.html", ["index.html", "← all records"]),
+    ):
+        page = render_detail(seed_index, links, only=one)
+        got = run_js(page, BACK, page=True, session=stamp(href, "Table"))
+        assert got["value"] == back, (links.nav, href)
+
+    # And the page a switched-off address answers with leaves no stamp of its own,
+    # so the stale one it replaced is not renewed by visiting it.
+    left = run_js(render_switched_off(seed_index, cycles), page=True, here="/table?owner=ann")
+    assert ORIGIN not in left["tabbed"], left["tabbed"]
 
 
 def test_every_page_carries_a_skip_link_and_a_live_region(rendered: Path):

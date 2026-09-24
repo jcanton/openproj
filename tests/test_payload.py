@@ -946,11 +946,17 @@ def test_every_page_says_so_when_a_config_file_holds_a_number_that_is_not_one(tm
             assert len(listed) == 1, f"{route} listed {listed}"
             assert listed[0].startswith("config/defaults.yaml — cooldown_weeks"), listed
             assert "cool-down" in listed[0], listed
+            # What is wrong with it is the item's to say, now that the headline
+            # also covers a `views` or `kinds` it could not use.
+            assert "not a number" in listed[0], listed
             # The headline separately from the list, because an empty list is the
             # answer to two questions — "no banner" and "a banner with nothing in
             # it" — and a red box announcing "0 settings" on every page is the
             # negative case a list-only test cannot see.
-            assert "not a number" in unusable_banner_says(got.text), route
+            assert unusable_banner_says(got.text) == (
+                "One setting in the plan could not be used as written, so this page was "
+                "drawn without it."
+            ), route
 
 
 def test_a_plan_with_nothing_wrong_draws_no_such_banner(tmp_path: Path):

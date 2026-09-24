@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from .. import __version__
 from ..index import Index
-from ..model import Unreadable, Unusable
+from ..model import RUNG, SWITCHES_FILE, VIEWS, Unreadable, Unusable
 from ..themes import FAMILIES
 from ..vendor import _font_uri
 from .env import _compiled
@@ -17,6 +17,31 @@ from .hill import hill_geometry
 from .icons import _icon_uri
 from .styles import STATUS_SLOTS, _code_css, _scheme_css
 from .tokens import HUMAN, KINDS, PRIORITY_GLYPH, STATUS_GLYPH, STATUSES, card_facts
+
+# The nav, as the field on `Links` each item points at and the word it wears. One
+# list, because the mark for "you are here" has to be decided once: six links
+# written out by hand were six places for a seventh page to be added and marked
+# nowhere.
+#
+# The words, and the order a plan that never wrote `views` gets — which is
+# `Links.nav`'s default, and why this sits above the class. Which items a page
+# draws, and in what order, is `Links.nav`: a plan's `views` decides it, through
+# `links_for` below, and `test_the_views_are_the_nav_in_the_nav_order` holds this
+# order to `VIEWS` so a plan that says nothing draws the nav it always drew.
+_NAV = (
+    ("records", "Records"),
+    ("table", "Table"),
+    ("graph", "Graph"),
+    ("timeline", "Timeline"),
+    ("cycles", "Cycles"),
+    ("people", "People"),
+    # The two inbox views of the landing list, back in the nav on jcanton's
+    # ruling: quick access to what would otherwise be a click on a filter. At
+    # the end, where they sat before the records flip retired their own pages.
+    ("issues", "Issues"),
+    ("notes", "Notes"),
+)
+_NAV_KEYS = frozenset(key for key, _ in _NAV)
 
 
 class Links(BaseModel):
@@ -75,6 +100,11 @@ class Links(BaseModel):
     # it from whether `table` or `cycle` began with a slash, so blanking a view's link would
     # have switched live updates and diagrams off on every page, and nothing would have said so.
     served: bool = False
+    # The nav's items, in order, by the field each one points at: Records, then every view
+    # this plan has that has a slot. `links_for` writes it beside the fields it blanks, so
+    # what the nav draws and where the pages link cannot disagree about which views exist —
+    # and the back link reads the same tuple to decide whether a stamped page still does.
+    nav: tuple[str, ...] = tuple(key for key, _ in _NAV)
 
 
 # What a page may do, said once. The server sends it as a header and every page
@@ -144,6 +174,38 @@ ROUTES = Links(
     body="/api/body/",
     served=True,
 )
+
+
+# The `Links` fields each view owns, which is the field of its own name — plus `cycle`
+# for Cycles, because the per-cycle pages are Cycles and a cycle number that stayed a
+# link would lead to one. Derived rather than written out, so a ninth view blanks its
+# own field on the commit that adds it, and the assertion below is what refuses a view
+# that has no field to blank.
+_FIELDS_OF: dict[str, tuple[str, ...]] = {
+    **{view: (view,) for view in VIEWS},
+    "cycles": ("cycles", "cycle"),
+}
+assert set(_FIELDS_OF) == set(VIEWS), "every view blanks something, and nothing else does"
+assert all(field in Links.model_fields for fields in _FIELDS_OF.values() for field in fields), (
+    "a view whose field is not on Links cannot be switched off"
+)
+assert _NAV_KEYS - {"records"} <= set(VIEWS), "a nav item that is not a view cannot go"
+
+
+def links_for(views: Sequence[str], base: Links) -> Links:
+    """`base` — `ROUTES` or `STATIC` — for a plan that has exactly these views.
+
+    The field of every view that is off is blanked, which is the convention
+    `new` and `deck` already had in the export: a template asks the field before
+    it draws the link, so a switched-off page is one nothing links to rather than
+    one every page links to and the router refuses. `nav` is Records and then the
+    views that have a slot, in the order the plan gave them.
+
+    Once per index build, not per request: `views` is a fact about one commit.
+    """
+    off = {field: "" for view in VIEWS if view not in views for field in _FIELDS_OF[view]}
+    nav = ("records", *(view for view in views if view in VIEWS and view in _NAV_KEYS))
+    return base.model_copy(update={**off, "nav": nav})
 
 
 _SHELL = """<!doctype html>
@@ -3367,8 +3429,10 @@ function fitRoom() { roomSlack = 0; settleRoom(4); }
 {#- Its sibling, and a second <section> rather than more <li>s in the one above:
     the two say opposite things about the same kind of file. That banner says the
     file is not in the plan; this one says it is, that everything else in it is in
-    force, and that one value in it is not a number — so the page in front of you
-    is drawing a date or a bar off a bound nobody chose. Folded into one list the
+    force, and that one setting in it could not be used as written — a number that
+    is not one, so the page is drawing a date or a bar off a bound nobody chose, or
+    a `views` or `kinds` that names something it cannot switch, so the nav is what
+    the tool made of it rather than what was written. Folded into one list the
     headline would have to be true of both, and the only sentence true of both is
     "something is wrong with some files", which is not a sentence anybody can act
     on.
@@ -3730,6 +3794,20 @@ if (ORIGIN) {
 // that costs the whole script and not one line.
 const ORIGIN_PATH = new RegExp({{ origin_path|tojson }});
 
+// The stamp names a page that may have been switched off since it was written: a
+// tab that sat on the Table while somebody committed `views` without it would
+// otherwise send its reader, from every record it opens, to a page that answers
+// 404. Honoured only while the page it names is one this plan still has — a nav
+// href exactly, or in the export a file of that name at the end of an absolute
+// path on disk; or, on a server, a per-cycle or deck page under a prefix that is
+// still on. `BACK_TO` is the shell's answer to which those are, as data.
+const BACK_TO = {{ back_to|tojson }};
+function stillHere(href) {
+  const path = href.split('?')[0];
+  return BACK_TO.exact.some(p => path === p || (!p.startsWith('/') && path.endsWith('/' + p)))
+    || BACK_TO.under.some(p => path.startsWith(p));
+}
+
 // **Where you came from, or nothing.** A function rather than the inline read it
 // was, because a second caller turned up: deleting a record navigates away, and
 // the page it should navigate to is the page the back link would have taken you
@@ -3741,7 +3819,8 @@ const ORIGIN_PATH = new RegExp({{ origin_path|tojson }});
 // view is simply the view before it, which is nothing anybody wants.
 function cameFrom() {
   const from = forThisTab.map(ORIGIN_KEY);
-  if (typeof from.href !== 'string' || !ORIGIN_PATH.test(from.href) || !from.label) return null;
+  if (typeof from.href !== 'string' || !ORIGIN_PATH.test(from.href)
+      || !stillHere(from.href) || !from.label) return null;
   return {href: from.href, label: from.label};
 }
 
@@ -4158,24 +4237,6 @@ def _titles(index: Index) -> dict[str, str]:
     return {record_id: record.title for record_id, record in index.plan.items()}
 
 
-# The nav, as the field on `Links` each item points at and the word it wears. One
-# list, because the mark for "you are here" has to be decided once: six links
-# written out by hand were six places for a seventh page to be added and marked
-# nowhere.
-_NAV = (
-    ("records", "Records"),
-    ("table", "Table"),
-    ("graph", "Graph"),
-    ("timeline", "Timeline"),
-    ("cycles", "Cycles"),
-    ("people", "People"),
-    # The two inbox views of the landing list, back in the nav on jcanton's
-    # ruling: quick access to what would otherwise be a click on a filter. At
-    # the end, where they sat before the records flip retired their own pages.
-    ("issues", "Issues"),
-    ("notes", "Notes"),
-)
-_NAV_KEYS = frozenset(key for key, _ in _NAV)
 # What a record page's back link calls the view it was opened from. The nav's own
 # word for all but one of them: the link has read "all records" since it could
 # only ever go there, and that is still what it says when there is no origin to
@@ -4268,16 +4329,19 @@ def _page(
     a page that silently draws a plan short.
 
     `unusable` is its sibling and rides in the same banner: the config and cycle
-    files that READ, and hold a number nothing can compute with. A separate
-    parameter and a separate sentence, because every word of the one above is
-    false about it — those files are in the plan, their other settings are in
-    force, and this page is drawing dates and bars off the value rather than
-    leaving them out. Twelve entry points now, and
+    files that READ, and hold a setting that could not be used as written — a
+    number nothing can compute with, or a `views` or `kinds` naming something it
+    cannot switch. A separate parameter and a separate sentence, because every
+    word of the one above is false about it — those files are in the plan, their
+    other settings are in force, and this page is drawn off what the tool made of
+    the value rather than leaving it out. Said as every entry point and not as a
+    count, which was twelve here until the switched-off page made it wrong;
     `test_every_page_says_so_when_a_config_file_holds_a_number_that_is_not_one`
-    is the tripwire that a thirteenth cannot forget it.
+    is the tripwire that the next one cannot forget it.
     """
     if current and current not in _PAGE_KEYS:
         raise ValueError(f"{current!r} is not a page: {sorted(_PAGE_KEYS)}")
+    labels = dict(_NAV)
     return _compiled(_SHELL).render(
         title=title,
         content=Markup(content),
@@ -4316,18 +4380,24 @@ def _page(
             "so nothing in them is on this page."
         ),
         # Built here for the same reason, and worded from the reader's side of
-        # it: what is wrong is not that a file is broken but that a number on
-        # this page came from somewhere other than the plan.
+        # it: what is wrong is not that a file is broken but that this page was
+        # drawn from something other than what the plan says. "Not a number" was
+        # the whole of it until `views` and `kinds` could be written wrong too —
+        # a typo, a duplicate, a name that is always on — and the list below each
+        # headline says which, in the setting's own words.
         unusable_headline=(
-            "One setting in the plan is not a number, so something on this page was "
+            "One setting in the plan could not be used as written, so this page was "
             "drawn without it."
             if len(unusable) == 1
-            else f"{len(unusable)} settings in the plan are not numbers, so things on "
-            "this page were drawn without them."
+            else f"{len(unusable)} settings in the plan could not be used as written, "
+            "so this page was drawn without them."
         ),
+        # The plan's nav and not every view there is: `links.nav` is what
+        # `links_for` left on, in the plan's order, and `_NAV` only says what each
+        # one is called.
         nav=[
-            {"href": getattr(links, key), "label": label, "current": key == current}
-            for key, label in _NAV
+            {"href": getattr(links, key), "label": labels[key], "current": key == current}
+            for key in links.nav
         ],
         # The Help page's own mark, on the one link to it, which is in the footer
         # and not in the nav above: `nav` cannot carry it.
@@ -4351,6 +4421,17 @@ def _page(
             else next((_BACK_LABEL.get(key, label) for key, label in _NAV if key == current), "")
         ),
         origin_path=_ORIGIN_PATH,
+        # Where a stamp may still lead, for `stillHere` in the script: the nav's
+        # own hrefs exactly, and the per-cycle and deck pages under their prefixes
+        # while those are on — neither `/cycle/37` nor `/deck/37` is a nav href,
+        # and both are views a record is opened from. Data rather than a pattern
+        # written into the template, for the reason `origin_path` is. A blank field
+        # is left out rather than carried: an empty prefix is a prefix of
+        # everything.
+        back_to={
+            "exact": [href for key in links.nav if (href := getattr(links, key))],
+            "under": [prefix for prefix in (links.cycle, links.deck) if links.served and prefix],
+        },
         # The shell writes the chip and legend rules for every status, so a
         # status added to the model cannot arrive with three of its four tokens
         # wired up and the fourth still spelled out on a line nobody edited. The
@@ -4395,4 +4476,91 @@ def _page(
         # not about the page, and `pyproject.toml` and `__init__.py` have already
         # disagreed with each other and with the newest tag once.
         version=__version__,
+    )
+
+
+# What a switched-off page says it was, as the subject of its one sentence. Written
+# out rather than built from the nav's words, because English is not uniform across
+# them — "Cycles are", "The review deck is" — and a view with no nav slot has no word
+# there to build from. Held to `VIEWS` below, so a ninth view cannot arrive with no
+# sentence to answer its address with.
+_OFF_PHRASE = {
+    "table": "The Table is",
+    "graph": "The Graph is",
+    "timeline": "The Timeline is",
+    "cycles": "Cycles are",
+    "deck": "The review deck is",
+    "people": "The People page is",
+    "issues": "The Issues list is",
+    "notes": "The Notes list is",
+}
+# And the page's heading: the nav's word where it has one, since that is what the
+# reader was looking for.
+_OFF_HEADING = {**{key: label for key, label in _NAV if key in VIEWS}, "deck": "Review deck"}
+assert set(_OFF_PHRASE) == set(_OFF_HEADING) == set(VIEWS), "every view has its sentence"
+_OFF_STYLE = ".switched-off code { font-family: var(--font-mono); }\n"
+
+
+def render_switched_off(
+    index: Index,
+    links: Links = STATIC,
+    view: str = "table",
+    off_kind: str = "",
+    query: str = "",
+    record_id: str = "",
+) -> str:
+    """What an address answers when the plan has switched its page off.
+
+    The ordinary shell, so the nav and the footer are where they always are and
+    the nav is already this plan's; one heading; one sentence naming the setting
+    and the file it is in; and one way out. A 404 and not a redirect: a bookmark
+    that silently landed on Records would be a page that changed under its reader
+    with nothing saying why — empty looking like broken, which is finding F1.
+
+    `view` is the view that is off; `off_kind`, when given, is a kind that is off
+    instead, and its sentence is `kind_refusal`'s (`model.py`) with the setting
+    and the file marked up. The way out is the record, for a slide view that is
+    one record's view; otherwise Records carrying the same query, because Records
+    honours every filter the other views read and so lands on the same rows; and
+    Records bare when there was no query. `query` is the address's own, still
+    percent-encoded, and it is escaped here like anything else.
+
+    `current` is empty on purpose: a page that marked Table would stamp itself as
+    the tab's origin and send the next record's back link here again. And every
+    parameter but `index` has a default, because the namespace censuses draw
+    every `render_*` from an index alone.
+    """
+    if off_kind:
+        heading = f"New {off_kind}"
+        said = Markup(
+            "{} are turned off for this plan. <code>kinds</code> in <code>{}</code> "
+            "decides which kinds of record it has."
+        ).format(
+            RUNG[off_kind].directory.capitalize(),
+            index.switches_from.get("kinds", SWITCHES_FILE),
+        )
+    else:
+        heading = _OFF_HEADING[view]
+        said = Markup(
+            "{} turned off for this plan. <code>views</code> in <code>{}</code> "
+            "decides which views it has."
+        ).format(_OFF_PHRASE[view], index.switches_from.get("views", SWITCHES_FILE))
+    if record_id:
+        out = Markup('<a href="{}{}">Open the record</a>').format(links.record, record_id)
+    elif query:
+        out = Markup('<a href="{}?{}">Show the same filters on Records</a>').format(
+            links.records, query
+        )
+    else:
+        out = Markup('<a href="{}">Go to Records</a>').format(links.records)
+    body = Markup('<section class="switched-off">\n<h1>{}</h1>\n<p>{}</p>\n<p>{}</p>\n</section>')
+    return _page(
+        f"openproj — {heading.lower()}, turned off",
+        body.format(heading, said, out),
+        _OFF_STYLE,
+        links,
+        "",
+        index.unreadable,
+        index.unusable,
+        fills=True,
     )
