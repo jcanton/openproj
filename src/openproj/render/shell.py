@@ -3803,10 +3803,17 @@ const ORIGIN_PATH = new RegExp({{ origin_path|tojson }});
 // href exactly, or in the export a file of that name at the end of an absolute
 // path on disk; or, on a server, a per-cycle or deck page under a prefix that is
 // still on. `BACK_TO` is the shell's answer to which those are, as data.
+//
+// A path that ends in a slash is judged as the index file under it, because an
+// export put on a web server is reached at `https://host/plan/` as well as at
+// `…/plan/index.html`. Judged as it came, that landing was no file of the
+// export, and a filter it had been opened with was lost from every back link.
+// Only for the export's file names: a server's routes are matched exactly.
 const BACK_TO = {{ back_to|tojson }};
 function stillHere(href) {
   const path = href.split('?')[0];
-  return BACK_TO.exact.some(p => path === p || (!p.startsWith('/') && path.endsWith('/' + p)))
+  const file = path.endsWith('/') ? path + 'index.html' : path;
+  return BACK_TO.exact.some(p => path === p || (!p.startsWith('/') && file.endsWith('/' + p)))
     || BACK_TO.under.some(p => path.startsWith(p));
 }
 

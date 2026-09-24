@@ -4797,13 +4797,29 @@ def test_a_back_link_to_a_view_that_was_switched_off_goes_to_records(seed_index:
         assert got["value"] == back, (links.nav, href)
 
     exported = "/home/ann/plan/table.html"
-    for links, href, back in (
-        (links_for(VIEWS, STATIC), exported, [exported, "← Table"]),
-        (links_for(("cycles",), STATIC), exported, ["index.html", "← all records"]),
-        (links_for(VIEWS, STATIC), "/home/ann/plan/mytable.html", ["index.html", "← all records"]),
+    for links, href, label, back in (
+        (links_for(VIEWS, STATIC), exported, "Table", [exported, "← Table"]),
+        (links_for(("cycles",), STATIC), exported, "Table", ["index.html", "← all records"]),
+        (
+            links_for(VIEWS, STATIC),
+            "/home/ann/plan/mytable.html",
+            "Table",
+            ["index.html", "← all records"],
+        ),
+        # An export on a web server is reached at its directory as well, and that
+        # landing is `index.html` to the server that answered it. Judged as the
+        # bare path it was no file of the export, and the filter it had been
+        # opened with was dropped from the back link; before views could be
+        # switched off, any path at all was followed.
+        (
+            links_for(("cycles",), STATIC),
+            "/plan/?owner=ann",
+            "all records",
+            ["/plan/?owner=ann", "← all records"],
+        ),
     ):
         page = render_detail(seed_index, links, only=one)
-        got = run_js(page, BACK, page=True, session=stamp(href, "Table"))
+        got = run_js(page, BACK, page=True, session=stamp(href, label))
         assert got["value"] == back, (links.nav, href)
 
     # And the page a switched-off address answers with leaves no stamp of its own,
