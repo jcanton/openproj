@@ -12,6 +12,7 @@ there is: facet values and filter values are always strings, and `apply_filters`
 returns ids sorted by id so that a shared URL renders identically twice.
 """
 
+import math
 import shutil
 from datetime import date
 from pathlib import Path
@@ -1864,52 +1865,39 @@ def test_an_absurd_cooldown_costs_that_cycles_flag_and_not_every_page(
     assert undated.ends_on >= undated.builds_until
 
 
-def test_an_absurd_appetite_draws_a_full_bar_and_not_a_500_on_three_pages(
+def test_an_absurd_appetite_is_no_appetite_at_all_on_three_pages(
     seed_root: Path, tmp_path: Path
 ):
     """The same question as the cool-down above, asked of the other number a
     person types — and it had the same answer on three more routes.
 
-    `person_weeks` is a float in a record file, and a load bar is
-    `min(100, round(100 * held / capacity))`. `round()` raises on infinity, so
-    one `person_weeks: .inf` in one committed task made /people, /cycles and
-    /cycle/<its cycle> answer 500 — permanently, on a protected branch, off a
-    file that parses, validates and loads without a word. `openproj check`
-    reported the same blocker and warning counts as a clean corpus and never
-    mentioned the file; `openproj render` died with a traceback after writing
-    some of the pages and not the rest.
-
     Three copies of the expression, so nothing guarded it: the cycle page's
     roster, the cycles index's card and the people page's per-cycle load each
-    wrote it out. `_percent` is the one copy, and it bounds before it rounds,
-    which is the order `days_after` and `within_the_calendar` (`model.py`)
-    already settled on for the same reason.
+    wrote out `min(100, round(100 * x / capacity))`. `_percent` (`tokens.py`) is
+    the one copy, and it bounds before it rounds, which is the order `days_after`
+    and `within_the_calendar` (`model.py`) already settled on.
 
-    Entered where a person's commit enters it — the number goes into the file
-    and `load_repo` reads it — for the reason the cool-down test gives: a fixture
+    Entered where a person's commit enters it — the number goes into the file and
+    `load_repo` reads it — for the reason the cool-down test gives: a fixture
     edited after the load is a fixture that never crosses the path the defect
     lives on. It renders rather than asking `_percent` directly, because a helper
     that answers correctly while two of the three call sites still spell the
     arithmetic out is exactly the state this defect was already in.
 
-    Beside the cool-down test rather than in the render suite, because what is
-    pinned is one number against the pages that draw a load bar, and a page
-    tested in another file is the page that gets the guard last.
+    **This test used to be called `..._draws_a_full_bar_and_not_a_500` and it
+    asserted an infinite load. Both halves of that are superseded, and by the
+    branch its own docstring predicted.** It said the remaining two sites were
+    "a branch of their own — jcanton, 2026-09-23", and on that branch the fix
+    landed one level up from the bars: `size_weeks` answers None for a size that
+    is not a number, so an absurd appetite is no appetite. The holder's load is
+    now their OTHER work, the bars are ordinary, and what says something is wrong
+    is a blocker on the record rather than a full bar somebody has to interpret.
 
-    **Three pages, and that is the whole of what this pins.** It is not every
-    page that divides by something, and the difference is two live defects rather
-    than a nicety of wording: `availability: .inf` reaches `_CYCLE`'s roster row
-    as `(row.rate * 100)|round|int` and answers OverflowError on /cycle/<n>, and
-    `person_weeks: .nan` reaches `round(100 * counted.fraction)` (`detail.py`)
-    and answers ValueError on the parent's record page and on the static
-    `detail.html`. Both measured the way this test measures, through the file.
-    They are a branch of their own — jcanton, 2026-09-23 — and the reason they
-    are written down in a passing test is that a docstring claiming more than its
-    assertions is how the next reader concludes the sweep is finished.
-
-    The bar is full and not empty. A ratio nobody can read is drawn as "as much
-    as it can hold", the same direction `_cycle_totals` keeps its own sum in: a
-    bar drawn empty is a cycle that looks free to bet into.
+    A full bar was the least-bad reading while the number still reached the
+    arithmetic — "as much as it can hold", because a bar drawn empty is a cycle
+    that looks free to bet into. It is a worse reading than not drawing the bet at
+    all and naming the file, which is what happens now: a full bar is a sentence
+    about capacity, and the thing that is wrong is not the capacity.
     """
     from openproj.render import render_cycle, render_cycles, render_people
 
@@ -1937,8 +1925,38 @@ def test_an_absurd_appetite_draws_a_full_bar_and_not_a_500_on_three_pages(
     # typed in beside a corpus that is allowed to grow is a date that stops
     # meaning "during the bet".
     opens, closes = dated.cycles[cycle]
-    index = build_index(records, config, opens + (closes - opens) / 2)
-    assert index.load(cycle)[holder] == float("inf")
+    when = opens + (closes - opens) / 2
+    index = build_index(records, config, when)
+
+    # The same corpus with the appetite REMOVED rather than made nonsense, which
+    # is the property in one comparison: a size that is not a number is no size.
+    # Derived rather than written down — a bet is divided among its assignees, so
+    # a number typed in here would be this test asserting arithmetic it did just
+    # as badly as the code might.
+    unsized = tmp_path / "unsized"
+    shutil.copytree(seed_root, unsized)
+    blank = unsized / "tasks" / "task-6a5c02--lower-the-scan-operator.md"
+    blank.write_text(blank.read_text().replace("person_weeks: 1.5\n", ""))
+    without = build_index(*load_repo(unsized)[:2], when)
+
+    held = index.load(cycle)[holder]
+    assert math.isfinite(held)
+    assert held == without.load(cycle)[holder], (
+        "a size that is not a number is not the same as no size at all"
+    )
+    # And that the comparison has teeth: the untouched corpus, where the bet is
+    # a number, must give a different answer — or both sides of the line above
+    # could be measuring a record nobody carries.
+    assert held != build_index(*load_repo(seed_root)[:2], when).load(cycle)[holder]
+
+    # Said on the record rather than drawn on a bar. This is what replaced the
+    # full bar, and without it the page would merely be quieter about a plan that
+    # is wrong.
+    assert [
+        one.severity
+        for one in index.problems
+        if one.record_id == "task-6a5c02" and one.field == "person_weeks"
+    ] == ["blocker"]
 
     pages = {
         "people": render_people(index),
@@ -1958,7 +1976,6 @@ def test_an_absurd_appetite_draws_a_full_bar_and_not_a_500_on_three_pages(
         assert widths, f"{name} drew no bar at all"
         drawn = [float(width.removeprefix("width:").removesuffix("%").strip()) for width in widths]
         assert all(0 <= one <= 100 for one in drawn), f"{name}: {widths}"
-        assert 100 in drawn, f"{name} drew nothing full for a bet of infinite weeks"
 
 
 def test_a_record_in_progress_with_nothing_linked_is_a_question_not_a_rule(seed_index: Index):

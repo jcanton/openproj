@@ -584,8 +584,18 @@ def _percent(part: float, whole: float) -> int:
     The constants come first in both comparisons because NaN loses every one of
     them, exactly as `within_the_calendar` does it: `min(100.0, nan)` is 100.0
     and `min(nan, 100.0)` is the NaN, which rounds no better than the infinity
-    did. NaN is reachable here and not hypothetical — an `availability` of `.inf`
-    makes the capacity infinite too, and inf/inf is NaN.
+    did.
+
+    **That NaN branch is no longer reachable from a plan file, and the line that
+    said it was is corrected rather than deleted.** It read "NaN is reachable
+    here and not hypothetical — an `availability` of `.inf` makes the capacity
+    infinite too, and inf/inf is NaN", and that was true until `Cycle.rate` and
+    `size_weeks` (`model.py`) started answering the nominal rate and None for a
+    value that is not a number. Both of this function's arguments are finite now
+    whatever anybody commits. The bounds stay for the reason `days_after` keeps
+    its own: a caller is not a proof, this is the one place in the app that turns
+    a ratio into a width, and the reachable case — `held` above `capacity`, which
+    is an ordinary over-bet — still needs the upper one.
 
     So an unreadable ratio draws a full bar rather than an empty one. That is the
     direction this number must never be wrong in: the cycles index says so about
