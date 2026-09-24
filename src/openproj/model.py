@@ -335,7 +335,8 @@ class Unreadable(BaseModel):
 
 
 class Unusable(BaseModel):
-    """A file in the plan that reads, and holds a number nothing can compute with.
+    """A file in the plan that reads, and holds a setting that could not be used as
+    written.
 
     `Unreadable`'s sibling and deliberately not `Unreadable` itself: that one says
     "this file is not a record, so nothing in it is in the plan", and of a
@@ -345,6 +346,17 @@ class Unusable(BaseModel):
     wrong is one value, and the consequence is a date or a bar drawn at a bound
     nobody chose.
 
+    Two families of setting arrive here, and the argument is the same for both.
+    A number nothing can compute with, from `unusable_numbers`. And a switch —
+    `views` or `kinds`, from `resolve_switches` — that names something it cannot
+    switch: a typo, a name that is always on, a view whose dependency is off, a
+    value that is not a list at all. The file is not dropped for any of those,
+    because `views: cycles` is one word in one file and `schema_version`,
+    `cooldown_weeks` and `repositories` sit beside it; what is drawn instead is
+    the switch's own default, or the list without the name, and this is what
+    says so. A typo that silently hid the Cycles page would be a page gone with
+    nothing anywhere saying why.
+
     Deliberately not a `Problem` either, for the reason `Unreadable` gives: a
     Problem is keyed by record id, every page hangs one on that record's row, and
     the table's headline count links to a filter over records. The two files this
@@ -353,7 +365,9 @@ class Unusable(BaseModel):
 
     A record's own `person_weeks: .inf` is NOT one of these. That record exists,
     it has a row and a page, and `_problems_for` reports it there, beside the
-    field, like every other thing wrong with a record.
+    field, like every other thing wrong with a record. Nor is an issue file in a
+    plan whose `kinds` leaves issues out: the switch is fine, the record is the
+    thing that disagrees with it, and `_kind_problems` hangs the warning on it.
 
     `field` as well as `path`, because these files hold twenty settings and the
     reader has to be sent to one line rather than to a file. `why` says what is
@@ -767,6 +781,18 @@ class Config(BaseModel):
     # is who the team says is on it. Neither answers the other's question, and a
     # login in one and not the other is the normal state of both.
     people: dict[str, Person] = {}
+    # Which views this plan has, in nav order, and which kinds of record — both
+    # RESOLVED, never as the file wrote them. `read_config` pulls the two keys
+    # out before the file is validated and hands them to `resolve_switches`, so
+    # a value that is not a list costs that switch and not the file around it,
+    # and nothing past that one function reads `views` or `kinds` as written.
+    #
+    # Everything on by default, because absent has to mean everything: every
+    # plan written before the keys existed would otherwise lose every page on
+    # the upgrade that introduced them. Factories and not literals, because the
+    # vocabulary is off the kind ladder and the ladder is further down this file.
+    views: tuple[str, ...] = Field(default_factory=lambda: VIEWS)
+    kinds: frozenset[str] = Field(default_factory=lambda: frozenset(KIND_NAMES))
 
     # Which config file each setting above was taken from, keyed by field name.
     # Private for the same reason `Record._source` is: it is where the value came
@@ -778,6 +804,12 @@ class Config(BaseModel):
     # is the same rule. `read_config` is the only writer, and it fills this at the
     # moment it accepts a key, which is the one moment both halves are in hand.
     _from: dict[str, str] = PrivateAttr(default_factory=dict)
+    # What `resolve_switches` could not use in `views` and `kinds`, as written.
+    # Carried here rather than returned beside the Config, because the three
+    # callers of `read_config` all unpack two values and only `build_index`
+    # wants this; private for the reason `_from` is, and it survives the
+    # `model_copy` in `with_plans` and `with_people` the way `_from` does.
+    _unusable: list[Unusable] = PrivateAttr(default_factory=list)
 
     @field_validator("repositories")
     @classmethod
@@ -820,6 +852,16 @@ class Config(BaseModel):
         """
         stated = self.nominal_availability
         return stated if a_number(stated) and stated else 1.0
+
+    def allows(self, kind: str) -> bool:
+        """Whether this plan has this kind of record.
+
+        The one predicate every kind question goes through — the write doors, the
+        create form's picker and the warning on a file already there — so that
+        "is an issue on here" has one answer, off the resolved set, and never a
+        second one somebody works out from `kinds` as the file wrote it.
+        """
+        return kind in self.kinds
 
     def with_people(self, people: list[Person]) -> Config:
         """Carried on the config for the same reason cycles are: nothing
@@ -964,10 +1006,20 @@ def read_config(
     # than worked out afterwards: afterwards there is only the merged mapping,
     # and which of four files a key was in is exactly what it no longer says.
     came_from: dict[str, str] = {}
+    # `views` and `kinds` exactly as written, kept out of `data` because they are
+    # RESOLVED rather than validated. Handed to pydantic with the rest, `views:
+    # cycles` or a bare `views:` is a ValidationError, and the loop below drops
+    # the whole file for one — `schema_version`, `cooldown_weeks` and
+    # `repositories` with it — where what is wrong is one switch, whose answer is
+    # its own default and an `Unusable` saying so.
+    switches: dict[str, object] = {}
     for path, mapping in loaded:
         # Unknown keys are ignored so a repository with a half-written config
         # still loads rather than taking the whole index down.
-        taken = {k: v for k, v in mapping.items() if k in Config.model_fields}
+        taken = {
+            k: v for k, v in mapping.items() if k in Config.model_fields and k not in _SWITCHES
+        }
+        switched = {k: mapping[k] for k in _SWITCHES if k in mapping}
         candidate = {**data, **taken}
         try:
             Config.model_validate(candidate)
@@ -976,11 +1028,20 @@ def read_config(
             continue
         data = candidate
         # After the validation and not before it, so a file that is dropped
-        # leaves no claim behind on the keys it was going to set. Last write
-        # wins, which is the same rule the merge above runs on.
-        came_from.update(dict.fromkeys(taken, path))
-    config = Config.model_validate(data)
+        # leaves no claim behind on the keys it was going to set — a switch
+        # included, since a file that is not in the plan does not get to turn a
+        # page off. Last write wins, which is the same rule the merge above runs on.
+        switches.update(switched)
+        came_from.update(dict.fromkeys([*taken, *switched], path))
+    views, kinds, unusable = resolve_switches(
+        switches.get("views", _MISSING),
+        switches.get("kinds", _MISSING),
+        came_from.get("views", SWITCHES_FILE),
+        came_from.get("kinds", SWITCHES_FILE),
+    )
+    config = Config.model_validate({**data, "views": views, "kinds": kinds})
     config._from = came_from
+    config._unusable = unusable
     return config, refused
 
 
@@ -1673,6 +1734,267 @@ KINDS: tuple[Rung, ...] = (
 )
 
 KIND_NAMES: tuple[str, ...] = tuple(rung.name for rung in KINDS)
+
+
+# The views a plan may switch, in the nav's order — which is also the order a
+# plan that does not say gets them in, so a plan with no `views` key draws the nav
+# it drew before the key existed. One word per view, and the word is the `Links`
+# field and the `_NAV` key (`render/shell.py`): there is no second spelling
+# anywhere to map it to, which is what keeps the config, the router, the nav and
+# the export from each growing their own. `deck` has no nav slot and is here
+# because it is a page a plan can turn off.
+#
+# Here and not in `render`, because `openproj check` has to know the vocabulary
+# to say what is wrong with a setting, and `check` does not import jinja.
+VIEWS: tuple[str, ...] = (
+    "table",
+    "graph",
+    "timeline",
+    "cycles",
+    "deck",
+    "people",
+    "issues",
+    "notes",
+)
+# The kinds `kinds` switches, off the ladder rather than written out: a third
+# unplanned rung is switchable on the commit that adds it. The planned four are
+# the hierarchy and the schedule — a plan without `project` would orphan the
+# parent of every pitch — so they are always on and never in this tuple.
+OPTIONAL_KINDS: tuple[str, ...] = tuple(rung.name for rung in KINDS if not rung.planned)
+_PLANNED_KINDS: tuple[str, ...] = tuple(rung.name for rung in KINDS if rung.planned)
+# What `views` may name and cannot switch, and what it is told instead. Records
+# is the landing page and the only home of the Create button, a record page is
+# what every bar, node and cycle row links to, and Help is in the footer — each
+# a request the tool will not honour, and the branch that decides not to act has
+# to say so rather than let somebody believe they turned Help off.
+_ALWAYS_ON_SAID = {
+    "records": "views names records, which is always on and always first",
+    "help": "views names help, which is always on, in the footer",
+    "detail": "views names detail, which is always on: every record has its page",
+}
+ALWAYS_ON_VIEWS: tuple[str, ...] = tuple(_ALWAYS_ON_SAID)
+# What a view cannot be on without. A value that is a kind is a kind the view
+# lists; anything else is another view. The deck is one cycle's review, reached
+# from that cycle's page, so it goes with `cycles` — jcanton: "should not be
+# possible to turn it on without having cycles". A list of a kind the plan does
+# not have is a list of nothing, and each inbox view is named for its rung's
+# directory, so that half is derived and a third inbox needs no line here.
+#
+# Only one way round: a kind may be on while its view is off, which is exactly
+# icon4py's notes — kept as a kind for drafting, dropped from the nav.
+VIEW_NEEDS: dict[str, str] = {
+    "deck": "cycles",
+    **{rung.directory: rung.name for rung in KINDS if not rung.planned},
+}
+# The two keys `read_config` resolves rather than validates, and the file the
+# switches are documented to live in — which is what a sentence names when no
+# file wrote the key, since that is where somebody adding it should look.
+_SWITCHES = ("views", "kinds")
+SWITCHES_FILE = "config/defaults.yaml"
+# Absent, as distinct from `views:` with nothing after it: the first is every
+# view and says nothing, the second is a value that is not a list and is reported.
+_MISSING = object()
+
+
+def _as_a_list(key: str, raw: object, vocabulary: tuple[str, ...], example: str) -> str:
+    """How to write this key as the list it was not: the words it held, when every
+    one is a word the key takes — `views: cycles, graph` is two views and a pair
+    of brackets short of right — and an example otherwise. The likely mistake is
+    the simplest one to fix, and a sentence that names it without saying how is
+    half of what an error owes its reader."""
+    words = [word.strip() for word in raw.split(",")] if isinstance(raw, str) else []
+    shown = ", ".join(words) if words and all(word in vocabulary for word in words) else example
+    return f"write it in brackets, as {key}: [{shown}]"
+
+
+def _needs_met(view: str, kinds: Collection[str], views: Collection[str]) -> bool:
+    need = VIEW_NEEDS.get(view)
+    if need is None:
+        return True
+    return need in kinds if need in KIND_NAMES else need in views
+
+
+def resolve_switches(
+    views_raw: object, kinds_raw: object, views_from: str, kinds_from: str
+) -> tuple[tuple[str, ...], frozenset[str], list[Unusable]]:
+    """The views and kinds a plan has, out of `views` and `kinds` as written.
+
+    Parse permissively, validate strictly, and here that means the answer is
+    always usable and whatever it could not use is said: a name that is not a
+    view is left out, a duplicate counts once at its first place, a name that is
+    always on is a no-op, a view whose dependency is off stays off, and a value
+    that is not a list is the key's default. Each of those is one `Unusable`, so
+    the banner and `openproj check` name it. A typo that silently hid the Cycles
+    page is finding F1 — a page gone and nothing saying why.
+
+    Absent and written are different answers, and on purpose. `views` absent is
+    every view whose dependency holds, silently — so `kinds: [note]` alone does
+    not report the Issues list it never asked for. A broken dependency is said
+    only for a view the setting actually names.
+
+    `views_from` and `kinds_from` are the file each key was read from, which is
+    where each `Unusable` sends its reader. `why` opens with the key, because the
+    banner prints the path and the reason and not the field.
+
+    The order the list gives is kept: it is the nav order after Records. Kinds
+    are a set, and the planned four are in it whatever it says.
+    """
+    unusable: list[Unusable] = []
+
+    def said(field: str, path: str, why: str) -> None:
+        unusable.append(Unusable(path=path, field=field, why=why))
+
+    kinds = set(KIND_NAMES)
+    if kinds_raw is not _MISSING and not isinstance(kinds_raw, list):
+        said(
+            "kinds",
+            kinds_from,
+            "kinds is not a list, so every kind is on; "
+            + _as_a_list("kinds", kinds_raw, OPTIONAL_KINDS, "note"),
+        )
+    elif isinstance(kinds_raw, list):
+        kinds = set(_PLANNED_KINDS)
+        # A list and not a set, because an item YAML hands back may be a list
+        # or a mapping, and neither can be hashed.
+        seen: list[object] = []
+        for item in kinds_raw:
+            if item in seen:
+                # Said once, where it first appeared. A repeat of a name already
+                # reported as unusable is the same sentence twice.
+                if item in OPTIONAL_KINDS:
+                    said("kinds", kinds_from, f"kinds names {item} twice; it counts once")
+                continue
+            seen.append(item)
+            if isinstance(item, str) and item in OPTIONAL_KINDS:
+                kinds.add(item)
+            elif isinstance(item, str) and item in _PLANNED_KINDS:
+                others = [name for name in _PLANNED_KINDS if name != item]
+                said(
+                    "kinds",
+                    kinds_from,
+                    f"kinds names {item}, which is always on — so are "
+                    f"{', '.join(others[:-1])} and {others[-1]}",
+                )
+            else:
+                said(
+                    "kinds",
+                    kinds_from,
+                    f"kinds names {item!r}, which is not a kind this setting switches "
+                    f"({', '.join(OPTIONAL_KINDS)}), so it is left out",
+                )
+
+    default = tuple(view for view in VIEWS if _needs_met(view, kinds, VIEWS))
+    if views_raw is _MISSING:
+        return default, frozenset(kinds), unusable
+    if not isinstance(views_raw, list):
+        # "Every view is on" only when it is: the default leaves out the list of a
+        # kind that is off, and a sentence the nav under it contradicts is worse
+        # than none.
+        lists = [
+            RUNG[VIEW_NEEDS[view]].directory.capitalize() for view in VIEWS if view not in default
+        ]
+        but = (
+            f" but the {' and '.join(lists)} list{'s' if len(lists) > 1 else ''}, "
+            f"whose kind{'s are' if len(lists) > 1 else ' is'} off"
+            if lists
+            else ""
+        )
+        said(
+            "views",
+            views_from,
+            f"views is not a list, so every view is on{but}; "
+            + _as_a_list("views", views_raw, VIEWS, "cycles, graph"),
+        )
+        return default, frozenset(kinds), unusable
+
+    # Every view the list names, wherever in it: `[deck, cycles]` turns the deck
+    # on as surely as `[cycles, deck]` does, because the deck has no place in the
+    # nav for the order to decide.
+    named = {item for item in views_raw if isinstance(item, str) and item in VIEWS}
+    views: list[str] = []
+    seen_views: list[object] = []
+    for item in views_raw:
+        if item in seen_views:
+            if item in views:
+                said(
+                    "views",
+                    views_from,
+                    f"views names {item} twice; it counts once, at its first place",
+                )
+            continue
+        seen_views.append(item)
+        if isinstance(item, str) and item in VIEWS:
+            need = VIEW_NEEDS.get(item, "")
+            if _needs_met(item, kinds, named):
+                views.append(item)
+            elif need in KIND_NAMES:
+                said(
+                    "views",
+                    views_from,
+                    f"views names {item}, which needs the {need} kind in kinds, so the "
+                    f"{RUNG[need].directory.capitalize()} list is off",
+                )
+            else:
+                said(
+                    "views",
+                    views_from,
+                    f"views names {item}, which needs {need}, so the {item} is off",
+                )
+        elif isinstance(item, str) and item in _ALWAYS_ON_SAID:
+            said("views", views_from, _ALWAYS_ON_SAID[item])
+        else:
+            said(
+                "views",
+                views_from,
+                f"views names {item!r}, which is not a view openproj has "
+                f"({', '.join(VIEWS)}), so it is left out",
+            )
+    return tuple(views), frozenset(kinds), unusable
+
+
+def kind_refusal(kind: str, config: Config) -> str | None:
+    """Why a record of this kind may not be written here, or None if it may.
+
+    One sentence for every door — `POST /api/record`, the target of a rekind,
+    `openproj new` — and for the warning on a file that is already there, so the
+    reader who meets it in a 422, in a terminal and beside a record reads the
+    same words each time and is sent to the same line of the same file.
+
+    `kind` is a kind this tool has: each door refuses a word that is not one
+    first, in its own sentence, because "turned off" is not what is wrong with it.
+
+    No backticks, although it names a key. Every place on the web that shows it
+    shows it as text — the problems beside a record, a table cell's marks, the
+    422 banner — so a backtick is drawn as a backtick, and no other sentence the
+    reader meets there has one: they name `views` and a config file bare. The
+    switched-off page marks the key and the file up in `<code>` itself.
+    """
+    if config.allows(kind):
+        return None
+    path = config._from.get("kinds", SWITCHES_FILE)
+    return (
+        f"{RUNG[kind].directory.capitalize()} are turned off for this plan. "
+        f"kinds in {path} decides which kinds of record it has."
+    )
+
+
+def kind_off_warning(kind: str, config: Config) -> str | None:
+    """What the warning beside a record of a kind that is off says, or None.
+
+    `kind_refusal`'s sentence, and then what to do about it. A door refusing a
+    write has nothing to add — the reader has not written anything yet — but a
+    file that is already there is a disagreement the reader has to settle, and
+    an error that says what is wrong and not how to fix it is half of one. Either
+    way settles it: the record goes, into the plan or out of it, or the kind
+    comes back. Promote is named only for a kind that has it, which today is
+    every optional kind, because the day one does not, telling its reader to
+    press a button that is not there would be worse than not naming it.
+    """
+    refused = kind_refusal(kind, config)
+    if refused is None:
+        return None
+    way_out = "Promote it or delete it" if kind in INBOXES else "Delete it"
+    return f"{refused} {way_out}, or put {kind} back in kinds."
 
 
 # Who is on the hook for doing it, and whether anybody has to look at it after.
@@ -4509,6 +4831,36 @@ def _identity_problems(records: list[Record]) -> Iterator[Problem]:
             )
 
 
+def _kind_problems(records: list[Record], config: Config) -> Iterator[Problem]:
+    """A file of a kind this plan has turned off: it loads, and it is warned about.
+
+    Loaded, listed on Records and drawn on its page like any other, because
+    hiding it would be a list that drops rows and looks normal — the thing
+    `readable` exists to prevent. What is wrong is the disagreement between the
+    file and the switch, and the reader can settle it either way: delete the
+    record, or put its kind back in `kinds`. So a warning and never a blocker,
+    and the sentence is `kind_refusal`'s, which is what the write doors say.
+
+    Beside `_identity_problems` and outside `_parked`'s exemption with it: a
+    shelved issue in a plan without issues is off whether it is shelved or not.
+
+    Version 5 is the vocabulary this belongs to and not a date it was invented
+    on. It is a warning at every version, so the number decides nothing; a 6
+    would still have made `LATEST_SCHEMA_VERSION` — the newest version any rule
+    carries — a number no rule agreed with, and the seed with it.
+    """
+    for record in records:
+        warned = kind_off_warning(record.kind, config)
+        if warned is not None:
+            yield Problem(
+                severity="warning",
+                record_id=record.id,
+                field="kind",
+                sentence=warned,
+                rule_version=5,
+            )
+
+
 def _parked(record: Record) -> bool:
     """Exempt from every rule: parked work is not broken work.
 
@@ -4593,6 +4945,7 @@ def validate_all(
     # a second file has taken, and the save that lands on the wrong file does not
     # care that one of the two is parked.
     problems.extend(_identity_problems(records))
+    problems.extend(_kind_problems(records, config))
     return problems
 
 

@@ -37,8 +37,13 @@ from test_store import commit_directly
 from openproj.index import build_index
 from openproj.model import (
     CALENDAR_DAYS,
+    KIND_NAMES,
+    VIEWS,
     Config,
+    kind_off_warning,
+    kind_refusal,
     parse_text,
+    read_config,
     what_json_can_carry,
     within_the_calendar,
 )
@@ -272,21 +277,25 @@ _TASK = (
 )
 
 
-def whole_plan(tmp_path: Path, size: str = "1", rate: str = "0.5", cooldown: str = "2.0") -> Path:
+def whole_plan(
+    tmp_path: Path, size: str = "1", rate: str = "0.5", cooldown: str = "2.0", also: str = ""
+) -> Path:
     """A plan with a cycle, a pitch, a task under it and a roster.
 
     Bigger than `plan_repo` above on purpose: the three sites this section is
     about are a cycle page, a record page and a deck, and none of those exists
     for a corpus of two loose tasks. Every one of the three bad values is a
     parameter, so one corpus builder covers the config file, the cycle and the
-    record, and a test names which of them it is varying.
+    record, and a test names which of them it is varying. `also` is any further
+    lines of `config/defaults.yaml`, for a setting that is not one of the three —
+    a `views` the plan could not use is said in the same banner.
     """
     path = tmp_path / "whole.git"
     pygit2.init_repository(str(path), bare=True, initial_head="main")
     commit_directly(
         path,
         {
-            "config/defaults.yaml": f"schema_version: 2\ncooldown_weeks: {cooldown}\n",
+            "config/defaults.yaml": f"schema_version: 2\ncooldown_weeks: {cooldown}\n{also}",
             "config/people.yaml": "known_people: [ann, bo]\n",
             "cycles/0037.md": _SETUP.format(rate=rate),
             "pitches/pitch-e00001.md": _PITCH,
@@ -507,6 +516,408 @@ def test_check_counts_a_setting_that_is_not_a_number_and_leaves_with_1(tmp_path,
 
 
 # --------------------------------------------------------------------------- #
+# The two switches, `views` and `kinds`: resolved, and never taken as written
+# --------------------------------------------------------------------------- #
+
+_TODAY = date(2026, 8, 17)
+_PLANNED = ("product", "project", "pitch", "task")
+_NOT_A_VIEW = f"which is not a view openproj has ({', '.join(VIEWS)}), so it is left out"
+
+
+def _switched(defaults: str, **others: str):
+    """`read_config` over files held in memory, and the index built from it.
+
+    The index as well as the config, because it is what every reader of these
+    answers is handed — the banner, `openproj check`, the nav — and a view that
+    resolved correctly and then was not carried is a switch that does nothing.
+    """
+    files = {"config/defaults.yaml": defaults}
+    files |= {f"config/{name}.yaml": text for name, text in others.items()}
+    config, unreadable = read_config(list(files), files.__getitem__)
+    return config, unreadable, build_index([], config, _TODAY)
+
+
+_VIEW_ROWS = [
+    pytest.param("schema_version: 5\n", VIEWS, [], id="absent is every view"),
+    pytest.param("views: []\n", (), [], id="empty is Records alone"),
+    pytest.param(
+        "views: [cycles, graph, timeline]\n",
+        ("cycles", "graph", "timeline"),
+        [],
+        id="the order is the nav order",
+    ),
+    pytest.param(
+        "views: [timeline, cycles, timeline]\n",
+        ("timeline", "cycles"),
+        ["views names timeline twice; it counts once, at its first place"],
+        id="a duplicate counts once, at its first place",
+    ),
+    pytest.param(
+        "views: [cycels]\n", (), [f"views names 'cycels', {_NOT_A_VIEW}"], id="a typo"
+    ),
+    pytest.param(
+        "views: [deck]\n",
+        (),
+        ["views names deck, which needs cycles, so the deck is off"],
+        id="the deck without cycles",
+    ),
+    pytest.param("views: [deck, cycles]\n", ("deck", "cycles"), [], id="the deck first"),
+    pytest.param(
+        "views: [records, help, detail]\n",
+        (),
+        [
+            "views names records, which is always on and always first",
+            "views names help, which is always on, in the footer",
+            "views names detail, which is always on: every record has its page",
+        ],
+        id="the three that are always on",
+    ),
+    pytest.param(
+        "views: cycles\n",
+        VIEWS,
+        ["views is not a list, so every view is on; write it in brackets, as views: [cycles]"],
+        id="a word",
+    ),
+    pytest.param(
+        "views:\n",
+        VIEWS,
+        [
+            "views is not a list, so every view is on; write it in brackets, as "
+            "views: [cycles, graph]"
+        ],
+        id="null",
+    ),
+    # And with a kind off, the default is not every view, and the sentence
+    # does not say it is: the nav under it has no Issues.
+    pytest.param(
+        "views: cycles, graph\nkinds: [note]\n",
+        tuple(one for one in VIEWS if one != "issues"),
+        [
+            "views is not a list, so every view is on but the Issues list, whose kind is "
+            "off; write it in brackets, as views: [cycles, graph]"
+        ],
+        id="a word, with a kind off",
+    ),
+    pytest.param("views: [5]\n", (), [f"views names 5, {_NOT_A_VIEW}"], id="a number"),
+    pytest.param(
+        "views: [issues]\nkinds: [note]\n",
+        (),
+        ["views names issues, which needs the issue kind in kinds, so the Issues list is off"],
+        id="the list of a kind that is off",
+    ),
+    # D1: absent `views` follows `kinds` in silence. A plan that wrote only
+    # `kinds: []` asked nothing of the Issues or the Notes list, and two
+    # banner lines about views it never named would be noise on every page.
+    pytest.param(
+        "kinds: []\n",
+        ("table", "graph", "timeline", "cycles", "deck", "people"),
+        [],
+        id="absent follows kinds silently",
+    ),
+]
+
+
+@pytest.mark.parametrize(("written", "views", "said"), _VIEW_ROWS)
+def test_views_resolve_to_what_the_setting_says_and_name_what_they_could_not_use(
+    written: str, views: tuple[str, ...], said: list[str]
+):
+    """Every row of the spec's two tables, and the WHOLE list of what was said —
+    not a filter on `views` — so a row that should be silent proves it is."""
+    config, unreadable, index = _switched(written)
+
+    assert unreadable == []
+    assert config.views == views
+    assert index.views == views, "resolved and not carried is a switch that does nothing"
+    assert [(one.path, one.field, one.why) for one in index.unusable] == [
+        ("config/defaults.yaml", "views", why) for why in said
+    ]
+    assert index.switches_from == {
+        key: "config/defaults.yaml" for key in ("views", "kinds") if f"{key}:" in written
+    }
+
+
+_KIND_ROWS = [
+    pytest.param("schema_version: 5\n", KIND_NAMES, [], id="absent is every kind"),
+    pytest.param("kinds: []\n", _PLANNED, [], id="empty is the planned four"),
+    pytest.param("kinds: [note]\n", (*_PLANNED, "note"), [], id="notes and no issues"),
+    # Somebody hoping to switch projects off has made a request the tool will
+    # not honour, and the branch that decides not to act has to say so.
+    pytest.param(
+        "kinds: [task, pitch]\n",
+        _PLANNED,
+        [
+            "kinds names task, which is always on — so are product, project and pitch",
+            "kinds names pitch, which is always on — so are product, project and task",
+        ],
+        id="a planned kind is always on",
+    ),
+    pytest.param(
+        "kinds: [bug]\n",
+        _PLANNED,
+        [
+            "kinds names 'bug', which is not a kind this setting switches (issue, note), "
+            "so it is left out"
+        ],
+        id="not a kind",
+    ),
+    pytest.param(
+        "kinds: note\n",
+        KIND_NAMES,
+        ["kinds is not a list, so every kind is on; write it in brackets, as kinds: [note]"],
+        id="a word",
+    ),
+    pytest.param(
+        "kinds: [note, note]\n",
+        (*_PLANNED, "note"),
+        ["kinds names note twice; it counts once"],
+        id="a duplicate",
+    ),
+]
+
+
+@pytest.mark.parametrize(("written", "kinds", "said"), _KIND_ROWS)
+def test_kinds_resolve_to_what_the_setting_says_and_name_what_they_could_not_use(
+    written: str, kinds: tuple[str, ...], said: list[str]
+):
+    """The resolved set, the one predicate every kind question asks, and what was
+    said — the whole list again, so `views` being absent is shown to say nothing
+    even where `kinds` switched a list's kind off."""
+    config, unreadable, index = _switched(written)
+
+    assert unreadable == []
+    assert config.kinds == index.kinds == frozenset(kinds)
+    assert {kind: config.allows(kind) for kind in KIND_NAMES} == {
+        kind: kind in kinds for kind in KIND_NAMES
+    }
+    assert [(one.path, one.field, one.why) for one in index.unusable] == [
+        ("config/defaults.yaml", "kinds", why) for why in said
+    ]
+
+
+_ONE_SETTING = (
+    "One setting in the plan could not be used as written, so this page was drawn without it."
+)
+
+
+def _settings(count: int) -> str:
+    return (
+        f"{count} settings in the plan could not be used as written, so this page was drawn "
+        "without them."
+    )
+
+
+@pytest.mark.parametrize(
+    ("written", "said"),
+    [
+        pytest.param(row.values[0], row.values[2], id=f"{key}: {row.id}")
+        for key, rows in (("views", _VIEW_ROWS), ("kinds", _KIND_ROWS))
+        for row in rows
+    ],
+)
+def test_every_row_is_said_in_the_banner_and_by_check(
+    written: str, said: list[str], tmp_path: Path, capsys
+):
+    """Spec test 5's other two columns: what the page says and what `openproj
+    check` prints, for the same rows, off the same file on disk.
+
+    The two tests above stop at `index.unusable`, and a list is only a promise
+    about what a reader is told while every reader is handed it. A `views` line
+    the banner or `check` dropped is a typo hiding Cycles with nothing anywhere
+    saying why — finding F1, and the reason these rows exist at all. The page is
+    the landing because it is the one every plan has; the switched-off page is
+    asked of a served plan below. The silent rows are asked as well, because a
+    red banner over a plan that wrote nothing wrong is the other half of it.
+    """
+    from pages import unusable_banner_says, unusable_in
+
+    from openproj.cli import main
+    from openproj.model import load_repo
+    from openproj.render import render_records
+
+    root = tmp_path / "plan"
+    (root / "config").mkdir(parents=True)
+    (root / "config" / "defaults.yaml").write_text(written, encoding="utf-8")
+    records, config, unreadable = load_repo(root)
+    page = render_records(build_index(records, config, _TODAY, unreadable))
+
+    assert unusable_in(page) == [f"config/defaults.yaml — {why}" for why in said]
+    assert unusable_banner_says(page) == (
+        # Counted by setting: every row writes one key, however many lines it earns.
+        "" if not said else _ONE_SETTING
+    )
+
+    assert main(["check", str(root), "--today", _TODAY.isoformat()]) == (1 if said else 0)
+    lines = capsys.readouterr().out.splitlines()
+    assert [line for line in lines if line.startswith("blocker: ")] == [
+        f"blocker: config/defaults.yaml: {why}" for why in said
+    ]
+    assert lines[-1] == f"{len(said)} blockers, 0 warnings"
+
+
+def test_a_views_typo_is_said_on_every_page_a_server_answers_the_switched_off_ones_too(
+    tmp_path: Path,
+):
+    """`views: [cycels]` is the typo the spec names: Cycles is off, and every
+    address under it answers the switched-off page, which is drawn by its own
+    entry point and hands the banner its own arguments. Nothing opened that page
+    with a setting it could not use — `_ROUTES` below is a plan with every view
+    on — so dropping `index.unusable` from its `_page` call failed no test, and
+    the one page a reader who lost Cycles is certain to land on would have been
+    the one page that did not say why.
+
+    Every route, so the pages that are still on and the ones that are not are
+    asked the same question. And a second name wrong in the same setting, for
+    the plural headline, which nothing asserted.
+    """
+    from pages import unusable_banner_says, unusable_in
+
+    typo = f"config/defaults.yaml — views names 'cycels', {_NOT_A_VIEW}"
+    other = f"config/defaults.yaml — views names 'grpah', {_NOT_A_VIEW}"
+
+    repo = whole_plan(tmp_path / "one", also="views: [cycels]\n")
+    with TestClient(create_app(repo, auth="dev")) as client:
+        refused = []
+        for route in _ROUTES:
+            got = client.get(route)
+            if not got.headers["content-type"].startswith("text/html"):
+                continue
+            if got.status_code == 404:
+                refused.append(route)
+            else:
+                assert got.status_code == 200, f"{route}: {got.status_code}"
+            assert unusable_in(got.text) == [typo], route
+            assert unusable_banner_says(got.text) == _ONE_SETTING, route
+        assert {"/cycles", "/cycle/37", "/deck/37"} <= set(refused), refused
+
+    # Two lines, one setting: the headline counts what the reader has to open
+    # and fix, and that is one key.
+    repo = whole_plan(tmp_path / "two", also="views: [cycels, grpah]\n")
+    with TestClient(create_app(repo, auth="dev")) as client:
+        for route in ("/", "/cycles"):
+            got = client.get(route)
+            assert unusable_in(got.text) == [typo, other], route
+            assert unusable_banner_says(got.text) == _ONE_SETTING, route
+
+    # Two settings, and the plural.
+    repo = whole_plan(tmp_path / "three", also="views: [cycels]\nkinds: [bug]\n")
+    with TestClient(create_app(repo, auth="dev")) as client:
+        for route in ("/", "/cycles"):
+            got = client.get(route)
+            assert len(unusable_in(got.text)) == 2, route
+            assert unusable_banner_says(got.text) == _settings(2), route
+
+
+@pytest.mark.parametrize(
+    "switch",
+    [
+        pytest.param("views: cycles", id="views is a word"),
+        pytest.param("views:", id="views is null"),
+        pytest.param("views: {cycles: true}", id="views is a mapping"),
+        # An item YAML hands back as a list cannot be hashed, so a resolver that
+        # put the items in a set would raise here and not report.
+        pytest.param("views: [[cycles]]", id="views holds a list"),
+        pytest.param("kinds: note", id="kinds is a word"),
+        pytest.param("kinds:", id="kinds is null"),
+        pytest.param("kinds: [[note]]", id="kinds holds a list"),
+    ],
+)
+def test_a_setting_that_is_not_a_list_costs_that_setting_and_not_the_file(switch: str):
+    """Handed to pydantic with the rest of the file, every one of these is a
+    ValidationError — and `read_config` drops a file for one, so a single word
+    in `views` would have taken `schema_version`, `cooldown_weeks` and
+    `repositories` down with it, and named the whole file as not in the plan."""
+    config, unreadable, index = _switched(
+        f"schema_version: 5\n{switch}\ncooldown_weeks: 3.0\nrepositories: [a/b]\n"
+    )
+
+    assert unreadable == []
+    assert config.schema_version == 5
+    assert config.cooldown_weeks == 3.0
+    assert config.repositories == ["a/b"]
+    assert [(one.path, one.field) for one in index.unusable] == [
+        ("config/defaults.yaml", switch.split(":")[0])
+    ]
+
+
+def test_a_config_file_that_is_dropped_switches_nothing():
+    """A file that is not in the plan does not get to turn a page off — the same
+    rule that keeps it from claiming the keys it was going to set."""
+    config, unreadable, index = _switched("views: [cycles]\nkinds: []\nholidays: [not-a-day]\n")
+
+    assert [one.path for one in unreadable] == ["config/defaults.yaml"]
+    assert config.views == VIEWS
+    assert config.kinds == frozenset(KIND_NAMES)
+    assert index.switches_from == {}
+    assert index.unusable == []
+
+
+def test_a_switch_is_answered_from_the_file_that_wrote_it():
+    """The four config files are merged key by key, so `kinds` in people.yaml is
+    as much in force as in defaults.yaml — and a sentence sending the reader to
+    defaults.yaml would send them to a file that does not say it."""
+    config, _, index = _switched("schema_version: 5\n", people="views: [cycels]\nkinds: [note]\n")
+
+    assert [(one.path, one.field) for one in index.unusable] == [("config/people.yaml", "views")]
+    assert index.switches_from == {"views": "config/people.yaml", "kinds": "config/people.yaml"}
+    assert kind_refusal("issue", config) == (
+        "Issues are turned off for this plan. "
+        "kinds in config/people.yaml decides which kinds of record it has."
+    )
+    assert kind_refusal("note", config) is None
+
+
+def test_a_record_of_a_kind_that_is_off_loads_and_is_warned_about(tmp_path: Path):
+    """Loaded, listed and warned about — never hidden. A list that drops rows and
+    looks normal is the thing `readable` exists to prevent, and a plan that has
+    switched issues off may still hold the four it wrote before it did.
+
+    The shelved one too: parked work is exempt from every rule about what a
+    record must contain, and this is not one of those. A file of a kind that is
+    off is off whatever its status says.
+    """
+    from openproj.model import load_repo
+
+    root = tmp_path / "plan"
+    issue = (
+        "---\nid: {id}\nkind: issue\ntitle: An issue\nstatus: {status}\n"
+        "reported_by: ann\nopened_on: 2026-08-01\n---\n\nBody.\n"
+    )
+    for where, text in {
+        "config/defaults.yaml": "schema_version: 5\nkinds: [note]\n",
+        "issues/issue-e00001.md": issue.format(id="issue-e00001", status="ready"),
+        "issues/issue-e00002.md": issue.format(id="issue-e00002", status="shelved"),
+        "notes/note-e00003.md": (
+            "---\nid: note-e00003\nkind: note\ntitle: A note, which is on\n"
+            "status: thinking\nwritten_by: ann\nwritten_on: 2026-08-01\n---\n\nBody.\n"
+        ),
+    }.items():
+        (root / where).parent.mkdir(parents=True, exist_ok=True)
+        (root / where).write_text(text, encoding="utf-8")
+
+    records, config, unreadable = load_repo(root)
+    index = build_index(records, config, _TODAY, unreadable)
+
+    assert unreadable == []
+    assert set(index.records) == {"issue-e00001", "issue-e00002", "note-e00003"}
+    refused = kind_refusal("issue", config)
+    assert refused == (
+        "Issues are turned off for this plan. "
+        "kinds in config/defaults.yaml decides which kinds of record it has."
+    )
+    warned = sorted(
+        (one.record_id, one.severity, one.message, one.rule_version)
+        for one in index.problems
+        if one.field == "kind"
+    )
+    said = kind_off_warning("issue", config)
+    assert said == f"{refused} Promote it or delete it, or put issue back in kinds."
+    assert warned == [
+        ("issue-e00001", "warning", said, 5),
+        ("issue-e00002", "warning", said, 5),
+    ]
+
+
+# --------------------------------------------------------------------------- #
 # The medium: what a page actually serves, and what it prints
 # --------------------------------------------------------------------------- #
 
@@ -680,11 +1091,17 @@ def test_every_page_says_so_when_a_config_file_holds_a_number_that_is_not_one(tm
             assert len(listed) == 1, f"{route} listed {listed}"
             assert listed[0].startswith("config/defaults.yaml — cooldown_weeks"), listed
             assert "cool-down" in listed[0], listed
+            # What is wrong with it is the item's to say, now that the headline
+            # also covers a `views` or `kinds` it could not use.
+            assert "not a number" in listed[0], listed
             # The headline separately from the list, because an empty list is the
             # answer to two questions — "no banner" and "a banner with nothing in
             # it" — and a red box announcing "0 settings" on every page is the
             # negative case a list-only test cannot see.
-            assert "not a number" in unusable_banner_says(got.text), route
+            assert unusable_banner_says(got.text) == (
+                "One setting in the plan could not be used as written, so this page was "
+                "drawn without it."
+            ), route
 
 
 def test_a_plan_with_nothing_wrong_draws_no_such_banner(tmp_path: Path):

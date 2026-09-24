@@ -113,6 +113,11 @@ _VIEW_SEGMENTS = (
 # the current view, and a control that says which one you are in is what the
 # three beside it already do.
 def _slidebar(record_id: str, links: Links, here: bool = False) -> Markup:
+    # Nothing when the plan has no deck: a slide is a page of one, and its address
+    # answers the switched-off page. Here and not at either caller, so the record
+    # page and the slide editor cannot disagree about it.
+    if not links.deck:
+        return Markup("")
     return Markup(
         '<a class="seg slide-view" href="{}{}?view=slide" aria-pressed="{}"'
         ' aria-label="Slide" title="Slide  the slide this record makes in its'
@@ -3980,7 +3985,10 @@ def render_detail(
         showing=[] if creating else [row["id"] for row in rows],
         single=creating is not None or only is not None,
         creating=creating,
-        kinds=KINDS,
+        # The create form's picker and the kind chip's menu, both: only the kinds
+        # this plan has, because each one leads to a write the server refuses for
+        # a kind that is off. `index.kinds` is `Config.allows`'s set, carried.
+        kinds=tuple(kind for kind in KINDS if kind in index.kinds),
         templates=TEMPLATES if creating else {},
         links=links,
         editable=base_commit is not None,

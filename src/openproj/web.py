@@ -95,6 +95,7 @@ from .model import (
     edited_by_id,
     ends_before_it_starts,
     in_model_order,
+    kind_refusal,
     loop_made,
     mint_id,
     named,
@@ -1315,6 +1316,32 @@ def _reject_undeclared_fields(fields: dict, known: tuple[str, ...], what: str) -
         )
 
 
+def _reject_a_new_kind(record_id: str, fields: dict) -> None:
+    """A save that would change what kind a record is, refused.
+
+    `kind` is a field every rung declares, so `_reject_undeclared_fields` lets it
+    through, and nothing else on a save ever asked about it. But the id carries
+    the kind — `task-c00001` cannot be a pitch — so a save that wrote `kind:
+    pitch` committed a file whose prefix and kind disagree, which `validate_all`
+    reports as a blocker only once it is in git, on a protected branch. It went
+    past everything Change kind does as well: no new id, no children repointed,
+    and no kind gate, so a kind the plan has turned off came in through the one
+    door that never asked. A kind changes through `POST /api/rekind` and nowhere
+    else.
+
+    Judged against the id's kind and not the file's. They differ only in a file
+    somebody got wrong in git, and a save that writes the id's kind back is the
+    repair, not a change. The same kind is let through, too: a form that sends
+    every field back is not asking for anything.
+    """
+    if "kind" in fields and fields["kind"] != _kind_for(record_id):
+        raise HTTPException(
+            422,
+            "A record's kind changes through Change kind, which gives it a new id, "
+            "not through a save.",
+        )
+
+
 async def _sent(request: Request) -> dict:
     """The JSON object a request carried, or a refusal that says so.
 
@@ -1674,6 +1701,77 @@ class Outbox:
                     await asyncio.sleep(0.01)
 
 
+# Which page route each of a plan's views switches off, by the route's own
+# template — the string FastAPI hands back as `request.scope["route"].path`, so
+# `switched_off` below finds the handler's row here, and no handler names its own
+# view. That is what makes the table the gate and not a list beside it: take a
+# row out and the page it named answers 200 again, whatever the plan says, and
+# `test_every_page_route_is_gated_or_always_on` is what fails.
+#
+# Cycles owns the per-cycle pages as well as the list, and the deck is the one
+# view with no nav slot. `/issues` and `/notes` are gated like the others even
+# though each is only Records with a filter on it: two behaviours for one
+# situation is one more thing to explain.
+SWITCHED: dict[str, str] = {
+    "/table": "table",
+    "/graph": "graph",
+    "/timeline": "timeline",
+    "/people": "people",
+    "/issues": "issues",
+    "/notes": "notes",
+    "/cycles": "cycles",
+    "/cycle/{number}": "cycles",
+    "/deck/{number}": "deck",
+}
+# Page routes that are always on and gated by what their query says: the create
+# form by the kind it is asked for, a record's own page by its slide view. Their
+# handlers ask, after the question only they can answer first — whether the kind
+# is a word this tool has, whether the record exists — because "turned off" is
+# not what is wrong with a typo.
+SWITCHED_BY_QUERY: dict[str, str] = {"/new": "kind", "/detail/{record_id}": "view=slide"}
+# And the pages no setting reaches. Records is the landing and the only home of
+# the Create button, a record page is what every bar, node and cycle row links
+# to, and Help is in the footer of every page. Written out so that a page route
+# nobody decided about fails the census on the commit that adds it, rather than
+# being on by omission.
+ALWAYS_ON: frozenset[str] = frozenset({"/", "/detail", "/help"})
+
+
+def switched_off(request: Request, index: Index, links: render.Links) -> HTMLResponse | None:
+    """The page a switched-off address answers with, or None when it is on.
+
+    A 404 with the ordinary shell and a sentence naming the setting, and not a
+    redirect: a bookmarked `/table` that silently landed on Records would be a
+    page that changed under its reader with nothing saying why. The address's
+    query goes with it, so `/table?owner=ann` is one click from the same rows on
+    Records. And a deck's number, so that `/deck/37` in a plan with Cycles and no
+    deck is one click from cycle 37 — only a number `CYCLE_PATTERN` accepts,
+    since this is asked before the handler checks it, and a link to
+    `/cycle/99999` would be a way out onto a 404 about which cycles exist.
+
+    Asked first by every handler in `SWITCHED`, ahead of the number check on
+    `/cycle/{number}` and `/deck/{number}`, so a switched-off address with a
+    whole number in it explains itself rather than answering "a cycle is
+    numbered 0 to 9999" about a page the plan does not have. Not one without:
+    `number` is typed `int`, so FastAPI answers `/cycle/abc` with its own 422
+    before any handler runs, on or off.
+    """
+    view = SWITCHED.get(request.scope["route"].path)
+    if view is None or view in index.views:
+        return None
+    number = str(request.path_params.get("number", ""))
+    return HTMLResponse(
+        render.render_switched_off(
+            index,
+            links,
+            view=view,
+            query=request.url.query,
+            cycle=str(int(number)) if CYCLE_PATTERN.match(number) else "",
+        ),
+        status_code=404,
+    )
+
+
 def create_app(
     repo: Path,
     *,
@@ -1880,23 +1978,38 @@ def create_app(
     # window to be preempted in. 25 of this app's routes are sync `def` and
     # Starlette dispatches those through anyio's worker threads, so concurrent
     # readers are the normal case rather than the exotic one.
-    held: tuple[str, date, Index] | None = None
+    #
+    # The links ride in the same tuple, and for the same reason. They are a
+    # function of the plan's `views` at that commit — every view that is off has
+    # its field blanked — so a page must take its nav, its gates and its index
+    # from ONE read: a nav from commit B over an index from commit A is a page
+    # linking to a view its own gate would refuse. Links cannot live on `Index`
+    # either, because `index.py` does not import `render`; this memo is the one
+    # place both are in reach. And no second cache for them: keyed on the commit
+    # here, a `defaults.yaml` committed through anything rebuilds both on the
+    # next request, which a cache of its own would have had to be told about.
+    held: tuple[str, date, Index, render.Links] | None = None
 
-    def index_now():
+    def plan_now() -> tuple[str, Index, render.Links]:
         nonlocal held
         commit = store.head()
         drawn = today or date.today()
         memo = held
         if memo is not None and memo[0] == commit and memo[1] == drawn:
-            return commit, memo[2]
-        commit, index = _build_index_at(commit, drawn)
-        held = (commit, drawn, index)
+            return commit, memo[2], memo[3]
+        commit, index, links = _build_index_at(commit, drawn)
+        held = (commit, drawn, index, links)
+        return commit, index, links
+
+    def index_now() -> tuple[str, Index]:
+        """The commit and its index, for every caller that draws no page."""
+        commit, index, _ = plan_now()
         return commit, index
 
-    def _build_index_at(commit: str, drawn: date):
+    def _build_index_at(commit: str, drawn: date) -> tuple[str, Index, render.Links]:
         config, unreadable_config = _config_at(store, commit)
         records, unreadable_records = _records_at(store, commit)
-        return commit, build_index(
+        index = build_index(
             records,
             config,
             # Pinned only where somebody pinned it, which today is `openproj
@@ -1910,6 +2023,7 @@ def create_app(
             # files and two walks finishing in whatever order is not that order.
             unreadable=sorted([*unreadable_config, *unreadable_records], key=lambda one: one.path),
         )
+        return commit, index, render.links_for(index.views, render.ROUTES)
 
     # The last history walk, and the head it walked TO. Keyed on the commit
     # ALONE — deliberately narrower than the index cache's (commit, today)
@@ -2079,7 +2193,9 @@ def create_app(
     def record_list(request: Request, only: str | None) -> HTMLResponse:
         """The landing and its two inbox views: one renderer, one page, the
         population decided by the route."""
-        commit, index = index_now()
+        commit, index, links = plan_now()
+        if (off := switched_off(request, index, links)) is not None:
+            return off
         # The map may be one commit ahead of `commit` if a write lands between
         # the two reads. The times are display; the rows are the index's; the
         # event stream's reload reconciles them a moment later.
@@ -2087,7 +2203,7 @@ def create_app(
         return page(
             render.render_records(
                 index,
-                render.ROUTES,
+                links,
                 base_commit=commit,
                 edited=edited_by_id(stamps),
                 now=int(time.time()),
@@ -2110,11 +2226,11 @@ def create_app(
 
     @app.get("/table", response_class=HTMLResponse)
     def table(request: Request) -> HTMLResponse:
-        commit, index = index_now()
+        commit, index, links = plan_now()
+        if (off := switched_off(request, index, links)) is not None:
+            return off
         return page(
-            render.render_table(
-                index, render.ROUTES, base_commit=commit, may_write=may_write(request)
-            )
+            render.render_table(index, links, base_commit=commit, may_write=may_write(request))
         )
 
     @app.get("/graph", response_class=HTMLResponse)
@@ -2123,25 +2239,31 @@ def create_app(
         # no argument at all until 2026-09-18, which is how it went on serving
         # "Edit dependencies", Save and Reset to a signed-out reader long after
         # `/table`, immediately above, had stopped.
-        commit, index = index_now()
+        commit, index, links = plan_now()
+        if (off := switched_off(request, index, links)) is not None:
+            return off
         return page(
-            render.render_graph(
-                index, render.ROUTES, base_commit=commit, may_write=may_write(request)
-            )
+            render.render_graph(index, links, base_commit=commit, may_write=may_write(request))
         )
 
     @app.get("/timeline", response_class=HTMLResponse)
     def timeline(
-        from_: str = Query("", alias="from"), to: str = "", zoom: str = ""
+        request: Request, from_: str = Query("", alias="from"), to: str = "", zoom: str = ""
     ) -> HTMLResponse:
         """The window and the day width come off the URL, so a view is a link.
 
         Every one of the three is typed by hand as easily as it is picked, so all
         three are parsed leniently: a nonsense value falls back to the default view
         rather than turning a bookmark into a 422.
+
+        `request` is for the gate, which needs the route it was reached by and the
+        query to hand on to Records.
         """
+        _, index, links = plan_now()
+        if (off := switched_off(request, index, links)) is not None:
+            return off
         window = (_as_date(from_), _as_date(to))
-        return page(render.render_timeline(index_now()[1], render.ROUTES, window, _as_zoom(zoom)))
+        return page(render.render_timeline(index, links, window, _as_zoom(zoom)))
 
     def which_editor(request: Request) -> str:
         """Which editing surface this page is asked to carry.
@@ -2379,12 +2501,14 @@ def create_app(
         )
 
     @app.get("/cycles", response_class=HTMLResponse)
-    def cycles() -> HTMLResponse:
-        commit, index = index_now()
-        return page(render.render_cycles(index, render.ROUTES, commit))
+    def cycles(request: Request) -> HTMLResponse:
+        commit, index, links = plan_now()
+        if (off := switched_off(request, index, links)) is not None:
+            return off
+        return page(render.render_cycles(index, links, commit))
 
     @app.get("/cycle/{number}", response_class=HTMLResponse)
-    def cycle(number: int) -> HTMLResponse:
+    def cycle(number: int, request: Request) -> HTMLResponse:
         """Typed `int`, so nothing that is not a number ever reaches a path.
 
         Stronger than a pattern: FastAPI refuses a non-integral value before the
@@ -2396,11 +2520,19 @@ def create_app(
         from `CYCLE_PATTERN` — the read path and the write path disagreeing about
         which cycles exist, which is a dead end a person can only find by filling
         the form in first.
+
+        The switch is asked before the number, so that with Cycles off every
+        whole-numbered address under `/cycle/` says why it is not there, and none
+        of them says something about which numbers a cycle may have. A number
+        that is not whole never gets here, on or off: the `int` above is
+        FastAPI's 422 first.
         """
+        commit, index, links = plan_now()
+        if (off := switched_off(request, index, links)) is not None:
+            return off
         if not CYCLE_PATTERN.match(str(number)):
             raise HTTPException(404, "a cycle is numbered 0 to 9999")
-        commit, index = index_now()
-        return page(render.render_cycle(index, number, render.ROUTES, commit))
+        return page(render.render_cycle(index, number, links, commit))
 
     @app.get("/deck/{number}", response_class=HTMLResponse)
     def deck(number: int, request: Request) -> HTMLResponse:
@@ -2416,14 +2548,16 @@ def create_app(
         states of the plan, and this page's whole job is to be handed to somebody
         who cannot check.
         """
+        commit, index, links = plan_now()
+        if (off := switched_off(request, index, links)) is not None:
+            return off
         if not CYCLE_PATTERN.match(str(number)):
             raise HTTPException(404, "a cycle is numbered 0 to 9999")
-        commit, index = index_now()
         return page(
             render.render_deck(
                 index,
                 number,
-                render.ROUTES,
+                links,
                 lambda path: store.read_asset(commit, path),
                 # The commit the rail's Save compares against, and whether this
                 # reader may write at all. Both, for the reason `render_deck`
@@ -2442,18 +2576,36 @@ def create_app(
         gets the same page as anybody else, which is the point of documentation —
         so it takes no `Request`. It takes the index all the same, for the one
         thing every page owes: the banner naming plan files that will not parse.
+        And the plan's links, because the nav it draws is this plan's, and so is
+        what it says about which views the guide below describes.
         """
-        return page(render.render_help(index_now()[1], render.ROUTES))
+        _, index, links = plan_now()
+        return page(render.render_help(index, links))
 
     @app.get("/people", response_class=HTMLResponse)
     def people(request: Request) -> HTMLResponse:
+        _, index, links = plan_now()
+        if (off := switched_off(request, index, links)) is not None:
+            return off
         me = picker_for(request)
-        return page(render.render_people(index_now()[1], render.ROUTES, editable=bool(me), me=me))
+        return page(render.render_people(index, links, editable=bool(me), me=me))
 
     @app.get("/new", response_class=HTMLResponse)
     def new(request: Request, kind: str = "task") -> HTMLResponse:
         if kind not in DIRECTORY:
             raise HTTPException(422, f"kind must be one of {sorted(DIRECTORY)}")
+        commit, index, links = plan_now()
+        # A kind this tool has and this plan has turned off: the switched-off page,
+        # after the word check above and before the sign-in one below. After,
+        # because `milestone` is a typo and not a setting; before, because a
+        # signed-out reader told "sign in to create a record" would sign in and
+        # then be told the kind is off. No query goes with it: `kind=issue` is
+        # what to create, not a filter, and handing it to Records would be a link
+        # promising the same rows on a page that never had any.
+        if kind not in index.kinds:
+            return HTMLResponse(
+                render.render_switched_off(index, links, off_kind=kind), status_code=404
+            )
         # A reader is refused the page rather than shown a hollow one. Every
         # control on the create form is behind `may_write`, so a signed-out
         # visitor who reached it got the heading, the kind picker and nothing to
@@ -2466,12 +2618,11 @@ def create_app(
         # session would refuse the demo its own create form.
         if not may_write(request):
             raise HTTPException(403, "sign in to create a record")
-        commit, index = index_now()
         who = viewer(request)
         return page(
             render.render_detail(
                 index,
-                render.ROUTES,
+                links,
                 base_commit=commit,
                 may_write=may_write(request),
                 editor=which_editor(request),
@@ -2482,11 +2633,12 @@ def create_app(
 
     @app.get("/detail", response_class=HTMLResponse)
     def detail_index() -> HTMLResponse:
-        return page(render.render_detail(index_now()[1], render.ROUTES))
+        _, index, links = plan_now()
+        return page(render.render_detail(index, links))
 
     @app.get("/detail/{record_id}", response_class=HTMLResponse)
     def detail(record_id: str, request: Request, view: str = "") -> HTMLResponse:
-        commit, index = index_now()
+        commit, index, links = plan_now()
         if record_id not in index.records:
             raise HTTPException(404, f"no record {record_id!r}")
         # The page carries the commit it was rendered at, so a save is compared
@@ -2511,12 +2663,22 @@ def create_app(
         # slide editor needs none of it. Anything this route does not recognise
         # is the record page, because a mistyped query should land somebody on
         # the page they asked for rather than on a 404 about a spelling.
+        #
+        # A slide is one record's page in its cycle's deck, so it goes with the
+        # deck: off, the address answers the switched-off page, whose way out is
+        # the record it was a view of. After the 404 above, because a record that
+        # does not exist has no slide to be switched off.
+        if view == "slide" and "deck" not in index.views:
+            return HTMLResponse(
+                render.render_switched_off(index, links, view="deck", record_id=record_id),
+                status_code=404,
+            )
         if view == "slide":
             return page(
                 render.render_slide_editor(
                     index,
                     record_id,
-                    render.ROUTES,
+                    links,
                     base_commit=commit,
                     may_write=may_write(request),
                     editor=which_editor(request),
@@ -2526,7 +2688,7 @@ def create_app(
         return page(
             render.render_detail(
                 index,
-                render.ROUTES,
+                links,
                 only=record_id,
                 base_commit=commit,
                 may_write=may_write(request),
@@ -2581,7 +2743,9 @@ def create_app(
         nobody can keep.
         """
         payload = await _sent(request)
-        commit, index = index_now()
+        # The plan's links, not every route: a slide links its cycle's page, and
+        # the preview has to draw the slide the deck would, on this plan.
+        commit, index, links = plan_now()
         record_id = payload.get("record_id")
         if not isinstance(record_id, str) or record_id not in index.records:
             raise HTTPException(404, "no such record")
@@ -2599,7 +2763,7 @@ def create_app(
                     render.slide_html(
                         index,
                         record,
-                        render.ROUTES,
+                        links,
                         render.inlined_assets(
                             [record.body, record.slide.body if record.slide else ""],
                             lambda path: store.read_asset(commit, path),
@@ -2975,6 +3139,7 @@ def create_app(
         # type to be wrong. It used to be written through to the file.
         _reject_undeclared_fields(fields, RECORD_FIELDS, "a record")
         _reject_bad_types(fields)
+        _reject_a_new_kind(record_id, fields)
         # `parse_text` below deliberately takes any word — a file that arrived
         # in git with one must still load — so without this the PATCH door
         # committed a status nobody defined, and the plan woke up with a
@@ -3169,6 +3334,14 @@ def create_app(
             raise HTTPException(422, f"{record_id} is already {_an(kind)}")
 
         base = _base_in(store, payload)
+        # The target is written, so it passes the same kind gate a create does,
+        # and at the same commit: HEAD, which is what the new record lands on.
+        # It was asked at `base`, and a base is whatever sha the caller sends —
+        # a tab drawn before `kinds: [note]` was committed still offers Issue on
+        # its chip, and `write_all` compares only the paths it writes, never the
+        # config, so that tab's rekind committed an issue into a plan with none.
+        if (refused := kind_refusal(kind, _config_at(store, store.head())[0])) is not None:
+            raise HTTPException(422, refused)
         path = _path_for(store, base, record_id)
         if path is None:
             raise HTTPException(404, f"no record {record_id!r}")
@@ -3405,6 +3578,7 @@ def create_app(
                     f"{record_id} is claimed by two files. Resolve it in git and reload — "
                     "a save here would edit a record that is not the one you were shown.",
                 )
+            _reject_a_new_kind(record_id, fields)
             _reject_bad_status(_kind_for(record_id), fields)
             content = _patched(store.read(base, path), fields, None, path)
             try:
@@ -4040,6 +4214,13 @@ def create_app(
         record_id = mint_id(kind)
         commit = store.head()
         config, _ = _config_at(store, commit)
+        # A kind the plan has turned off, refused by name and not left to the
+        # validator: `validate_all` says so as a WARNING — a file of that kind
+        # that is already there still loads — and this route filters to
+        # blockers, so the issue would have been created with a 201. The
+        # sentence is `openproj new`'s, word for word, off the same function.
+        if (refused := kind_refusal(kind, config)) is not None:
+            raise HTTPException(422, refused)
         content = patch_text(
             "---\n---\n",
             in_model_order(
@@ -4867,7 +5048,9 @@ def create_app(
                         _reject_bad_types(fields)
                         # The room writes through the same gate as PATCH — the
                         # comment on `writer` above says exactly that — so the
-                        # vocabulary stands here too.
+                        # vocabulary stands here too, and so does the kind, or
+                        # the socket would be the way round Change kind.
+                        _reject_a_new_kind(record_id, fields)
                         _reject_bad_status(_kind_for(record_id), fields)
                     except HTTPException as refused:
                         _to(connection, {"t": "refused", "why": refused.detail})

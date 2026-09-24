@@ -634,6 +634,27 @@ def test_a_status_the_kind_does_not_speak_is_refused_at_the_socket_too(
         assert len(log_of(plan)) == before, "a refusal writes nothing"
 
 
+def test_a_kind_is_not_changed_through_the_room_either(client: TestClient, plan: Path):
+    """The kind gate, at the third door. The two PATCH routes refuse a save that
+    sets `kind` to anything but the record's own, because the id carries the kind
+    and only Change kind mints a new one; with a socket up, the record page's
+    fields reach git through this frame instead, so without the same refusal here
+    it would be the one door left."""
+    before = len(log_of(plan))
+    with open_room(client, "ann") as one:
+        ann = Session(one, "ann")
+        ann.hello()
+        # Non-ASCII, for the reason the test above gives.
+        ann.type(0, "ẞ—")
+        ann.save({"kind": "pitch"})
+        # "saved" as well, so a room that took the write answers this test
+        # rather than leaving it waiting for a refusal that is never sent.
+        refused = ann.take("refused", "saved")
+        assert refused["t"] == "refused", f"the room committed it: {refused}"
+        assert "Change kind" in refused["why"], refused["why"]
+        assert len(log_of(plan)) == before, "a refusal writes nothing"
+
+
 def test_a_commit_made_in_git_arrives_in_the_room_as_text(client: TestClient, plan: Path):
     """The existing conflict machinery is not regressed, it is fed.
 

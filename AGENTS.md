@@ -116,6 +116,19 @@ proxy that fetches any path on api.github.com that anybody can name, from an IP
 inside the project, with our token on it. The allowlist is a file somebody
 committed to the plan.
 
+**A view that is off is off everywhere, `Links` is the seam, and nothing reads server mode off a
+link.** `views` and `kinds` are resolved once, in `read_config` (`resolve_switches`, `model.py`),
+and nothing past it reads either as the file wrote it. `links_for` (`render/shell.py`) blanks the
+field of every view that is off, and every template asks the field before drawing a link — the
+convention `Links.deck` already had in the export. `SWITCHED` and `SWITCHED_BY_QUERY` in `web.py`
+are the only list of switched routes, and `test_every_page_route_is_gated_or_always_on` holds them
+against `app.routes`, so a page route nobody decided about fails on the commit that adds it.
+A kind has one predicate, `Config.allows`, and one sentence, `kind_refusal`, at every door that
+writes one; a PATCH may not change `kind` at all, because it could, straight past the gate and past
+Change kind. `Links.served` exists because three places once decided whether a server was behind
+a page by asking whether `links.table` or `links.cycle` began with a slash, so the first plan to
+switch its Table off would have lost live updates and diagrams on every page without a word.
+
 **No npm, no build step, no CDN.** A Node toolchain that rots is the most common way a small
 internal tool becomes unbuildable in two years. Libraries are vendored, checksummed and inlined
 (`static/VENDOR.md`); the typeface is a `data:` URI, and because every rendered page is therefore a

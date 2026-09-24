@@ -164,8 +164,13 @@ filename and is not a field**: nothing points at a person, so a second copy woul
 halves of the app something to disagree about.
 
 **`Config`** — `config/*.yaml`: `schema_version`, `nominal_availability`, `cooldown_weeks`,
-`holidays`, the cycle windows, and `known_people`, the **roster**. Empty means the
-check is off; when it does name people, somebody who is not on it is a warning and never a blocker.
+`repositories`, `views`, `kinds`, `holidays`, the cycle windows, and `known_people`, the **roster**.
+Empty means the check is off; when it does name people, somebody who is not on it is a warning and
+never a blocker. `views` is the views this plan has, in nav order after Records, and it is held
+**resolved** — every name it could not use left out and reported — so nothing past reading the
+config ever sees the list as written. `kinds` is which of the unplanned kinds, `issue` and `note`,
+the plan has; a record of a kind that is off still loads, is listed and warns, because a list that
+drops rows and looks normal is worse than one that says a row is wrong.
 
 **`Problem` and `Unreadable`** — a `Problem` is keyed by record id, so every page hangs it on that
 record's row. An `Unreadable` is keyed by a path: a file that will not parse has no record, which is

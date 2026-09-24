@@ -21,6 +21,7 @@ import pytest
 from test_store import SEED, commit_directly
 
 from openproj.cli import main
+from openproj.model import VIEWS, kind_off_warning, kind_refusal, load_repo
 
 
 def test_check_exits_non_zero_when_the_repository_has_blockers(seed_root: Path, capsys):
@@ -83,6 +84,34 @@ def test_render_writes_the_three_pages(seed_root: Path, tmp_path: Path):
     assert main(["render", str(seed_root), str(tmp_path)]) == 0
     for name in ("index.html", "graph.html", "timeline.html"):
         assert (tmp_path / name).is_file()
+
+
+def test_render_writes_and_names_only_the_views_the_plan_has(
+    seed_root: Path, tmp_path: Path, capsys
+):
+    """`views` in `config/defaults.yaml` reaches the export through the resolver,
+    and the line `render` prints names the files it wrote and no others.
+
+    Any `views:` the corpus already carries is dropped before this one is written:
+    a second key is a DuplicateKeyError, which loses the whole file as Unreadable
+    and would export every view while looking like it had read the setting.
+    """
+    import shutil
+
+    root, out = tmp_path / "plan", tmp_path / "out"
+    shutil.copytree(seed_root, root)
+    defaults = root / "config" / "defaults.yaml"
+    kept = [
+        line
+        for line in defaults.read_text(encoding="utf-8").splitlines()
+        if not line.startswith("views:")
+    ]
+    defaults.write_text("\n".join([*kept, "views: [cycles, graph, timeline]", ""]), "utf-8")
+
+    assert main(["render", str(root), str(out)]) == 0
+    written = "index.html, detail.html, cycles.html, graph.html, timeline.html, help.html"
+    assert capsys.readouterr().out.splitlines() == [f"wrote {written} to {out}"]
+    assert sorted(path.name for path in out.glob("*.html")) == sorted(written.split(", "))
 
 
 def test_schedule_json_round_trips(seed_root: Path, capsys):
@@ -849,6 +878,76 @@ def test_new_refuses_a_field_the_kind_does_not_have(plan: Path, capsys):
     assert "reportedby" in capsys.readouterr().out
 
 
+def switched(plan: Path, setting: str) -> None:
+    """The fixture's config with one switch written into it, the way a plan says it."""
+    (plan / "config" / "defaults.yaml").write_text(
+        f"schema_version: 4\nnominal_availability: 1.0\n{setting}\n", encoding="utf-8"
+    )
+
+
+def test_new_refuses_a_kind_the_plan_has_turned_off(plan: Path, capsys):
+    """argparse offers every kind this tool has, because it cannot know the plan,
+    so the refusal is the command's own and has to write nothing. The sentence is
+    `kind_refusal`'s, the one every door that writes a record gives: the reader
+    told no in a terminal is sent to the same line of the same file as one told no
+    in a 422. The note is the control — the same plan still takes a kind it has, so
+    the refusal is about the kind and not about a config the command choked on.
+    """
+    switched(plan, "kinds: [note]")
+    config = load_repo(plan)[1]
+
+    code = main(["new", "issue", str(plan), "--title", "Two extrapolations"])
+
+    assert code == 1
+    assert written(plan) == []
+    out = capsys.readouterr().out
+    assert f"blocker: {kind_refusal('issue', config)}\n" in out
+    assert "kinds in config/defaults.yaml" in out
+    assert "nothing written" in out
+
+    assert main(["new", "note", str(plan), "--title", "A thought"]) == 0
+    assert [one.parent.name for one in written(plan)] == ["notes"]
+
+
+def test_check_names_a_views_setting_it_could_not_use(plan: Path, capsys):
+    """A typo in `views` hides a page, and a page gone with nothing saying why is
+    finding F1. So `check` names the file and the word, and counts it as a
+    blocker the way it already counts a number nothing can compute with — CI is
+    where somebody who committed `cycels` finds out before the team does."""
+    switched(plan, "views: [cycels]")
+
+    assert main(["check", str(plan)]) == 1
+
+    lines = capsys.readouterr().out.splitlines()
+    assert (
+        "blocker: config/defaults.yaml: views names 'cycels', which is not a view openproj "
+        f"has ({', '.join(VIEWS)}), so it is left out"
+    ) in lines
+    assert lines[-1] == "1 blockers, 0 warnings"
+
+
+def test_check_warns_about_a_record_of_a_kind_that_is_off(plan: Path, capsys):
+    """The issue is written while issues are on and the switch is committed after,
+    which is the order it happens in a real plan. The file still loads and still
+    counts; `check` says it disagrees with `kinds`, in the sentence the write doors
+    give, and does not fail the build over a file somebody may yet delete."""
+    assert main(["new", "issue", str(plan), "--title", "Two extrapolations", "--json"]) == 0
+    record_id = json.loads(capsys.readouterr().out)["id"]
+    switched(plan, "kinds: [note]")
+    config = load_repo(plan)[1]
+
+    assert main(["check", str(plan)]) == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    assert f"warning: {record_id}: kind: {kind_off_warning('issue', config)}" in lines
+    # And the warning says how to settle it, which a refusal at a door does not.
+    assert kind_off_warning("issue", config).startswith(kind_refusal("issue", config))
+    assert kind_off_warning("issue", config).endswith(
+        "Promote it or delete it, or put issue back in kinds."
+    )
+    assert lines[-1] == "0 blockers, 1 warnings"
+
+
 def test_new_owns_the_date_and_defaults_the_author_on_an_inbox_record(plan: Path):
     """When a record was made is not an opinion, so the command writes it. Who
     reported it is a default and not a fact — somebody files what a colleague
@@ -1315,6 +1414,33 @@ def test_the_seed_is_written_at_the_newest_schema_version(demo_root: Path):
     from openproj.model import LATEST_SCHEMA_VERSION, load_config
 
     assert load_config(demo_root).schema_version == LATEST_SCHEMA_VERSION
+
+
+def test_a_new_plan_and_the_demo_write_every_view_and_kind_out(demo_root: Path):
+    """`views` and `kinds` absent already mean everything, so writing them out
+    changes nothing either plan does — and it is the only way somebody reading
+    `config/defaults.yaml` learns the two switches exist. A setting nobody can see
+    is a setting nobody uses.
+
+    Held to `VIEWS` and to the optional kinds off the ladder, so a ninth view that
+    neither file names fails here instead of being a switch only the source knows
+    about; and each list is put through the resolver as well, since every name it
+    could not use is a blocker in `openproj check`."""
+    from ruamel.yaml import YAML
+
+    from openproj.bootstrap import Options, plan_files
+    from openproj.model import OPTIONAL_KINDS, resolve_switches
+
+    written = {
+        "the demo": (demo_root / "config" / "defaults.yaml").read_text(encoding="utf-8"),
+        "openproj init": plan_files("garden", Options())["config/defaults.yaml"],
+    }
+    for who, text in written.items():
+        said = YAML(typ="safe", pure=True).load(text)
+        assert said.get("views") == list(VIEWS), f"{who} does not write every view out"
+        assert said.get("kinds") == list(OPTIONAL_KINDS), f"{who} does not write every kind out"
+        views, _, unusable = resolve_switches(said["views"], said["kinds"], who, who)
+        assert views == VIEWS and unusable == [], (who, unusable)
 
 
 def test_serve_refuses_github_auth_without_an_org(seed_root: Path, monkeypatch, capsys):

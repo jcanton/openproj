@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from datetime import date
 from html.parser import HTMLParser
+from itertools import takewhile
 from pathlib import Path
 
 import pytest
@@ -206,6 +207,95 @@ def test_the_page_is_the_same_in_both_modes(page: str, index: Index):
     exported = render_help(index, STATIC)
     assert parsed(exported).sections == parsed(page).sections
     assert 'class="unread"' not in exported
+
+
+def test_help_says_which_views_this_plan_has_only_when_it_has_fewer(
+    seed_root: Path, tmp_path: Path, page: str
+):
+    """The guide describes every view and every kind openproj has, and is not
+    filtered per plan. So a plan that has switched some off opens its Help with one
+    sentence saying what it has, and where that was decided — and a plan that has
+    everything opens it with nothing, since "this plan has everything" is one more
+    line to read past.
+
+    Through the real resolver, from a `defaults.yaml` saying it, so the file the
+    sentence names is the one `read_config` read it from. The first row is
+    icon4py's, the deployment this was asked for, word for word. A nav item can be
+    missing because `views` left it out or because it lists a kind `kinds` left
+    out, and the sentence names the setting that did it.
+    """
+    import shutil
+
+    from pages import elements
+
+    from openproj.render import links_for
+
+    def scope(setting: str) -> tuple[list[str], list[str]]:
+        root = tmp_path / f"plan-{len(list(tmp_path.iterdir()))}"
+        shutil.copytree(seed_root, root)
+        defaults = root / "config" / "defaults.yaml"
+        defaults.write_text(defaults.read_text(encoding="utf-8") + setting, encoding="utf-8")
+        records, config, unreadable = load_repo(root)
+        index = build_index(records, config, date(2026, 8, 17), unreadable)
+        assert not index.unusable, index.unusable
+        found = elements(render_help(index, links_for(index.views, ROUTES)))
+        at = [n for n, one in enumerate(found) if "scope" in one.attrs.get("class", "")]
+        # The `<code>` spans inside the sentence and nowhere else. `elements()` is
+        # flat, in document order, and the sentence holds nothing but `<code>`, so
+        # its spans are the run of them straight after it — the page-wide list it
+        # used to be went red the day the guide below it mentioned `views` itself.
+        after = found[at[0] + 1 :] if at else []
+        inside = takewhile(lambda one: one.tag == "code", after)
+        return (
+            [found[n].text for n in at],
+            [one.text for one in inside if one.text in ("views", "kinds")],
+        )
+
+    assert scope("views: [cycles, graph, timeline]\nkinds: [note]\n") == (
+        [
+            "This plan has Records, Cycles, Graph and Timeline. The guide below describes "
+            "every view openproj has; the others are turned off here by views in "
+            "config/defaults.yaml, and issues by kinds."
+        ],
+        ["views", "kinds"],
+    )
+    assert scope("views: []\n") == (
+        [
+            "This plan has Records. The guide below describes every view openproj has; "
+            "the others are turned off here by views in config/defaults.yaml."
+        ],
+        ["views"],
+    )
+    # `kinds` alone takes the lists of those kinds out of the nav, and the
+    # sentence says so by the key that did it: this plan never wrote `views`.
+    assert scope("kinds: []\n") == (
+        [
+            "Issues and notes are turned off for this plan by kinds in config/defaults.yaml. "
+            "The guide below describes every kind of record openproj has."
+        ],
+        ["kinds"],
+    )
+    assert scope("kinds: [note]\n") == (
+        [
+            "Issues are turned off for this plan by kinds in config/defaults.yaml. The "
+            "guide below describes every kind of record openproj has."
+        ],
+        ["kinds"],
+    )
+    assert scope("views: []\nkinds: []\n") == (
+        [
+            "This plan has Records. The guide below describes every view openproj has; "
+            "the others are turned off here by views in config/defaults.yaml, and issues "
+            "and notes by kinds."
+        ],
+        ["views", "kinds"],
+    )
+    # Every view named, in another order: the nav moved, nothing is missing.
+    assert scope("views: [notes, issues, people, deck, cycles, timeline, graph, table]\n") == (
+        [],
+        [],
+    )
+    assert [one for one in elements(page) if "scope" in one.attrs.get("class", "")] == []
 
 
 def test_the_container_carries_the_documents():

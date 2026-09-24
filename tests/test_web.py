@@ -47,7 +47,7 @@ import threading
 import time
 from pathlib import Path
 from typing import NamedTuple
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import httpx
 import pygit2
@@ -64,6 +64,7 @@ from test_remote import contains, pushed_from_a_terminal, tree_now, unplugged
 from test_store import commit_directly
 
 from openproj.auth import User, sign_session
+from openproj.model import KIND_NAMES, OPTIONAL_KINDS, VIEW_NEEDS, VIEWS, _an
 from openproj.web import create_app
 
 ORG = "kilnlab"
@@ -7008,3 +7009,556 @@ def test_a_row_carries_the_end_date_so_the_table_can_tell_what_it_still_needs(
     # a reader of that row is actually looking at: a finished record was a dot,
     # with its End cell showing the day it began.
     assert (rows[DONE]["start"], rows[DONE]["end"]) == ("2026-08-03", "2026-08-20")
+
+
+# --------------------------------------------------------------------------- #
+# 15. A plan says which views and kinds it has
+#
+# `views` and `kinds` in `config/defaults.yaml` (design/views-and-kinds.md). What
+# is held here is the server's half: a view that is off answers its address with
+# the switched-off page, and nothing the server still draws leads to it; a kind
+# that is off is refused at every door that writes one. Every fixture is derived
+# — the views off `VIEWS`, the dependants off `VIEW_NEEDS`, the gated routes off
+# `web.SWITCHED` — so a ninth view is swept on the commit that adds it.
+# --------------------------------------------------------------------------- #
+
+# Every record in `SEED`, each of which has its own page.
+SEED_IDS = (PROJECT, PITCH, TASK, OTHER, DONE)
+# The one address each gated route with a value in it is opened at. Cycle 37 is in
+# no calendar `SEED` has, which is fine: an unrecorded cycle is a page like any
+# other, and the nav test above opens the same one.
+_OPENED_AT = {"/cycle/{number}": "/cycle/37", "/deck/{number}": "/deck/37"}
+
+
+def _plan_saying(tmp_path: Path, setting: str) -> Path:
+    """The corpus, with `setting` written into its `config/defaults.yaml` — the
+    file a plan's switches are documented to live in."""
+    path = tmp_path / "switched.git"
+    pygit2.init_repository(str(path), bare=True, initial_head="main")
+    commit_directly(
+        path,
+        {**SEED, "config/defaults.yaml": SEED["config/defaults.yaml"] + setting},
+        "seed a plan that switches something off",
+    )
+    return path
+
+
+def _opened_at(template: str) -> str:
+    assert "{" not in template or template in _OPENED_AT, (
+        f"{template} is gated and this file has no address to open it at — add one to _OPENED_AT"
+    )
+    return _OPENED_AT.get(template, template)
+
+
+def _off_with(view: str) -> set[str]:
+    """This view and every view that cannot be on without it: Cycles takes the
+    deck with it. Off `VIEW_NEEDS`, so a second dependant is swept too."""
+    return {view, *(other for other, need in VIEW_NEEDS.items() if need == view)}
+
+
+def _dead_ends(client: TestClient, url: str, page: str, views, kinds) -> list[str]:
+    """Every link and form on `page` that leads to a page this plan switched off.
+
+    Resolved the way a browser and then Starlette would, not as a substring: the
+    href is joined to the address the page was served at, so a relative `?owner=`
+    or a blank field lands where it really lands, and the path is walked against
+    `app.routes` in order to the first GET route that matches — the one the
+    request would reach. That route's row in the gate table says whether it is on.
+
+    `SWITCHED_BY_QUERY` is read by what each of its two rows means, and held to
+    being exactly those two, so a third query-gated page fails here until this
+    has been taught to read it.
+
+    **Resolving is also what hides a blanked field.** A view that is off has its
+    `Links` field set to `""`, so a link site that forgot its guard draws the
+    suffix alone — `<a href="37">Review deck →</a>` on `/cycle/37` — and that
+    joins to `/cycle/37`, which is on. So a target that is empty, or relative
+    without being a query or a fragment, is a dead end by its shape: that is
+    what `{{ links.X }}{{ suffix }}` writes when `X` is off, and no page this
+    server draws writes one on purpose.
+    """
+    from fastapi.routing import APIRoute
+
+    from openproj.web import SWITCHED, SWITCHED_BY_QUERY
+
+    assert SWITCHED_BY_QUERY == {"/new": "kind", "/detail/{record_id}": "view=slide"}
+    found = []
+    for one in elements(page):
+        target = one.attrs.get({"a": "href", "form": "action"}.get(one.tag, ""))
+        if target is None:
+            continue
+        if not re.match(r"[/?#]|[a-zA-Z][a-zA-Z0-9+.-]*:", target):
+            found.append(f"<{one.tag}> {target!r} on {url} is a blanked link")
+            continue
+        where = urlparse(urljoin(f"http://testserver{url}", target))
+        if where.netloc != "testserver":
+            continue
+        route = next(
+            (
+                route
+                for route in client.app.routes
+                if isinstance(route, APIRoute)
+                and "GET" in route.methods
+                and route.path_regex.match(where.path)
+            ),
+            None,
+        )
+        if route is None:
+            continue
+        asked = parse_qs(where.query)
+        switch = SWITCHED.get(route.path)
+        if switch is not None and switch not in views:
+            found.append(f"<{one.tag}> {target!r} on {url} reaches {route.path}: {switch} is off")
+        kind = asked.get("kind", ["task"])[0]
+        if route.path == "/new" and kind in KIND_NAMES and kind not in kinds:
+            found.append(f"<{one.tag}> {target!r} on {url} creates {_an(kind)}, which is off")
+        slide = asked.get("view") == ["slide"]
+        if route.path == "/detail/{record_id}" and slide and "deck" not in views:
+            found.append(f"<{one.tag}> {target!r} on {url} opens a slide, and the deck is off")
+    return found
+
+
+def _says(page: str, setting: str) -> bool:
+    """Whether the page names this setting the way the switched-off page does."""
+    return any(one.tag == "code" and one.text == setting for one in elements(page))
+
+
+@pytest.mark.parametrize("view", VIEWS)
+def test_a_view_that_is_off_is_off_everywhere(tmp_path: Path, view: str):
+    """Each view off on its own, and swept.
+
+    Its own addresses answer 404 with the sentence naming `views`. Every page that
+    is still on answers 200, and nothing on any of them — the nav, a filter link, a
+    Review deck link, the slide button — leads to a page that is off. That last
+    half is the one that needs a DOM: a view that is off in the router and still
+    linked from a page is a dead end somebody clicks, and no status code says so.
+    """
+    from pages import unusable_banner_says
+
+    from openproj.web import SWITCHED
+
+    off = _off_with(view)
+    views = tuple(one for one in VIEWS if one not in off)
+    repo = _plan_saying(tmp_path, f"views: [{', '.join(views)}]\n")
+    kinds = frozenset(KIND_NAMES)
+
+    with TestClient(create_app(repo, auth="dev", secret=SECRET)) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+
+        refused = [_opened_at(template) for template, one in SWITCHED.items() if one in off]
+        if "deck" in off:
+            refused.append(f"/detail/{PITCH}?view=slide")
+        assert refused, f"{view} has no address to switch off"
+        # The switch is asked before the number: with the view off, a number no
+        # cycle can have is still this page, and not a 404 about which numbers
+        # a cycle may have, about a page the plan does not have at all.
+        refused += [
+            template.replace("{number}", "99999")
+            for template, one in SWITCHED.items()
+            if one in off and "{number}" in template
+        ]
+        for url in refused:
+            got = client.get(url)
+            assert got.status_code == 404, f"{url}: {got.status_code}"
+            assert _says(got.text, "views"), f"{url} does not say which setting it was"
+
+        still = [
+            "/",
+            "/help",
+            "/detail",
+            *(f"/detail/{one}" for one in SEED_IDS),
+            "/new?kind=task",
+            *(_opened_at(template) for template, one in SWITCHED.items() if one in views),
+            *([f"/detail/{PITCH}?view=slide"] if "deck" in views else []),
+        ]
+        for url in still:
+            got = client.get(url)
+            assert got.status_code == 200, f"{url}: {got.status_code}"
+            # The setting was written right, so nothing is drawn around it: a
+            # banner here would mean the sweep is of whatever the tool made of a
+            # typo, not of the plan this test meant.
+            assert unusable_banner_says(got.text) == "", url
+            assert _dead_ends(client, url, got.text, views, kinds) == [], url
+
+        if "deck" in off:
+            record = client.get(f"/detail/{PITCH}").text
+            assert not [
+                one
+                for one in elements(record)
+                if one.tag == "a" and "slide-view" in one.attrs.get("class", "").split()
+            ], "the record page offers a slide in a plan with no deck"
+        if "deck" in off and "cycles" in views:
+            # By its words as well as by where it leads: the sweep above would
+            # see a guard dropped as a blanked link, and this says which one.
+            cycle = elements(client.get("/cycle/37").text)
+            assert not [one for one in cycle if one.tag == "a" and "deck" in one.text.lower()], (
+                "/cycle/37 offers a Review deck in a plan with no deck"
+            )
+
+
+@pytest.mark.parametrize("kind", OPTIONAL_KINDS)
+def test_a_kind_that_is_off_is_refused_at_every_door(tmp_path: Path, kind: str):
+    """The create form, the create route and the target of Change kind, each asked
+    for a kind the plan has turned off.
+
+    The form is the switched-off page, naming `kinds`; the routes answer 422 with
+    `kind_refusal`'s sentence, which is `openproj new`'s word for word. Neither the
+    create form's picker nor the kind chip's menu offers it, because every one of
+    those choices would end in that 422.
+
+    A file of that kind that is already there is not what this switches off: it
+    still loads, is listed on Records and opens on its own page. Hiding it would be
+    a list that drops rows and looks normal.
+    """
+    from pages import selects
+
+    from openproj.model import RUNG, Config, kind_off_warning, kind_refusal
+    from openproj.web import SWITCHED
+
+    kinds = [one for one in OPTIONAL_KINDS if one != kind]
+    repo = _plan_saying(tmp_path, f"kinds: [{', '.join(kinds)}]\n")
+    record_id = f"{RUNG[kind].prefix}-f00001"
+    commit_directly(
+        repo,
+        {
+            **tree_now(repo),
+            f"{RUNG[kind].directory}/{record_id}.md": (
+                f"---\nid: {record_id}\nkind: {kind}\ntitle: Written before the switch\n---\n"
+            ),
+        },
+        f"{_an(kind)} somebody wrote before the plan turned them off",
+    )
+    sentence = kind_refusal(kind, Config(kinds=frozenset(KIND_NAMES) - {kind}))
+    # Bare, because the record page and the 422 banner draw it as text, and a
+    # backtick there is a backtick.
+    assert sentence is not None and "kinds in config/defaults.yaml" in sentence
+    assert "`" not in sentence
+
+    with TestClient(create_app(repo, auth="dev", secret=SECRET)) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+
+        form = client.get(f"/new?kind={kind}")
+        assert form.status_code == 404, form.status_code
+        assert _says(form.text, "kinds"), "the create form does not say which setting it was"
+        # And Records bare as its way out: `kind=` is what was to be created, and
+        # handed to Records it would promise the same rows on a page with none.
+        assert [
+            (one.text, one.attrs.get("href"))
+            for one in elements(form.text)
+            if one.tag == "a" and one.text in ("Go to Records", "Show the same filters on Records")
+        ] == [("Go to Records", "/")]
+        # And the list of that kind with it, although `views` was never written:
+        # a list of a kind the plan does not have is a list of nothing. Its page
+        # names `kinds` for the same reason, and not `views` — this plan never
+        # wrote `views`, and `views: [issues]` would not bring the list back.
+        listing = [template for template, view in SWITCHED.items() if VIEW_NEEDS.get(view) == kind]
+        assert listing, f"no view lists {kind}s"
+        for template in listing:
+            got = client.get(template)
+            assert got.status_code == 404, template
+            assert _says(got.text, "kinds") and not _says(got.text, "views"), template
+
+        for url in ("/new?kind=task", f"/detail/{TASK}"):
+            offered = {value for options in selects(client.get(url).text) for value, _ in options}
+            assert kind not in offered, f"{url} offers {_an(kind)}"
+
+        made = create(client, {"kind": kind, "title": "Halo exchange feels slow"})
+        assert made.status_code == 422, made.text
+        assert made.json()["detail"] == sentence
+
+        moved = rekind(client, TASK, kind)
+        assert moved.status_code == 422, moved.text
+        assert moved.json()["detail"] == sentence
+
+        # And a save that names the kind outright, which is not a way to change
+        # one at all (D5): refused whether or not the plan has it.
+        saved = save(client, TASK, {"kind": kind})
+        assert saved.status_code == 422, saved.text
+
+        opened = client.get(f"/detail/{record_id}")
+        assert opened.status_code == 200
+        # With the warning beside it: the words every door uses, and then how to
+        # settle it, which a door has no reason to say and a file already there does.
+        warned = [one.text for one in elements(opened.text) if one.tag == "li"]
+        said = kind_off_warning(kind, Config(kinds=frozenset(KIND_NAMES) - {kind}))
+        assert said is not None and said.startswith(sentence)
+        assert said in warned, "the record page does not say its kind is off"
+        listed = [
+            one.attrs["data-id"]
+            for one in elements(client.get("/").text)
+            if one.tag == "tr" and "data-id" in one.attrs
+        ]
+        assert record_id in listed, listed
+
+        # And swept, every page still on, the way a view that is off is swept:
+        # nothing may offer to create one. What would fail here is a "New issue"
+        # somewhere other than the inbox that went off with its kind — a Table,
+        # a cycle page, the deck — which no status code would say.
+        views = tuple(one for one in VIEWS if VIEW_NEEDS.get(one) != kind)
+        on = frozenset(KIND_NAMES) - {kind}
+        still = [
+            "/",
+            "/help",
+            "/detail",
+            *(f"/detail/{one}" for one in (*SEED_IDS, record_id)),
+            "/new?kind=task",
+            *(_opened_at(template) for template, one in SWITCHED.items() if one in views),
+            f"/detail/{PITCH}?view=slide",
+        ]
+        for url in still:
+            got = client.get(url)
+            assert got.status_code == 200, f"{url}: {got.status_code}"
+            assert _dead_ends(client, url, got.text, views, on) == [], url
+
+    # The create form asks the switch after the word and before the sign-in: a
+    # signed-out reader told to sign in would sign in and then be told the kind
+    # is off. Only a GitHub-authenticated app can say "sign in" — under `dev`
+    # every request may write — and nobody is signed in to this one.
+    signed_out = create_app(
+        repo,
+        auth="github",
+        org=ORG,
+        secret=SECRET,
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+    )
+    with TestClient(signed_out) as client:
+        form = client.get(f"/new?kind={kind}")
+        assert form.status_code == 404, form.status_code
+        assert _says(form.text, "kinds")
+        assert client.get("/new?kind=task").status_code == 403, "nobody is signed in"
+        assert client.get("/new?kind=milestone").status_code == 422, "a typo is a typo"
+
+
+@pytest.mark.parametrize("kind", OPTIONAL_KINDS)
+def test_a_kind_change_from_a_page_drawn_before_the_switch_is_refused(
+    repo_path: Path, client: TestClient, kind: str
+):
+    """The tab was drawn while the kind was on, so its chip still offers it, and
+    `kinds` was committed while the tab sat open. Its Change kind carries the
+    base it was drawn at, and the gate is asked at HEAD all the same, which is
+    what the new record would land on.
+
+    Asked at `base`, this went through: `write_all` compares only the paths it
+    writes, the config is never one of them, and the record was committed into
+    a plan that had turned its kind off. `confirming` walks the drops question,
+    so that the answer without the gate is the write and not a 409; and the task
+    is under nothing, because an issue or a note under a pitch is a 409 of its own.
+    """
+    from openproj.model import RUNG, Config, kind_refusal
+
+    loose = "task-f00009"
+    commit_directly(
+        repo_path,
+        {
+            **tree_now(repo_path),
+            f"tasks/{loose}.md": f"---\nid: {loose}\nkind: task\ntitle: Under nothing\n---\n",
+        },
+        "a task under nothing",
+    )
+    drawn_at = head(client)
+    kinds = [one for one in OPTIONAL_KINDS if one != kind]
+    tree = tree_now(repo_path)
+    assert not any(path.startswith(f"{RUNG[kind].directory}/") for path in tree)
+    setting = f"kinds: [{', '.join(kinds)}]\n"
+    commit_directly(
+        repo_path,
+        {**tree, "config/defaults.yaml": tree["config/defaults.yaml"] + setting},
+        f"turn {RUNG[kind].directory} off",
+    )
+    assert head(client) != drawn_at
+
+    moved = rekind(client, loose, kind, base=drawn_at, confirming=True)
+    assert moved.status_code == 422, moved.text
+    assert moved.json()["detail"] == kind_refusal(kind, Config(kinds=frozenset(kinds)))
+    assert not any(path.startswith(f"{RUNG[kind].directory}/") for path in tree_now(repo_path))
+
+
+def _offered_by(page: str, which) -> list[str]:
+    """The values of the options in every `<select>` whose attributes `which`
+    accepts, in document order.
+
+    Off `elements`, which is flat, so an option is the select's that precedes it
+    most closely — the only element an `<option>` can be inside here, bar a
+    `<datalist>`, which is counted as the container it is so that its options are
+    never read as the select's before it.
+    """
+    offered: list[str] = []
+    inside = False
+    for one in elements(page):
+        if one.tag in ("select", "datalist"):
+            inside = one.tag == "select" and which(one.attrs)
+        elif one.tag == "option" and inside:
+            offered.append(one.attrs.get("value", one.text))
+    return offered
+
+
+# `kinds` absent, empty, and naming each optional kind alone.
+@pytest.mark.parametrize("listed", [None, (), *((one,) for one in OPTIONAL_KINDS)])
+def test_the_create_form_and_the_kind_chip_offer_only_kinds_that_are_on(
+    tmp_path: Path, listed: tuple[str, ...] | None
+):
+    """The create form's picker and a record's Change kind menu, each asked for
+    exactly what it offers: every kind the plan has, in the ladder's order, and
+    nothing else. The chip leaves out the kind the record already is.
+
+    Exact lists rather than "not the one that is off": a picker that dropped a
+    planned kind along with the optional one, or offered them out of order, passes
+    a test that only looks for what should be missing.
+    """
+    on = [
+        one
+        for one in KIND_NAMES
+        if one not in OPTIONAL_KINDS or listed is None or one in listed
+    ]
+    repo = _plan_saying(tmp_path, "" if listed is None else f"kinds: [{', '.join(listed)}]\n")
+    with TestClient(create_app(repo, auth="dev", secret=SECRET)) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+
+        form = client.get("/new?kind=task")
+        assert form.status_code == 200, form.status_code
+        assert _offered_by(form.text, lambda attrs: attrs.get("id") == "kind") == on
+
+        record = client.get(f"/detail/{TASK}")
+        assert record.status_code == 200, record.status_code
+        chip = _offered_by(record.text, lambda attrs: "becomes" in attrs.get("class", "").split())
+        assert chip == ["", *(one for one in on if one != "task")]
+
+
+def test_nothing_but_records_is_still_a_whole_app(tmp_path: Path):
+    """`views: []` and `kinds: []`: the least a plan can have, which is Records,
+    every record's page, the create form for the four planned kinds, and Help.
+
+    Every one of those still draws, with a nav of one item and not a single link
+    to a page that is gone — the case where a guard missing anywhere shows, since
+    everything it could lead to is off at once.
+    """
+    from pages import nav_of
+
+    from openproj.web import SWITCHED
+
+    repo = _plan_saying(tmp_path, "views: []\nkinds: []\n")
+    kinds = frozenset(one for one in KIND_NAMES if one not in OPTIONAL_KINDS)
+    with TestClient(create_app(repo, auth="dev", secret=SECRET)) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+
+        for url in ("/", "/help", "/detail", *(f"/detail/{one}" for one in SEED_IDS), "/new"):
+            got = client.get(url)
+            assert got.status_code == 200, f"{url}: {got.status_code}"
+            assert [label for label, _, _ in nav_of(got.text)] == ["Records"], url
+            assert _dead_ends(client, url, got.text, (), kinds) == [], url
+
+        for template in SWITCHED:
+            assert client.get(_opened_at(template)).status_code == 404, template
+        for kind in OPTIONAL_KINDS:
+            assert client.get(f"/new?kind={kind}").status_code == 404, kind
+
+
+def test_a_committed_views_setting_changes_the_next_page(client: TestClient, repo_path: Path):
+    """A `defaults.yaml` committed while the server runs is the plan on the very
+    next request — the nav, and the gate behind it.
+
+    The links ride the per-commit memo beside the index, so this is the test that
+    a cache of them could not be keyed on anything else: one built once, or keyed
+    on the day, would go on drawing the Table and answering `/table` until a
+    restart.
+    """
+    from pages import nav_of
+
+    assert "Table" in [label for label, _, _ in nav_of(client.get("/").text)]
+    assert client.get("/table").status_code == 200
+    commit_directly(
+        repo_path,
+        {
+            **tree_now(repo_path),
+            "config/defaults.yaml": SEED["config/defaults.yaml"] + "views: [graph]\n",
+        },
+        "the plan keeps the graph and nothing else",
+    )
+
+    assert [label for label, _, _ in nav_of(client.get("/").text)] == ["Records", "Graph"]
+    assert client.get("/table").status_code == 404
+    assert client.get("/graph").status_code == 200
+
+
+def test_a_switched_off_address_hands_its_filters_to_records(tmp_path: Path):
+    """`/table?owner=ann` in a plan without a Table: the switched-off page, and one
+    link to Records carrying the same filters — Records reads every filter the
+    other views do, so it lands on the same rows. Without a filter the way out is
+    Records bare, and the answer is a page like any other: HTML, with the headers
+    every response here carries.
+
+    Only the filters: a timeline's window is not one, and `/issues?owner=ann` is
+    issues owned by ann, so its kind goes with it. And a deck, in a plan with
+    Cycles, goes to the cycle it was the review of — when that is a cycle.
+    """
+    from openproj.web import SWITCHED
+
+    views = [one for one in VIEWS if one not in ("table", "timeline", "issues", "deck")]
+    assert {"/table", "/timeline", "/issues"} <= set(SWITCHED)
+    repo = _plan_saying(tmp_path, f"views: [{', '.join(views)}]\n")
+    # The page's ways out, by what each says; the nav and the footer are every
+    # other page's too and are not what is asked here.
+    out = {"Show the same filters on Records", "Open the record", "Go to Records", "Open cycle 37"}
+    with TestClient(create_app(repo, auth="dev", secret=SECRET)) as client:
+
+        def ways_out(url: str) -> list[tuple[str, str]]:
+            got = client.get(url)
+            assert got.status_code == 404, f"{url}: {got.status_code}"
+            assert got.headers["content-type"].startswith("text/html"), url
+            assert "content-security-policy" in got.headers, url
+            return [
+                (one.text, one.attrs.get("href", ""))
+                for one in elements(got.text)
+                if one.tag == "a" and one.text in out
+            ]
+
+        assert ways_out("/table?owner=ann") == [("Show the same filters on Records", "/?owner=ann")]
+        assert ways_out("/table?owner=ann&status=ready") == [
+            ("Show the same filters on Records", "/?owner=ann&status=ready")
+        ]
+        assert ways_out("/table") == [("Go to Records", "/")]
+        assert ways_out("/table?sort=title&desc=1") == [("Go to Records", "/")]
+        assert ways_out("/timeline?from=2026-01-01&zoom=weeks") == [("Go to Records", "/")]
+        assert ways_out("/issues?owner=ann&zoom=weeks") == [
+            ("Show the same filters on Records", "/?kind=issue&owner=ann")
+        ]
+        assert ways_out("/deck/37") == [("Open cycle 37", "/cycle/37")]
+        assert ways_out("/deck/037") == [("Open cycle 37", "/cycle/37")]
+        # Asked before the number is, so a number no cycle can have is Records.
+        assert ways_out("/deck/99999") == [("Go to Records", "/")]
+
+
+def test_a_records_kind_changes_through_change_kind_and_nowhere_else(
+    client: TestClient, repo_path: Path
+):
+    """`kind` is a field every rung declares, so a save could set it, and nothing
+    asked. The id carries the kind, so what that committed was a task's id over a
+    pitch's frontmatter — a blocker the plan woke up with, on a protected branch —
+    and it went past everything Change kind does: no new id, no children
+    repointed, and no kind gate.
+
+    Both save doors refuse it, and write nothing. The record's own kind is let
+    through, because a form that sends every field back is not asking for
+    anything; the co-editing room is the third door, and `test_coedit` holds it.
+    """
+    before = git_head(repo_path)
+    said = (
+        "A record's kind changes through Change kind, which gives it a new id, not through a save."
+    )
+
+    one = save(client, TASK, {"kind": "pitch"})
+    assert one.status_code == 422, one.text
+    assert one.json()["detail"] == said
+
+    # One record in the selection that is not a task refuses all of it: the
+    # batch is one commit.
+    many = save_many(client, [TASK, PITCH], {"kind": "task"})
+    assert many.status_code == 422, many.text
+    assert many.json()["detail"] == said
+    assert git_head(repo_path) == before, "a refusal writes nothing"
+
+    same = save(client, TASK, {"kind": "task", "priority": "low"})
+    assert same.status_code == 200, same.text
+    both = save_many(client, [TASK, OTHER], {"kind": "task", "priority": "high"})
+    assert both.status_code == 200, both.text

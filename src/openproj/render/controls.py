@@ -493,11 +493,19 @@ function syncFilters() {
 // Whether anything is set at all, asked of the query string rather than of the
 // controls: the query string is the state, and the people page's `role` is a
 // field the record list below has never heard of.
+//
+// Every field `matches` reads, as well as every menu drawn. Records draws no
+// menus and filters by all of `FILTERS`, so `/?owner=ann` — where People sends a
+// name in a plan without a Table, and where a switched-off `/table?owner=ann`
+// sends its reader — narrowed the rows with this button hidden and the fold
+// saying nothing. The table, the graph and the timeline draw a menu for every
+// field in `FILTERS` already, so on those the set is what it was. A Set, so a
+// field that is both counts once in "3 set".
 function showTheWayOut() {
   const out = document.getElementById('unfilter');
   const fields = [...document.querySelectorAll('.facet[data-field]')]
     .map(facet => facet.dataset.field);
-  const chosen = [...fields, 'q', 'predicate']
+  const chosen = [...new Set([...fields, ...FILTERS, 'q', 'predicate'])]
     .filter(field => params.getAll(field).filter(Boolean).length);
   if (out) out.hidden = !chosen.length;
   sayWhatIsFolded(chosen.length);

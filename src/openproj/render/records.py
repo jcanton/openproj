@@ -5,12 +5,12 @@ from __future__ import annotations
 from markupsafe import Markup
 
 from ..index import Index, holder_fields, predicates_of
-from ..model import RUNG, unread_fields
-from .controls import _FILTER_JS, _facets_html
+from ..model import OPTIONAL_KINDS, RUNG, unread_fields
+from .controls import _FILTER_JS, _PLAN_FACETS, _facets_html
 from .env import _compiled
-from .shell import _NAV, STATIC, Links, _page
+from .shell import _NAV, STATIC, Links, _page, _titles
 from .styles import _SCROLL_STYLE
-from .tokens import _ago
+from .tokens import LABELS, _ago, _human
 
 _RECORDS = """
 {#- Announced, not drawn: the lit nav item already says which view this is. -#}
@@ -86,12 +86,30 @@ const recordsEmpty = document.getElementById('records-empty');
 // empty, and a second spelling here is what would let the two drift.
 const SAID = {{ said|tojson }};
 
+// The filters the address set, each as "Owner: ann" in the words the table's
+// menus use — this page draws no menu for any of them, so without this the rows
+// narrowed and nothing but a Clear button said a filter was on, let alone which.
+// Said where the page describes itself, in place of that sentence while any is
+// set, and the description comes back when they are cleared.
+const RECORDS_ABOUT = document.getElementById('records-about');
+const RECORDS_ITSELF = RECORDS_ABOUT ? RECORDS_ABOUT.textContent : '';
+function filteredBy() {
+  return Object.entries(SAID.fields)
+    .map(([field, name]) => [name, params.getAll(field).filter(Boolean)])
+    .filter(([, values]) => values.length)
+    .map(([name, values]) =>
+      `${name}: ${values.map(value => SAID.words[value] || value).join(' or ')}`);
+}
+
 // Four states, four sentences, and they must not look like each other: a view
 // with no records at all, a payload that did not load, a query that cannot be
 // read (whose parse error `sayQueryError` already puts beside the box — the
 // row only points at it), and a search that matched nothing. The empty view is
 // asked FIRST: with nothing to filter, a sentence about the search box would
-// be true and useless.
+// be true and useless. And a search that matched nothing names what did the
+// hiding, because a filter from the address is not in the box: "hidden by
+// what is in the box" over an empty box points at the one control that is not
+// the cause.
 function recordsApply() {
   let shown = 0;
   for (const item of recordItems) {
@@ -100,6 +118,10 @@ function recordsApply() {
     item.hidden = !kept;
     shown += kept ? 1 : 0;
   }
+  const by = filteredBy();
+  const typed = !!(params.get('q') || '').trim();
+  if (RECORDS_ABOUT)
+    RECORDS_ABOUT.textContent = by.length ? `Filtered by ${by.join(' and ')}.` : RECORDS_ITSELF;
   let headline = '', hint = '', spoken = '';
   if (!recordItems.length) {
     headline = SAID.empty_headline;
@@ -112,8 +134,8 @@ function recordsApply() {
     headline = 'That search cannot be read.';
     hint = 'What is wrong with it is beside the search box.';
   } else if (!shown) {
-    headline = SAID.none_headline;
-    hint = SAID.none_hint;
+    headline = by.length && !typed ? SAID.none_filtered_headline : SAID.none_headline;
+    hint = !by.length ? SAID.none_hint : typed ? SAID.none_both_hint : SAID.none_filtered_hint;
     spoken = headline;
   }
   recordsEmpty.querySelector('.headline').textContent = headline;
@@ -223,6 +245,16 @@ def _record_row(index: Index, record_id: str) -> dict:
     }
 
 
+# What each optional kind is, in the landing's empty-plan invitation — the clause
+# a plan without that kind leaves out. Held to `OPTIONAL_KINDS`, so a third inbox
+# rung cannot arrive switchable with nothing to say here.
+_STARTS_AS = {
+    "issue": "an issue somebody noticed",
+    "note": "half a thought in a note",
+}
+assert tuple(_STARTS_AS) == OPTIONAL_KINDS, "every optional kind has its clause, in ladder order"
+
+
 def render_records(
     index: Index,
     links: Links = STATIC,
@@ -270,7 +302,12 @@ def render_records(
     # A door that opens onto a refusal is worse than no door, and the static
     # export needs neither — it has no server to post to, which is why
     # `editable` exists at all and why the two names both stay.
-    creatable = editable and may_write
+    #
+    # And a kind the plan has, for the same reason: the button opens
+    # `/new?kind=…`, which answers the switched-off page for a kind that is off.
+    # `/issues` cannot be on without issues (`VIEW_NEEDS`), so this is the
+    # button standing on its own feet rather than on the router's.
+    creatable = editable and may_write and (only is None or only in index.kinds)
     # The Links field, the nav slot and the export filename in one word,
     # off the ladder rather than a second map: `RUNG["issue"].directory`
     # is "issues".
@@ -309,11 +346,16 @@ def render_records(
         # pre-fill theirs.
         "href": links.new if only is None else f"{links.new}?kind={only}",
     }
+    # The landing's invitation names the kinds a first record can be, and only
+    # the ones this plan has: "an issue somebody noticed" on a plan without
+    # issues is a promise the create form's picker then breaks.
+    starts_as = ", ".join(
+        ("work to plan", *(said for kind, said in _STARTS_AS.items() if kind in index.kinds))
+    )
     empty_headline, empty_hint = {
         "records": (
             "This plan has no records yet.",
-            "Everything here starts as a record: work to plan, an issue "
-            "somebody noticed, half a thought in a note.",
+            f"Everything here starts as a record: {starts_as}.",
         ),
         "issues": (
             "No issues are open.",
@@ -326,11 +368,35 @@ def render_records(
             "no owner, no size, no cycle.",
         ),
     }[key]
+    # What the address can filter this page by, in the words the table's menus
+    # would use. This page draws no menu for any of them (`fields=()` below) and
+    # `matches` reads them all, so `/?owner=ann` — where People sends a name in a
+    # plan with no Table, and where a switched-off `/table?owner=ann` sends its
+    # reader — narrowed the rows with nothing saying by what, and a filter that
+    # matched nothing said the rows were hidden "by what is in the box" over an
+    # empty box. Only the values whose word is not themselves: a login is its
+    # own word, a project's id is not.
+    titles = _titles(index)
+    spelled = {
+        value: titles.get(value) or _human(value)
+        for field in _PLAN_FACETS
+        for value in index.facets.get(field, [])
+    }
+    words = {value: spelling for value, spelling in spelled.items() if spelling != value}
     said = {
         "empty_headline": empty_headline,
         "empty_hint": empty_hint,
         "none_headline": f"No {word} matches this search.",
         "none_hint": f"Every {word} is hidden by what is in the box.",
+        "none_filtered_headline": f"No {word} matches these filters.",
+        "none_filtered_hint": (
+            f"Every {word} is hidden by the filters named above. Clear filters shows them all."
+        ),
+        "none_both_hint": (
+            f"Every {word} is hidden by what is in the box and the filters named above."
+        ),
+        "fields": {field: LABELS.get(field, field) for field in _PLAN_FACETS},
+        "words": words,
     }
     # Shortened on 2026-09-16, jcanton's own wording. They sit on the search
     # box's line now rather than on a row of their own, and a line shared with a
@@ -360,7 +426,7 @@ def render_records(
         facets=_facets_html(
             index.facets,
             fields=(),
-            aside=Markup('<p class="hint">{}</p>').format(describe),
+            aside=Markup('<p class="hint" id="records-about">{}</p>').format(describe),
         ),
         filters=_FILTER_JS,
     )

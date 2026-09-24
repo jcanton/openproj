@@ -27,3 +27,8 @@ nominal_availability: 1.0
 # measured against the end of build: cool-down is for the mess afterwards, so
 # work that lands in it did not fit its box.
 cooldown_weeks: 2.0
+# Which views this plan has, in nav order after Records. Records, every record page and Help
+# (in the footer) are always there. deck needs cycles; issues and notes need their kind below.
+views: [table, graph, timeline, cycles, deck, people, issues, notes]
+# The optional kinds of record. task, pitch, project and product are always on.
+kinds: [issue, note]

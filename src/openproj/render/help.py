@@ -26,10 +26,11 @@ from typing import NamedTuple
 from markupsafe import Markup
 
 from ..index import Index
+from ..model import OPTIONAL_KINDS, RUNG, SWITCHES_FILE, VIEW_NEEDS
 from ..vendor import _docs_root
 from .env import _compiled
 from .markdown import _LEADING_HEADING, document_html
-from .shell import STATIC, Links, _page
+from .shell import _NAV, _NAV_KEYS, STATIC, Links, _page
 from .styles import _DETAIL_STYLE, _SUGGEST_STYLE
 
 
@@ -131,6 +132,7 @@ _HELP = """
 {#- Announced, not drawn: the footer's Help link, marked as the page you are on,
     already says which page this is. -#}
 <h1 class="sr-only">Help</h1>
+{{ scope }}
 <div class="helppanes">
 {#- A navigation landmark with a name on it, because this is the second set of
     links on the page and a reader moving by landmark needs to tell it from the
@@ -227,6 +229,10 @@ _HELP_STYLE = """
    instead of the one block that is too wide. */
 .helppanes { display: grid; grid-template-columns: minmax(0, 16rem) minmax(0, 1fr);
              gap: 0 2rem; }
+/* The sentence above the guide that says what this plan has switched off. Its
+   two settings and the file are identifiers, set the way `.meta code` and the
+   switched-off page set theirs. */
+.scope code { font-family: var(--font-mono); }
 /* A measure, and it is the one place in this app that wants one. Every other
    page is a table, a graph or a form — dense, and read by scanning — and this one
    is documents of prose read line by line. At 1280px the second track came
@@ -347,6 +353,67 @@ _HELP_STYLE = """
 """
 
 
+def _listed(words: list[str]) -> str:
+    """The words joined as a list is said: A; A and B; A, B and C; nothing for none."""
+    return f"{', '.join(words[:-1])} and {words[-1]}" if len(words) > 1 else "".join(words)
+
+
+def _scope(index: Index, links: Links) -> Markup:
+    """One sentence saying what this plan has, when it has less than the guide.
+
+    The guide itself is not filtered: that would need markers in `docs/*.md`,
+    break the moment a paragraph mentions two views, and tax every future edit of
+    the guide to buy tidiness. So it describes everything openproj has, and this
+    says what is true of the plan in front of the reader instead — and which
+    setting decided it, so the reader who wants a view back knows which line to
+    edit.
+
+    Nothing at all for a plan that has everything, which is every plan that never
+    wrote `views` or `kinds`: a sentence saying so is one more line to read past.
+    "Everything" is the nav and the optional kinds, and the deck has no nav item,
+    so a plan that turns off the deck alone gets no sentence.
+
+    A nav item can be missing for either of two reasons, and the sentence names
+    the one that holds. A list of a kind the plan has not got goes with the kind
+    (`VIEW_NEEDS`), so `kinds: []` alone takes Issues and Notes out of the nav
+    without `views` saying a word — and "turned off by `views`" would send the
+    reader to a key they never wrote.
+
+    Built here and not in the template: English is not something Jinja should
+    be doing arithmetic about, and `Markup.format` is the one escaping boundary
+    the `<code>` spans need.
+    """
+    kinds_off = [kind for kind in OPTIONAL_KINDS if kind not in index.kinds]
+    by_views = [key for key in _NAV_KEYS - set(links.nav) if VIEW_NEEDS.get(key) not in kinds_off]
+    if not by_views and not kinds_off:
+        return Markup("")
+    lists = _listed([RUNG[kind].directory for kind in kinds_off])
+    views_from = index.switches_from.get("views", SWITCHES_FILE)
+    kinds_from = index.switches_from.get("kinds", SWITCHES_FILE)
+    if by_views:
+        said = Markup(
+            "This plan has {}. The guide below describes every view openproj has; the "
+            "others are turned off here by <code>views</code> in <code>{}</code>"
+        ).format(_listed([dict(_NAV)[key] for key in links.nav]), views_from)
+        if kinds_off:
+            said += Markup(", and {} by <code>kinds</code>").format(lists)
+            # Named only when it is another file: the two keys usually sit side
+            # by side, and a path said twice in one sentence reads as two places.
+            if kinds_from != views_from:
+                said += Markup(" in <code>{}</code>").format(kinds_from)
+        said += Markup(".")
+    else:
+        # Said as the switch and not as a count. A file of a kind that is off still
+        # loads and is listed on Records, so "this plan has no issues" was false of
+        # any plan that had some before it turned them off — and it is the words of
+        # `kind_refusal`, which every door and the warning beside such a file use.
+        said = Markup(
+            "{} are turned off for this plan by <code>kinds</code> in <code>{}</code>. "
+            "The guide below describes every kind of record openproj has."
+        ).format(lists.capitalize(), kinds_from)
+    return Markup('<p class="hint scope">{}</p>').format(said)
+
+
 def render_help(index: Index, links: Links = STATIC) -> str:
     """Every document this tool ships, on one page, with a contents beside it.
 
@@ -387,7 +454,7 @@ def render_help(index: Index, links: Links = STATIC) -> str:
                 "why": why,
             }
         )
-    body = _compiled(_HELP).render(docs=drawn)
+    body = _compiled(_HELP).render(docs=drawn, scope=_scope(index, links))
     return _page(
         "openproj — help",
         body,
