@@ -21,6 +21,7 @@ import pytest
 from test_store import SEED, commit_directly
 
 from openproj.cli import main
+from openproj.model import VIEWS, kind_refusal, load_repo
 
 
 def test_check_exits_non_zero_when_the_repository_has_blockers(seed_root: Path, capsys):
@@ -847,6 +848,71 @@ def test_new_refuses_a_field_the_kind_does_not_have(plan: Path, capsys):
     assert code == 1
     assert written(plan) == []
     assert "reportedby" in capsys.readouterr().out
+
+
+def switched(plan: Path, setting: str) -> None:
+    """The fixture's config with one switch written into it, the way a plan says it."""
+    (plan / "config" / "defaults.yaml").write_text(
+        f"schema_version: 4\nnominal_availability: 1.0\n{setting}\n", encoding="utf-8"
+    )
+
+
+def test_new_refuses_a_kind_the_plan_has_turned_off(plan: Path, capsys):
+    """argparse offers every kind this tool has, because it cannot know the plan,
+    so the refusal is the command's own and has to write nothing. The sentence is
+    `kind_refusal`'s, the one every door that writes a record gives: the reader
+    told no in a terminal is sent to the same line of the same file as one told no
+    in a 422. The note is the control — the same plan still takes a kind it has, so
+    the refusal is about the kind and not about a config the command choked on.
+    """
+    switched(plan, "kinds: [note]")
+    config = load_repo(plan)[1]
+
+    code = main(["new", "issue", str(plan), "--title", "Two extrapolations"])
+
+    assert code == 1
+    assert written(plan) == []
+    out = capsys.readouterr().out
+    assert f"blocker: {kind_refusal('issue', config)}\n" in out
+    assert "`kinds` in config/defaults.yaml" in out
+    assert "nothing written" in out
+
+    assert main(["new", "note", str(plan), "--title", "A thought"]) == 0
+    assert [one.parent.name for one in written(plan)] == ["notes"]
+
+
+def test_check_names_a_views_setting_it_could_not_use(plan: Path, capsys):
+    """A typo in `views` hides a page, and a page gone with nothing saying why is
+    finding F1. So `check` names the file and the word, and counts it as a
+    blocker the way it already counts a number nothing can compute with — CI is
+    where somebody who committed `cycels` finds out before the team does."""
+    switched(plan, "views: [cycels]")
+
+    assert main(["check", str(plan)]) == 1
+
+    lines = capsys.readouterr().out.splitlines()
+    assert (
+        "blocker: config/defaults.yaml: views names 'cycels', which is not a view openproj "
+        f"has ({', '.join(VIEWS)}), so it is left out"
+    ) in lines
+    assert lines[-1] == "1 blockers, 0 warnings"
+
+
+def test_check_warns_about_a_record_of_a_kind_that_is_off(plan: Path, capsys):
+    """The issue is written while issues are on and the switch is committed after,
+    which is the order it happens in a real plan. The file still loads and still
+    counts; `check` says it disagrees with `kinds`, in the sentence the write doors
+    give, and does not fail the build over a file somebody may yet delete."""
+    assert main(["new", "issue", str(plan), "--title", "Two extrapolations", "--json"]) == 0
+    record_id = json.loads(capsys.readouterr().out)["id"]
+    switched(plan, "kinds: [note]")
+    config = load_repo(plan)[1]
+
+    assert main(["check", str(plan)]) == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    assert f"warning: {record_id}: kind: {kind_refusal('issue', config)}" in lines
+    assert lines[-1] == "0 blockers, 1 warnings"
 
 
 def test_new_owns_the_date_and_defaults_the_author_on_an_inbox_record(plan: Path):

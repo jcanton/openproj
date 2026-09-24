@@ -49,6 +49,7 @@ from .model import (
     _an,
     edited_by_id,
     in_model_order,
+    kind_refusal,
     load_repo,
     mint_id,
     opening_fields,
@@ -309,6 +310,16 @@ def _new(args) -> int:
         return 1
 
     records, config, _ = load_repo(args.repo)
+    # The parser offers every kind this tool has, because argparse is built
+    # before any plan is read and cannot know which kinds this one switched off.
+    # So the refusal is here, the moment the config is in hand and before an id
+    # is minted, and in `kind_refusal`'s sentence — the one every door that
+    # writes a record gives — so a person told no in a terminal and an agent told
+    # no in a 422 are sent to the same line of the same file.
+    if (refused := kind_refusal(kind, config)) is not None:
+        print(f"blocker: {refused}")
+        print("nothing written")
+        return 1
     try:
         fields = _assigned(args.assignments)
     except ValueError as error:
