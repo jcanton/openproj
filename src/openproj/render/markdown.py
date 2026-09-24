@@ -511,14 +511,19 @@ def _fence(
     since it was written and the Help page drew it as five lines of ASCII-ish
     source.
 
-    **The prefix decides, exactly as it does for `_image` and `_link`.** The
-    bundle is 3.5 MB and is fetched from `/static/mermaid.min.js` rather than
-    inlined (see `static/VENDOR.md`), so a diagram needs a server to ask. The
-    static export has none — its pages are opened over `file://` — and a `<pre>`
-    that sits there empty for ever, or a console full of failed fetches, is worse
-    than the source it replaced. So an exported page keeps the ordinary code
-    block it has always had, and `openproj render` writes the same bytes it did
-    before this rule existed.
+    **Whether a server is behind the page decides — `Links.served`, and not any
+    one link's prefix.** This read `links.table` once, by analogy with `_image` and
+    `_link`, which take a prefix from `links.repo` and `links.record`. For them a
+    prefix only says where a path points; as a mode it was wrong, because a plan
+    that switches its Table off blanks `links.table`, and that would have turned
+    every diagram on a served page back into source. The bundle is 3.5 MB and is
+    fetched from `/static/mermaid.min.js` rather than inlined (see
+    `static/VENDOR.md`), so a diagram needs a server to ask. The static export
+    has none — its pages are opened over `file://` — and a `<pre>` that sits
+    there empty for ever, or a console full of failed fetches, is worse than the
+    source it replaced. So an exported page keeps the ordinary code block it has
+    always had, and `openproj render` writes the same bytes it did before this
+    rule existed.
 
     **The content is escaped by `Markup(...).format`, exactly as it would be in a
     code block.** A mermaid fence in a shaping document is text a member typed,
