@@ -396,6 +396,16 @@ def test_no_served_page_lets_a_field_become_markup(hostile_served, benign_served
         assert_same_shape(html, benign_served[route], f"served {route}")
 
 
+def _is_page(route) -> bool:
+    """Whether a route draws a page: HTML, as against JSON, a redirect or a file."""
+    from fastapi.responses import HTMLResponse
+
+    drawn = getattr(route, "response_class", None)
+    # FastAPI wraps an undeclared response class in a DefaultPlaceholder.
+    drawn = getattr(drawn, "value", drawn)
+    return isinstance(drawn, type) and issubclass(drawn, HTMLResponse)
+
+
 def test_every_html_get_route_is_in_the_census(tmp_path: Path):
     """Risk 2 in the design, closed permanently: the census was a hand-written
     list, and a hand-written list fails OPEN — move the table to /table and the
@@ -406,7 +416,6 @@ def test_every_html_get_route_is_in_the_census(tmp_path: Path):
     Filtered on `response_class`: JSON routes, redirects and the asset stream
     are not pages, and a census of them would be a different test.
     """
-    from fastapi.responses import HTMLResponse
     from fastapi.routing import APIRoute
 
     path = tmp_path / "census.git"
@@ -414,19 +423,12 @@ def test_every_html_get_route_is_in_the_census(tmp_path: Path):
     commit_directly(path, corpus(BENIGN), "seed a plan for the route census")
     app = create_app(path, auth="dev", secret="a-signing-secret-for-tests")
     with TestClient(app):
-
-        def is_page(route) -> bool:
-            drawn = getattr(route, "response_class", None)
-            # FastAPI wraps an undeclared response class in a DefaultPlaceholder.
-            drawn = getattr(drawn, "value", drawn)
-            return isinstance(drawn, type) and issubclass(drawn, HTMLResponse)
-
         # A list, not a set: `APIRoute` defines `__eq__` and no `__hash__`, so
         # a set of routes is a TypeError before anything is checked at all.
         pages = [
             route
             for route in app.routes
-            if isinstance(route, APIRoute) and "GET" in route.methods and is_page(route)
+            if isinstance(route, APIRoute) and "GET" in route.methods and _is_page(route)
         ]
         assert pages, "no HTML GET routes at all, so nothing was checked"
 
@@ -445,9 +447,9 @@ def test_every_html_get_route_is_in_the_census(tmp_path: Path):
                 if not (isinstance(route, APIRoute) and "GET" in route.methods):
                     continue
                 if route.path_regex.match(where):
-                    # `is_page` again rather than membership in `pages` — the
+                    # `_is_page` again rather than membership in `pages` — the
                     # same filter, asked without route equality or hashing.
-                    if is_page(route):
+                    if _is_page(route):
                         covered.add(route.path)
                     break
 
@@ -459,6 +461,98 @@ def test_every_html_get_route_is_in_the_census(tmp_path: Path):
         )
         stale = CENSUS_BLIND - templates
         assert not stale, f"CENSUS_BLIND names routes that no longer exist: {sorted(stale)}"
+
+
+def test_every_page_route_is_gated_or_always_on(tmp_path: Path):
+    """The gate table, held against `app.routes` the way the census above is.
+
+    Every HTML GET route is in exactly one of three places: `SWITCHED`, which a
+    plan's `views` turns off by path; `SWITCHED_BY_QUERY`, always on as a route
+    and gated by what its query asks for; or `ALWAYS_ON`, which no setting
+    reaches. A page route nobody decided about is a failure on the commit that
+    adds it, rather than a page that stays on in every plan because nobody
+    thought to switch it — and a row left behind by a route that went is one too.
+
+    And every view has a page to turn off. A ninth view in `VIEWS` whose route
+    nobody put in the table would be a setting that does nothing, and `views`
+    would accept it in silence.
+    """
+    from fastapi.routing import APIRoute
+
+    from openproj.model import VIEWS
+    from openproj.web import ALWAYS_ON, SWITCHED, SWITCHED_BY_QUERY
+
+    path = tmp_path / "gates.git"
+    pygit2.init_repository(str(path), bare=True, initial_head="main")
+    commit_directly(path, corpus(BENIGN), "seed a plan for the gate census")
+    app = create_app(path, auth="dev", secret="a-signing-secret-for-tests")
+    pages = {
+        route.path
+        for route in app.routes
+        if isinstance(route, APIRoute) and "GET" in route.methods and _is_page(route)
+    }
+    assert pages, "no HTML GET routes at all, so nothing was checked"
+
+    gated, queried = set(SWITCHED), set(SWITCHED_BY_QUERY)
+    assert not gated & queried, gated & queried
+    assert not gated & ALWAYS_ON, gated & ALWAYS_ON
+    assert not queried & ALWAYS_ON, queried & ALWAYS_ON
+    decided = gated | queried | ALWAYS_ON
+    assert not pages - decided, (
+        "page routes no gate row and no always-on entry decides about — add each to "
+        f"SWITCHED, SWITCHED_BY_QUERY or ALWAYS_ON in web.py: {sorted(pages - decided)}"
+    )
+    assert not decided - pages, f"gate rows for routes that do not exist: {sorted(decided - pages)}"
+    assert set(SWITCHED.values()) == set(VIEWS), (
+        f"views with no page to switch off: {sorted(set(VIEWS) - set(SWITCHED.values()))}; "
+        f"switches that are not views: {sorted(set(SWITCHED.values()) - set(VIEWS))}"
+    )
+
+
+def test_a_switched_off_address_hands_on_its_query_as_text(tmp_path: Path):
+    """The switched-off page reflects its address's query into a link, so the query
+    is the payload — sent literally, as a client that is not a browser can, and not
+    percent-encoded the way httpx and every browser would first make it.
+
+    `TestClient` encodes whatever it is handed, so the query is put into the scope
+    underneath it, which is where uvicorn puts the bytes off the socket. The two
+    pages, one hostile and one benign, must draw the same elements, and the link
+    must carry the query as the text it was.
+    """
+    from pages import elements
+
+    from openproj.model import VIEWS
+
+    views = ", ".join(view for view in VIEWS if view != "table")
+    plan = corpus(BENIGN)
+    plan["config/defaults.yaml"] += f"views: [{views}]\n"
+    path = tmp_path / "reflected.git"
+    pygit2.init_repository(str(path), bare=True, initial_head="main")
+    commit_directly(path, plan, "seed a plan without a Table")
+    app = create_app(path, auth="dev", secret="a-signing-secret-for-tests")
+    sent = {"query": b""}
+
+    async def literally(scope, receive, send):
+        if scope["type"] == "http":
+            scope = {**scope, "query_string": sent["query"]}
+        await app(scope, receive, send)
+
+    drawn = {}
+    with TestClient(literally) as client:
+        for name, text in (("hostile", PAYLOAD), ("benign", BENIGN)):
+            sent["query"] = f"q={text}".encode()
+            got = client.get("/table")
+            assert got.status_code == 404, f"{name}: {got.status_code}"
+            drawn[name] = got.text
+
+    assert_clean(drawn["hostile"], "switched-off /table")
+    assert_same_shape(drawn["hostile"], drawn["benign"], "switched-off /table")
+    way = [
+        one.attrs.get("href")
+        for one in elements(drawn["hostile"])
+        if one.tag == "a" and one.text == "Show the same filters on Records"
+    ]
+    assert way == [f"/?q={PAYLOAD}"], way
 
 
 def test_no_template_marks_a_value_safe():

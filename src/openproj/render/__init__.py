@@ -86,7 +86,7 @@ from .markdown import (
 from .pop import _POP_STYLE, _pop_js
 from .records import render_records
 from .rows import _row
-from .shell import _SHELL, CSP, ROUTES, STATIC, _page, links_for, render_switched_off
+from .shell import _SHELL, CSP, ROUTES, STATIC, Links, _page, links_for, render_switched_off
 from .slides import render_slide_editor
 from .styles import STATUS_SLOTS, _chosen, _scheme_css
 from .table import (
@@ -146,6 +146,7 @@ __all__ = [
     "DOCS",
     "render_help",
     "REQUIRED_AT",
+    "Links",
     "ROUTES",
     "STATIC",
     "STATUSES",
