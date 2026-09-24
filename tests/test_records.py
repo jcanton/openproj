@@ -415,6 +415,50 @@ def test_the_landing_offers_no_kind_the_plan_has_turned_off():
     assert create(planned | {"note"}, only="issue") == []
 
 
+def test_the_landing_says_a_filter_from_the_address_is_on(tmp_path: Path):
+    """`/?owner=ann` is where People sends a name in a plan without a Table, and
+    where the switched-off `/table?owner=ann` sends its reader. Records filters by
+    it — `matches` reads every field in `FILTERS` — but draws no menu for any of
+    them, and "Clear filters" counted only the menus a page draws: the rows
+    narrowed to ann's and nothing on screen said a filter was on or offered to
+    take it off. A filter you cannot see is a filter you cannot leave.
+
+    Driven, because the button is shown and the rows are hidden by the page's own
+    script: the address is where the state lives, so the address is what is set.
+    """
+    path = plan_repo(tmp_path)
+    commit_directly(path, PLAN, "seed", when=1_000_000)
+    with TestClient(create_app(path, auth="dev")) as client:
+        page = client.get("/").text
+
+    every = sorted(re.findall(r"^id: (\S+)$", "\n".join(PLAN.values()), re.M))
+    owned = sorted(
+        re.search(r"^id: (\S+)$", text, re.M).group(1)
+        for text in PLAN.values()
+        if re.search(r"^owner: ann$", text, re.M)
+    )
+    assert owned and len(owned) < len(every), "a filter that hides nothing asks nothing"
+
+    look = (
+        "(() => { const out = document.getElementById('unfilter');"
+        " const shown = () => [...document.querySelectorAll('#records tbody tr[data-id]')]"
+        "   .filter(tr => !tr.hidden).map(tr => tr.dataset.id).sort();"
+        " const before = [out.hidden, shown()];"
+        " out.onclick();"
+        " return [before, [out.hidden, shown(), params.toString()]]; })()"
+    )
+    answer = run_js(page, look, page=True, here="/?owner=ann")
+    assert not [e for e in answer["errors"] if e.startswith("expression:")], answer["errors"]
+    before, after = answer["value"]
+    assert before == [False, owned], "the rows narrowed and no way out was offered"
+    assert after == [True, every, ""], "Clear left the address's filter set"
+
+    # And nothing set is nothing offered: a Clear that is always there is a
+    # control that does nothing most of the time.
+    quiet = run_js(page, "document.getElementById('unfilter').hidden", page=True, here="/")
+    assert quiet["value"] is True
+
+
 def test_an_unreadable_query_goes_to_the_error_region_not_to_a_row(tmp_path: Path):
     path = plan_repo(tmp_path)
     commit_directly(path, PLAN, "seed", when=1_000_000)
