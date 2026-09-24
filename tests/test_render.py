@@ -4419,16 +4419,19 @@ def test_the_switched_off_page_names_the_setting_and_the_way_out(seed_index: Ind
     """What `/table` answers in a plan without a Table: the ordinary shell and this
     plan's nav, one sentence naming the setting and the file, and one way out.
 
-    The way out carries the address's own query to Records, which honours the same
-    filters, and that query is text somebody typed into an address bar — so the
+    The way out carries the address's filters to Records, which honours the same
+    ones, and that query is text somebody typed into an address bar — so the
     hostile ones are here and asked of the parsed page. A percent-encoded one has
     nothing in it to escape and proves little on its own; the literal quote, the
     angle brackets and the single quote are the ones that would break out of the
     attribute if the one escaping boundary were bypassed.
     """
+    from urllib.parse import parse_qs, urlparse
+
     from pages import nav_of
 
-    from openproj.model import KIND_NAMES, OPTIONAL_KINDS, VIEWS, kind_refusal
+    from openproj.model import KIND_NAMES, OPTIONAL_KINDS, RUNG, VIEW_NEEDS, VIEWS, kind_refusal
+    from openproj.render.shell import _OFF_PHRASE
 
     links = links_for(("cycles",), ROUTES)
     way = "Show the same filters on Records"
@@ -4464,7 +4467,27 @@ def test_the_switched_off_page_names_the_setting_and_the_way_out(seed_index: Ind
         found = elements(render_switched_off(seed_index, links, view="table", query=hostile))
         assert sum(one.tag == "script" for one in found) == scripts, hostile
         out = [one.attrs for one in found if one.tag == "a" and one.text == way]
-        assert out == [{"href": f"/?{hostile}"}], hostile
+        assert [set(attrs) for attrs in out] == [{"href"}], hostile
+        # Re-encoded on the way through, so the href is not the address's own
+        # spelling — and it asks Records exactly what the address asked.
+        where = urlparse(out[0]["href"])
+        assert (where.path, parse_qs(where.query)) == ("/", parse_qs(hostile)), hostile
+
+    # Only what Records filters on goes with it. The timeline's window and the
+    # table's sort are not filters, and a link saying "the same filters" that
+    # landed on every record with Clear hidden said something untrue. An inbox's
+    # kind is in its route, and goes with its filters so the rows are the same.
+    for view, query, expected in (
+        ("timeline", "zoom=week&from=2026-01-01", ("Go to Records", "/")),
+        ("table", "sort=title&desc=1", ("Go to Records", "/")),
+        ("people", "role=owner", ("Go to Records", "/")),
+        ("table", "owner=ann&sort=title&predicate=late", (way, "/?owner=ann&predicate=late")),
+        ("issues", "owner=ann", (way, "/?kind=issue&owner=ann")),
+        ("notes", "kind=issue&q=draft", (way, "/?kind=note&q=draft")),
+    ):
+        _, _, anchors = said(render_switched_off(seed_index, links, view=view, query=query))
+        outs = {"Go to Records", way}
+        assert [(text, href) for text, href in anchors if text in outs] == [expected], query
 
     # Every view has its sentence, derived from `VIEWS` so a ninth cannot be the one
     # whose address answers a KeyError.
@@ -4475,13 +4498,56 @@ def test_the_switched_off_page_names_the_setting_and_the_way_out(seed_index: Ind
     # A kind that is off says `kind_refusal`'s sentence — the one the CLI and the
     # 422 say — with the setting and the file marked up.
     planned = Config(kinds=frozenset(KIND_NAMES) - set(OPTIONAL_KINDS))
+    # Its way out is Records bare: `/new` hands no query on, because `kind=issue`
+    # is what was to be created and not a filter (`web.py` says so where it calls
+    # this), so nothing here is asked with one either.
     for kind in OPTIONAL_KINDS:
-        page = render_switched_off(seed_index, links, off_kind=kind, query=f"kind={kind}")
+        page = render_switched_off(seed_index, links, off_kind=kind)
         codes, paragraphs, anchors = said(page)
         assert codes == ["kinds", "config/defaults.yaml"]
         assert kind_refusal(kind, planned).replace("`", "") in paragraphs, paragraphs
-        assert [href for text, href in anchors if text == way] == [f"/?kind={kind}"]
+        assert [(text, href) for text, href in anchors if text in (way, "Go to Records")] == [
+            ("Go to Records", "/")
+        ]
         assert [text for _, text in headings(page)] == [f"New {kind}"]
+
+    # A list that is off because its KIND is off names `kinds`, and the file that
+    # wrote it: a reader sent to `views` would write `views: [issues]`, turn every
+    # other view off, and still have no Issues. Help's `_scope` says the same.
+    inboxes = [view for view in VIEWS if VIEW_NEEDS.get(view) in KIND_NAMES]
+    assert inboxes, "no view lists a kind"
+    for view in inboxes:
+        need = VIEW_NEEDS[view]
+        without = seed_index.model_copy(
+            update={
+                "kinds": seed_index.kinds - {need},
+                "switches_from": {"kinds": "config/local.yaml"},
+            }
+        )
+        codes, paragraphs, _ = said(render_switched_off(without, links, view=view))
+        assert codes == ["kinds", "config/local.yaml"], view
+        sentence = [p for p in paragraphs if "turned off" in p]
+        assert sentence == [
+            f"{_OFF_PHRASE[view]} turned off for this plan, because {RUNG[need].directory} "
+            "are. kinds in config/local.yaml decides which kinds of record it has."
+        ], view
+
+    # The deck without Cycles says which of its items it is missing; with Cycles,
+    # a deck is one cycle's review and its way out is that cycle.
+    no_cycles = seed_index.model_copy(
+        update={"views": tuple(v for v in VIEWS if v not in ("cycles", "deck"))}
+    )
+    drawn = render_switched_off(
+        no_cycles, links_for(no_cycles.views, ROUTES), view="deck", cycle="37"
+    )
+    _, paragraphs, anchors = said(drawn)
+    assert "Open cycle 37" not in [text for text, _ in anchors], "Cycles are off"
+    assert (
+        "The review deck is turned off for this plan, because Cycles are. views in "
+        "config/defaults.yaml decides which views it has." in paragraphs
+    ), paragraphs
+    _, _, anchors = said(render_switched_off(seed_index, links, view="deck", cycle="37"))
+    assert ("Open cycle 37", "/cycle/37") in anchors
 
     # The slide view is one record's view, so its way out is that record.
     one = next(iter(seed_index.plan))

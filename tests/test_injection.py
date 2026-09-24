@@ -517,8 +517,11 @@ def test_a_switched_off_address_hands_on_its_query_as_text(tmp_path: Path):
     `TestClient` encodes whatever it is handed, so the query is put into the scope
     underneath it, which is where uvicorn puts the bytes off the socket. The two
     pages, one hostile and one benign, must draw the same elements, and the link
-    must carry the query as the text it was.
+    must ask Records what the query asked: it is parsed and encoded again on the
+    way through, so what it carries is the filter and not the spelling.
     """
+    from urllib.parse import parse_qs, urlparse
+
     from pages import elements
 
     from openproj.model import VIEWS
@@ -552,7 +555,14 @@ def test_a_switched_off_address_hands_on_its_query_as_text(tmp_path: Path):
         for one in elements(drawn["hostile"])
         if one.tag == "a" and one.text == "Show the same filters on Records"
     ]
-    assert way == [f"/?q={PAYLOAD}"], way
+    # The payload's bare `&` splits it, and what follows is a key Records does not
+    # read, so it is not handed on; the half that is `q` goes with every quote and
+    # angle bracket it had.
+    asked = parse_qs(f"q={PAYLOAD}")
+    assert set(asked) == {"q", " </script><img src"}, asked
+    assert [(urlparse(href).path, parse_qs(urlparse(href).query)) for href in way] == [
+        ("/", {"q": asked["q"]})
+    ], way
 
 
 def test_no_template_marks_a_value_safe():

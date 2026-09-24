@@ -7211,12 +7211,23 @@ def test_a_kind_that_is_off_is_refused_at_every_door(tmp_path: Path, kind: str):
         form = client.get(f"/new?kind={kind}")
         assert form.status_code == 404, form.status_code
         assert _says(form.text, "kinds"), "the create form does not say which setting it was"
+        # And Records bare as its way out: `kind=` is what was to be created, and
+        # handed to Records it would promise the same rows on a page with none.
+        assert [
+            (one.text, one.attrs.get("href"))
+            for one in elements(form.text)
+            if one.tag == "a" and one.text in ("Go to Records", "Show the same filters on Records")
+        ] == [("Go to Records", "/")]
         # And the list of that kind with it, although `views` was never written:
-        # a list of a kind the plan does not have is a list of nothing.
+        # a list of a kind the plan does not have is a list of nothing. Its page
+        # names `kinds` for the same reason, and not `views` — this plan never
+        # wrote `views`, and `views: [issues]` would not bring the list back.
         listing = [template for template, view in SWITCHED.items() if VIEW_NEEDS.get(view) == kind]
         assert listing, f"no view lists {kind}s"
         for template in listing:
-            assert client.get(template).status_code == 404, template
+            got = client.get(template)
+            assert got.status_code == 404, template
+            assert _says(got.text, "kinds") and not _says(got.text, "views"), template
 
         for url in ("/new?kind=task", f"/detail/{TASK}"):
             offered = {value for options in selects(client.get(url).text) for value, _ in options}
@@ -7242,6 +7253,7 @@ def test_a_kind_that_is_off_is_refused_at_every_door(tmp_path: Path, kind: str):
             if one.tag == "tr" and "data-id" in one.attrs
         ]
         assert record_id in listed, listed
+
 
 
 @pytest.mark.parametrize("kind", OPTIONAL_KINDS)
@@ -7397,19 +7409,23 @@ def test_a_committed_views_setting_changes_the_next_page(client: TestClient, rep
 
 def test_a_switched_off_address_hands_its_filters_to_records(tmp_path: Path):
     """`/table?owner=ann` in a plan without a Table: the switched-off page, and one
-    link to Records carrying the same query — Records reads every filter the other
-    views do, so it lands on the same rows. Without a query the way out is Records
-    bare, and the answer is a page like any other: HTML, with the headers every
-    response here carries.
+    link to Records carrying the same filters — Records reads every filter the
+    other views do, so it lands on the same rows. Without a filter the way out is
+    Records bare, and the answer is a page like any other: HTML, with the headers
+    every response here carries.
+
+    Only the filters: a timeline's window is not one, and `/issues?owner=ann` is
+    issues owned by ann, so its kind goes with it. And a deck, in a plan with
+    Cycles, goes to the cycle it was the review of — when that is a cycle.
     """
     from openproj.web import SWITCHED
 
-    views = [one for one in VIEWS if one != "table"]
-    assert SWITCHED["/table"] == "table"
+    views = [one for one in VIEWS if one not in ("table", "timeline", "issues", "deck")]
+    assert {"/table", "/timeline", "/issues"} <= set(SWITCHED)
     repo = _plan_saying(tmp_path, f"views: [{', '.join(views)}]\n")
-    # The page's three ways out, by what each says; the nav and the footer are
-    # every other page's too and are not what is asked here.
-    out = {"Show the same filters on Records", "Open the record", "Go to Records"}
+    # The page's ways out, by what each says; the nav and the footer are every
+    # other page's too and are not what is asked here.
+    out = {"Show the same filters on Records", "Open the record", "Go to Records", "Open cycle 37"}
     with TestClient(create_app(repo, auth="dev", secret=SECRET)) as client:
 
         def ways_out(url: str) -> list[tuple[str, str]]:
@@ -7428,6 +7444,15 @@ def test_a_switched_off_address_hands_its_filters_to_records(tmp_path: Path):
             ("Show the same filters on Records", "/?owner=ann&status=ready")
         ]
         assert ways_out("/table") == [("Go to Records", "/")]
+        assert ways_out("/table?sort=title&desc=1") == [("Go to Records", "/")]
+        assert ways_out("/timeline?from=2026-01-01&zoom=weeks") == [("Go to Records", "/")]
+        assert ways_out("/issues?owner=ann&zoom=weeks") == [
+            ("Show the same filters on Records", "/?kind=issue&owner=ann")
+        ]
+        assert ways_out("/deck/37") == [("Open cycle 37", "/cycle/37")]
+        assert ways_out("/deck/037") == [("Open cycle 37", "/cycle/37")]
+        # Asked before the number is, so a number no cycle can have is Records.
+        assert ways_out("/deck/99999") == [("Go to Records", "/")]
 
 
 def test_a_records_kind_changes_through_change_kind_and_nowhere_else(

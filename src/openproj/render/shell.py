@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from urllib.parse import parse_qsl, urlencode
 
 from markupsafe import Markup
 from pydantic import BaseModel
 
 from .. import __version__
 from ..index import Index
-from ..model import RUNG, SWITCHES_FILE, VIEWS, Unreadable, Unusable
+from ..model import RUNG, SWITCHES_FILE, VIEW_NEEDS, VIEWS, Unreadable, Unusable
 from ..themes import FAMILIES
 from ..vendor import _font_uri
+from .controls import _PLAN_FACETS
 from .env import _compiled
 from .hill import hill_geometry
 from .icons import _icon_uri
@@ -4499,6 +4501,10 @@ _OFF_PHRASE = {
 _OFF_HEADING = {**{key: label for key, label in _NAV if key in VIEWS}, "deck": "Review deck"}
 assert set(_OFF_PHRASE) == set(_OFF_HEADING) == set(VIEWS), "every view has its sentence"
 _OFF_STYLE = ".switched-off code { font-family: var(--font-mono); }\n"
+# Every key of an address that Records filters on: the bar's fields, which are
+# `FILTERS` in `_FILTER_JS` plus `predicate`, and the search box. What a
+# switched-off address hands on to Records, and nothing else.
+_RECORDS_READS = frozenset({*_PLAN_FACETS, "q"})
 
 
 def render_switched_off(
@@ -4508,6 +4514,7 @@ def render_switched_off(
     off_kind: str = "",
     query: str = "",
     record_id: str = "",
+    cycle: str = "",
 ) -> str:
     """What an address answers when the plan has switched its page off.
 
@@ -4519,17 +4526,30 @@ def render_switched_off(
 
     `view` is the view that is off; `off_kind`, when given, is a kind that is off
     instead, and its sentence is `kind_refusal`'s (`model.py`) with the setting
-    and the file marked up. The way out is the record, for a slide view that is
-    one record's view; otherwise Records carrying the same query, because Records
-    honours every filter the other views read and so lands on the same rows; and
-    Records bare when there was no query. `query` is the address's own, still
-    percent-encoded, and it is escaped here like anything else.
+    and the file marked up. **The setting named is the one that did it.** A view
+    that needs something the plan has not got (`VIEW_NEEDS`) is off because of
+    that, whatever `views` says: the Issues list of a plan whose `kinds` leaves
+    issues out is off with `views` never written, and a sentence sending that
+    reader to `views` sent them to a key they had not written and whose every
+    fix — `views: [issues]` — turned the other views off and left Issues off.
+    `_scope` on the Help page asks the same question the same way.
+
+    The way out is the record, for a slide view that is one record's view; the
+    cycle, for a deck that is one cycle's review, when Cycles are on; otherwise
+    Records with the filters the address carried; and Records bare when it
+    carried none. **Only the filters**, which are the keys Records reads —
+    `_RECORDS_READS` — and not the query as it came: `/timeline?zoom=week` has no
+    filter in it, and a link promising "the same filters" that landed on every
+    record with Clear hidden said something that was not going to happen. And an
+    inbox's kind with them, because `/issues?owner=ann` is issues owned by ann,
+    and its kind is in its route rather than its query.
 
     `current` is empty on purpose: a page that marked Table would stamp itself as
     the tab's origin and send the next record's back link here again. And every
     parameter but `index` has a default, because the namespace censuses draw
     every `render_*` from an index alone.
     """
+    need = VIEW_NEEDS.get(view, "")
     if off_kind:
         heading = f"New {off_kind}"
         said = Markup(
@@ -4539,17 +4559,39 @@ def render_switched_off(
             RUNG[off_kind].directory.capitalize(),
             index.switches_from.get("kinds", SWITCHES_FILE),
         )
-    else:
+    elif need in RUNG and need not in index.kinds:
         heading = _OFF_HEADING[view]
         said = Markup(
-            "{} turned off for this plan. <code>views</code> in <code>{}</code> "
+            "{} turned off for this plan, because {} are. <code>kinds</code> in "
+            "<code>{}</code> decides which kinds of record it has."
+        ).format(
+            _OFF_PHRASE[view],
+            RUNG[need].directory,
+            index.switches_from.get("kinds", SWITCHES_FILE),
+        )
+    else:
+        heading = _OFF_HEADING[view]
+        # The deck, without Cycles: `views` is the key either way, and the
+        # sentence says which of its items the deck is missing.
+        because = (
+            Markup(", because {}").format(_OFF_PHRASE[need])
+            if need in VIEWS and need not in index.views
+            else ""
+        )
+        said = Markup(
+            "{} turned off for this plan{}. <code>views</code> in <code>{}</code> "
             "decides which views it has."
-        ).format(_OFF_PHRASE[view], index.switches_from.get("views", SWITCHES_FILE))
+        ).format(_OFF_PHRASE[view], because, index.switches_from.get("views", SWITCHES_FILE))
+    kept = [(key, value) for key, value in parse_qsl(query) if key in _RECORDS_READS]
+    if kept and need in RUNG:
+        kept = [("kind", need), *((key, value) for key, value in kept if key != "kind")]
     if record_id:
         out = Markup('<a href="{}{}">Open the record</a>').format(links.record, record_id)
-    elif query:
+    elif view == "deck" and cycle and links.cycle:
+        out = Markup('<a href="{}{}">Open cycle {}</a>').format(links.cycle, cycle, cycle)
+    elif kept:
         out = Markup('<a href="{}?{}">Show the same filters on Records</a>').format(
-            links.records, query
+            links.records, urlencode(kept)
         )
     else:
         out = Markup('<a href="{}">Go to Records</a>').format(links.records)

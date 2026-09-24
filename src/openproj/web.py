@@ -1744,18 +1744,30 @@ def switched_off(request: Request, index: Index, links: render.Links) -> HTMLRes
     redirect: a bookmarked `/table` that silently landed on Records would be a
     page that changed under its reader with nothing saying why. The address's
     query goes with it, so `/table?owner=ann` is one click from the same rows on
-    Records.
+    Records. And a deck's number, so that `/deck/37` in a plan with Cycles and no
+    deck is one click from cycle 37 — only a number `CYCLE_PATTERN` accepts,
+    since this is asked before the handler checks it, and a link to
+    `/cycle/99999` would be a way out onto a 404 about which cycles exist.
 
     Asked first by every handler in `SWITCHED`, ahead of the number check on
-    `/cycle/{number}` and `/deck/{number}`, so a switched-off address always
-    explains itself rather than sometimes answering "a cycle is numbered 0 to
-    9999" about a page the plan does not have.
+    `/cycle/{number}` and `/deck/{number}`, so a switched-off address with a
+    whole number in it explains itself rather than answering "a cycle is
+    numbered 0 to 9999" about a page the plan does not have. Not one without:
+    `number` is typed `int`, so FastAPI answers `/cycle/abc` with its own 422
+    before any handler runs, on or off.
     """
     view = SWITCHED.get(request.scope["route"].path)
     if view is None or view in index.views:
         return None
+    number = str(request.path_params.get("number", ""))
     return HTMLResponse(
-        render.render_switched_off(index, links, view=view, query=request.url.query),
+        render.render_switched_off(
+            index,
+            links,
+            view=view,
+            query=request.url.query,
+            cycle=str(int(number)) if CYCLE_PATTERN.match(number) else "",
+        ),
         status_code=404,
     )
 
@@ -2510,8 +2522,10 @@ def create_app(
         the form in first.
 
         The switch is asked before the number, so that with Cycles off every
-        address under `/cycle/` says why it is not there, and none of them says
-        something about which numbers a cycle may have.
+        whole-numbered address under `/cycle/` says why it is not there, and none
+        of them says something about which numbers a cycle may have. A number
+        that is not whole never gets here, on or off: the `int` above is
+        FastAPI's 422 first.
         """
         commit, index, links = plan_now()
         if (off := switched_off(request, index, links)) is not None:
