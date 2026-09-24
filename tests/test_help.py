@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from datetime import date
 from html.parser import HTMLParser
+from itertools import takewhile
 from pathlib import Path
 
 import pytest
@@ -238,9 +239,16 @@ def test_help_says_which_views_this_plan_has_only_when_it_has_fewer(
         index = build_index(records, config, date(2026, 8, 17), unreadable)
         assert not index.unusable, index.unusable
         found = elements(render_help(index, links_for(index.views, ROUTES)))
+        at = [n for n, one in enumerate(found) if "scope" in one.attrs.get("class", "")]
+        # The `<code>` spans inside the sentence and nowhere else. `elements()` is
+        # flat, in document order, and the sentence holds nothing but `<code>`, so
+        # its spans are the run of them straight after it — the page-wide list it
+        # used to be went red the day the guide below it mentioned `views` itself.
+        after = found[at[0] + 1 :] if at else []
+        inside = takewhile(lambda one: one.tag == "code", after)
         return (
-            [one.text for one in found if one.tag == "p" and "scope" in one.attrs.get("class", "")],
-            [one.text for one in found if one.tag == "code" and one.text in ("views", "kinds")],
+            [found[n].text for n in at],
+            [one.text for one in inside if one.text in ("views", "kinds")],
         )
 
     assert scope("views: [cycles, graph, timeline]\nkinds: [note]\n") == (
