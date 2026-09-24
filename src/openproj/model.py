@@ -1929,13 +1929,19 @@ def kind_refusal(kind: str, config: Config) -> str | None:
 
     `kind` is a kind this tool has: each door refuses a word that is not one
     first, in its own sentence, because "turned off" is not what is wrong with it.
+
+    No backticks, although it names a key. Every place on the web that shows it
+    shows it as text — the problems beside a record, a table cell's marks, the
+    422 banner — so a backtick is drawn as a backtick, and no other sentence the
+    reader meets there has one: they name `views` and a config file bare. The
+    switched-off page marks the key and the file up in `<code>` itself.
     """
     if config.allows(kind):
         return None
     path = config._from.get("kinds", SWITCHES_FILE)
     return (
         f"{RUNG[kind].directory.capitalize()} are turned off for this plan. "
-        f"`kinds` in {path} decides which kinds of record it has."
+        f"kinds in {path} decides which kinds of record it has."
     )
 
 

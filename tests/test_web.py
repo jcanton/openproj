@@ -7229,7 +7229,10 @@ def test_a_kind_that_is_off_is_refused_at_every_door(tmp_path: Path, kind: str):
         f"{_an(kind)} somebody wrote before the plan turned them off",
     )
     sentence = kind_refusal(kind, Config(kinds=frozenset(KIND_NAMES) - {kind}))
-    assert sentence is not None and "`kinds` in config/defaults.yaml" in sentence
+    # Bare, because the record page and the 422 banner draw it as text, and a
+    # backtick there is a backtick.
+    assert sentence is not None and "kinds in config/defaults.yaml" in sentence
+    assert "`" not in sentence
 
     with TestClient(create_app(repo, auth="dev", secret=SECRET)) as client:
         client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
@@ -7272,7 +7275,11 @@ def test_a_kind_that_is_off_is_refused_at_every_door(tmp_path: Path, kind: str):
         saved = save(client, TASK, {"kind": kind})
         assert saved.status_code == 422, saved.text
 
-        assert client.get(f"/detail/{record_id}").status_code == 200
+        opened = client.get(f"/detail/{record_id}")
+        assert opened.status_code == 200
+        # With the warning beside it, in the words every door uses.
+        warned = [one.text for one in elements(opened.text) if one.tag == "li"]
+        assert sentence in warned, "the record page does not say its kind is off"
         listed = [
             one.attrs["data-id"]
             for one in elements(client.get("/").text)

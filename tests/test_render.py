@@ -4532,7 +4532,7 @@ def test_the_switched_off_page_names_the_setting_and_the_way_out(seed_index: Ind
         page = render_switched_off(seed_index, links, off_kind=kind)
         codes, paragraphs, anchors = said(page)
         assert codes == ["kinds", "config/defaults.yaml"]
-        assert kind_refusal(kind, planned).replace("`", "") in paragraphs, paragraphs
+        assert kind_refusal(kind, planned) in paragraphs, paragraphs
         assert [(text, href) for text, href in anchors if text in (way, "Go to Records")] == [
             ("Go to Records", "/")
         ]

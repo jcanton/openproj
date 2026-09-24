@@ -718,7 +718,7 @@ def test_a_switch_is_answered_from_the_file_that_wrote_it():
     assert index.switches_from == {"views": "config/people.yaml", "kinds": "config/people.yaml"}
     assert kind_refusal("issue", config) == (
         "Issues are turned off for this plan. "
-        "`kinds` in config/people.yaml decides which kinds of record it has."
+        "kinds in config/people.yaml decides which kinds of record it has."
     )
     assert kind_refusal("note", config) is None
 
@@ -759,7 +759,7 @@ def test_a_record_of_a_kind_that_is_off_loads_and_is_warned_about(tmp_path: Path
     refused = kind_refusal("issue", config)
     assert refused == (
         "Issues are turned off for this plan. "
-        "`kinds` in config/defaults.yaml decides which kinds of record it has."
+        "kinds in config/defaults.yaml decides which kinds of record it has."
     )
     warned = sorted(
         (one.record_id, one.severity, one.message, one.rule_version)

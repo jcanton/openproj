@@ -902,7 +902,7 @@ def test_new_refuses_a_kind_the_plan_has_turned_off(plan: Path, capsys):
     assert written(plan) == []
     out = capsys.readouterr().out
     assert f"blocker: {kind_refusal('issue', config)}\n" in out
-    assert "`kinds` in config/defaults.yaml" in out
+    assert "kinds in config/defaults.yaml" in out
     assert "nothing written" in out
 
     assert main(["new", "note", str(plan), "--title", "A thought"]) == 0
