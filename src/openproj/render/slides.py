@@ -1112,4 +1112,5 @@ def render_slide_editor(
         # own back link was supposed to be reading.
         "detail",
         index.unreadable,
+        index.unusable,
     )

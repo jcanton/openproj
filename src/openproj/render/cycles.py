@@ -26,94 +26,12 @@ from .icons import _ICON_ART, ICONS, icon_svg
 from .markdown import _markdown
 from .shell import ROUTES, STATIC, Links, _page
 from .styles import _DETAIL_STYLE, _SCROLL_STYLE, _SUGGEST_STYLE, _TREE_STYLE
-from .tokens import PRIORITIES, STATUSES
+from .tokens import PRIORITIES, STATUSES, _over, _percent
 
 # Betting table to review meeting for a plan with nothing to copy from. Four
 # weeks is the team's cadence; every cycle written after the first one carries
 # its predecessor's length instead.
 _DEFAULT_CYCLE_DAYS = 28
-
-
-def _percent(part: float, whole: float) -> int:
-    """`part` of `whole` as a whole percent from 0 to 100, for a bar's width.
-
-    Written once because it was written three times — the cycle page, the cycles
-    index and the people page each carried `min(100, round(100 * x / capacity))`,
-    and all three raised. An invariant written three times is guarded in none of
-    them: `person_weeks: .inf` in one hand-committed task file made the ratio
-    infinite, `round()` raises OverflowError on infinity, and /people, /cycles and
-    /cycle/37 all answered 500 off a file `openproj check` reported nothing about.
-
-    The bound goes BEFORE the round, which is the whole of the fix and the same
-    order `days_after` and `within_the_calendar` (`model.py`) settled on. The two
-    ends were already the right ones — a bar cannot be wider than full or
-    narrower than empty — they were just applied to an integer that could no
-    longer be made.
-
-    The constants come first in both comparisons because NaN loses every one of
-    them, exactly as `within_the_calendar` does it: `min(100.0, nan)` is 100.0
-    and `min(nan, 100.0)` is the NaN, which rounds no better than the infinity
-    did. NaN is reachable here and not hypothetical — an `availability` of `.inf`
-    makes the capacity infinite too, and inf/inf is NaN.
-
-    So an unreadable ratio draws a full bar rather than an empty one. That is the
-    direction this number must never be wrong in: the cycles index says so about
-    its own sum, and a bar drawn empty is a cycle that looks free to bet into.
-
-    **There is a second copy, in the browser, and it is called `percent`.** The
-    cycle page's `recount` redraws the roster's bars while a rate is being typed,
-    so the same ratio is taken in JavaScript — and it was taken there with only
-    the upper bound, which made `-1` in a rate box freeze the bar at whatever it
-    was last showing where a reload drew an empty one. Whoever changes this
-    changes that, and the comment above `percent` says which of the two rules
-    here does not survive the translation.
-
-    **This is not the last of them, and the honest count belongs here rather than
-    in a 500.** Two more places take an unbounded float out of a plan file and
-    hand it to a rounding that raises, and both were measured on a copy of the
-    corpus with the value written into the file the way a person writes it.
-    `_CYCLE`'s roster row renders the rate as `(row.rate * 100)|round|int`, so an
-    `availability: .inf` in a cycle record answers `OverflowError: cannot convert
-    float infinity to integer` on /cycle/<that cycle>. And the record page takes
-    `round(100 * counted.fraction)` twice (`detail.py`), so a `person_weeks: .nan`
-    on one task made its PARENT's page — and the whole of the static
-    `detail.html`, which is every record at once — answer `ValueError: cannot
-    convert float NaN to integer`; the deck spells that same expression a third
-    time, and the corpus above does not reach it. They are a branch of their own,
-    with a sweep in both languages and a validation rule in `_problems_for`
-    beside them — jcanton, 2026-09-23 — and they are named here so that the next
-    reader of this docstring does not read "one helper now" as "all of them".
-    """
-    if not whole:
-        return 0
-    return round(max(0.0, min(100.0, 100 * part / whole)))
-
-
-def _over(held: float, capacity: float) -> bool:
-    """Whether somebody is holding more weeks than their capacity buys.
-
-    **The browser has the second copy, inside `recount`, and it is spelled
-    `capacity > 0 && held > capacity`.** This one was `capacity and held >
-    capacity`, written out three times, and the two shapes disagree on every
-    negative number — which a rate box takes, because it is a plain text input.
-    With a hand-committed `availability: {someone: -1}` the served row came down
-    wearing `class="over"` with that person named under "Over capacity", and one
-    character typed into the rate box took both away. Commit 4e259a4 fixed the
-    BAR two lines above this line in `recount` and left the flag beside it.
-
-    `capacity > 0` and not `bool(capacity)`, and the browser's is the shape that
-    is right rather than merely the one that won: a capacity is a number of
-    weeks, so a capacity that is not positive is not a budget somebody can be
-    over. It also keeps this flag agreeing with the bar drawn next to it —
-    `_percent(1.0, -4.0)` is 0, so the alternative was an empty bar in a row
-    coloured for being full. NaN loses `> 0` as well, which is the same direction
-    `_percent` puts its constants first for.
-
-    Whoever changes either of these changes an invariant written in two
-    languages, which is this repository's characteristic way of guarding half of
-    one.
-    """
-    return capacity > 0 and held > capacity
 
 
 _CYCLE = """
@@ -219,7 +137,7 @@ _CYCLE = """
       class="confirm" hidden>out?<button type="button" class="yes">yes</button><button
       type="button" class="no">no</button></span></td>{% else %}<td></td>{% endif %}
     <td>{{ row.login }}</td>
-    <td><span class="read">{{ (row.rate * 100)|round|int }}%</span>
+    <td><span class="read">{{ row.rate_read }}%</span>
         <input class="field rate" data-login="{{ row.login }}" value="{{ row.rate }}"
                aria-label="{{ row.login }} availability" autocomplete="off"></td>
     <td class="derived capacity">{{ '%.1f'|format(row.capacity) }} wk</td>
@@ -578,7 +496,14 @@ async function saveSetup() {
     // or a `50%` into a removal nobody asked for and nothing reported. Taking
     // somebody out is the button beside their name, which asks first. Said the
     // way the bets table one screen away says it: the field, and the value.
-    if (!typed || Number.isNaN(rate) || rate <= 0) {
+    // `Number.isFinite` and not `Number.isNaN`, which is what this asked and
+    // which `Infinity` walks straight through: `Number('Infinity')` is not NaN
+    // and it is greater than zero, so the box passed this gate — and then
+    // `JSON.stringify` wrote it as `null`, exactly the way it writes NaN, so the
+    // server was asked to refuse a blank about a box holding a word. That is the
+    // failure the comment below is about, arriving through the one spelling the
+    // fix for it did not cover. One predicate answers both.
+    if (!typed || !Number.isFinite(rate) || rate <= 0) {
       say(`${input.dataset.login}'s availability must be a number greater than `
           + `zero, not "${input.value}"`);
       input.focus();
@@ -845,7 +770,7 @@ for (const pick of document.querySelectorAll('#bets select.pick')) {
   };
 }
 
-// **The browser's copy of `_percent` (`cycles.py`), and it has to stay one.**
+// **The browser's copy of `_percent` (`tokens.py`), and it has to stay one.**
 // Whoever changes either of these is changing an invariant written in two
 // languages, which is this repository's characteristic way of guarding half of
 // one. The server bounds the ratio at both ends; this bounded only the top —
@@ -886,12 +811,18 @@ function recount() {
   const build = BUILD_WEEKS;
   const over = [];
   for (const row of document.querySelectorAll('#roster tr')) {
-    const rate = Number(row.querySelector('input.rate').value) || 0;
+    // `|| 0` catches NaN — `Number('six')` — and lets `Infinity` past, so the
+    // capacity beside a box holding that word read "Infinity wk" where the same
+    // box holding "six" read "0.0 wk". Two unusable inputs, two behaviours, and
+    // the save gate refuses both. `Number.isFinite` is the same question
+    // `Cycle.rate` (`model.py`) asks of the same value on the server side.
+    const typedRate = Number(row.querySelector('input.rate').value);
+    const rate = Number.isFinite(typedRate) ? typedRate : 0;
     const held = Number(row.dataset.held) || 0;
     const capacity = rate * build;
     row.querySelector('.capacity').textContent = capacity.toFixed(1) + ' wk';
     row.querySelector('.bar > span').style.width = percent(held, capacity) + '%';
-    // **The browser's copy of `_over` (`cycles.py`), and it has to stay one.**
+    // **The browser's copy of `_over` (`tokens.py`), and it has to stay one.**
     // The server spelled this `capacity and held > capacity` in all three of the
     // places it asks, which disagrees with the line below on every negative
     // number — and a rate box is a plain text input, so `-1` is one keystroke.
@@ -2467,7 +2398,13 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
     # something — which would make the roster a report instead of a decision.
     people = []
     for login in sorted(listed, key=str.lower):
-        rate = proposed.availability.get(login, nominal)
+        # `Cycle.rate` and not the dict: the number in this box is the number
+        # the capacity beside it is computed from, and the two came from two
+        # readings — so an availability of `.inf` put "inf" in the box and
+        # "Infinity wk" beside it, which is not an editable value and not a
+        # week. The file's own text is not lost: `unusable_numbers` names the
+        # file, the cycle and the person on every page.
+        rate = proposed.rate(login, nominal)
         # Asked of the cycle rather than multiplied out here. It was
         # `rate * build_weeks`, which is `Cycle.capacity` written a second time —
         # and the cycles index already asks the cycle, so the two pages computed
@@ -2486,6 +2423,19 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
             {
                 "login": login,
                 "rate": rate,
+                # The percent, worked out here and not as `(row.rate *
+                # 100)|round|int` in the template. Not because the value can
+                # still be infinite — `Cycle.rate` above sees to that — but
+                # because a template is the one place in this app where nothing
+                # CAN guard it: `|round` is Jinja's two-argument round, which
+                # passes `inf` straight through to `|int`, and the traceback that
+                # comes out of it names a filter rather than a field. Arithmetic
+                # on a plan number belongs where a guard can stand next to it.
+                #
+                # Not `_percent`, which clamps to 100 on purpose for a bar's
+                # width: an availability of 1.5 is somebody at 150%, unusual and
+                # not wrong, and this cell is a readout of what they typed.
+                "rate_read": round(rate * 100),
                 "capacity": capacity,
                 "held": held.get(login, 0.0),
                 "over": _over(held.get(login, 0.0), capacity),
@@ -2697,6 +2647,7 @@ def render_cycle(
         # and not the word in the nav, so it stays on the screen.
         "cycles",
         index.unreadable,
+        index.unusable,
         # The betting table's `thead th` is already sticky; what it was sticking
         # to was the window, which meant the setup form and the two headings
         # above it scrolled away and took the nav and the footer with them.
@@ -2839,6 +2790,7 @@ def render_cycles(index: Index, links: Links = STATIC, base_commit: str | None =
         links,
         "cycles",
         index.unreadable,
+        index.unusable,
         # A card per cycle, and a plan two years old has enough of them to run off
         # the bottom of the window.
         fills=True,
@@ -3018,4 +2970,7 @@ def render_people(index: Index, links: Links = STATIC, editable: bool = False, m
         load=load,
         filters=_FILTER_JS,
     )
-    return _page("openproj — people", body, _PEOPLE_STYLE, links, "people", index.unreadable)
+    return _page(
+        "openproj — people", body, _PEOPLE_STYLE, links, "people",
+        index.unreadable, index.unusable,
+    )

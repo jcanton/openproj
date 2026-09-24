@@ -446,7 +446,7 @@ def _staffed_at(record: Record, config: Config, by_id: dict[str, Record]) -> flo
     infinity is not a useful forecast for unowned work.
     """
     rates = [_availability_of(who, record, config, by_id) for who in workers_on(record)]
-    return sum(rates) or config.nominal_availability or 1.0
+    return sum(rates) or config.nominal()
 
 
 def _availability_of(who: str, record: Record, config: Config, by_id: dict[str, Record]) -> float:
@@ -465,10 +465,22 @@ def _availability_of(who: str, record: Record, config: Config, by_id: dict[str, 
     # The cycle of the BET, so a task reads the rates of the cycle its pitch was
     # bet into. A task carries no cycle of its own any more, and falling back to
     # nominal here would have quietly undone every per-person rate on the page.
+    # `Cycle.rate` and not a second reading of the same dict: it is the one place
+    # a typed availability becomes a number, and it is where `.inf` and `.nan`
+    # are turned back into the nominal rate. Written out again here, this branch
+    # would be the copy without the guard — which is how the scheduler came to
+    # print "inf full-time between them" under a pitch whose cycle held one.
     number = cycle_of(record, by_id)
     plan = config.plans.get(number) if number is not None else None
-    stated = plan.availability.get(who) if plan else None
-    return stated if stated else config.nominal_availability or 1.0
+    if plan is not None:
+        # `or` on top of `Cycle.rate`, which answers a stated zero as zero: on
+        # the cycle page that is a real rate somebody typed, and here it is the
+        # divisor of `size / staffed_at`. "A rate of zero reads the same way
+        # rather than as a bet nobody can ever finish" is the line this had, and
+        # it stays where it belongs rather than being pushed down into a method
+        # the roster also calls.
+        return plan.rate(who, config.nominal()) or config.nominal()
+    return config.nominal()
 
 
 class Overrun(NamedTuple):

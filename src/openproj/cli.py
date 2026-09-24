@@ -658,6 +658,14 @@ def _check(repo: Path, today: date | None) -> int:
             f"{one.why}"
         )
     index = build_index(records, config, today or date.today(), unreadable)
+    # The files that read and hold a number nothing can compute with, between the
+    # files that did not read and the problems on records. Counted as blockers
+    # for the same reason those are: the plan still draws, and every date or bar
+    # that value feeds is drawn at a bound nobody chose. A `cooldown_weeks: .inf`
+    # moves the end of every cycle on every page, and this command reported
+    # byte-identical counts on a corpus holding one and on a corpus holding none.
+    for bad in index.unusable:
+        print(f"blocker: {bad.path}: {bad.why}")
     problems = sorted(
         index.problems,
         key=lambda p: (p.severity, p.record_id, p.field or ""),
@@ -665,8 +673,9 @@ def _check(repo: Path, today: date | None) -> int:
     for problem in problems:
         print(f"{problem.severity}: {problem.record_id}: {problem.field}: {problem.message}")
     blockers = [p for p in problems if p.severity == "blocker"]
-    print(f"{len(blockers) + len(unreadable)} blockers, {len(problems) - len(blockers)} warnings")
-    return 1 if blockers or unreadable else 0
+    stopped = len(blockers) + len(unreadable) + len(index.unusable)
+    print(f"{stopped} blockers, {len(problems) - len(blockers)} warnings")
+    return 1 if blockers or unreadable or index.unusable else 0
 
 
 def _render(repo: Path, out_dir: Path, today: date | None) -> int:
@@ -678,8 +687,9 @@ def _render(repo: Path, out_dir: Path, today: date | None) -> int:
     # WITHOUT the time column — omitted, not blank, because blank looks broken
     # and file mtimes lie after a fresh clone.
     stamps = last_edited_in(repo)
+    index = build_index(records, config, today or date.today(), unreadable)
     written = render_static(
-        build_index(records, config, today or date.today(), unreadable),
+        index,
         out_dir,
         repo,
         edited=edited_by_id(stamps) if stamps is not None else None,
@@ -691,6 +701,11 @@ def _render(repo: Path, out_dir: Path, today: date | None) -> int:
     # announces only success is how it ships.
     for one in unreadable:
         print(f"left out {one.path}: {one.why}")
+    # Not "left out": these files are in the export and their settings are in
+    # force. What is wrong is one value in each, and a build log that says so is
+    # where somebody notices before the pages ship.
+    for bad in index.unusable:
+        print(f"{bad.path}: {bad.why}")
     return 0
 
 
@@ -1006,6 +1021,8 @@ def _schedule(repo: Path, as_json: bool, today: date | None) -> int:
         # To stderr, so `--json` stays a document a script can pipe while the
         # person watching still finds out the plan was read short.
         print(f"left out {one.path}: {one.why}", file=sys.stderr)
+    for bad in index.unusable:
+        print(f"{bad.path}: {bad.why}", file=sys.stderr)
     if as_json:
         print(
             json.dumps(

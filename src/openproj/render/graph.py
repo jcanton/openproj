@@ -2016,5 +2016,11 @@ def render_graph(
     # shell's, which ships on all twelve pages for a thing three of them draw.
     # Exactly what `table.py` already does with `_SUGGEST_STYLE`.
     return _page(
-        "openproj — graph", body, _graph_css() + _POP_STYLE, links, "graph", index.unreadable
+        "openproj — graph",
+        body,
+        _graph_css() + _POP_STYLE,
+        links,
+        "graph",
+        index.unreadable,
+        index.unusable,
     )

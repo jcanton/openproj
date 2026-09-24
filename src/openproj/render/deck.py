@@ -31,7 +31,14 @@ from .env import _compiled
 from .markdown import _drop_repeated_title, _inlined_assets, _markdown, _markdown_line, _pr_link
 from .shell import ROUTES, Links, _page
 from .styles import _DETAIL_STYLE
-from .tokens import PRIORITY_GLYPH, STATUS_GLYPH, TEMPLATES, _priority_class, _status_class
+from .tokens import (
+    PRIORITY_GLYPH,
+    STATUS_GLYPH,
+    TEMPLATES,
+    _percent,
+    _priority_class,
+    _status_class,
+)
 
 # --------------------------------------------------------------------------- #
 # The review deck
@@ -1600,7 +1607,10 @@ def slides_of(index: Index, record: Record, links: Links, assets: dict[str, str]
         # panel on the detail page and the meter in the table read the same two,
         # and a third arithmetic is a third answer.
         "text": counted.text if counted is not None else "",
-        "percent": round(100 * counted.fraction) if counted is not None else 0,
+        # The third copy of the record page's expression, and it goes through
+        # the same helper for the same two reasons — one guarded rounding,
+        # and a meter that cannot announce more than it draws.
+        "percent": _percent(counted.done, counted.total) if counted is not None else 0,
         "skip": slide.skip,
     }
     return [
@@ -1805,6 +1815,7 @@ def render_deck(
         # Same reasoning as `/cycle/<n>`: the item that got you here stays lit.
         "cycles",
         index.unreadable,
+        index.unusable,
         # But it calls ITSELF the deck when a slide editor asks where it came
         # from. The nav word would be "Cycles", which points at a listing this
         # page is not — and "← deck 37" is what somebody who walked here from the

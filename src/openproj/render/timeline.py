@@ -1245,6 +1245,7 @@ def render_timeline(
         links,
         "timeline",
         index.unreadable,
+        index.unusable,
         # **The one view whose payload is not the plan.** A bar is work that
         # has dates, so the project a task is filed under is often not drawn
         # here at all — and the hover card names it. The other two pages

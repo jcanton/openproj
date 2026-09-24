@@ -13,6 +13,7 @@ from ..model import (
     NOTE_STATES,
     RUNG,
     Record,
+    a_number,
     checklist,
     sections,
     size_weeks,
@@ -49,6 +50,7 @@ from .tokens import (
     TEMPLATES,
     _editable_for,
     _human,
+    _percent,
     _read_date,
     _status_class,
 )
@@ -3129,9 +3131,19 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
                 # person-weeks, and now has to say so on its own: this is the row
                 # that lost the unit off its label, and "1.0" under a bare
                 # "Appetite" is a number a reader cannot act on.
+                #
+                # `a_number` and not `not in ("", None)`, which is the test this
+                # had and which a `person_weeks: .nan` walks straight through: the
+                # row drew "nan person-weeks", the one readout in the whole app
+                # that still spelled a hand-edited non-number out loud after the
+                # sizes and the rates were guarded at their sources. A dash and
+                # the problem beside it in `<ul class="problems">`, which is where
+                # this record's is already drawn, say the two halves of it — where
+                # "nan person-weeks" says neither. Zero is a size and passes, the
+                # same as it did.
                 display = (
                     Markup("{} person-weeks").format(field["text"])
-                    if field["text"] not in ("", None)
+                    if a_number(field["text"])
                     else empty
                 )
             else:
@@ -3314,7 +3326,16 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
                     f"{counted.done:g}",
                     f"{counted.total:g}",
                     counted.unit,
-                    round(100 * counted.fraction),
+                    # `_percent` and not `round(100 * fraction)`, which is what this
+                    # said. Two things change and both are corrections: the
+                    # arithmetic is now guarded in the one place this app rounds
+                    # a ratio, and the number is clamped to 100. `.meter` is
+                    # `overflow: hidden` (`shell.py`), so a pitch whose tasks add
+                    # up to more than its bet ALREADY drew a full bar — and this
+                    # line announced "120 per cent of this bet is done" over it.
+                    # The announcement catching up to the pixels is the whole of
+                    # the visible change.
+                    _percent(counted.done, counted.total),
                 ),
                 "control": "",
                 "gates": (),
@@ -3446,7 +3467,10 @@ def _progress_view(index: Index, record: Record) -> dict | None:
         )
     return {
         "text": counted.text,
-        "percent": round(100 * counted.fraction),
+        # `_percent` for the reason the Progress row above gives: one place
+        # rounds a ratio here, and this panel and that row are the same two
+        # numbers drawn twice.
+        "percent": _percent(counted.done, counted.total),
         # `tasks` and not `items`: a Jinja lookup finds `dict.items` first, so
         # `progress.items` was the built-in method and the template raised
         # `'builtin_function_or_method' object is not iterable` on every page
@@ -4033,6 +4057,7 @@ def render_detail(
             style,
             links,
             unreadable=index.unreadable,
+            unusable=index.unusable,
             fills=True,
         )
     return _page(
@@ -4042,6 +4067,7 @@ def render_detail(
         links,
         "detail",
         index.unreadable,
+        index.unusable,
         # The index of every record, and every record, and the create form all
         # come out of this one function — so all three scroll inside the shell's
         # box and all three keep the nav and the footer. This page has nothing to

@@ -16,6 +16,7 @@ faked with an assertion that only looks like coverage.
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 from pathlib import Path
@@ -44,7 +45,7 @@ from test_web import (
 )
 
 from openproj.auth import sign_session
-from openproj.render.cycles import _over, _percent
+from openproj.render.tokens import _over, _percent
 from openproj.web import MAX_ASSET_BYTES, SESSION_COOKIE, create_app
 
 # Computed by the scheduler, never typed. If one of these ever gains an input,
@@ -976,12 +977,19 @@ TYPE_A_RATE = """
 
 
 def _as_a_number(typed: str) -> float:
-    """`Number(value) || 0`, which is what the script reads a rate box with."""
+    """`Number.isFinite(x) ? x : 0`, which is what the script reads a rate box with.
+
+    It was `Number(value) || 0`, and `||` catches NaN and lets `Infinity` past —
+    so `nonsense` in the box read "0.0 wk" beside it and `1e999` read
+    "Infinity wk", two unusable inputs with two different answers. `Number.isFinite`
+    is the same question `Cycle.rate` (`model.py`) asks of the same value on the
+    server's side of the wire.
+    """
     try:
         got = float(typed)
     except ValueError:
         return 0.0
-    return got if got == got else 0.0
+    return got if math.isfinite(got) else 0.0
 
 
 def test_the_load_bar_is_the_same_width_in_the_browser_as_it_is_on_the_server(
@@ -989,7 +997,7 @@ def test_the_load_bar_is_the_same_width_in_the_browser_as_it_is_on_the_server(
 ):
     """The invariant is written in two languages — which copy is guarded?
 
-    `_percent` bounds the ratio at both ends before it rounds it. `recount`
+    `_percent` (`tokens.py`) bounds the ratio at both ends before it rounds it. `recount`
     bounded only the top — `Math.min(100, Math.round(100 * held / capacity))` —
     and assigned that straight into `style.width`. A rate of `-1` therefore wrote
     `width: "-25%"`, which is not a width: CSSOM refuses it and leaves the last
@@ -1032,6 +1040,77 @@ def test_the_load_bar_is_the_same_width_in_the_browser_as_it_is_on_the_server(
     # The one a reader reaches by typing a single character, named rather than
     # left to the loop: an empty bar, and not the width it happened to have.
     assert answer["found"]["-1"] == {"declared": "0%", "painted": 0}
+
+
+# The capacity column and the save gate, asked of the one spelling that walked
+# through both of them. `Number('Infinity')` is a number, it is not NaN and it is
+# greater than zero — so it passed a gate written as `Number.isNaN(rate) || rate
+# <= 0`, and then `JSON.stringify` wrote it as `null`, which is exactly what it
+# writes for NaN. The server was therefore asked to refuse a blank about a box
+# holding a word, which is the failure the comment beside that gate is about,
+# arriving through the one spelling the fix for it did not cover.
+TYPE_INFINITY_AND_SAVE = """
+  const row = document.querySelector('#roster tr');
+  const rate = row.querySelector('input.rate');
+  const found = {};
+  for (const typed of ['Infinity', '-Infinity', 'nonsense', '0.5']) {
+    rate.value = typed;
+    rate.dispatchEvent(new Event('input', {bubbles: true}));
+    found[typed] = {capacity: row.querySelector('.capacity').textContent};
+  }
+  // And the gate, on the one that used to pass it. `saveSetup` is async and
+  // answers false before it reaches the network when a box is refused, so what
+  // comes back says whether the fetch was even attempted.
+  rate.value = 'Infinity';
+  const sent = [];
+  const real = window.fetch;
+  window.fetch = (...args) => { sent.push(args[0]); return real(...args); };
+  const answered = await saveSetup();
+  window.fetch = real;
+  return {
+    found,
+    refused: answered === false,
+    sent: sent.length,
+    // `announce` (shell.py) prefers the page's own visible message slot over the
+    // shell's hidden region — announcing into both would say everything twice —
+    // so the cycle page's is `#state` and the fallback is only for pages with
+    // none. Both are read, because which one a message lands in is the shell's
+    // decision and not this test's claim.
+    said: [...document.querySelectorAll('#state, [aria-live]')]
+      .map(one => one.textContent).join(' '),
+  };
+"""
+
+
+def test_a_rate_of_infinity_is_refused_by_name_rather_than_sent_as_a_blank(
+    client: TestClient, tmp_path: Path
+):
+    """Two halves of one spelling, and both were wrong in the same direction.
+
+    The capacity column read "Infinity wk" where the same box holding a word read
+    "0.0 wk" — `|| 0` catches NaN and lets `Infinity` past. And the save gate let
+    it through to `JSON.stringify`, which writes `Infinity` as `null`, so the
+    value the server was asked to name was gone by the time it was asked.
+
+    Asked in Chrome rather than of the script's text, because what is claimed is
+    what a person sees after typing: a column that says a number, and a refusal
+    that quotes what they typed.
+    """
+    page = client.get("/cycle/37").text
+
+    got = measured_in(chrome(), page, tmp_path / "rate-infinity.html", 1280, TYPE_INFINITY_AND_SAVE)
+
+    assert got["found"]["0.5"]["capacity"].endswith(" wk"), got["found"]
+    for typed in ("Infinity", "-Infinity", "nonsense"):
+        assert got["found"][typed]["capacity"] == got["found"]["nonsense"]["capacity"], (
+            f"a rate of {typed!r} reads {got['found'][typed]['capacity']!r} where a word "
+            f"reads {got['found']['nonsense']['capacity']!r} — two unusable inputs, two answers"
+        )
+    assert got["refused"] is True, "Infinity passed the gate"
+    assert got["sent"] == 0, "the refusal happened after the request rather than before it"
+    assert "Infinity" in got["said"], (
+        f"the refusal did not quote what was typed: {got['said']!r}"
+    )
 
 
 # The same rates, asked of the flag beside the bar rather than of the bar. The

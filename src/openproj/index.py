@@ -29,6 +29,7 @@ from .model import (
     Problem,
     Record,
     Unreadable,
+    Unusable,
     _days_outside,
     ancestors,
     checklist,
@@ -37,6 +38,7 @@ from .model import (
     size_weeks,
     under,
     unread_fields,
+    unusable_numbers,
     validate_all,
     workers_on,
 )
@@ -282,6 +284,12 @@ class Index(BaseModel):
     # handed to each renderer, because it is the answer to "is what I am looking
     # at the whole plan" and every page has to be able to say no.
     unreadable: list[Unreadable] = []
+    # The config and cycle files that read, and hold a number nothing can compute
+    # with. Beside `unreadable` rather than folded into it, because the sentence
+    # is different in every word: those files are not in the plan, and these are.
+    # `Unusable` (`model.py`) has the whole argument, including why a record's
+    # own bad size is a `Problem` up there instead of one of these.
+    unusable: list[Unusable] = []
     facets: dict[str, list[str]]
     search_blob: dict[str, str]
     # The second, narrow haystack: `nameable`'s id-and-title string, which is
@@ -1183,6 +1191,7 @@ def build_index(
         # start date as passed on a plan whose whole calendar says otherwise.
         problems=validate_all(parsed, config, spans, today),
         unreadable=list(unreadable),
+        unusable=unusable_numbers(config),
         facets={field: _ordered(field, values) for field, values in facets.items()}
         | {"predicate": sorted(COMPUTED_PREDICATES)},
         search_blob=search_blob,
