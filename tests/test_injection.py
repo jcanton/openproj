@@ -965,12 +965,30 @@ def test_no_page_script_spells_a_page_route_by_hand():
     switches it off and every save is a literal fetch of one.
 
     Read as syntax: the templates are Python string constants, so what is scanned
-    is each constant's value, and a match must open with a quote — the JS and
-    HTML spelling of a literal, `'/cycle/' + n` or `href="/table?owner=ann"`.
-    Comments inside the templates name routes in backticks by the dozen, and
-    backticks are deliberately not a quote here. A Python constant that IS a
-    route, `"/table"` handed to a template as a value, is caught as well: it
-    reaches the page the same way and would bypass `links` just the same.
+    is each constant's value. **A route is a whole path segment, whatever follows
+    it.** The first version of this listed what might follow — the closing quote,
+    `?`, `+` or a space — and so passed every way these templates actually write a
+    link with a value in it: `href="/cycle/{{ c.number }}"`,
+    `Markup('<a href="/detail/{}">')`, `href="/table#top"`, and an f-string whose
+    constant piece ends at the route. A list of what may follow is never finished.
+    So a prefix route (`/detail/`, `/cycle/`, `/deck/`) counts with anything after
+    it, an id being the point of one, and any other route counts unless what
+    follows continues its name: `/tables` is not `/table`, and `/table?`,
+    `/table#` and `/table/` all are.
+
+    A match opens on a quote, `'` or `"`, which is the JS and HTML spelling of a
+    literal — or on a backtick, when the template literal it opens is
+    interpolated: `` `/cycle/${number}` ``, the form these scripts already use for
+    every `/api/` path with a value in it. The templates' comments name routes in
+    backticks by the dozen and never with a `${` inside; an uninterpolated
+    `` `/table` `` in code is the one spelling this cannot tell from a comment.
+    Jinja comments are blanked before the scan, for the reason docstrings are
+    exempt — the compiler drops both and neither reaches a page — and because
+    `_RECORDS` quotes jcanton writing `"/table, /graph, /timeline`.
+
+    A Python constant that IS a route or begins with one, `"/table"` or
+    `"/cycle/37"` handed to a template as a value, is caught as well: it reaches
+    the page the same way and would bypass `links` just the same.
     """
     from openproj.render import ROUTES
 
@@ -984,7 +1002,17 @@ def test_no_page_script_spells_a_page_route_by_hand():
         reverse=True,
     )
     assert "/cycle/" in routes and "/detail/" in routes, routes
-    quoted = re.compile(r"""(['"])(""" + "|".join(map(re.escape, routes)) + r""")(\1|\?|\+|\s)""")
+    spelled = (
+        "(?:"
+        + "|".join(
+            re.escape(route) + ("" if route.endswith("/") else r"(?![\w-])") for route in routes
+        )
+        + ")"
+    )
+    bare = re.compile(spelled)
+    quoted = re.compile(r"""['"]""" + spelled)
+    interpolated = re.compile("`" + spelled + r"[^`\n]*\$\{")
+    jinja_comment = re.compile(r"\{#.*?#\}", re.DOTALL)
 
     offenders = []
     for source in render_paths():
@@ -995,12 +1023,14 @@ def test_no_page_script_spells_a_page_route_by_hand():
                 continue
             if id(node) in exempt:
                 continue
-            text = node.value
-            if any(text == route or text.startswith(route + "?") for route in routes):
-                offenders.append(f"{source.name}:{node.lineno}: {text!r}")
-            for found in quoted.finditer(text):
+            if bare.match(node.value):
+                offenders.append(f"{source.name}:{node.lineno}: {node.value!r}")
+            # Blanked newline for newline, so a line number after one still counts.
+            text = jinja_comment.sub(lambda c: "\n" * c.group(0).count("\n"), node.value)
+            for found in (*quoted.finditer(text), *interpolated.finditer(text)):
                 line = node.lineno + text.count("\n", 0, found.start())
-                offenders.append(f"{source.name}:{line}: {found.group(0)!r}")
+                shown = text[found.start() : found.end() + 24].partition("\n")[0]
+                offenders.append(f"{source.name}:{line}: {shown!r}")
     assert not offenders, "a page spells a route by hand instead of reading `links`:\n" + "\n".join(
         offenders
     )
