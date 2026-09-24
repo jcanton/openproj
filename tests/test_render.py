@@ -32,6 +32,7 @@ from openproj.render import (
     render_switched_off,
 )
 from openproj.render.shell import Links
+from openproj.vendor import ACE_FILES
 
 PAGES = (
     "index.html",
@@ -313,7 +314,9 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(
     inlined = sorted(
         path.name for path in static.iterdir() if path.suffix == ".js" and path.name not in FETCHED
     )
-    assert len(inlined) == 5, inlined
+    # Eight since the three fence languages joined Ace: a count, so a ninth file is
+    # a decision somebody takes here rather than one that lands in a page unread.
+    assert len(inlined) == 8, inlined
 
     # **"Exactly once, into the page that uses it" — which is not the same claim
     # as "exactly once, into the graph".** It was, when every vendored script was
@@ -332,7 +335,7 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(
     # and which must not is asked properly in `tests/test_calendar.py`; what
     # this line is for is the older claim beside it, that the bytes are inlined
     # ONCE into the page that has them.
-    ON_AN_EDITING_PAGE = ("ace.js", "keybinding-vim.js", "datepicker.min.js")
+    ON_AN_EDITING_PAGE = (*ACE_FILES, "datepicker.min.js")
     for name in inlined:
         # 200 and not 120: two of these are webpack bundles whose first 120
         # characters are the same UMD preamble, so the shorter signature found
@@ -3653,10 +3656,16 @@ def test_a_rendered_block_carries_the_source_line_it_came_from(seed_index: Index
     # for the browser's half to disagree with.
     assert ("ul", "3", "5") in at, "the list runs from line 3 to the blank line that ends it"
     assert ("p", "6", "6") in at, "and the paragraph under it is line 6"
-    # Only the blocks a reader scrolls past. Every paragraph inside every list
-    # item stamped too would be bytes on every page for a resolution nothing
-    # wants, and the one thing a scroll position interpolates between is these.
-    assert not [e for e in elements(page) if e.tag == "li" and "data-startline" in e.attrs]
+    # Every block that begins a line of its own, at any depth — the second point
+    # is a point of its own, because a list is not one interval to a reader
+    # scrolling through it. The first point begins on its list's line and at its
+    # list's pixel, so it is not stamped a second time, and nor is the paragraph
+    # inside either point.
+    assert ("li", "4", "5") in at, "the second point begins line 4"
+    stamped = [e for e in elements(page) if "data-startline" in e.attrs]
+    items = {e.attrs["data-startline"] for e in stamped if e.tag == "li"}
+    assert items == {"4"}, f"only the point that begins a line of its own: {items}"
+    assert not [e for e in stamped if e.tag == "p" and e.attrs["data-startline"] in ("3", "4")]
 
 
 def test_an_editable_page_reaches_the_network_no_more_than_a_read_only_one(seed_index: Index):

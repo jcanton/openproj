@@ -65,6 +65,44 @@ def test_a_fence_that_names_its_language_is_coloured():
     assert 'class="language-python"' in drawn
 
 
+def spans_in(html: str) -> list[tuple[str, str]]:
+    found = re.findall(r'<span class="(hl-[a-z0-9]+)">([^<]*)</span>', html)
+    return [(css, word) for css, word in found if word.strip()]
+
+
+def test_a_python_name_is_drawn_as_what_it_is():
+    """jcanton, 2026-09-24, beside the same record in LazyVim: in the preview only
+    keywords and strings had colour. Pygments calls every Python name `Name`, so
+    `_PythonShapes` reads one token either side and names four shapes — the same
+    four the editor draws (`markdownMode`). A bare variable stays ink, which is
+    the rule `UNCOLOURED` above records; this is the line that says so of `ta`,
+    of `x` and of the `units` that is only a value."""
+    drawn = str(_markdown(
+        "```python\n"
+        "VnField = Annotated[fa.EdgeKField[ta.wpfloat], quantity(units=units)]\n"
+        "if x == MAX_N: print(x)\n"
+        "```\n",
+        ROUTES,
+    ))
+    spans = spans_in(drawn)
+    for shape, word in (("hl-nc", "VnField"), ("hl-nc", "Annotated"), ("hl-nc", "EdgeKField"),
+                        ("hl-nf", "quantity"), ("hl-no", "MAX_N"), ("hl-nb", "print")):
+        assert (shape, word) in spans, f"{word} is not drawn as {shape}: {spans}"
+    # `units=units`: the argument, then the name it is given, which is ink.
+    assert spans.index(("hl-nv", "units")) < spans.index(("hl-n", "units")), spans
+    for word in ("fa", "ta", "wpfloat", "x"):
+        assert ("hl-n", word) in spans, f"{word} is a plain name and was given a shape: {spans}"
+    # `==` is not an assignment, so `x` before it is not an argument.
+    assert ("hl-nv", "x") not in spans
+
+
+def test_a_name_in_another_language_is_left_alone():
+    """The shapes are Python's. A YAML key and a shell word already have tokens
+    of their own, and CapWords means nothing in either."""
+    drawn = str(_markdown("```yaml\nViews: [Cycles]\n```\n", ROUTES))
+    assert "hl-nc" not in drawn and "hl-nf" not in drawn, drawn
+
+
 def test_a_fence_that_does_not_is_left_as_ink():
     """No guessing, and this is the whole of that rule.
 

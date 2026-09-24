@@ -57,6 +57,7 @@ from test_store import commit_directly
 from openproj.index import build_index
 from openproj.model import load_repo
 from openproj.render import _json, render_static
+from openproj.vendor import ACE_FILES
 from openproj.web import create_app
 
 # The quote comes first so the payload escapes an attribute before it opens a
@@ -971,7 +972,7 @@ def test_no_title_can_inline_a_library_a_second_time(marker_static, marker_serve
         for path in STATIC_DIR.iterdir()
         if path.suffix == ".js"
         and path.name not in FETCHED | ELSEWHERE
-        and not path.name.startswith(("ace", "keybinding-"))
+        and path.name not in ACE_FILES
     }
     assert len(heads) == 2, "the graph vendors two libraries"
     for where, graph in (
