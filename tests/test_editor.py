@@ -46,6 +46,7 @@ from test_web import (
 
 from openproj.auth import sign_session
 from openproj.render.tokens import _over, _percent
+from openproj.vendor import ACE_FILES
 from openproj.web import MAX_ASSET_BYTES, SESSION_COOKIE, create_app
 
 # Computed by the scheduler, never typed. If one of these ever gains an input,
@@ -232,7 +233,7 @@ def test_the_second_editor_is_inlined_checksummed_and_named(client: TestClient):
         if line.strip()
     )
     note = (static / "VENDOR.md").read_text(encoding="utf-8")
-    for name in ("ace.js", "keybinding-vim.js"):
+    for name in ACE_FILES:
         assert name in sums, f"{name} ships in a page and is checksummed nowhere"
         digest = hashlib.sha256((static / name).read_bytes()).hexdigest()
         assert digest == sums[name].strip(), name
@@ -1517,7 +1518,7 @@ def _without_the_library(page: str) -> str:
     """
     from openproj.render import _static_dir
 
-    for name in ("ace.js", "keybinding-vim.js"):
+    for name in ACE_FILES:
         body = (_static_dir() / name).read_text(encoding="utf-8")
         assert body in page, f"{name} is not inlined in the page this is cutting it from"
         page = page.replace(body, "")
@@ -7094,6 +7095,7 @@ def test_colon_w_presses_save_and_says_so_when_there_is_nothing_to_press(
     )
 
 
+
 _STICKY_EDITOR = r"""
   return {search: location.search, editor: EDITOR.editor,
           surface: SURFACE.onSplice ? 'ace' : 'textarea',
@@ -10701,6 +10703,109 @@ _VIM_WALKS = r"""
   out.screenAfterJ = editor.session.documentToScreenPosition(after.row, after.column).row;
   return out;
 """
+
+
+# A document with one of everything the editor colours, a Python fence in the
+# middle, and markdown after it — the line that says the fence CLOSED.
+_COLOURED_DOC = "\n".join([
+    "# A heading",
+    "- [ ] a point with `code` and **bold** and a [link](https://example.com)",
+    "```python",
+    "def go(units=1):",
+    "    return Quantity(MAX_N, units=units).run()",
+    "```",
+    "**after the fence**",
+    "<!-- a comment -->",
+])
+
+_COLOURED = (
+    f"const DOC = {json.dumps(_COLOURED_DOC)};"
+    + r"""
+  flipEditing();
+  await new Promise(r => setTimeout(r, 300));
+  const editor = SURFACE.editor;
+  editor.session.setValue(DOC);
+  editor.renderer.$loop._flush();
+  await new Promise(r => setTimeout(r, 200));
+  const rows = [];
+  for (let row = 0; row < editor.session.getLength(); row++) {
+    rows.push(editor.session.getTokens(row)
+      .filter(token => token.value.trim())
+      .map(token => [token.type, token.value.trim()]));
+  }
+  // What a role resolves to on this page, off an element of our own, so the
+  // comparison is between two computed colours and not between two spellings.
+  const role = name => {
+    const probe = document.createElement('span');
+    probe.style.color = `var(${name})`;
+    document.body.append(probe);
+    const colour = getComputedStyle(probe).color;
+    probe.remove();
+    return colour;
+  };
+  const drawn = selector => {
+    const found = document.querySelector('.ace_editor ' + selector);
+    return found ? getComputedStyle(found).color : null;
+  };
+  return {
+    rows,
+    drawn: {heading: drawn('.ace_heading'), list: drawn('.ace_list'),
+            code: drawn('.ace_md-code'), type: drawn('.ace_support.ace_type'),
+            keyword: drawn('.ace_keyword'), fence: drawn('.ace_md-fence')},
+    roles: {heading: role('--code-function'), list: role('--code-name'),
+            code: role('--code-string'), type: role('--code-type'),
+            keyword: role('--code-keyword'), fence: role('--muted')},
+  };
+"""
+)
+
+
+def test_the_editor_colours_a_document_and_the_python_in_it(client: TestClient, tmp_path: Path):
+    """jcanton, 2026-09-24, beside the same record in LazyVim: the editor pane drew
+    a shaping document in one colour. It has a markdown mode now, and the three
+    fence languages the plan uses come from Ace's own modes.
+
+    Asked two ways, because each misses what the other catches. The TOKENS say
+    what the tokenizer decided — including the line after the fence, which is
+    markdown again only if the closing fence was seen, and the four Python shapes
+    the preview's `_PythonShapes` draws too. The COLOURS say whether Ace's own
+    TextMate theme, injected into the head in hex, lost the cascade to the roles:
+    a token with the right name drawn in `rgb(12, 7, 255)` is the defect a reader
+    sees and a token list cannot.
+    """
+    page = client.get(f"/detail/{TASK}?editor=ace").text
+    got = measured_in(
+        chrome(), page, tmp_path / "coloured.html", 1400, _COLOURED,
+        query="?editor=ace", patience=4800,
+    )
+    rows = [dict((value, kind) for kind, value in row) for row in got["rows"]]
+    assert rows[0] == {"# A heading": "heading"}, rows[0]
+    assert rows[1]["-"] == "list" and rows[1]["[ ]"] == "list", rows[1]
+    assert rows[1]["`code`"] == "md-code" and rows[1]["**bold**"] == "md-bold", rows[1]
+    assert rows[1]["link"] == "md-link-text" and rows[1]["https://example.com"] == "md-url"
+    assert rows[2] == {"```python": "md-fence"}, "the fence did not open a Python block"
+    assert rows[3]["def"] == "keyword" and rows[3]["units"] == "variable.parameter", rows[3]
+    shapes = rows[4]
+    assert shapes["Quantity"] == "support.type", f"CapWords is a type: {shapes}"
+    assert shapes["MAX_N"] == "constant.other", f"ALL_CAPS is a constant: {shapes}"
+    # `units=units`: the name before `=` is the argument, the one after it is a
+    # plain name and stays ink — both, in that order.
+    pairs = got["rows"][4]
+    assert pairs.index(["variable.parameter", "units"]) < pairs.index(["identifier", "units"]), (
+        f"a keyword argument and the name it is given: {pairs}"
+    )
+    assert shapes["run"] == "entity.name.function", f"a call: {shapes}"
+    assert rows[5] == {"```": "md-fence"}, rows[5]
+    assert rows[6] == {"**after the fence**": "md-bold"}, (
+        "the line after the closing fence is still Python, so the fence never closed"
+    )
+    assert rows[7] == {"<!-- a comment -->": "md-comment"}, rows[7]
+
+    for name, colour in got["drawn"].items():
+        assert colour == got["roles"][name], (
+            f"the editor draws a {name} in {colour} and its role is {got['roles'][name]}: "
+            "Ace's own theme won the cascade"
+        )
 
 
 def test_j_and_k_walk_the_screen_line_under_vim(client: TestClient, tmp_path: Path):

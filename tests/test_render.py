@@ -32,6 +32,7 @@ from openproj.render import (
     render_switched_off,
 )
 from openproj.render.shell import Links
+from openproj.vendor import ACE_FILES
 
 PAGES = (
     "index.html",
@@ -313,7 +314,9 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(
     inlined = sorted(
         path.name for path in static.iterdir() if path.suffix == ".js" and path.name not in FETCHED
     )
-    assert len(inlined) == 5, inlined
+    # Eight since the three fence languages joined Ace: a count, so a ninth file is
+    # a decision somebody takes here rather than one that lands in a page unread.
+    assert len(inlined) == 8, inlined
 
     # **"Exactly once, into the page that uses it" — which is not the same claim
     # as "exactly once, into the graph".** It was, when every vendored script was
@@ -332,7 +335,7 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(
     # and which must not is asked properly in `tests/test_calendar.py`; what
     # this line is for is the older claim beside it, that the bytes are inlined
     # ONCE into the page that has them.
-    ON_AN_EDITING_PAGE = ("ace.js", "keybinding-vim.js", "datepicker.min.js")
+    ON_AN_EDITING_PAGE = (*ACE_FILES, "datepicker.min.js")
     for name in inlined:
         # 200 and not 120: two of these are webpack bundles whose first 120
         # characters are the same UMD preamble, so the shorter signature found

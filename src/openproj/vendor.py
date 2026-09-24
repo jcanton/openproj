@@ -122,11 +122,18 @@ def _notice(name: str, banner: str) -> str:
     return f"/* {banner}\n\n{notice}*/\n"
 
 
+# Ace, its vim keymap and the three fence languages, in the order they are
+# inlined — one list, which the page, the checksum test and the page-size tests
+# all read, so a file added to one is added to all of them.
+ACE_FILES = ("ace.js", "keybinding-vim.js", "mode-python.js", "mode-sh.js", "mode-yaml.js")
+
+
 @cache
 def _ace() -> Markup:
-    """Ace and its vim keymap, as the two classic scripts they already are.
+    """Ace, its vim keymap and three fence languages, as the classic scripts they
+    already are.
 
-    594,306 B, inlined only when the address asked for them, and every part of
+    616,932 B, inlined only when the address asked for them, and every part of
     that sentence is load-bearing.
 
     **Why they are here at all.** Ask 6 of the seven is a vim keymap, and it is
@@ -175,11 +182,13 @@ def _ace() -> Markup:
     # inlines them and says nothing has redistributed the software without the
     # notice BSD-3 clause 2 asks for. Read from the file rather than typed here,
     # so a re-vendoring that changes the licence changes this too.
+    #
+    # The three modes after the keymap, for the fences' highlight rules and nothing
+    # else — `markdownMode` in `render/editor.py` `require`s them, and `VENDOR.md`
+    # records why these three and why not `mode-markdown.js`.
     return Markup(
-        _notice("ace-LICENSE.txt", "Ace 1.44.0 (ace.js and keybinding-vim.js), BSD-3-Clause.")
-        + _inline("ace.js")
-        + "\n"
-        + _inline("keybinding-vim.js")
+        _notice("ace-LICENSE.txt", f"Ace 1.44.0 ({', '.join(ACE_FILES)}), BSD-3-Clause.")
+        + "\n".join(_inline(name) for name in ACE_FILES)
     )
 
 

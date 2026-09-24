@@ -73,12 +73,189 @@ _ACE_SURFACE = Markup(r"""
    belongs on the thing a person can see, which is the editor. */
 .ace_text-input:focus, .ace_text-input:focus-visible { outline: none; }
 .acebox:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* The document's own colours — `markdownMode` below says which role each token
+   is and why. Every value is a `--code-*` role or `--muted`, so a scheme recolours
+   the editor exactly as it recolours the preview's code, and the app's own palette
+   answers in all three of its blocks.
+   Ace's TextMate theme colours these same classes in hex, injected into the head;
+   each rule here repeats its selector's compound (`.ace_constant.ace_language` is
+   (0,3,0), not (0,2,0)) and sits later in the document, so it wins the tie rather
+   than a heavier rule by accident. */
+.ace-tm .ace_heading { color: var(--code-function); font-weight: 600; }
+.ace-tm .ace_list, .ace-tm .ace_md-link-text { color: var(--code-name); }
+.ace-tm .ace_md-url { color: var(--code-number); }
+.ace-tm .ace_md-link, .ace-tm .ace_md-pipe, .ace-tm .ace_md-rule,
+.ace-tm .ace_md-fence { color: var(--muted); }
+.ace-tm .ace_md-bold { color: var(--code-type); font-weight: 600; }
+.ace-tm .ace_md-italic { color: var(--code-keyword); font-style: italic; }
+.ace-tm .ace_md-strike { color: var(--muted); text-decoration: line-through; }
+.ace-tm .ace_md-code { color: var(--code-string); }
+.ace-tm .ace_md-math, .ace-tm .ace_md-quote { color: var(--code-escape); }
+.ace-tm .ace_md-comment, .ace-tm .ace_comment,
+.ace-tm .ace_comment.ace_doc { color: var(--code-comment); font-style: italic; }
+/* Inside a fence: the roles the preview's Pygments spans take (`_CODE_COLOURS` in
+   `styles.py`), so a line reads the same colour in both panes of the split. */
+.ace-tm .ace_keyword, .ace-tm .ace_storage,
+.ace-tm .ace_constant.ace_language { color: var(--code-keyword); }
+.ace-tm .ace_keyword.ace_operator { color: var(--code-operator); }
+.ace-tm .ace_string { color: var(--code-string); }
+.ace-tm .ace_string.ace_regex,
+.ace-tm .ace_constant.ace_character.ace_escape { color: var(--code-escape); }
+.ace-tm .ace_constant, .ace-tm .ace_constant.ace_numeric, .ace-tm .ace_constant.ace_other,
+.ace-tm .ace_constant.ace_buildin, .ace-tm .ace_constant.ace_library,
+.ace-tm .ace_support.ace_constant { color: var(--code-number); }
+.ace-tm .ace_support.ace_function, .ace-tm .ace_entity.ace_name.ace_function,
+.ace-tm .ace_variable.ace_language { color: var(--code-function); }
+.ace-tm .ace_support.ace_type, .ace-tm .ace_support.ace_class { color: var(--code-type); }
+.ace-tm .ace_variable, .ace-tm .ace_meta.ace_tag { color: var(--code-name); }
+.ace-tm .ace_invalid { background: none; color: var(--code-error); }
 /* The split view needs no rule of its own any more: `height: 100%` above is the
    room the column has in every view, and the rendered pane beside it takes the
    same 100% of the same box. The pair cannot drift because neither carries a
    number. */
 </style>
 <script>
+// --- the document's own colours --------------------------------------------
+//
+// jcanton, 2026-09-24, beside a screenshot of the same record in LazyVim: "the
+// colours for syntax highlighting could be better ... can we do a little more on
+// openproj? (or ideally achieve the same)". The editor pane had no mode at all,
+// so a shaping document was one colour from its first heading to its last fence.
+//
+// **Our rules for the markdown, Ace's for the fences.** `mode-markdown.js` is
+// still refused, for the reasons `static/VENDOR.md` gives; a markdown tokenizer is
+// a list of regular expressions, and this one is the list. What a list here
+// cannot be is Python, so the three languages the plan's fences are written in
+// come from Ace's own modes, embedded between an opening fence that names them
+// and the closing fence that ends it.
+//
+// **Every colour is the scheme's, by base16's own styling guide**: headings are
+// base0D, list markers and link text base08, a link's address base09, bold
+// base0A, italic base0E, code base0B, quotes base0C — each through the `--code-*`
+// role that already wears that hue, so no scheme is asked for a value it does not
+// have. What LazyVim does with a colourscheme, the picker does here.
+//
+// **And Python the way the preview draws it**: a keyword argument, a CapWords
+// type, an ALL_CAPS constant and a call, by the same four patterns
+// `_PythonShapes` in `render/markdown.py` applies to the preview's Pygments
+// stream — tree-sitter's own Python query uses the first three, because the
+// language itself does not say. The two panes of the split read the same colour
+// for the same word.
+//
+// Built once per page: a mode is a tokenizer and every session may share it.
+let MARKDOWN_MODE = null;
+function markdownMode() {
+  if (MARKDOWN_MODE) return MARKDOWN_MODE;
+  const oop = ace.require('ace/lib/oop');
+  const TextRules = ace.require('ace/mode/text_highlight_rules').TextHighlightRules;
+  const TextMode = ace.require('ace/mode/text').Mode;
+  const src = pattern => pattern.source;
+  const FENCE = src(/^\s*(?:```+|~~~+)\s*/);
+  const CLOSE = src(/^\s*(?:```+|~~~+)\s*$/);
+  // An info string's first word, the names people write for each; a language
+  // whose file is not on the page stays code-coloured rather than breaking the
+  // mode, which is a fence and not a tokenizer pointing at a state that is not
+  // there.
+  const EMBEDDED = [
+    {prefix: 'py-', words: 'python3?|py', module: 'ace/mode/python_highlight_rules',
+     rules: 'PythonHighlightRules'},
+    {prefix: 'sh-', words: 'bash|sh|shell|zsh|console', module: 'ace/mode/sh_highlight_rules',
+     rules: 'ShHighlightRules'},
+    {prefix: 'yaml-', words: 'ya?ml', module: 'ace/mode/yaml_highlight_rules',
+     rules: 'YamlHighlightRules'},
+  ].filter(one => {
+    const found = ace.require(one.module);
+    return !!(found && found[one.rules]) && (one.Rules = found[one.rules]);
+  });
+
+  function shapesOfPython(state) {
+    const words = (state.find(rule => typeof rule.token === 'function') || {}).token;
+    if (!words) return [];
+    // A shape only where Python's own rules call it a plain identifier: `None(`
+    // is not a call and `True` is not a type.
+    const unless = shape => value => (words(value) === 'identifier' ? shape : words(value));
+    return [
+      {token: 'variable.parameter', regex: src(/(?<=[(,]\s*)[A-Za-z_]\w*(?=\s*=(?!=))/)},
+      {token: ['punctuation', 'support.type'], regex: src(/(\.)([A-Z]\w*[a-z]\w*)\b/)},
+      {token: ['punctuation', 'entity.name.function'], regex: src(/(\.)([A-Za-z_]\w*)(?=\s*\()/)},
+      {token: ['punctuation', 'constant.other'], regex: src(/(\.)([A-Z][A-Z0-9_]*)\b/)},
+      // Ace draws EVERY attribute as a function, `ta.wpfloat` included; an
+      // attribute is a name, and ink, as Pygments has it.
+      {token: ['punctuation', 'identifier'], regex: src(/(\.)([A-Za-z_]\w*)/)},
+      {token: unless('support.type'), regex: src(/[A-Z]\w*[a-z]\w*\b/)},
+      {token: unless('constant.other'), regex: src(/[A-Z][A-Z0-9_]*\b/)},
+      {token: unless('entity.name.function'), regex: src(/[A-Za-z_]\w*(?=\s*\()/)},
+    ];
+  }
+
+  function Rules() {
+    const inline = [
+      // An escaped character is itself: `\*` opens no emphasis.
+      {token: 'text', regex: src(/\\./)},
+      {token: 'md-code', regex: src(/``(?:[^`]|`(?!`))+``|`[^`]+`/)},
+      {token: 'md-math', regex: [
+        src(/\$\$.+?\$\$/), src(/\$(?=[^\s$])[^$]*?[^\s$]\$(?!\d)/), src(/\$[^\s$]\$(?!\d)/),
+      ].join('|')},
+      {token: 'md-comment', regex: src(/<!--.*?-->/)},
+      {token: 'md-comment', regex: src(/<!--/), next: 'comment'},
+      {token: ['md-link', 'md-link-text', 'md-link', 'md-url', 'md-link'],
+       regex: src(/(!?\[)([^\]]*)(\]\()([^)]*)(\))/)},
+      // A bare address, an autolink, and `org/repo#12`, which the renderer links.
+      {token: 'md-url', regex: [
+        src(/<https?:\/\/[^>\s]+>/), src(/https?:\/\/[^\s<>()\]]+/),
+        src(/\b[\w.-]+\/[\w.-]+#\d+\b/),
+      ].join('|')},
+      {token: 'md-bold', regex: [
+        src(/\*\*(?=\S)(?:[^*]|\*(?!\*))+?\*\*/), src(/(?<!\w)__(?=\S).+?__(?!\w)/),
+      ].join('|')},
+      // Underscores only at word edges, or every `default_task_effort` in a
+      // plan would open an emphasis.
+      {token: 'md-italic', regex: [
+        src(/\*(?=[^\s*])[^*]*?[^\s*]\*/), src(/\*[^\s*]\*/),
+        src(/(?<!\w)_(?=[^\s_])[^_]*?[^\s_]_(?!\w)/), src(/(?<!\w)_[^\s_]_(?!\w)/),
+      ].join('|')},
+      {token: 'md-strike', regex: src(/~~(?=\S).+?~~/)},
+      {token: 'md-pipe', regex: src(/\|/)},
+    ];
+    this.$rules = {
+      start: [
+        ...EMBEDDED.map(one => ({token: 'md-fence', regex: FENCE + '(?:' + one.words + ')\\b.*$',
+                                 next: one.prefix + 'start'})),
+        {token: 'md-fence', regex: FENCE + '.*$', next: 'fence'},
+        {token: 'md-math', regex: src(/^\s*\$\$\s*$/), next: 'math'},
+        {token: 'heading', regex: src(/^#{1,6}(?=\s|$).*$/)},
+        {token: 'md-quote', regex: src(/^\s*>.*$/)},
+        {token: 'md-pipe', regex: src(/^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$/)},
+        {token: 'md-rule', regex: src(/^\s*(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$/)},
+        {token: ['text', 'list', 'text', 'list'],
+         regex: src(/^(\s*)([-*+]|\d{1,9}[.)])(\s+)(\[[ xX]\])(?=\s|$)/)},
+        {token: ['text', 'list'], regex: src(/^(\s*)([-*+]|\d{1,9}[.)])(?=\s|$)/)},
+        ...inline,
+      ],
+      fence: [{token: 'md-fence', regex: CLOSE, next: 'start'}, {token: 'md-code', regex: '.+'}],
+      math: [{token: 'md-math', regex: src(/^\s*\$\$\s*$/), next: 'start'},
+             {token: 'md-math', regex: '.+'}],
+      comment: [{token: 'md-comment', regex: src(/.*?-->/), next: 'start'},
+                {token: 'md-comment', regex: '.+'}],
+    };
+    // The closing fence is put ahead of every rule of the language inside it, so
+    // a string or a comment Python has left open cannot swallow the fence.
+    for (const one of EMBEDDED) {
+      this.embedRules(one.Rules, one.prefix, [{token: 'md-fence', regex: CLOSE, next: 'start'}]);
+    }
+    const python = this.$rules['py-start'];
+    if (python) python.splice(1, 0, ...shapesOfPython(python));
+    this.normalizeRules();
+  }
+  oop.inherits(Rules, TextRules);
+
+  function Mode() { TextMode.call(this); this.HighlightRules = Rules; }
+  oop.inherits(Mode, TextMode);
+  Mode.prototype.$id = 'openproj/markdown';
+  MARKDOWN_MODE = new Mode();
+  return MARKDOWN_MODE;
+}
+
 // --- Ace, as the same surface ----------------------------------------------
 //
 // The second editor, and the only ask a textarea cannot have: ask 6, a vim
@@ -268,6 +445,12 @@ function aceSurface(area, seeded) {
   // CRLF. `test_the_second_surface_holds_one_line_ending_whatever_is_pasted_
   // into_it` is that case and it fails without this.
   document_.setNewLineMode('unix');
+
+  // The document's colours — see `markdownMode`. A mode OBJECT and not a name:
+  // `setMode('ace/mode/…')` with a string is `config.loadModule`, which is the
+  // network path this page refuses, and a mode handed over as an object is used
+  // as it is. Its `createWorker` is `TextMode`'s, which returns null.
+  session.setMode(markdownMode());
 
   // Seeded once, on construction, and this is the ONE `setValue` in the file.
   // It is not a binding operation: nothing observes this document yet and the
