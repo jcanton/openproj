@@ -63,10 +63,27 @@ _CALENDAR_STYLE = """
   color: var(--fg); cursor: pointer; font: inherit; padding: 2px 8px;
 }
 .datepicker-controls .button:focus-visible { outline: 2px solid var(--focus); }
-.datepicker-grid { display: flex; flex-wrap: wrap; width: 15.5rem; }
+/* The seven columns, stated once for the two rows that have to agree.
+
+   `.days-of-week` had no rule here at all and the header read `MoTuWeThFrSaSu`
+   — seven inline spans in an unstyled block, over a grid that was laid out
+   correctly underneath them. The pruning note above says only the rules this
+   app shows are kept, and this is a row it shows; it went out with the four
+   framework variants that it sits next to in upstream's sheet.
+
+   One custom property rather than `14.2857%` written twice, because two copies
+   of one number is the defect this repository keeps paying for: the header and
+   the grid are the same seven columns or the picker is unreadable, and nothing
+   about a stylesheet makes that obvious to whoever edits one of them. */
+.datepicker-picker { --day-column: 14.2857%; }
+.days-of-week, .datepicker-grid { display: flex; flex-wrap: wrap; width: 15.5rem; }
+.days-of-week .dow {
+  align-items: center; color: var(--muted); display: flex; font-size: 11px;
+  height: 1.5rem; justify-content: center; width: var(--day-column);
+}
 .datepicker-cell {
   align-items: center; border-radius: 3px; cursor: pointer; display: flex;
-  height: 2rem; justify-content: center; position: relative; width: 14.2857%;
+  height: 2rem; justify-content: center; position: relative; width: var(--day-column);
 }
 
 /* The ink on a cell is a ladder of three rungs, every one of them (0,2,0) and
@@ -189,6 +206,52 @@ _CALENDAR_STYLE = """
    trackpad. */
 @media not (pointer: coarse) {
   input[type="date"]::-webkit-calendar-picker-indicator { display: none; }
+}
+
+/* Firefox, where the rule above is not wrong but inert: there is no
+   `::-webkit-calendar-picker-indicator` to hide, Firefox draws a calendar button
+   of its own, and it exposes no pseudo-element for it (Mozilla bug 1812397, open).
+   `appearance: none` does not remove it and `preventDefault` on `mousedown` does
+   not stop the click that opens it (bug 1647711), so the button cannot be
+   suppressed — only clipped away.
+
+   **What was actually reported: two pickers.** Since Firefox 109 the native one
+   opens ONLY from that button and no longer from a click in the field (bug
+   1804879), so ours opened on the field and Firefox's opened on the icon beside
+   it — one date box, two calendars, and only one of them knows what a cycle is.
+
+   `clip-path` and not `overflow` on a parent, because clipping is the only thing
+   that removes the button from HIT-TESTING as well as from view: measured in
+   Firefox, `elementFromPoint` over the clipped strip answers the paragraph
+   behind the field instead of the input.
+
+   The clip takes the input's own right border with it, which is why `.datewrap`
+   exists and why the border lives there. Measured at the real field width first:
+   clipping the input alone leaves a box that is visibly short and open on the
+   right, between two full-width fields that are not — so the wrapper is not
+   belt-and-braces, it is the difference between this being shippable and not.
+
+   `@supports not selector(...)` asks the stylesheet's half of the question in
+   the same words the installer asks its half — `CSS.supports('selector(...)')`
+   in `_GLUE` — for the reason the media query above is spelled the way it is:
+   two halves of one gate that can drift are one half guarded. Chrome answers
+   true to it and Firefox false, measured in both. */
+@supports not selector(::-webkit-calendar-picker-indicator) {
+  @media not (pointer: coarse) {
+    .datewrap { display: block; }
+    .datewrap > input[type="date"] {
+      background: none; border: 0; border-radius: 0; padding: 0; width: 100%;
+      /* Wide enough for the button at the font sizes this app uses, and the
+         field's own right padding sits inside the wrapper now, so nothing the
+         reader can see is inside the clipped strip. */
+      clip-path: inset(0 1.6rem 0 0);
+    }
+    /* The focus ring moves to the wrapper with the border. The shell's floor
+       puts it on the input, and an outline on a clipped element is clipped too —
+       measured — so it would draw three sides of a ring and no fourth. */
+    .datewrap > input[type="date"]:focus-visible { outline: none; }
+    .datewrap:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+  }
 }
 """
 
@@ -574,6 +637,52 @@ for (const when of ['change', 'input']) {
 // from a keyboard-only desktop as well as from a phone.
 const COARSE = window.matchMedia('(pointer: coarse)');
 
+// Whether this browser can be told to hide the native picker button. Chrome and
+// Safari answer true and the `@media` rule above does the whole job there;
+// Firefox answers false, draws a button of its own and offers no way to hide it
+// (Mozilla bug 1812397), so the box has to be wrapped and clipped instead.
+//
+// The capability and not the browser. A user-agent test would be a list of names
+// that goes stale the day one of them ships the pseudo-element, and this asks
+// the one thing the answer actually depends on: is there something to hide it
+// with. `CSS.supports('selector(...)')` is itself young enough to be absent, and
+// a browser that cannot answer the question is one we must not wrap — it is
+// far likelier to be an old WebKit, where the rule above works, than a Firefox.
+const CAN_HIDE_THE_NATIVE_BUTTON =
+  !window.CSS || !CSS.supports || CSS.supports('selector(::-webkit-calendar-picker-indicator)');
+
+// The box, inside the wrapper that carries its border on Firefox. Idempotent,
+// because it is called from two places and a box that is already wrapped must
+// not collect a second one.
+//
+// Done here in script rather than in the six templates that write a date box —
+// and one of those six is the table, which BUILDS its box at the moment a cell
+// is opened, so a wrapper in markup would have to be written in Python five
+// times and in JavaScript once. This is the file that already decides whether a
+// date box becomes this widget at all, and the wrapper is the same decision.
+function wrapForClipping(box) {
+  if (CAN_HIDE_THE_NATIVE_BUTTON || COARSE.matches) return;
+  const parent = box.parentNode;
+  if (!parent || (parent.classList && parent.classList.contains('datewrap'))) return;
+  const wrap = document.createElement('span');
+  wrap.className = 'datewrap';
+  parent.insertBefore(wrap, box);
+  wrap.appendChild(box);
+}
+
+// Every box that is on the page when this runs. The delegated listeners below
+// catch a box that arrives later, but they fire on focus — and the button is
+// clickable before anything is focused, which is exactly the click that was
+// reported.
+function wrapEveryBox() {
+  for (const box of document.querySelectorAll('input[type="date"]')) wrapForClipping(box);
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', wrapEveryBox);
+} else {
+  wrapEveryBox();
+}
+
 // One delegated listener and not a hook per host. Three of the places a date box
 // appears are built at runtime — the table's cells, its draft row and the `#pop`
 // form's third face — and none of them exists when this script first runs, so a
@@ -581,7 +690,14 @@ const COARSE = window.matchMedia('(pointer: coarse)');
 // arrive with none.
 document.addEventListener('focusin', (event) => {
   const box = event.target;
-  if (box.matches && box.matches('input[type="date"]') && !COARSE.matches) openCalendar(box);
+  if (box.matches && box.matches('input[type="date"]') && !COARSE.matches) {
+    // A box built after the sweep above — the table's cells, its draft row and
+    // the `#pop` form all make theirs when they are opened — is wrapped the
+    // first time it takes focus, which is before it has been on screen long
+    // enough for anybody to reach for the button beside it.
+    wrapForClipping(box);
+    openCalendar(box);
+  }
 });
 
 // The keyboard's own way in, which is what a combobox uses and what this needs

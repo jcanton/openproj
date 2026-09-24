@@ -1614,11 +1614,26 @@ dt > label { display: inline; }
    it: a template is an offer, not a step. */
 .tplpick { display: inline; color: var(--muted); font-size: 12px; }
 .tplpick select { font: inherit; }
-input.field, select.field, textarea.field {
+/* `.datewrap` is in this list and NOT a second copy of these six declarations.
+   It is the box a date field wears on a browser whose native picker button
+   cannot be hidden — Firefox, where there is no
+   `::-webkit-calendar-picker-indicator` to set `display: none` on and no
+   pseudo-element of its own (Mozilla bug 1812397). The input inside it is
+   clipped, which takes the button away along with the input's own right border,
+   so the border has to be on something that is not clipped.
+
+   `display: contents` below means it draws nothing at all anywhere else: an
+   element with that display generates no box, so every declaration here is
+   inert on Chrome and Safari, where the date field is still the input itself
+   and this wrapper is a span that costs a tag. The `@supports` block in
+   `_CALENDAR_STYLE` (`calendar.py`) is the only place it becomes a box, and it
+   asks the question in the same words the installer asks it in JavaScript. */
+input.field, select.field, textarea.field, .datewrap {
   width: 100%; box-sizing: border-box; font: inherit; padding: .25rem .4rem;
   border: 1px solid var(--line-strong); border-radius: 3px;
   background: var(--surface); color: inherit;
 }
+.datewrap { display: contents; }
 input.title-field { font-size: 1.4rem; font-weight: 600; margin-bottom: .6rem; }
 /* In the heading's slot the box takes the READ title's metrics, so pressing
    Write changes what the name is drawn in and never where a line of it sits —
