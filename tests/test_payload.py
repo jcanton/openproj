@@ -276,21 +276,25 @@ _TASK = (
 )
 
 
-def whole_plan(tmp_path: Path, size: str = "1", rate: str = "0.5", cooldown: str = "2.0") -> Path:
+def whole_plan(
+    tmp_path: Path, size: str = "1", rate: str = "0.5", cooldown: str = "2.0", also: str = ""
+) -> Path:
     """A plan with a cycle, a pitch, a task under it and a roster.
 
     Bigger than `plan_repo` above on purpose: the three sites this section is
     about are a cycle page, a record page and a deck, and none of those exists
     for a corpus of two loose tasks. Every one of the three bad values is a
     parameter, so one corpus builder covers the config file, the cycle and the
-    record, and a test names which of them it is varying.
+    record, and a test names which of them it is varying. `also` is any further
+    lines of `config/defaults.yaml`, for a setting that is not one of the three —
+    a `views` the plan could not use is said in the same banner.
     """
     path = tmp_path / "whole.git"
     pygit2.init_repository(str(path), bare=True, initial_head="main")
     commit_directly(
         path,
         {
-            "config/defaults.yaml": f"schema_version: 2\ncooldown_weeks: {cooldown}\n",
+            "config/defaults.yaml": f"schema_version: 2\ncooldown_weeks: {cooldown}\n{also}",
             "config/people.yaml": "known_people: [ann, bo]\n",
             "cycles/0037.md": _SETUP.format(rate=rate),
             "pitches/pitch-e00001.md": _PITCH,
@@ -532,87 +536,87 @@ def _switched(defaults: str, **others: str):
     return config, unreadable, build_index([], config, _TODAY)
 
 
-@pytest.mark.parametrize(
-    ("written", "views", "said"),
-    [
-        pytest.param("schema_version: 5\n", VIEWS, [], id="absent is every view"),
-        pytest.param("views: []\n", (), [], id="empty is Records alone"),
-        pytest.param(
-            "views: [cycles, graph, timeline]\n",
-            ("cycles", "graph", "timeline"),
-            [],
-            id="the order is the nav order",
-        ),
-        pytest.param(
-            "views: [timeline, cycles, timeline]\n",
-            ("timeline", "cycles"),
-            ["views names timeline twice; it counts once, at its first place"],
-            id="a duplicate counts once, at its first place",
-        ),
-        pytest.param(
-            "views: [cycels]\n", (), [f"views names 'cycels', {_NOT_A_VIEW}"], id="a typo"
-        ),
-        pytest.param(
-            "views: [deck]\n",
-            (),
-            ["views names deck, which needs cycles, so the deck is off"],
-            id="the deck without cycles",
-        ),
-        pytest.param("views: [deck, cycles]\n", ("deck", "cycles"), [], id="the deck first"),
-        pytest.param(
-            "views: [records, help, detail]\n",
-            (),
-            [
-                "views names records, which is always on and always first",
-                "views names help, which is always on, in the footer",
-                "views names detail, which is always on: every record has its page",
-            ],
-            id="the three that are always on",
-        ),
-        pytest.param(
-            "views: cycles\n",
-            VIEWS,
-            ["views is not a list, so every view is on; write it in brackets, as views: [cycles]"],
-            id="a word",
-        ),
-        pytest.param(
-            "views:\n",
-            VIEWS,
-            [
-                "views is not a list, so every view is on; write it in brackets, as "
-                "views: [cycles, graph]"
-            ],
-            id="null",
-        ),
-        # And with a kind off, the default is not every view, and the sentence
-        # does not say it is: the nav under it has no Issues.
-        pytest.param(
-            "views: cycles, graph\nkinds: [note]\n",
-            tuple(one for one in VIEWS if one != "issues"),
-            [
-                "views is not a list, so every view is on but the Issues list, whose kind is "
-                "off; write it in brackets, as views: [cycles, graph]"
-            ],
-            id="a word, with a kind off",
-        ),
-        pytest.param("views: [5]\n", (), [f"views names 5, {_NOT_A_VIEW}"], id="a number"),
-        pytest.param(
-            "views: [issues]\nkinds: [note]\n",
-            (),
-            ["views names issues, which needs the issue kind in kinds, so the Issues list is off"],
-            id="the list of a kind that is off",
-        ),
-        # D1: absent `views` follows `kinds` in silence. A plan that wrote only
-        # `kinds: []` asked nothing of the Issues or the Notes list, and two
-        # banner lines about views it never named would be noise on every page.
-        pytest.param(
-            "kinds: []\n",
-            ("table", "graph", "timeline", "cycles", "deck", "people"),
-            [],
-            id="absent follows kinds silently",
-        ),
-    ],
-)
+_VIEW_ROWS = [
+    pytest.param("schema_version: 5\n", VIEWS, [], id="absent is every view"),
+    pytest.param("views: []\n", (), [], id="empty is Records alone"),
+    pytest.param(
+        "views: [cycles, graph, timeline]\n",
+        ("cycles", "graph", "timeline"),
+        [],
+        id="the order is the nav order",
+    ),
+    pytest.param(
+        "views: [timeline, cycles, timeline]\n",
+        ("timeline", "cycles"),
+        ["views names timeline twice; it counts once, at its first place"],
+        id="a duplicate counts once, at its first place",
+    ),
+    pytest.param(
+        "views: [cycels]\n", (), [f"views names 'cycels', {_NOT_A_VIEW}"], id="a typo"
+    ),
+    pytest.param(
+        "views: [deck]\n",
+        (),
+        ["views names deck, which needs cycles, so the deck is off"],
+        id="the deck without cycles",
+    ),
+    pytest.param("views: [deck, cycles]\n", ("deck", "cycles"), [], id="the deck first"),
+    pytest.param(
+        "views: [records, help, detail]\n",
+        (),
+        [
+            "views names records, which is always on and always first",
+            "views names help, which is always on, in the footer",
+            "views names detail, which is always on: every record has its page",
+        ],
+        id="the three that are always on",
+    ),
+    pytest.param(
+        "views: cycles\n",
+        VIEWS,
+        ["views is not a list, so every view is on; write it in brackets, as views: [cycles]"],
+        id="a word",
+    ),
+    pytest.param(
+        "views:\n",
+        VIEWS,
+        [
+            "views is not a list, so every view is on; write it in brackets, as "
+            "views: [cycles, graph]"
+        ],
+        id="null",
+    ),
+    # And with a kind off, the default is not every view, and the sentence
+    # does not say it is: the nav under it has no Issues.
+    pytest.param(
+        "views: cycles, graph\nkinds: [note]\n",
+        tuple(one for one in VIEWS if one != "issues"),
+        [
+            "views is not a list, so every view is on but the Issues list, whose kind is "
+            "off; write it in brackets, as views: [cycles, graph]"
+        ],
+        id="a word, with a kind off",
+    ),
+    pytest.param("views: [5]\n", (), [f"views names 5, {_NOT_A_VIEW}"], id="a number"),
+    pytest.param(
+        "views: [issues]\nkinds: [note]\n",
+        (),
+        ["views names issues, which needs the issue kind in kinds, so the Issues list is off"],
+        id="the list of a kind that is off",
+    ),
+    # D1: absent `views` follows `kinds` in silence. A plan that wrote only
+    # `kinds: []` asked nothing of the Issues or the Notes list, and two
+    # banner lines about views it never named would be noise on every page.
+    pytest.param(
+        "kinds: []\n",
+        ("table", "graph", "timeline", "cycles", "deck", "people"),
+        [],
+        id="absent follows kinds silently",
+    ),
+]
+
+
+@pytest.mark.parametrize(("written", "views", "said"), _VIEW_ROWS)
 def test_views_resolve_to_what_the_setting_says_and_name_what_they_could_not_use(
     written: str, views: tuple[str, ...], said: list[str]
 ):
@@ -631,46 +635,46 @@ def test_views_resolve_to_what_the_setting_says_and_name_what_they_could_not_use
     }
 
 
-@pytest.mark.parametrize(
-    ("written", "kinds", "said"),
-    [
-        pytest.param("schema_version: 5\n", KIND_NAMES, [], id="absent is every kind"),
-        pytest.param("kinds: []\n", _PLANNED, [], id="empty is the planned four"),
-        pytest.param("kinds: [note]\n", (*_PLANNED, "note"), [], id="notes and no issues"),
-        # Somebody hoping to switch projects off has made a request the tool will
-        # not honour, and the branch that decides not to act has to say so.
-        pytest.param(
-            "kinds: [task, pitch]\n",
-            _PLANNED,
-            [
-                "kinds names task, which is always on — so are product, project and pitch",
-                "kinds names pitch, which is always on — so are product, project and task",
-            ],
-            id="a planned kind is always on",
-        ),
-        pytest.param(
-            "kinds: [bug]\n",
-            _PLANNED,
-            [
-                "kinds names 'bug', which is not a kind this setting switches (issue, note), "
-                "so it is left out"
-            ],
-            id="not a kind",
-        ),
-        pytest.param(
-            "kinds: note\n",
-            KIND_NAMES,
-            ["kinds is not a list, so every kind is on; write it in brackets, as kinds: [note]"],
-            id="a word",
-        ),
-        pytest.param(
-            "kinds: [note, note]\n",
-            (*_PLANNED, "note"),
-            ["kinds names note twice; it counts once"],
-            id="a duplicate",
-        ),
-    ],
-)
+_KIND_ROWS = [
+    pytest.param("schema_version: 5\n", KIND_NAMES, [], id="absent is every kind"),
+    pytest.param("kinds: []\n", _PLANNED, [], id="empty is the planned four"),
+    pytest.param("kinds: [note]\n", (*_PLANNED, "note"), [], id="notes and no issues"),
+    # Somebody hoping to switch projects off has made a request the tool will
+    # not honour, and the branch that decides not to act has to say so.
+    pytest.param(
+        "kinds: [task, pitch]\n",
+        _PLANNED,
+        [
+            "kinds names task, which is always on — so are product, project and pitch",
+            "kinds names pitch, which is always on — so are product, project and task",
+        ],
+        id="a planned kind is always on",
+    ),
+    pytest.param(
+        "kinds: [bug]\n",
+        _PLANNED,
+        [
+            "kinds names 'bug', which is not a kind this setting switches (issue, note), "
+            "so it is left out"
+        ],
+        id="not a kind",
+    ),
+    pytest.param(
+        "kinds: note\n",
+        KIND_NAMES,
+        ["kinds is not a list, so every kind is on; write it in brackets, as kinds: [note]"],
+        id="a word",
+    ),
+    pytest.param(
+        "kinds: [note, note]\n",
+        (*_PLANNED, "note"),
+        ["kinds names note twice; it counts once"],
+        id="a duplicate",
+    ),
+]
+
+
+@pytest.mark.parametrize(("written", "kinds", "said"), _KIND_ROWS)
 def test_kinds_resolve_to_what_the_setting_says_and_name_what_they_could_not_use(
     written: str, kinds: tuple[str, ...], said: list[str]
 ):
@@ -687,6 +691,108 @@ def test_kinds_resolve_to_what_the_setting_says_and_name_what_they_could_not_use
     assert [(one.path, one.field, one.why) for one in index.unusable] == [
         ("config/defaults.yaml", "kinds", why) for why in said
     ]
+
+
+_ONE_SETTING = (
+    "One setting in the plan could not be used as written, so this page was drawn without it."
+)
+
+
+def _settings(count: int) -> str:
+    return (
+        f"{count} settings in the plan could not be used as written, so this page was drawn "
+        "without them."
+    )
+
+
+@pytest.mark.parametrize(
+    ("written", "said"),
+    [
+        pytest.param(row.values[0], row.values[2], id=f"{key}: {row.id}")
+        for key, rows in (("views", _VIEW_ROWS), ("kinds", _KIND_ROWS))
+        for row in rows
+    ],
+)
+def test_every_row_is_said_in_the_banner_and_by_check(
+    written: str, said: list[str], tmp_path: Path, capsys
+):
+    """Spec test 5's other two columns: what the page says and what `openproj
+    check` prints, for the same rows, off the same file on disk.
+
+    The two tests above stop at `index.unusable`, and a list is only a promise
+    about what a reader is told while every reader is handed it. A `views` line
+    the banner or `check` dropped is a typo hiding Cycles with nothing anywhere
+    saying why — finding F1, and the reason these rows exist at all. The page is
+    the landing because it is the one every plan has; the switched-off page is
+    asked of a served plan below. The silent rows are asked as well, because a
+    red banner over a plan that wrote nothing wrong is the other half of it.
+    """
+    from pages import unusable_banner_says, unusable_in
+
+    from openproj.cli import main
+    from openproj.model import load_repo
+    from openproj.render import render_records
+
+    root = tmp_path / "plan"
+    (root / "config").mkdir(parents=True)
+    (root / "config" / "defaults.yaml").write_text(written, encoding="utf-8")
+    records, config, unreadable = load_repo(root)
+    page = render_records(build_index(records, config, _TODAY, unreadable))
+
+    assert unusable_in(page) == [f"config/defaults.yaml — {why}" for why in said]
+    assert unusable_banner_says(page) == (
+        "" if not said else _ONE_SETTING if len(said) == 1 else _settings(len(said))
+    )
+
+    assert main(["check", str(root), "--today", _TODAY.isoformat()]) == (1 if said else 0)
+    lines = capsys.readouterr().out.splitlines()
+    assert [line for line in lines if line.startswith("blocker: ")] == [
+        f"blocker: config/defaults.yaml: {why}" for why in said
+    ]
+    assert lines[-1] == f"{len(said)} blockers, 0 warnings"
+
+
+def test_a_views_typo_is_said_on_every_page_a_server_answers_the_switched_off_ones_too(
+    tmp_path: Path,
+):
+    """`views: [cycels]` is the typo the spec names: Cycles is off, and every
+    address under it answers the switched-off page, which is drawn by its own
+    entry point and hands the banner its own arguments. Nothing opened that page
+    with a setting it could not use — `_ROUTES` below is a plan with every view
+    on — so dropping `index.unusable` from its `_page` call failed no test, and
+    the one page a reader who lost Cycles is certain to land on would have been
+    the one page that did not say why.
+
+    Every route, so the pages that are still on and the ones that are not are
+    asked the same question. And a second name wrong in the same setting, for
+    the plural headline, which nothing asserted.
+    """
+    from pages import unusable_banner_says, unusable_in
+
+    typo = f"config/defaults.yaml — views names 'cycels', {_NOT_A_VIEW}"
+    other = f"config/defaults.yaml — views names 'grpah', {_NOT_A_VIEW}"
+
+    repo = whole_plan(tmp_path / "one", also="views: [cycels]\n")
+    with TestClient(create_app(repo, auth="dev")) as client:
+        refused = []
+        for route in _ROUTES:
+            got = client.get(route)
+            if not got.headers["content-type"].startswith("text/html"):
+                continue
+            if got.status_code == 404:
+                refused.append(route)
+            else:
+                assert got.status_code == 200, f"{route}: {got.status_code}"
+            assert unusable_in(got.text) == [typo], route
+            assert unusable_banner_says(got.text) == _ONE_SETTING, route
+        assert {"/cycles", "/cycle/37", "/deck/37"} <= set(refused), refused
+
+    repo = whole_plan(tmp_path / "two", also="views: [cycels, grpah]\n")
+    with TestClient(create_app(repo, auth="dev")) as client:
+        for route in ("/", "/cycles"):
+            got = client.get(route)
+            assert unusable_in(got.text) == [typo, other], route
+            assert unusable_banner_says(got.text) == _settings(2), route
 
 
 @pytest.mark.parametrize(
