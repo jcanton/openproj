@@ -45,6 +45,7 @@ from test_web import (
 )
 
 from openproj.auth import sign_session
+from openproj.render import preview_html
 from openproj.render.tokens import _over, _percent
 from openproj.web import MAX_ASSET_BYTES, SESSION_COOKIE, create_app
 
@@ -4206,6 +4207,85 @@ def test_the_two_panes_scroll_to_the_same_line(client: TestClient, tmp_path: Pat
     )
     assert abs(got["settled"]["box"] - got["backAgain"]) < 2, "the two panes drove each other"
     assert abs(got["settled"]["pane"] - got["blockOfEightyTwo"]) < 2
+
+
+# A list whose points are nothing like each other in height: the first wraps for
+# a screenful and the other eight are two words each, then enough paragraphs
+# below for both panes to scroll. The rendered side is the real renderer's, not a
+# stub's, because what is under test is which blocks it stamps.
+_LISTED_BODY = "\n".join(
+    ["1. " + ("alpha " * 400).strip()]
+    + [f"{n}. point {n}" for n in range(2, 10)]
+    + [""]
+    + [f"filler {n}\n" for n in range(1, 101)]
+)
+
+_LISTING = (
+    f"const LISTED_BODY = {json.dumps(_LISTED_BODY)};"
+    + "window.fetch = async () => ({ok: true, json: async () => ({html: "
+    + json.dumps(preview_html(_LISTED_BODY))
+    + "})});"
+    + """
+const area = document.querySelector('textarea[name=body]');
+const pane = document.getElementById('body-preview');
+const settle = ms => new Promise(go => setTimeout(go, ms));
+
+flipEditing();
+area.value = LISTED_BODY;
+area.dispatchEvent(new Event('input', {bubbles: true}));
+document.getElementById('view-both').click();
+await settle(500);
+
+// The source side's ground truth off the textarea itself, as the test above
+// does it: every line is one row except the first, so the box's own
+// scrollHeight says how many rows that one took.
+const style = getComputedStyle(area);
+const step = parseFloat(style.lineHeight);
+const padTop = parseFloat(style.paddingTop);
+const lines = LISTED_BODY.split('\\n').length;
+const rows = Math.round(
+  (area.scrollHeight - padTop - parseFloat(style.paddingBottom)) / step);
+const longRows = rows - (lines - 1);
+// Line 5 is the fifth point: the long one above it and three short ones.
+area.scrollTop = padTop + (longRows + 3) * step;
+area.dispatchEvent(new Event('scroll'));
+await settle(90);
+
+const five = [...pane.querySelectorAll('li')].find(li => li.textContent.trim() === 'point 5');
+return {longRows, whereIsFive: five.getBoundingClientRect().top - pane.getBoundingClientRect().top};
+"""
+)
+
+
+def test_a_long_list_scrolls_point_by_point(client: TestClient, tmp_path: Path):
+    """Each point of a list is a place the two panes meet, not only the list.
+
+    jcanton, 2026-09-24, on a record whose `## Problems` is nine numbered points:
+    the heading under the list was 180px lower in the preview than in the source.
+    The renderer stamped source lines on top-level blocks only, so the whole list
+    was one interval and the sync interpolated across it by line number — while
+    the points themselves wrap to different heights on the two sides, which is
+    what prose in a half-width box always does.
+
+    Here the fifth point is on line 5 and below a first point that is most of the
+    list. Interpolated across the list it is put four ninths of the way down, a
+    screenful from where it is drawn. Measured off two rects, so this is what a
+    reader sees and not what either side of the sync computed.
+    """
+    got = measured_in(
+        chrome(),
+        client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "listed.html",
+        1400,
+        _LISTING,
+        patience=1800,
+    )
+
+    assert got["longRows"] > 5, "the first point did not wrap, so no height here differs"
+    assert abs(got["whereIsFive"]) < 2, (
+        f"the fifth point is {got['whereIsFive']:.0f}px from the top of the pane after "
+        "the source was scrolled to it: the sync is interpolating across the list"
+    )
 
 
 _LIVE = (

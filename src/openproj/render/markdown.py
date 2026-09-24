@@ -345,19 +345,40 @@ def _source_lines(state: StateCore) -> None:
     adds a block. Written as an attribute on the token rather than into a string,
     so it leaves through the same escaper as every other attribute.
 
-    `token.level == 0`, so only the blocks a reader scrolls past are marked. Every
-    paragraph inside every list item would be stamped too, which is bytes on every
-    page for a resolution nothing wants: what a scroll position interpolates
-    between is top-level blocks.
+    **Every block that begins a source line of its own, at any depth.** This was
+    `token.level == 0` — top-level blocks only, on the argument that nothing wants
+    a finer resolution than that — and a shaping document is exactly what wants
+    it. A nine-point `## Problems` list is ONE top-level block, so the scroll
+    sync interpolated across all nine points by line number, while the points
+    themselves wrap to different heights on the two sides: a point that is four
+    rows in the source can be two in the preview. Measured on jcanton's real
+    record at 1675x1400, with the source scrolled into that list, the heading
+    under it sat up to 163px lower in the preview than in the source.
+
+    A block whose first line is its parent's first line is left alone — the
+    paragraph inside a list item, the first item of a list, the first row of a
+    table body — because the parent already carries that line, starts at the same
+    pixel, and a second stamp would be bytes on the page for no point the sync
+    could use. Everything else is a point: each further item, a nested list, a
+    second paragraph, a fence inside an item, each table row.
 
     `map` is [start, end) and zero-based; both numbers here are one-based and
     inclusive, because that is what the editing surface counts in and a second
     convention is a second place to be off by one.
     """
+    # The first line of each block open around the current token, innermost last.
+    # A block with no map of its own (a table cell) stands on its parent's.
+    opened: list[int] = []
     for token in state.tokens:
-        if token.level == 0 and token.nesting >= 0 and token.map:
+        if token.nesting < 0:
+            opened.pop()
+            continue
+        begins = token.map[0] if token.map else (opened[-1] if opened else 0)
+        if token.map and token.type != "inline" and (not opened or begins != opened[-1]):
             token.attrSet("data-startline", str(token.map[0] + 1))
             token.attrSet("data-endline", str(token.map[1]))
+        if token.nesting > 0:
+            opened.append(begins)
 
 
 def _pr_refs(state: StateCore) -> None:

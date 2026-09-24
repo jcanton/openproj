@@ -556,7 +556,8 @@ async function askPreview() {
 // Both sides of the split are a list of (source line, pixel top), so both
 // directions are one interpolation read the other way round. The rendered side
 // gets its lines from `data-startline`, which the renderer stamps on every
-// top-level block from markdown-it's own token map; the source side gets its
+// block that begins a source line — list items and table rows included — from
+// markdown-it's own token map; the source side gets its
 // pixels from `lineTops`, which measures rather than assuming that one line is
 // one row — in a pane half a window wide most lines wrap, and `scrollTop /
 // lineHeight` is only right for a document in which none of them do.
@@ -646,11 +647,15 @@ function previewMap() {
     // staying put; this arithmetic asks the question that is actually being
     // asked.
     const zero = VIEW_PANE.getBoundingClientRect().top - VIEW_PANE.scrollTop;
+    // Later in the source AND no higher on the screen, because the points are
+    // nested now and a nested block need not be drawn where its line suggests:
+    // one inside something collapsed measures 0, and a map whose tops go back
+    // up is a map `lineOfPixel` walks off the wrong end of.
     for (const block of VIEW_PANE.querySelectorAll('[data-startline]')) {
       const line = Number(block.dataset.startline);
-      if (line > previewPoints[previewPoints.length - 1].line) {
-        previewPoints.push({line, top: block.getBoundingClientRect().top - zero});
-      }
+      const top = block.getBoundingClientRect().top - zero;
+      const last = previewPoints[previewPoints.length - 1];
+      if (line > last.line && top >= last.top) previewPoints.push({line, top});
     }
     // The foot of the rendered document, and then the foot of the room below it
     // — the same two points the source side ends with, so the two empty spaces
