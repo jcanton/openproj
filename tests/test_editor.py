@@ -7095,7 +7095,6 @@ def test_colon_w_presses_save_and_says_so_when_there_is_nothing_to_press(
     )
 
 
-
 _STICKY_EDITOR = r"""
   return {search: location.search, editor: EDITOR.editor,
           surface: SURFACE.onSplice ? 'ace' : 'textarea',
