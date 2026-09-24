@@ -1951,3 +1951,145 @@ def test_a_machine_with_no_pointer_at_all_still_gets_the_calendar(
     assert found["declined"] is False, "Alt+Down opened nothing for a reader with no pointer"
     assert found["told"] is True, "the page has no calendar at all, so nothing was gated"
 
+
+
+# --------------------------------------------------------------------------- #
+# The weekday row, and the browser whose own button cannot be hidden
+#
+# Both reported from a screenshot — jcanton, 2026-09-24, "it's partly broken".
+# Neither was visible to this suite: one is a stylesheet rule that was never
+# written, and the other only happens on a browser nothing here drives.
+# --------------------------------------------------------------------------- #
+
+
+ALIGNMENT = """
+  const box = document.getElementById('start');
+  openCalendar(box);
+  const left = el => Math.round(el.getBoundingClientRect().left);
+  const wide = el => Math.round(el.getBoundingClientRect().width);
+  const dows = [...document.querySelectorAll('.days-of-week .dow')];
+  const cells = [...document.querySelectorAll('.datepicker-grid .datepicker-cell')].slice(0, 7);
+  return {
+    names: dows.map(d => d.textContent.trim()),
+    dowLeft: dows.map(left), cellLeft: cells.map(left),
+    dowWidth: dows.map(wide), cellWidth: cells.map(wide),
+    dowBottom: dows.length ? Math.round(dows[0].getBoundingClientRect().bottom) : 0,
+    cellTop: cells.length ? Math.round(cells[0].getBoundingClientRect().top) : 0,
+  };
+"""
+
+
+def test_the_weekday_row_stands_over_the_days_it_names(seed_index: Index, tmp_path: Path):
+    """`MoTuWeThFrSaSu`, run together in one line, over a grid laid out correctly
+    underneath it.
+
+    `_CALENDAR_STYLE` carried no rule for `.days-of-week` or `.dow` at all. The
+    sheet's own note says only the rules this app shows are kept out of
+    upstream's sixty, and this is a row it shows — it went out with the four
+    framework variants it sits among there. Nothing noticed because every test
+    here asked the grid about days, and the header is not a day.
+
+    Measured, not asserted about the stylesheet. A rule being present says
+    nothing about where a browser puts the box, which is the only thing a reader
+    sees — and the failure mode was seven boxes of the wrong WIDTH, which
+    resolves perfectly well and lines up with nothing.
+    """
+    page = _page_with_a_date_field(seed_index, _a_month_holding_more_than_build_days(seed_index))
+
+    found = measured_in(chrome(), page, tmp_path / "dow.html", 1280, ALIGNMENT)
+
+    assert len(found["names"]) == 7, found["names"]
+    assert found["dowLeft"] == found["cellLeft"], (
+        f"the weekday names sit at {found['dowLeft']} over days at {found['cellLeft']}"
+    )
+    assert found["dowWidth"] == found["cellWidth"], found
+    # And that it is a row ABOVE the grid rather than seven boxes that merely
+    # happen to share the lefts: one line of seven, then the days.
+    assert len(set(found["dowLeft"])) == 7, "the names are stacked, not laid out in a row"
+    assert found["dowBottom"] <= found["cellTop"], "the header overlaps the first week"
+
+
+def test_the_two_halves_of_the_firefox_gate_ask_one_question(seed_index: Index):
+    """The stylesheet and the installer both have to know whether this browser
+    can be told to hide its native picker button, and they must not answer
+    differently.
+
+    This repository has the same pair once already — `@media not (pointer:
+    coarse)` beside `matchMedia('(pointer: coarse)')` — and the comment on it
+    says why they are spelled alike. This is the second, and it is worse if it
+    drifts: the stylesheet would move the border onto a wrapper the script never
+    made, or the script would clip an input whose border is still its own. Either
+    way the field loses a side.
+
+    A text test and not a rendered one, because the browser that would show it is
+    the one no harness here drives. What it holds is the thing a person editing
+    one half would break.
+    """
+    sheet = calendar_module._CALENDAR_STYLE
+    script = calendar_module._GLUE
+
+    asked = "selector(::-webkit-calendar-picker-indicator)"
+    assert f"@supports not {asked}" in sheet, "the stylesheet no longer asks the question"
+    assert f"CSS.supports('{asked}')" in script, "the installer no longer asks the question"
+    # The stylesheet's block does the two things the script's wrapper assumes,
+    # and the script makes the element the stylesheet styles.
+    assert ".datewrap { display: block; }" in sheet
+    assert "wrap.className = 'datewrap'" in script
+
+
+def test_the_wrapper_wears_the_field_box_instead_of_a_copy_of_it():
+    """`.datewrap` is in the same rule as `input.field`, not a second set of the
+    same six declarations.
+
+    A border, a radius and a padding written twice is the defect this repository
+    keeps paying for, and here the two copies would be side by side on one
+    screen: every other field drawn by one rule and the date field by the other,
+    differing by whatever somebody changed in one of them. The wrapper draws
+    nothing anywhere but Firefox — `display: contents` makes no box — so sharing
+    the rule costs nothing and guarantees they cannot disagree.
+    """
+    import openproj.render.styles as styles
+
+    # Comments stripped FIRST, and this is not tidiness. Written without it this
+    # test passed with `.datewrap` taken out of the shared rule, because the
+    # paragraph above that rule says the words `.datewrap` and `input.field` and
+    # a regex reading selectors reads a comment as one. A test that finds its
+    # answer in prose about the code is this suite's own documented failure.
+    sheet = re.sub(r"/\*.*?\*/", "", styles._DETAIL_STYLE, flags=re.S)
+    rules = [
+        block for block in re.findall(r"([^{}]+)\{([^{}]*)\}", sheet) if ".datewrap" in block[0]
+    ]
+    shared = [sel for sel, body in rules if "input.field" in sel and "border:" in body]
+
+    assert shared, f"`.datewrap` no longer shares the field's box rule: {[r[0] for r in rules]}"
+    assert any("display: contents" in body for sel, body in rules if sel.strip() == ".datewrap"), (
+        "the wrapper draws a box where it is not needed"
+    )
+
+
+def test_a_browser_that_can_hide_its_own_button_is_left_alone(
+    seed_index: Index, tmp_path: Path
+):
+    """Chrome and Safari need no wrapper and must not get one.
+
+    The whole cost of this fix is a span on one browser; if it appeared on all of
+    them it would be a box inside a box on every date field in the app, and the
+    inner one is the one the stylesheet strips. Asked of the running page rather
+    than of the branch, because what decides it is a capability query.
+    """
+    page = _page_with_a_date_field(seed_index, _a_month_holding_more_than_build_days(seed_index))
+
+    found = measured_in(chrome(), page, tmp_path / "unwrapped.html", 1280, """
+      const box = document.getElementById('start');
+      openCalendar(box);
+      return {
+        canHide: CSS.supports('selector(::-webkit-calendar-picker-indicator)'),
+        wrapped: box.parentNode.classList.contains('datewrap'),
+        wrappers: document.querySelectorAll('.datewrap').length,
+        opened: !!document.querySelector('.datepicker.active'),
+      };
+    """)
+
+    assert found["canHide"] is True, "this browser cannot hide it either, so the claim is untested"
+    assert found["wrapped"] is False and found["wrappers"] == 0, found
+    assert found["opened"] is True, "and the popup this is all for still opens"
