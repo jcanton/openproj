@@ -368,6 +368,53 @@ def test_an_empty_view_and_an_empty_plan_are_different_sentences(tmp_path: Path)
     assert "This plan has no records yet." not in nothing
 
 
+def test_the_landing_offers_no_kind_the_plan_has_turned_off():
+    """Every "Create …" draws from the kinds the plan has, and so does the
+    sentence that invites the first record: "an issue somebody noticed" on a plan
+    without issues is a promise the create form's picker then breaks.
+
+    The inbox view's button is asked with its kind off although the router would
+    never draw that page — `/issues` cannot be on without issues — because the
+    button is not allowed to lean on that: it opens `/new?kind=issue`, which is
+    the switched-off page.
+    """
+    from pages import elements
+
+    from openproj.model import KIND_NAMES, OPTIONAL_KINDS, Config
+
+    def drawn(kinds: frozenset[str], only: str | None = None):
+        index = build_index([], Config(kinds=kinds), date(2026, 8, 17))
+        page = render_records(
+            index, ROUTES, base_commit="abc", edited={}, now=0, only=only, may_write=True
+        )
+        return elements(page)
+
+    def invitation(kinds: frozenset[str]) -> list[str]:
+        return [one.text for one in drawn(kinds) if one.tag == "p" and "starts as" in one.text]
+
+    def create(kinds: frozenset[str], only: str | None = None) -> list[str]:
+        return [
+            one.text
+            for one in drawn(kinds, only)
+            if one.tag == "a" and "button" in one.attrs.get("class", "").split()
+        ]
+
+    every = frozenset(KIND_NAMES)
+    planned = every - set(OPTIONAL_KINDS)
+    opening = "Everything here starts as a record: "
+    assert invitation(every) == [
+        opening + "work to plan, an issue somebody noticed, half a thought in a note."
+    ]
+    assert invitation(planned | {"note"}) == [opening + "work to plan, half a thought in a note."]
+    assert invitation(planned) == [opening + "work to plan."]
+    # Above the table and in the empty row. The landing's own opens the picker on
+    # a task, which is always on.
+    assert create(planned) == ["Create record", "Create record"]
+
+    assert create(every, only="issue") == ["Create issue", "Create issue"]
+    assert create(planned | {"note"}, only="issue") == []
+
+
 def test_an_unreadable_query_goes_to_the_error_region_not_to_a_row(tmp_path: Path):
     path = plan_repo(tmp_path)
     commit_directly(path, PLAN, "seed", when=1_000_000)

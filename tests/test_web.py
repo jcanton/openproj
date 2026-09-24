@@ -7244,6 +7244,57 @@ def test_a_kind_that_is_off_is_refused_at_every_door(tmp_path: Path, kind: str):
         assert record_id in listed, listed
 
 
+def _offered_by(page: str, which) -> list[str]:
+    """The values of the options in every `<select>` whose attributes `which`
+    accepts, in document order.
+
+    Off `elements`, which is flat, so an option is the select's that precedes it
+    most closely — the only element an `<option>` can be inside here, bar a
+    `<datalist>`, which is counted as the container it is so that its options are
+    never read as the select's before it.
+    """
+    offered: list[str] = []
+    inside = False
+    for one in elements(page):
+        if one.tag in ("select", "datalist"):
+            inside = one.tag == "select" and which(one.attrs)
+        elif one.tag == "option" and inside:
+            offered.append(one.attrs.get("value", one.text))
+    return offered
+
+
+# `kinds` absent, empty, and naming each optional kind alone.
+@pytest.mark.parametrize("listed", [None, (), *((one,) for one in OPTIONAL_KINDS)])
+def test_the_create_form_and_the_kind_chip_offer_only_kinds_that_are_on(
+    tmp_path: Path, listed: tuple[str, ...] | None
+):
+    """The create form's picker and a record's Change kind menu, each asked for
+    exactly what it offers: every kind the plan has, in the ladder's order, and
+    nothing else. The chip leaves out the kind the record already is.
+
+    Exact lists rather than "not the one that is off": a picker that dropped a
+    planned kind along with the optional one, or offered them out of order, passes
+    a test that only looks for what should be missing.
+    """
+    on = [
+        one
+        for one in KIND_NAMES
+        if one not in OPTIONAL_KINDS or listed is None or one in listed
+    ]
+    repo = _plan_saying(tmp_path, "" if listed is None else f"kinds: [{', '.join(listed)}]\n")
+    with TestClient(create_app(repo, auth="dev", secret=SECRET)) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+
+        form = client.get("/new?kind=task")
+        assert form.status_code == 200, form.status_code
+        assert _offered_by(form.text, lambda attrs: attrs.get("id") == "kind") == on
+
+        record = client.get(f"/detail/{TASK}")
+        assert record.status_code == 200, record.status_code
+        chip = _offered_by(record.text, lambda attrs: "becomes" in attrs.get("class", "").split())
+        assert chip == ["", *(one for one in on if one != "task")]
+
+
 def test_nothing_but_records_is_still_a_whole_app(tmp_path: Path):
     """`views: []` and `kinds: []`: the least a plan can have, which is Records,
     every record's page, the create form for the four planned kinds, and Help.

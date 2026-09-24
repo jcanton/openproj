@@ -4682,6 +4682,42 @@ def test_a_back_link_to_a_view_that_was_switched_off_goes_to_records(seed_index:
     assert ORIGIN not in left["tabbed"], left["tabbed"]
 
 
+def test_a_record_page_offers_no_slide_view_when_the_deck_is_off(seed_index: Index):
+    """jcanton: "if deck is off all of it is off." The slide button opens
+    `?view=slide`, which answers the switched-off page in a plan without a deck, so
+    a record page in that plan draws no button rather than a door onto a refusal.
+
+    Asked of the renderer with each set of links, and not only through the served
+    sweep: `_slidebar` has two callers, and the guard is inside it so the record
+    page and the slide editor cannot disagree about it.
+    """
+    from openproj.model import VIEWS
+    from openproj.render import render_slide_editor
+
+    pitch = next(one for one, record in seed_index.plan.items() if record.kind == "pitch")
+
+    def slide_buttons(page: str) -> list[str]:
+        return [
+            one.attrs.get("href", "")
+            for one in elements(page)
+            if one.tag == "a" and "slide-view" in one.attrs.get("class", "").split()
+        ]
+
+    without = links_for(tuple(one for one in VIEWS if one != "deck"), ROUTES)
+    assert without.deck == "" and without.cycles, "the deck alone is off"
+    for links, wanted in ((without, []), (ROUTES, [f"/detail/{pitch}?view=slide"])):
+        record = render_detail(
+            seed_index, links, only=pitch, base_commit="deadbee", may_write=True
+        )
+        assert slide_buttons(record) == wanted, links.deck
+    # The slide editor is behind the same gate in `web.py`, so it is only ever
+    # drawn with the deck on; with it off its own button goes too, from the same
+    # guard, rather than pointing at the page it is.
+    for links, wanted in ((without, []), (ROUTES, [f"/detail/{pitch}?view=slide"])):
+        slide = render_slide_editor(seed_index, pitch, links, base_commit="deadbee", may_write=True)
+        assert slide_buttons(slide) == wanted, links.deck
+
+
 def test_every_page_carries_a_skip_link_and_a_live_region(rendered: Path):
     """Two shell obligations, because a page cannot opt out of either.
 

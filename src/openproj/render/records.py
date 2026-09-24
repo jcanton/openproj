@@ -5,7 +5,7 @@ from __future__ import annotations
 from markupsafe import Markup
 
 from ..index import Index, holder_fields, predicates_of
-from ..model import RUNG, unread_fields
+from ..model import OPTIONAL_KINDS, RUNG, unread_fields
 from .controls import _FILTER_JS, _facets_html
 from .env import _compiled
 from .shell import _NAV, STATIC, Links, _page
@@ -223,6 +223,16 @@ def _record_row(index: Index, record_id: str) -> dict:
     }
 
 
+# What each optional kind is, in the landing's empty-plan invitation — the clause
+# a plan without that kind leaves out. Held to `OPTIONAL_KINDS`, so a third inbox
+# rung cannot arrive switchable with nothing to say here.
+_STARTS_AS = {
+    "issue": "an issue somebody noticed",
+    "note": "half a thought in a note",
+}
+assert tuple(_STARTS_AS) == OPTIONAL_KINDS, "every optional kind has its clause, in ladder order"
+
+
 def render_records(
     index: Index,
     links: Links = STATIC,
@@ -270,7 +280,12 @@ def render_records(
     # A door that opens onto a refusal is worse than no door, and the static
     # export needs neither — it has no server to post to, which is why
     # `editable` exists at all and why the two names both stay.
-    creatable = editable and may_write
+    #
+    # And a kind the plan has, for the same reason: the button opens
+    # `/new?kind=…`, which answers the switched-off page for a kind that is off.
+    # `/issues` cannot be on without issues (`VIEW_NEEDS`), so this is the
+    # button standing on its own feet rather than on the router's.
+    creatable = editable and may_write and (only is None or only in index.kinds)
     # The Links field, the nav slot and the export filename in one word,
     # off the ladder rather than a second map: `RUNG["issue"].directory`
     # is "issues".
@@ -309,11 +324,16 @@ def render_records(
         # pre-fill theirs.
         "href": links.new if only is None else f"{links.new}?kind={only}",
     }
+    # The landing's invitation names the kinds a first record can be, and only
+    # the ones this plan has: "an issue somebody noticed" on a plan without
+    # issues is a promise the create form's picker then breaks.
+    starts_as = ", ".join(
+        ("work to plan", *(said for kind, said in _STARTS_AS.items() if kind in index.kinds))
+    )
     empty_headline, empty_hint = {
         "records": (
             "This plan has no records yet.",
-            "Everything here starts as a record: work to plan, an issue "
-            "somebody noticed, half a thought in a note.",
+            f"Everything here starts as a record: {starts_as}.",
         ),
         "issues": (
             "No issues are open.",
