@@ -922,6 +922,120 @@ def test_no_page_is_assembled_by_substitution():
     )
 
 
+def _docstrings(tree: ast.AST) -> set[int]:
+    """The `id` of every docstring constant in a module: prose about a route is
+    not a route, and a docstring never reaches a page."""
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            first = node.body[0] if node.body else None
+            if (
+                isinstance(first, ast.Expr)
+                and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)
+            ):
+                found.add(id(first.value))
+    return found
+
+
+def _the_routes_themselves(tree: ast.AST) -> set[int]:
+    """The `id` of every node inside `ROUTES = Links(...)`, which is the one place
+    a route is meant to be spelled."""
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "ROUTES" for target in node.targets
+        ):
+            found.update(id(inner) for inner in ast.walk(node.value))
+    return found
+
+
+def test_no_page_script_spells_a_page_route_by_hand():
+    """A path a page names goes through `links`, and never as a literal.
+
+    After a create the record page sent its reader to `'/detail/' + answer.id`,
+    and "start cycle" to `'/cycle/' + number` — correct only while the server
+    answered at exactly those paths, and invisible to anything that decides where
+    a link goes, such as a plan switching a view off. Both read `links` now, and
+    this is what keeps a third from arriving.
+
+    The routes are read off `ROUTES` rather than written down here, so a route
+    added there is looked for on the commit that adds it. `/` is left out because
+    every path begins with one, and `/api/` because an API is not a page: nothing
+    switches it off and every save is a literal fetch of one.
+
+    Read as syntax: the templates are Python string constants, so what is scanned
+    is each constant's value. **A route is a whole path segment, whatever follows
+    it.** The first version of this listed what might follow — the closing quote,
+    `?`, `+` or a space — and so passed every way these templates actually write a
+    link with a value in it: `href="/cycle/{{ c.number }}"`,
+    `Markup('<a href="/detail/{}">')`, `href="/table#top"`, and an f-string whose
+    constant piece ends at the route. A list of what may follow is never finished.
+    So a prefix route (`/detail/`, `/cycle/`, `/deck/`) counts with anything after
+    it, an id being the point of one, and any other route counts unless what
+    follows continues its name: `/tables` is not `/table`, and `/table?`,
+    `/table#` and `/table/` all are.
+
+    A match opens on a quote, `'` or `"`, which is the JS and HTML spelling of a
+    literal — or on a backtick, when the template literal it opens is
+    interpolated: `` `/cycle/${number}` ``, the form these scripts already use for
+    every `/api/` path with a value in it. The templates' comments name routes in
+    backticks by the dozen and never with a `${` inside; an uninterpolated
+    `` `/table` `` in code is the one spelling this cannot tell from a comment.
+    Jinja comments are blanked before the scan, for the reason docstrings are
+    exempt — the compiler drops both and neither reaches a page — and because
+    `_RECORDS` quotes jcanton writing `"/table, /graph, /timeline`.
+
+    A Python constant that IS a route or begins with one, `"/table"` or
+    `"/cycle/37"` handed to a template as a value, is caught as well: it reaches
+    the page the same way and would bypass `links` just the same.
+    """
+    from openproj.render import ROUTES
+
+    routes = sorted(
+        (
+            value
+            for value in ROUTES.model_dump().values()
+            if isinstance(value, str) and value not in ("", "/") and not value.startswith("/api/")
+        ),
+        key=len,
+        reverse=True,
+    )
+    assert "/cycle/" in routes and "/detail/" in routes, routes
+    spelled = (
+        "(?:"
+        + "|".join(
+            re.escape(route) + ("" if route.endswith("/") else r"(?![\w-])") for route in routes
+        )
+        + ")"
+    )
+    bare = re.compile(spelled)
+    quoted = re.compile(r"""['"]""" + spelled)
+    interpolated = re.compile("`" + spelled + r"[^`\n]*\$\{")
+    jinja_comment = re.compile(r"\{#.*?#\}", re.DOTALL)
+
+    offenders = []
+    for source in render_paths():
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        exempt = _docstrings(tree) | _the_routes_themselves(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            if id(node) in exempt:
+                continue
+            if bare.match(node.value):
+                offenders.append(f"{source.name}:{node.lineno}: {node.value!r}")
+            # Blanked newline for newline, so a line number after one still counts.
+            text = jinja_comment.sub(lambda c: "\n" * c.group(0).count("\n"), node.value)
+            for found in (*quoted.finditer(text), *interpolated.finditer(text)):
+                line = node.lineno + text.count("\n", 0, found.start())
+                shown = text[found.start() : found.end() + 24].partition("\n")[0]
+                offenders.append(f"{source.name}:{line}: {shown!r}")
+    assert not offenders, "a page spells a route by hand instead of reading `links`:\n" + "\n".join(
+        offenders
+    )
+
+
 def strings_in(data: object) -> int:
     """How many strings a JSON document holds, keys included — which is how many
     quote characters a correctly escaped rendering of it may contain."""

@@ -70,6 +70,11 @@ class Links(BaseModel):
     # the whole plan with nowhere to put the number. Where it is empty the cycle
     # page draws no link to it, rather than a link to a file nobody wrote.
     deck: str = ""
+    # Whether a server is behind the page — the event stream, the health poll, per-cycle pages,
+    # diagrams fetched on demand. A fact about the mode, said once. Three places used to infer
+    # it from whether `table` or `cycle` began with a slash, so blanking a view's link would
+    # have switched live updates and diagrams off on every page, and nothing would have said so.
+    served: bool = False
 
 
 # What a page may do, said once. The server sends it as a header and every page
@@ -137,6 +142,7 @@ ROUTES = Links(
     repo="/",
     deck="/deck/",
     body="/api/body/",
+    served=True,
 )
 
 
@@ -4316,8 +4322,9 @@ def _page(
         highlighting=Markup(_code_css()),
         status_slots=STATUS_SLOTS,
         # Only the server has an event stream to listen to. A static page opening a
-        # connection to nothing would retry forever in the console.
-        live=links.table.startswith("/"),
+        # connection to nothing would retry forever in the console. Asked of
+        # `served` and not of any one link, which a plan may blank.
+        live=links.served,
         # Whether this page has a diagram on it, and therefore whether it should
         # carry the loader that fetches 3.5 MB of mermaid.
         #

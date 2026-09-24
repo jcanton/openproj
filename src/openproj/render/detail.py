@@ -2657,7 +2657,7 @@ async function createRecord() {
       return;
     }
     committed = answer.commit;
-    location.href = '/detail/' + answer.id;
+    location.href = {{ links.record|tojson }} + answer.id;
   } catch (error) {
     // The connection went while the request was in the air. This was `try` and
     // `finally` with no `catch`, so a rejection here escaped unhandled and the
