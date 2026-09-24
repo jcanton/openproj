@@ -7280,6 +7280,25 @@ def test_a_kind_that_is_off_is_refused_at_every_door(tmp_path: Path, kind: str):
         ]
         assert record_id in listed, listed
 
+        # And swept, every page still on, the way a view that is off is swept:
+        # nothing may offer to create one. What would fail here is a "New issue"
+        # somewhere other than the inbox that went off with its kind — a Table,
+        # a cycle page, the deck — which no status code would say.
+        views = tuple(one for one in VIEWS if VIEW_NEEDS.get(one) != kind)
+        on = frozenset(KIND_NAMES) - {kind}
+        still = [
+            "/",
+            "/help",
+            "/detail",
+            *(f"/detail/{one}" for one in (*SEED_IDS, record_id)),
+            "/new?kind=task",
+            *(_opened_at(template) for template, one in SWITCHED.items() if one in views),
+            f"/detail/{PITCH}?view=slide",
+        ]
+        for url in still:
+            got = client.get(url)
+            assert got.status_code == 200, f"{url}: {got.status_code}"
+            assert _dead_ends(client, url, got.text, views, on) == [], url
 
     # The create form asks the switch after the word and before the sign-in: a
     # signed-out reader told to sign in would sign in and then be told the kind
