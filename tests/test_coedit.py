@@ -5137,6 +5137,52 @@ def test_a_save_made_without_the_room_it_left_reloads(client: TestClient, plan: 
     )
 
 
+def test_leaving_a_room_with_its_text_uncommitted_reloads_nothing(
+    client: TestClient, plan: Path
+):
+    """Found in the second review. A room commit nobody here pressed marks the
+    read view behind, and the box then differs from the committed body by
+    whatever the room is still typing — somebody else's words as often as this
+    tab's. Reloading would bring that back as this tab's "unsaved draft
+    restored". So leaving reloads nothing while the room holds uncommitted text:
+    the room commits it, and the page says why the read view is behind."""
+    page = client.get(f"/detail/{TASK}?editor=plain").text
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = {
+        "t": "welcome",
+        "seed": room.seed,
+        "base": room.base,
+        "you": "ann",
+        "sv": base64.b64encode(room.state()).decode(),
+        "update": base64.b64encode(room.since(None)).decode(),
+    }
+    theirs = {"t": "saved", "commit": "e" * 40, "outcome": "committed", "pushed": True}
+    answer = run_js(
+        page,
+        "(async () => {"
+        "  flipEditing();"
+        "  __socket.opened();"
+        f" __socket.hear({json.dumps(welcome)});"
+        "  if (!COEDIT.live()) return 'the room never came up';"
+        f" __socket.hear({json.dumps(theirs)});"
+        "  const box = document.querySelector('[name=body]');"
+        "  box.value = box.value + 'Still being typed in the room.\\n';"
+        "  box.dispatchEvent(new Event('input', {bubbles: true}));"
+        "  flipEditing();"
+        "  return {reloads: __reloads(), said: document.getElementById('state').textContent};"
+        "})()",
+        page=True,
+        socket=True,
+    )
+    assert not answer["errors"], answer["errors"]
+    assert answer["value"]["reloads"] == 0, (
+        "leaving reloaded over the room's uncommitted text, which comes back as a draft"
+    )
+    assert "before the last save" in answer["value"]["said"], answer["value"]
+    assert "openproj:resumed" not in answer["tabbed"], answer["tabbed"]
+
+
 def test_what_the_room_said_about_a_save_is_said_where_you_are(
     client: TestClient, plan: Path
 ):

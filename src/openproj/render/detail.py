@@ -945,39 +945,55 @@ function keepView() {
 // `freshen` brings them up to date on the way out rather than on every save.
 let STALE = false;
 
-// Whether anything in the form or the box is not committed. A number typed as a
-// word throws in `read`, and that is unsaved too.
-function unsavedHere() {
-  try { return Object.keys(changed()).length > 0 || SURFACE.text() !== ORIGINAL_BODY; }
-  catch (error) { return true; }
-}
-
 // The read view, brought up to the last save before anybody reads it — by a
 // reload, because it is the only thing that redraws all of it: the facts, the
 // title, the Progress section, and the diagrams, whose loader runs once at load.
 // True when the page is going away.
 //
-// **With unsaved work in the box the reload carries it**, as a draft written
-// now rather than on the draft timer's next tick, and a one-shot that lands the
-// page on the read view: a restored draft otherwise opens a session, and a
-// reload would put somebody who asked to read straight back into the editor.
-// Where this browser keeps no drafts the reload would lose that work, so there
-// is none, and the page says why the text under the box is older than the save.
+// **What is unsaved decides whether it may.** A changed FIELD cannot cross a
+// reload — a draft is the body and nothing else — so with one in the form there
+// is no reload, and the page says why the text under the box is older than the
+// save. Nor with an unsaved body in a LIVE ROOM: that text is the room's, as
+// much somebody else's typing as this tab's, and reloading would bring it back
+// as this tab's "restored draft". The room commits it — its quiet window, or the
+// last member out, which leaving this session makes this tab — and the next
+// load of the page shows it. Out of a room an unsaved body is this tab's, and it goes
+// across as a draft written now rather than on the draft timer's next tick, with
+// a one-shot landing the reload on the read view: a restored draft otherwise
+// opens a session, and a reload would put somebody who asked to read straight
+// back into the editor. Where this browser keeps no drafts there is no reload.
 function freshen() {
   // The create form has no read view and never reaches the flag.
   if (!LANDING || !STALE) return false;
-  if (unsavedHere()) {
+  let fields = true;
+  // A number typed as a word throws in `read`, and that is unsaved too.
+  try { fields = Object.keys(changed()).length > 0; } catch (error) { fields = true; }
+  if (fields) return stillBehind();
+  if (SURFACE.text() !== ORIGINAL_BODY) {
+    if (COEDIT.live()) return stillBehind();
     writeDraft();
-    if (!draftWritten) {
-      announce('The page under the editor is from before your last save. It will be '
-               + 'redrawn once what is in the box is saved.');
-      return false;
-    }
+    if (!draftWritten) return stillBehind();
     forThisTab.set(RESUMED, 'view');
   }
   STALE = false;
+  // And out of the address, the flag that opened this session: `?edit` and
+  // `?both` beat any one-shot on load, and a reload keeps the query string, so
+  // leaving would reload straight back into the editor.
+  try {
+    const flags = new URLSearchParams(location.search);
+    for (const name of VIEWS) flags.delete(name);
+    const query = flags.toString();
+    history.replaceState(history.state, '', location.pathname + (query ? '?' + query : '')
+                         + (location.hash || ''));
+  } catch (error) { /* the reload still happens; it lands in the linked view */ }
   location.reload();
   return true;
+}
+
+function stillBehind() {
+  announce('The page under the editor is from before the last save. It is redrawn '
+           + 'once nothing in the editor is unsaved.');
+  return false;
 }
 
 // And then the remembered one, which is the second half of the preference this
@@ -2630,7 +2646,11 @@ async function save() {
     // copies. Both are what the reload was quietly curing, so both still reload
     // — into the view and onto the line, which is what `keepView` is for.
     if (answer.outcome === 'merged' || COEDIT.joined()) {
-      forgetDraft();
+      // A keystroke made while this was in the air goes across as a draft on
+      // the base it was typed on, so saving it merges it with what landed
+      // instead of writing over the paragraph that did.
+      if (SURFACE.text() === (body === null ? ORIGINAL_BODY : body)) forgetDraft();
+      else writeDraft();
       keepView();
       location.reload();
       return;

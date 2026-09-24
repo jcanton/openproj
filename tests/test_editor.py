@@ -4898,6 +4898,109 @@ def test_leaving_where_no_draft_can_be_kept_reloads_nothing(client: TestClient):
     assert got["value"]["reloads"] == 0, "a reload threw away writing that exists nowhere else"
 
 
+# Saved, then a FIELD changed, then left.
+_LEFT_WITH_A_FIELD_CHANGED = """
+(async () => {
+  chooseView('edit');
+  const box = document.querySelector('[name=body]');
+  box.value = 'Saved.\\n';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  await save();
+  const tags = document.querySelector('[name=tags]');
+  tags.value = 'changed-after-the-save';
+  tags.dispatchEvent(new Event('input', {bubbles: true}));
+  chooseView('view');
+  return {reloads: __reloads(), said: document.getElementById('state').textContent};
+})()
+"""
+
+
+def test_leaving_with_a_field_changed_after_a_save_reloads_nothing(client: TestClient):
+    """Found in the second review. A draft is the body and nothing else, so a
+    reload after a changed title, status or tag throws the change away without a
+    word — the draft text equals the server's and nothing is restored. No reload,
+    and the page says why the text under the box is older than the save."""
+    from test_injection import run_js
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    got = run_js(
+        page, _LEFT_WITH_A_FIELD_CHANGED, page=True,
+        replies=[{"status": 200, "json": {"commit": "0" * 40, "outcome": "committed"}}],
+    )
+    assert not got["errors"], got["errors"]
+    assert got["value"]["reloads"] == 0, "a reload threw away a field nobody saved"
+    assert "before the last save" in got["value"]["said"], got["value"]
+
+
+# Saved into a merge, with a line typed while the request was in the air.
+_TYPED_WHILE_A_MERGE_WAS_IN_THE_AIR = """
+(async () => {
+  chooseView('both');
+  const box = document.querySelector('[name=body]');
+  const base = BASE.value;
+  box.value = 'Mine.\\n';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  const pressed = save();
+  box.value = 'Mine.\\nTyped while it was saving.\\n';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  await pressed;
+  return {base, reloads: __reloads()};
+})()
+"""
+
+
+def test_a_line_typed_during_a_merged_save_crosses_the_reload(client: TestClient):
+    """The merge reloads, and a keystroke made while the save was in the air is
+    in no commit. It goes across as a draft on the base it was TYPED on — not on
+    the merge — so saving it again merges with the paragraph that landed instead
+    of writing over it."""
+    from test_injection import run_js
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    got = run_js(
+        page, _TYPED_WHILE_A_MERGE_WAS_IN_THE_AIR, page=True,
+        replies=[{"status": 200, "json": {"commit": "0" * 40, "outcome": "merged"}}],
+    )
+    assert not got["errors"], got["errors"]
+    assert got["value"]["reloads"] == 1, got["value"]
+    draft = json.loads(got["stored"].get(f"openproj:draft:2:{TASK}", "null") or "null")
+    assert draft == {
+        "base": got["value"]["base"],
+        "text": "Mine.\nTyped while it was saving.\n",
+    }, f"the line typed during the save did not cross the reload on its own base: {draft}"
+
+
+# Opened by a link that says `?edit`, saved, and left.
+_LEFT_A_LINKED_EDITOR = """
+(async () => {
+  const replaced = [];
+  history.replaceState = (state, title, url) => replaced.push(url);
+  const box = document.querySelector('[name=body]');
+  box.value = 'Saved.\\n';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  await save();
+  chooseView('view');
+  return {reloads: __reloads(), replaced};
+})()
+"""
+
+
+def test_leaving_an_editor_a_link_opened_does_not_reload_back_into_it(client: TestClient):
+    """`?edit` beats every one-shot on load and a reload keeps the query string,
+    so leaving after a save would reload straight back into the editor. The flag
+    comes out of the address first; the rest of the query stays."""
+    from test_injection import run_js
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    got = run_js(
+        page, _LEFT_A_LINKED_EDITOR, page=True, here=f"/detail/{TASK}?edit&keep=1",
+        replies=[{"status": 200, "json": {"commit": "0" * 40, "outcome": "committed"}}],
+    )
+    assert not got["errors"], got["errors"]
+    assert got["value"]["reloads"] == 1, got["value"]
+    assert got["value"]["replaced"] == [f"/detail/{TASK}?keep=1"], got["value"]
+
+
 # A save the store had to merge: somebody else's paragraph is in the commit and
 # not in the box.
 _SAVED_INTO_A_MERGE = """
