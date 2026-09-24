@@ -1601,7 +1601,7 @@ document.getElementById('yes').onclick = async () => {
       return;
     }
     committed = answer.commit;
-    location.href = '/cycle/' + number;
+    location.href = {{ links.cycle|tojson }} + number;
   } catch (error) {
     // The connection went while the request was in the air. With no `catch` the
     // rejection escaped, the confirmation panel stayed up over a Yes that had
@@ -2747,7 +2747,10 @@ def render_cycles(index: Index, links: Links = STATIC, base_commit: str | None =
         # Whether there is a page per cycle to link a card to. Only the server
         # serves one; `render_static` writes six files and no cycle is among
         # them, so on a rendered plan the card names its cycle and stops there.
-        per_cycle_page=links.cycle.startswith("/"),
+        # `served` and not `bool(links.cycle)`: the export's `cycle` is the
+        # non-empty `cycles.html#`, and would link every card to an anchor
+        # nothing on that page carries.
+        per_cycle_page=links.served,
         # The next cycle's betting table is the day the last one's cool-down
         # ends, and its review meeting is as far from it as the last one's was:
         # both are true far more often than not, and both are corrected on the

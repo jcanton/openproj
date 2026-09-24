@@ -82,12 +82,26 @@ def test_a_mermaid_fence_is_a_diagram_where_there_is_a_server():
 
 def test_a_mermaid_fence_is_a_code_block_where_there_is_not():
     """The static export has no server to fetch 3.5 MB from, and a `<pre>` that
-    sits empty for ever is worse than the source it replaced. The prefix decides,
-    which is the seam `_image` and `_link` already switch on.
+    sits empty for ever is worse than the source it replaced. `Links.served`
+    decides, which is the mode itself rather than any one link's spelling.
     """
     drawn = str(_markdown(DIAGRAM, STATIC))
     assert diagrams(drawn) == 0
     assert "flowchart LR" in drawn
+
+
+def test_diagrams_are_drawn_wherever_a_server_is_behind_the_page_whatever_its_links_say():
+    """Whether a fence is a diagram was decided by whether `links.table` began
+    with a slash. A plan that switches its Table off blanks that link, and every
+    diagram on every page of it would have gone back to being source, with
+    nothing anywhere to say why. The question is whether a server is behind the
+    page, and `served` is the one field that answers it — so a link's spelling
+    must move nothing, in either direction.
+    """
+    blanked = ROUTES.model_copy(update={"table": "", "cycle": ""})
+    assert diagrams(str(_markdown(DIAGRAM, blanked))) == 1
+    spelled_like_a_route = STATIC.model_copy(update={"table": "/table"})
+    assert diagrams(str(_markdown(DIAGRAM, spelled_like_a_route))) == 0
 
 
 def test_every_other_fence_is_left_alone():

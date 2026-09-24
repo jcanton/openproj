@@ -922,6 +922,90 @@ def test_no_page_is_assembled_by_substitution():
     )
 
 
+def _docstrings(tree: ast.AST) -> set[int]:
+    """The `id` of every docstring constant in a module: prose about a route is
+    not a route, and a docstring never reaches a page."""
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            first = node.body[0] if node.body else None
+            if (
+                isinstance(first, ast.Expr)
+                and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)
+            ):
+                found.add(id(first.value))
+    return found
+
+
+def _the_routes_themselves(tree: ast.AST) -> set[int]:
+    """The `id` of every node inside `ROUTES = Links(...)`, which is the one place
+    a route is meant to be spelled."""
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "ROUTES" for target in node.targets
+        ):
+            found.update(id(inner) for inner in ast.walk(node.value))
+    return found
+
+
+def test_no_page_script_spells_a_page_route_by_hand():
+    """A path a page names goes through `links`, and never as a literal.
+
+    After a create the record page sent its reader to `'/detail/' + answer.id`,
+    and "start cycle" to `'/cycle/' + number` — correct only while the server
+    answered at exactly those paths, and invisible to anything that decides where
+    a link goes, such as a plan switching a view off. Both read `links` now, and
+    this is what keeps a third from arriving.
+
+    The routes are read off `ROUTES` rather than written down here, so a route
+    added there is looked for on the commit that adds it. `/` is left out because
+    every path begins with one, and `/api/` because an API is not a page: nothing
+    switches it off and every save is a literal fetch of one.
+
+    Read as syntax: the templates are Python string constants, so what is scanned
+    is each constant's value, and a match must open with a quote — the JS and
+    HTML spelling of a literal, `'/cycle/' + n` or `href="/table?owner=ann"`.
+    Comments inside the templates name routes in backticks by the dozen, and
+    backticks are deliberately not a quote here. A Python constant that IS a
+    route, `"/table"` handed to a template as a value, is caught as well: it
+    reaches the page the same way and would bypass `links` just the same.
+    """
+    from openproj.render import ROUTES
+
+    routes = sorted(
+        (
+            value
+            for value in ROUTES.model_dump().values()
+            if isinstance(value, str) and value not in ("", "/") and not value.startswith("/api/")
+        ),
+        key=len,
+        reverse=True,
+    )
+    assert "/cycle/" in routes and "/detail/" in routes, routes
+    quoted = re.compile(r"""(['"])(""" + "|".join(map(re.escape, routes)) + r""")(\1|\?|\+|\s)""")
+
+    offenders = []
+    for source in render_paths():
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        exempt = _docstrings(tree) | _the_routes_themselves(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            if id(node) in exempt:
+                continue
+            text = node.value
+            if any(text == route or text.startswith(route + "?") for route in routes):
+                offenders.append(f"{source.name}:{node.lineno}: {text!r}")
+            for found in quoted.finditer(text):
+                line = node.lineno + text.count("\n", 0, found.start())
+                offenders.append(f"{source.name}:{line}: {found.group(0)!r}")
+    assert not offenders, "a page spells a route by hand instead of reading `links`:\n" + "\n".join(
+        offenders
+    )
+
+
 def strings_in(data: object) -> int:
     """How many strings a JSON document holds, keys included — which is how many
     quote characters a correctly escaped rendering of it may contain."""

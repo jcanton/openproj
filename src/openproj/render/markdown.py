@@ -531,7 +531,7 @@ def _fence(
     # ` ```mermaid ` and ` ```mermaid something ` are both mermaid, and
     # ` ```mermaidish ` is not.
     language = token.info.strip().split(maxsplit=1)[:1]
-    served = env.get("links", STATIC).table.startswith("/")
+    served = env.get("links", STATIC).served
     if language == ["mermaid"] and served:
         # `<pre>` and not `<div>`: until mermaid has run — and for ever if the
         # bundle never arrives — this element is showing source, and source in a

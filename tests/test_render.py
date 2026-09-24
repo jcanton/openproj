@@ -4254,6 +4254,47 @@ def test_a_nav_item_that_is_not_a_nav_item_is_refused():
         _page("t", "", current="cycle")
 
 
+def test_the_live_page_is_live_whatever_its_links_say():
+    """The event stream, the pile and the health poll were switched on by
+    whether `links.table` began with a slash. A plan that switches its Table off
+    blanks that link, and every page of it would have stopped hearing about other
+    people's saves — a page that looks current and is not, with nothing on it to
+    say so. `served` is the mode; a link is only where one page points.
+
+    `#pile` and `#moved` are the two elements only a live page draws, asked of
+    the parsed page rather than of its text, which carries the stylesheet's rules
+    for both ids whether or not the elements are there.
+    """
+    from openproj.render import _page
+
+    def live(page: str) -> set[str]:
+        ids = {one.attrs.get("id") for one in elements(page)}
+        return ids & {"pile", "moved"}
+
+    assert live(_page("t", "", links=ROUTES.model_copy(update={"table": ""}))) == {"pile", "moved"}
+    assert live(_page("t", "", links=STATIC.model_copy(update={"table": "/table"}))) == set()
+
+
+def test_a_cycle_card_links_to_its_page_wherever_a_server_serves_one(seed_index: Index):
+    """The third place that read the mode off a link: a card's heading on the
+    cycles page was a link when `links.cycle` began with a slash. There is a page
+    per cycle exactly when a server is behind the page, so `served` decides, and
+    the prefix only says where that page is.
+    """
+    from openproj.render import render_cycles
+
+    def headings_linked(links) -> list[str]:
+        return [
+            one.attrs["href"]
+            for one in elements(render_cycles(seed_index, links))
+            if one.tag == "a" and one.text.startswith("Cycle ")
+        ]
+
+    served = headings_linked(ROUTES.model_copy(update={"cycle": "cycle-"}))
+    assert served and all(href.startswith("cycle-") for href in served), served
+    assert headings_linked(STATIC.model_copy(update={"cycle": "/cycle/"})) == []
+
+
 # --------------------------------------------------------------------------- #
 # Where "back" goes
 # --------------------------------------------------------------------------- #
