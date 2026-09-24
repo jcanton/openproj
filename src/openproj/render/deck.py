@@ -1607,9 +1607,10 @@ def slides_of(index: Index, record: Record, links: Links, assets: dict[str, str]
         # panel on the detail page and the meter in the table read the same two,
         # and a third arithmetic is a third answer.
         "text": counted.text if counted is not None else "",
-        # The third copy of the record page's expression, and it goes through
-        # the same helper for the same two reasons — one guarded rounding,
-        # and a meter that cannot announce more than it draws.
+        # The third copy of the record page's expression, through the same
+        # helper so that one function rounds a ratio here. No number moves —
+        # `done <= total` is structural in `_weighed`, and the comment on the
+        # record page's Progress row says why.
         "percent": _percent(counted.done, counted.total) if counted is not None else 0,
         "skip": slide.skip,
     }

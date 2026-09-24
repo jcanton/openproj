@@ -3326,15 +3326,23 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
                     f"{counted.done:g}",
                     f"{counted.total:g}",
                     counted.unit,
-                    # `_percent` and not `round(100 * fraction)`, which is what this
-                    # said. Two things change and both are corrections: the
-                    # arithmetic is now guarded in the one place this app rounds
-                    # a ratio, and the number is clamped to 100. `.meter` is
-                    # `overflow: hidden` (`shell.py`), so a pitch whose tasks add
-                    # up to more than its bet ALREADY drew a full bar — and this
-                    # line announced "120 per cent of this bet is done" over it.
-                    # The announcement catching up to the pixels is the whole of
-                    # the visible change.
+                    # `_percent` and not `round(100 * fraction)`, which is what
+                    # this said, so that one function in this app turns a ratio
+                    # into a width — the rule an invariant written twice is
+                    # guarded once.
+                    #
+                    # **It changes no number, and the reason is worth writing
+                    # down because the first version of this comment got it
+                    # wrong.** It claimed a pitch whose tasks outrun its bet
+                    # announced "120 per cent" over a bar `overflow: hidden` had
+                    # already clamped. `fraction` cannot exceed 1: `_weighed`
+                    # (`index.py`) sums the SAME per-child quantity for both
+                    # halves and the done half sums over a subset of the
+                    # children, so `done <= total` is structural. Constructed
+                    # deliberately — a bet of 1 holding two done tasks worth 3
+                    # and 2 — and it reads 5/5, not 5/1. The bet against its
+                    # contents is `_rollup_problems`, which is a different
+                    # sentence on a different line.
                     _percent(counted.done, counted.total),
                 ),
                 "control": "",

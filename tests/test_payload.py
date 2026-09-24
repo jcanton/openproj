@@ -43,6 +43,7 @@ from openproj.model import (
     within_the_calendar,
 )
 from openproj.render import STATIC, render_graph, render_table
+from openproj.render.tokens import _percent
 from openproj.web import create_app
 
 ORDINARY = (
@@ -697,3 +698,55 @@ def test_a_plan_with_nothing_wrong_draws_no_such_banner(tmp_path: Path):
 
         assert unusable_banner_says(got.text) == ""
         assert banner_says(got.text) == ""
+
+
+def test_a_rollup_can_never_be_more_than_finished(seed_root: Path):
+    """The structural fact the three `_percent` calls rest on, pinned because a
+    comment claiming it is not the same as a test holding it.
+
+    `_weighed` (`index.py`) sums the same per-child quantity for both halves of a
+    rollup and the done half sums over a subset of the children, so `done` cannot
+    exceed `total`. Which means routing the record page's two meters and the
+    deck's third through `_percent` moves no number — the clamp is defensive, and
+    an earlier version of the comment beside them claimed it fixed a meter
+    announcing "120 per cent" over a full bar. It does not, because there is no
+    such meter.
+
+    Constructed as well as swept: a bet of 1 holding two done tasks worth 3 and 2
+    is the shape that would produce one if anything could, and it reads 5/5. The
+    mismatch between a bet and its contents is real and is reported — by
+    `_rollup_problems`, in words, on its own line.
+    """
+    from openproj.index import build_index
+    from openproj.model import Config, load_repo
+
+    records, config, unreadable = load_repo(seed_root)
+    seed = build_index(records, config, date(2026, 8, 17), unreadable)
+
+    assert seed.progress, "the corpus rolled nothing up, so the sweep proved nothing"
+    for record_id, counted in seed.progress.items():
+        assert counted.done <= counted.total, f"{record_id}: {counted.text}"
+
+    outrun = build_index(
+        [
+            parse_text(
+                "---\nid: pitch-ee0001\nkind: pitch\ntitle: A small bet\n"
+                "status: in_progress\nperson_weeks: 1\n---\n\nB\n",
+                "pitches/pitch-ee0001.md",
+            ),
+            *(
+                parse_text(
+                    f"---\nid: task-ee000{n}\nkind: task\ntitle: T{n}\nstatus: done\n"
+                    f"parent: pitch-ee0001\nperson_weeks: {weeks}\n---\n\nB\n",
+                    f"tasks/task-ee000{n}.md",
+                )
+                for n, weeks in ((1, 3), (2, 2))
+            ),
+        ],
+        Config(schema_version=2),
+        date(2026, 8, 17),
+    )
+    rolled = outrun.progress["pitch-ee0001"]
+
+    assert (rolled.done, rolled.total) == (5.0, 5.0), rolled.text
+    assert _percent(rolled.done, rolled.total) == round(100 * rolled.fraction) == 100
