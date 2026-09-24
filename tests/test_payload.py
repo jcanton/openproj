@@ -570,9 +570,31 @@ def _switched(defaults: str, **others: str):
             id="the three that are always on",
         ),
         pytest.param(
-            "views: cycles\n", VIEWS, ["views is not a list, so every view is on"], id="a word"
+            "views: cycles\n",
+            VIEWS,
+            ["views is not a list, so every view is on; write it in brackets, as views: [cycles]"],
+            id="a word",
         ),
-        pytest.param("views:\n", VIEWS, ["views is not a list, so every view is on"], id="null"),
+        pytest.param(
+            "views:\n",
+            VIEWS,
+            [
+                "views is not a list, so every view is on; write it in brackets, as "
+                "views: [cycles, graph]"
+            ],
+            id="null",
+        ),
+        # And with a kind off, the default is not every view, and the sentence
+        # does not say it is: the nav under it has no Issues.
+        pytest.param(
+            "views: cycles, graph\nkinds: [note]\n",
+            tuple(one for one in VIEWS if one != "issues"),
+            [
+                "views is not a list, so every view is on but the Issues list, whose kind is "
+                "off; write it in brackets, as views: [cycles, graph]"
+            ],
+            id="a word, with a kind off",
+        ),
         pytest.param("views: [5]\n", (), [f"views names 5, {_NOT_A_VIEW}"], id="a number"),
         pytest.param(
             "views: [issues]\nkinds: [note]\n",
@@ -636,12 +658,15 @@ def test_views_resolve_to_what_the_setting_says_and_name_what_they_could_not_use
             id="not a kind",
         ),
         pytest.param(
-            "kinds: note\n", KIND_NAMES, ["kinds is not a list, so every kind is on"], id="a word"
+            "kinds: note\n",
+            KIND_NAMES,
+            ["kinds is not a list, so every kind is on; write it in brackets, as kinds: [note]"],
+            id="a word",
         ),
         pytest.param(
             "kinds: [note, note]\n",
             (*_PLANNED, "note"),
-            ["kinds names note twice"],
+            ["kinds names note twice; it counts once"],
             id="a duplicate",
         ),
     ],

@@ -1796,6 +1796,17 @@ SWITCHES_FILE = "config/defaults.yaml"
 _MISSING = object()
 
 
+def _as_a_list(key: str, raw: object, vocabulary: tuple[str, ...], example: str) -> str:
+    """How to write this key as the list it was not: the words it held, when every
+    one is a word the key takes — `views: cycles, graph` is two views and a pair
+    of brackets short of right — and an example otherwise. The likely mistake is
+    the simplest one to fix, and a sentence that names it without saying how is
+    half of what an error owes its reader."""
+    words = [word.strip() for word in raw.split(",")] if isinstance(raw, str) else []
+    shown = ", ".join(words) if words and all(word in vocabulary for word in words) else example
+    return f"write it in brackets, as {key}: [{shown}]"
+
+
 def _needs_met(view: str, kinds: Collection[str], views: Collection[str]) -> bool:
     need = VIEW_NEEDS.get(view)
     if need is None:
@@ -1835,7 +1846,12 @@ def resolve_switches(
 
     kinds = set(KIND_NAMES)
     if kinds_raw is not _MISSING and not isinstance(kinds_raw, list):
-        said("kinds", kinds_from, "kinds is not a list, so every kind is on")
+        said(
+            "kinds",
+            kinds_from,
+            "kinds is not a list, so every kind is on; "
+            + _as_a_list("kinds", kinds_raw, OPTIONAL_KINDS, "note"),
+        )
     elif isinstance(kinds_raw, list):
         kinds = set(_PLANNED_KINDS)
         # A list and not a set, because an item YAML hands back may be a list
@@ -1846,7 +1862,7 @@ def resolve_switches(
                 # Said once, where it first appeared. A repeat of a name already
                 # reported as unusable is the same sentence twice.
                 if item in OPTIONAL_KINDS:
-                    said("kinds", kinds_from, f"kinds names {item} twice")
+                    said("kinds", kinds_from, f"kinds names {item} twice; it counts once")
                 continue
             seen.append(item)
             if isinstance(item, str) and item in OPTIONAL_KINDS:
@@ -1871,7 +1887,24 @@ def resolve_switches(
     if views_raw is _MISSING:
         return default, frozenset(kinds), unusable
     if not isinstance(views_raw, list):
-        said("views", views_from, "views is not a list, so every view is on")
+        # "Every view is on" only when it is: the default leaves out the list of a
+        # kind that is off, and a sentence the nav under it contradicts is worse
+        # than none.
+        lists = [
+            RUNG[VIEW_NEEDS[view]].directory.capitalize() for view in VIEWS if view not in default
+        ]
+        but = (
+            f" but the {' and '.join(lists)} list{'s' if len(lists) > 1 else ''}, "
+            f"whose kind{'s are' if len(lists) > 1 else ' is'} off"
+            if lists
+            else ""
+        )
+        said(
+            "views",
+            views_from,
+            f"views is not a list, so every view is on{but}; "
+            + _as_a_list("views", views_raw, VIEWS, "cycles, graph"),
+        )
         return default, frozenset(kinds), unusable
 
     # Every view the list names, wherever in it: `[deck, cycles]` turns the deck
