@@ -40,6 +40,7 @@ from openproj.model import (
     KIND_NAMES,
     VIEWS,
     Config,
+    kind_off_warning,
     kind_refusal,
     parse_text,
     read_config,
@@ -741,7 +742,8 @@ def test_every_row_is_said_in_the_banner_and_by_check(
 
     assert unusable_in(page) == [f"config/defaults.yaml — {why}" for why in said]
     assert unusable_banner_says(page) == (
-        "" if not said else _ONE_SETTING if len(said) == 1 else _settings(len(said))
+        # Counted by setting: every row writes one key, however many lines it earns.
+        "" if not said else _ONE_SETTING
     )
 
     assert main(["check", str(root), "--today", _TODAY.isoformat()]) == (1 if said else 0)
@@ -787,11 +789,21 @@ def test_a_views_typo_is_said_on_every_page_a_server_answers_the_switched_off_on
             assert unusable_banner_says(got.text) == _ONE_SETTING, route
         assert {"/cycles", "/cycle/37", "/deck/37"} <= set(refused), refused
 
+    # Two lines, one setting: the headline counts what the reader has to open
+    # and fix, and that is one key.
     repo = whole_plan(tmp_path / "two", also="views: [cycels, grpah]\n")
     with TestClient(create_app(repo, auth="dev")) as client:
         for route in ("/", "/cycles"):
             got = client.get(route)
             assert unusable_in(got.text) == [typo, other], route
+            assert unusable_banner_says(got.text) == _ONE_SETTING, route
+
+    # Two settings, and the plural.
+    repo = whole_plan(tmp_path / "three", also="views: [cycels]\nkinds: [bug]\n")
+    with TestClient(create_app(repo, auth="dev")) as client:
+        for route in ("/", "/cycles"):
+            got = client.get(route)
+            assert len(unusable_in(got.text)) == 2, route
             assert unusable_banner_says(got.text) == _settings(2), route
 
 
@@ -897,9 +909,11 @@ def test_a_record_of_a_kind_that_is_off_loads_and_is_warned_about(tmp_path: Path
         for one in index.problems
         if one.field == "kind"
     )
+    said = kind_off_warning("issue", config)
+    assert said == f"{refused} Promote it or delete it, or put issue back in kinds."
     assert warned == [
-        ("issue-e00001", "warning", refused, 5),
-        ("issue-e00002", "warning", refused, 5),
+        ("issue-e00001", "warning", said, 5),
+        ("issue-e00002", "warning", said, 5),
     ]
 
 

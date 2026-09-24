@@ -21,7 +21,7 @@ import pytest
 from test_store import SEED, commit_directly
 
 from openproj.cli import main
-from openproj.model import VIEWS, kind_refusal, load_repo
+from openproj.model import VIEWS, kind_off_warning, kind_refusal, load_repo
 
 
 def test_check_exits_non_zero_when_the_repository_has_blockers(seed_root: Path, capsys):
@@ -939,7 +939,12 @@ def test_check_warns_about_a_record_of_a_kind_that_is_off(plan: Path, capsys):
     assert main(["check", str(plan)]) == 0
 
     lines = capsys.readouterr().out.splitlines()
-    assert f"warning: {record_id}: kind: {kind_refusal('issue', config)}" in lines
+    assert f"warning: {record_id}: kind: {kind_off_warning('issue', config)}" in lines
+    # And the warning says how to settle it, which a refusal at a door does not.
+    assert kind_off_warning("issue", config).startswith(kind_refusal("issue", config))
+    assert kind_off_warning("issue", config).endswith(
+        "Promote it or delete it, or put issue back in kinds."
+    )
     assert lines[-1] == "0 blockers, 1 warnings"
 
 

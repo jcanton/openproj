@@ -4351,6 +4351,7 @@ def _page(
     if current and current not in _PAGE_KEYS:
         raise ValueError(f"{current!r} is not a page: {sorted(_PAGE_KEYS)}")
     labels = dict(_NAV)
+    settings = len({(one.path, one.field) for one in unusable})
     return _compiled(_SHELL).render(
         title=title,
         content=Markup(content),
@@ -4394,11 +4395,14 @@ def _page(
         # the whole of it until `views` and `kinds` could be written wrong too —
         # a typo, a duplicate, a name that is always on — and the list below each
         # headline says which, in the setting's own words.
+        # Counted by setting and not by line: `views: [records, help, detail]` is
+        # one setting with three things wrong in it, and "3 settings" named a
+        # count the reader could not find anywhere in the file.
         unusable_headline=(
             "One setting in the plan could not be used as written, so this page was "
             "drawn without it."
-            if len(unusable) == 1
-            else f"{len(unusable)} settings in the plan could not be used as written, "
+            if settings == 1
+            else f"{settings} settings in the plan could not be used as written, "
             "so this page was drawn without them."
         ),
         # The plan's nav and not every view there is: `links.nav` is what

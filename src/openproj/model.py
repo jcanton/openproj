@@ -1978,6 +1978,25 @@ def kind_refusal(kind: str, config: Config) -> str | None:
     )
 
 
+def kind_off_warning(kind: str, config: Config) -> str | None:
+    """What the warning beside a record of a kind that is off says, or None.
+
+    `kind_refusal`'s sentence, and then what to do about it. A door refusing a
+    write has nothing to add — the reader has not written anything yet — but a
+    file that is already there is a disagreement the reader has to settle, and
+    an error that says what is wrong and not how to fix it is half of one. Either
+    way settles it: the record goes, into the plan or out of it, or the kind
+    comes back. Promote is named only for a kind that has it, which today is
+    every optional kind, because the day one does not, telling its reader to
+    press a button that is not there would be worse than not naming it.
+    """
+    refused = kind_refusal(kind, config)
+    if refused is None:
+        return None
+    way_out = "Promote it or delete it" if kind in INBOXES else "Delete it"
+    return f"{refused} {way_out}, or put {kind} back in kinds."
+
+
 # Who is on the hook for doing it, and whether anybody has to look at it after.
 # Split out of `_WORK_FIELDS` below on `Rung.staffed`, because the two tuples
 # answer two different questions and a project answers them differently: it is
@@ -4831,13 +4850,13 @@ def _kind_problems(records: list[Record], config: Config) -> Iterator[Problem]:
     carries — a number no rule agreed with, and the seed with it.
     """
     for record in records:
-        refused = kind_refusal(record.kind, config)
-        if refused is not None:
+        warned = kind_off_warning(record.kind, config)
+        if warned is not None:
             yield Problem(
                 severity="warning",
                 record_id=record.id,
                 field="kind",
-                sentence=refused,
+                sentence=warned,
                 rule_version=5,
             )
 
