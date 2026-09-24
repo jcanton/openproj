@@ -17,7 +17,7 @@ from markupsafe import escape
 from pages import elements, headings, lit, render_source, selects, tags
 
 from openproj.index import Index, build_index
-from openproj.model import KIND_NAMES, Config, load_repo
+from openproj.model import KIND_NAMES, VIEW_NEEDS, VIEWS, Config, load_repo
 from openproj.render import (
     PRIORITIES,
     PRIORITY_GLYPH,
@@ -176,27 +176,54 @@ def test_the_export_carries_drawings_as_well_as_assets(seed_index, tmp_path: Pat
     assert (out / "drawings" / "draw-a1b2c3.png").is_file()
 
 
-def test_the_export_writes_only_the_views_the_plan_has(seed_index: Index, tmp_path: Path):
-    """A plan with three views exports those three, the landing, the record page
-    and Help — and no written page links to a file that was not written.
+# The views a plan has with each one off on its own, and whatever cannot be on
+# without it (`VIEW_NEEDS`) off with it — Cycles takes the deck.
+_EACH_VIEW_OFF_ALONE = [
+    tuple(one for one in VIEWS if one != view and VIEW_NEEDS.get(one) != view) for view in VIEWS
+]
+
+
+@pytest.mark.parametrize(
+    "views",
+    [("cycles", "graph", "timeline"), *_EACH_VIEW_OFF_ALONE],
+    ids=["icon4py", *(f"no-{view}" for view in VIEWS)],
+)
+def test_the_export_writes_only_the_views_the_plan_has(
+    seed_index: Index, tmp_path: Path, views: tuple[str, ...]
+):
+    """A plan exports the views it has, the landing, the record page and Help —
+    and no written page links to a file that was not written. The first row is
+    icon4py's; the rest are each view off alone.
 
     The export wrote all ten files whatever the plan said, and drew every page
     with the bare `STATIC`, whose nav is every view. Cutting the files without the
     links would leave `table.html` named in the nav of every page it did write, so
     the links are read out of the parsed pages rather than trusted: a page drawn
     with the wrong `Links` fails here on its first nav item.
+
+    Into a directory an export with every view already wrote, which is how the
+    README runs it: the file of a view that is now off is gone rather than left
+    there drawing the plan as it was.
     """
-    views = ("cycles", "graph", "timeline")
+    everything = render_static(seed_index, tmp_path)
+    assert len(everything) == 10, everything
     written = render_static(seed_index.model_copy(update={"views": views}), tmp_path)
 
-    assert written == (
+    assert set(written) == {
         "index.html",
         "detail.html",
-        "cycles.html",
-        "graph.html",
-        "timeline.html",
         "help.html",
-    )
+        *(f"{view}.html" for view in views if view != "deck"),
+    }
+    if views == ("cycles", "graph", "timeline"):
+        assert written == (
+            "index.html",
+            "detail.html",
+            "cycles.html",
+            "graph.html",
+            "timeline.html",
+            "help.html",
+        )
     assert sorted(path.name for path in tmp_path.iterdir()) == sorted(written)
     linked: set[str] = set()
     for page in written:
@@ -210,7 +237,7 @@ def test_the_export_writes_only_the_views_the_plan_has(seed_index: Index, tmp_pa
                 linked.add(path)
     # Not vacuous: every view that is on was found as a link somewhere, so the
     # parse above read the nav it was meant to be reading.
-    assert {f"{view}.html" for view in views} <= linked, linked
+    assert {f"{view}.html" for view in views if view != "deck"} <= linked, linked
 
 
 def fetches_nothing(body: str, where: str) -> None:

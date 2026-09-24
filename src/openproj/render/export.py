@@ -46,6 +46,15 @@ def render_static(
     what every written page links to, so which files exist and which files are
     linked are one answer rather than two that could disagree — `deck` is a view
     and has no file here at all.
+
+    **And a file of a view that is off is removed**, if an earlier export into
+    the same directory wrote it. Before views could be switched off every file in
+    the table below was rewritten on every run, so none could go stale; now a
+    plan that commits `views: [cycles]` and is exported into the `out/` the README
+    names would leave last run's `table.html` there, drawing the old plan with the
+    old nav, for any bookmark or publish of the directory. Only the names in the
+    table and never a glob: this is a directory somebody chose, and the export
+    owns its own ten files in it and nothing else.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     # Both directories, and by name rather than by "every directory here": the
@@ -81,6 +90,7 @@ def render_static(
         ("help.html", None, partial(render_help, index, links)),
     ):
         if item is not None and item not in links.nav:
+            (out_dir / name).unlink(missing_ok=True)
             continue
         (out_dir / name).write_text(draw(), encoding="utf-8")
         written.append(name)
