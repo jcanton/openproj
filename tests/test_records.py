@@ -301,7 +301,8 @@ def test_a_predicate_in_the_url_filters_rows_and_an_unmatched_one_is_a_sentence(
     assert shown == untracked, "the box and the server disagree about ?predicate="
     assert none_shown == 0
     assert hidden is False
-    assert headline == "No record matches this search."
+    # A flag in the address is a filter and not a search: the box is empty.
+    assert headline == "No record matches these filters."
 
 
 # --------------------------------------------------------------------------- #
@@ -457,6 +458,68 @@ def test_the_landing_says_a_filter_from_the_address_is_on(tmp_path: Path):
     # control that does nothing most of the time.
     quiet = run_js(page, "document.getElementById('unfilter').hidden", page=True, here="/")
     assert quiet["value"] is True
+
+
+def test_the_landing_names_the_filters_from_the_address_and_what_hid_every_row(
+    tmp_path: Path,
+):
+    """A Clear button is the only thing the test above holds, and it says a
+    filter is on without saying which: on `/?owner=ann&status=ready` the line
+    beside the box went on reading "Everything written down in this plan." over
+    a list of one. And a bookmark whose filter now matches nothing — an owner who
+    left — said "Every record is hidden by what is in the box" over an empty box,
+    which is finding F1: an empty list pointing at the one control that did not
+    cause it.
+
+    The words are the menus' words, so a project is its title and a status its
+    label, and a filter typed in the box as well is named as both.
+    """
+    path = plan_repo(tmp_path)
+    commit_directly(path, PLAN, "seed", when=1_000_000)
+    with TestClient(create_app(path, auth="dev")) as client:
+        page = client.get("/").text
+
+    look = (
+        "(() => { const row = document.getElementById('records-empty');"
+        " const said = () => [document.getElementById('records-about').textContent,"
+        "   row.hidden ? '' : row.querySelector('.headline').textContent,"
+        "   row.hidden ? '' : row.querySelector('.hint').textContent];"
+        " const before = said();"
+        " document.getElementById('unfilter').onclick();"
+        " return [before, said()]; })()"
+    )
+    itself = ["Everything written down in this plan.", "", ""]
+
+    def asked(here: str) -> list[list[str]]:
+        answer = run_js(page, look, page=True, here=here)
+        assert not [e for e in answer["errors"] if e.startswith("expression:")], answer["errors"]
+        before, after = answer["value"]
+        assert after == itself, f"{here}: Clear did not give the page its own sentence back"
+        return before
+
+    assert asked("/?owner=ann&status=ready") == [
+        "Filtered by Status: Ready and Owner: ann.",
+        "",
+        "",
+    ]
+    assert asked("/?project=proj-a10000")[0] == "Filtered by Project: Aroma engine."
+    assert asked("/?owner=bo&owner=nobody-left")[0] == "Filtered by Owner: bo or nobody-left."
+    assert asked("/?owner=nobody-left") == [
+        "Filtered by Owner: nobody-left.",
+        "No record matches these filters.",
+        "Every record is hidden by the filters named above. Clear filters shows them all.",
+    ]
+    assert asked("/?owner=nobody-left&q=numpy") == [
+        "Filtered by Owner: nobody-left.",
+        "No record matches this search.",
+        "Every record is hidden by what is in the box and the filters named above.",
+    ]
+    # The box alone is the sentence it always was.
+    assert asked("/?q=zzyzzx")[1:] == [
+        "No record matches this search.",
+        "Every record is hidden by what is in the box.",
+    ]
+    assert asked("/")[0] == itself[0]
 
 
 def test_an_unreadable_query_goes_to_the_error_region_not_to_a_row(tmp_path: Path):
