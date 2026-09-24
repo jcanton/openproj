@@ -1411,6 +1411,33 @@ def test_the_seed_is_written_at_the_newest_schema_version(demo_root: Path):
     assert load_config(demo_root).schema_version == LATEST_SCHEMA_VERSION
 
 
+def test_a_new_plan_and_the_demo_write_every_view_and_kind_out(demo_root: Path):
+    """`views` and `kinds` absent already mean everything, so writing them out
+    changes nothing either plan does — and it is the only way somebody reading
+    `config/defaults.yaml` learns the two switches exist. A setting nobody can see
+    is a setting nobody uses.
+
+    Held to `VIEWS` and to the optional kinds off the ladder, so a ninth view that
+    neither file names fails here instead of being a switch only the source knows
+    about; and each list is put through the resolver as well, since every name it
+    could not use is a blocker in `openproj check`."""
+    from ruamel.yaml import YAML
+
+    from openproj.bootstrap import Options, plan_files
+    from openproj.model import OPTIONAL_KINDS, resolve_switches
+
+    written = {
+        "the demo": (demo_root / "config" / "defaults.yaml").read_text(encoding="utf-8"),
+        "openproj init": plan_files("garden", Options())["config/defaults.yaml"],
+    }
+    for who, text in written.items():
+        said = YAML(typ="safe", pure=True).load(text)
+        assert said.get("views") == list(VIEWS), f"{who} does not write every view out"
+        assert said.get("kinds") == list(OPTIONAL_KINDS), f"{who} does not write every kind out"
+        views, _, unusable = resolve_switches(said["views"], said["kinds"], who, who)
+        assert views == VIEWS and unusable == [], (who, unusable)
+
+
 def test_serve_refuses_github_auth_without_an_org(seed_root: Path, monkeypatch, capsys):
     """`--org` defaulted to one team's org, so every other deployment that forgot
     the flag refused everybody outside that team, silently. Now it is a refusal
