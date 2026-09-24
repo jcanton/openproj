@@ -394,6 +394,7 @@ def render_help(index: Index, links: Links = STATIC) -> str:
         links,
         "help",
         index.unreadable,
+        index.unusable,
         # Five documents in one page: the one page in this app that is certain to
         # be longer than any window. The contents column is `position: sticky` and
         # now holds against this box rather than against the window, which is the

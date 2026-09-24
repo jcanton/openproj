@@ -97,10 +97,19 @@ def nav_of(page: str) -> list[tuple[str, str, bool]]:
 
 
 class _Unreadable(HTMLParser):
-    """The shell's "not a record" banner: its headline, and each file it lists."""
+    """One of the shell's two file banners: its headline, and each file it lists.
 
-    def __init__(self) -> None:
+    `which` is the section id — `unreadable` for the plan files that are not
+    records, `unusable` for the config and cycle files that read and hold a
+    number nothing can compute with. One parser for both because the two sections
+    have the same shape on purpose and a second copy of this would be a second
+    thing to keep in step; the id is the only thing that differs, and it is the
+    only thing that tells a reader them apart.
+    """
+
+    def __init__(self, which: str = "unreadable") -> None:
         super().__init__(convert_charrefs=True)
+        self._which = which
         self.found: list[str] = []
         self.headline = ""
         self._depth = 0
@@ -109,7 +118,7 @@ class _Unreadable(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         found = dict(attrs)
-        if found.get("id") == "unreadable":
+        if found.get("id") == self._which:
             self._depth = 1
             # A banner that exists says at least this much, so an empty one is
             # still distinguishable from no banner at all.
@@ -155,6 +164,27 @@ def unreadable_in(page: str) -> list[str]:
     parser = _Unreadable()
     parser.feed(page)
     return parser.found
+
+
+def unusable_in(page: str) -> list[str]:
+    """ "<path> — <why>" for each file the page says holds a number that is not one.
+
+    `unreadable_in`'s sibling, and parsed rather than searched for the reason
+    that one gives — with a second one here: the two banners are drawn with the
+    same `class="unreadable"`, because they are the same weight and a second
+    colour would be a channel carrying nothing. A substring test cannot tell them
+    apart at all; the section id can.
+    """
+    parser = _Unreadable("unusable")
+    parser.feed(page)
+    return parser.found
+
+
+def unusable_banner_says(page: str) -> str:
+    """The headline of that banner, or "" when the page draws none."""
+    parser = _Unreadable("unusable")
+    parser.feed(page)
+    return parser.headline
 
 
 def banner_says(page: str) -> str:

@@ -131,6 +131,29 @@ def what_json_can_carry(data: object) -> object:
     return data
 
 
+def a_number(value: object) -> bool:
+    """Whether `value` is a number anybody can plan against.
+
+    `.inf`, `-.inf` and `.nan` are all legal YAML and all pass a pydantic
+    `float`, so `person_weeks: .inf` is a size the model accepts and no
+    arithmetic can use. The question is asked here rather than at the dozen
+    places that ask it, for the reason `days_after` exists: an invariant written
+    twice is guarded once, and the rounding sites that raise on these three were
+    found five at a time, on `main`, under a green suite.
+
+    `None` answers False, because every caller's next move is the same for a size
+    nobody typed and a size that is not a number: draw the dash. It takes
+    `object` and not `float | None` so that the one question can also be put to a
+    value straight out of a file, before anything has decided what it is.
+
+    The predicate and not a clamp. Clamping belongs where the arithmetic is —
+    `within_the_calendar` for a length in days, `_percent` for a bar's width —
+    and those two already do it. This is for the places whose honest answer is
+    not a number at all: what a reader is shown, and what `openproj check` says.
+    """
+    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
+
+
 def days_after(day: date, days: float) -> date:
     """`day` moved `days` calendar days, stopping at the ends of the calendar.
 
@@ -308,6 +331,39 @@ class Unreadable(BaseModel):
     """
 
     path: str
+    why: str
+
+
+class Unusable(BaseModel):
+    """A file in the plan that reads, and holds a number nothing can compute with.
+
+    `Unreadable`'s sibling and deliberately not `Unreadable` itself: that one says
+    "this file is not a record, so nothing in it is in the plan", and of a
+    `config/defaults.yaml` holding `cooldown_weeks: .inf` every word of that is
+    false. The file parsed, the settings around the bad one are in force, and the
+    pages render — `within_the_calendar` and `_percent` see to that. What is
+    wrong is one value, and the consequence is a date or a bar drawn at a bound
+    nobody chose.
+
+    Deliberately not a `Problem` either, for the reason `Unreadable` gives: a
+    Problem is keyed by record id, every page hangs one on that record's row, and
+    the table's headline count links to a filter over records. The two files this
+    can be about — `config/*.yaml` and a cycle — have no record between them, so
+    a Problem here would add to a count whose filter can never show it.
+
+    A record's own `person_weeks: .inf` is NOT one of these. That record exists,
+    it has a row and a page, and `_problems_for` reports it there, beside the
+    field, like every other thing wrong with a record.
+
+    `field` as well as `path`, because these files hold twenty settings and the
+    reader has to be sent to one line rather than to a file. `why` says what is
+    drawn instead, not what the value is: "so every cycle's cool-down is drawn at
+    the end of the calendar" is actionable where "cooldown_weeks is inf" is the
+    thing they can already see.
+    """
+
+    path: str
+    field: str
     why: str
 
 
@@ -538,9 +594,46 @@ class Cycle(BaseModel):
             return []
         return [one for one in value if isinstance(one, str)]
 
+    def rate(self, who: str, nominal: float = 1.0) -> float:
+        """This person's availability in this cycle, as a number.
+
+        **The one place a typed availability becomes a number anything computes
+        with**, and the reason it is one place is the fifteen readouts on the
+        other side of it. `availability` is a `dict[str, float]` off a file, so
+        `.inf`, `-.inf` and `.nan` all reach it — and from here the value runs
+        into `capacity`, into the scheduler's `_staffed_at`, into `budget_weeks`
+        and out to `{staffed_at:g} full-time between them`, `{capacity:.1f} wk`
+        and a dozen more. Every one of those printed `inf` off one hand edit, and
+        guarding them one at a time is fifteen chances to miss one.
+
+        A rate that is not a number falls back to `nominal` — which is where the
+        line already sent a rate of zero and a person not on the roster at all,
+        both for the reason `_availability_of` (`schedule.py`) writes down: the
+        scheduler cannot fix a planning mistake by refusing to produce a date.
+        The reader is told which file it was in by `unusable_numbers`, on every
+        page, rather than by a bar that silently means something else.
+
+        `nominal` is guarded too and not taken on trust: it is
+        `config.nominal_availability`, which is a hand-edited config value of
+        exactly the same kind, and a fallback that can itself be `.inf` is not a
+        fallback. 1.0 is `Config`'s own default for it.
+
+        **A stated zero is zero here, and it is the nominal rate in the
+        scheduler, and that is not an oversight in either.** They are two
+        questions: this one is "what rate does the file state for this person in
+        this cycle", where zero is a thing somebody typed and means it; the
+        scheduler's is "what do we divide the appetite by", where zero is a
+        division by zero and no forecast at all. `_availability_of`
+        (`schedule.py`) asks this and then applies its own floor on top, so the
+        two answers stay different on purpose and the non-finite case is
+        answered once.
+        """
+        stated = self.availability.get(who)
+        return stated if a_number(stated) else (nominal if a_number(nominal) else 1.0)
+
     def capacity(self, who: str, nominal: float = 1.0) -> float:
         """Weeks of work this person can hold in this cycle."""
-        return self.availability.get(who, nominal) * self.build_weeks
+        return self.rate(who, nominal) * self.build_weeks
 
 
 class Person(BaseModel):
@@ -675,6 +768,17 @@ class Config(BaseModel):
     # login in one and not the other is the normal state of both.
     people: dict[str, Person] = {}
 
+    # Which config file each setting above was taken from, keyed by field name.
+    # Private for the same reason `Record._source` is: it is where the value came
+    # from and not part of the value, so `serialise` must never write it back.
+    #
+    # Here because the configuration is a MERGE of up to four files and a reader
+    # sent to the wrong one is worse off than a reader sent to none — this
+    # repository has the rule written down about line numbers in documents and it
+    # is the same rule. `read_config` is the only writer, and it fills this at the
+    # moment it accepts a key, which is the one moment both halves are in hand.
+    _from: dict[str, str] = PrivateAttr(default_factory=dict)
+
     @field_validator("repositories")
     @classmethod
     def _repositories_are_owner_and_repo(cls, given: list[str]) -> list[str]:
@@ -700,6 +804,22 @@ class Config(BaseModel):
                     "'kilnlab/kiln4py'"
                 )
         return given
+
+    def nominal(self) -> float:
+        """`nominal_availability`, as a number anything can divide by.
+
+        The field stays exactly as the file wrote it, because
+        `unusable_numbers` has to be able to say that it is wrong and a value
+        repaired at parse time is a value nobody can report. So the repair is
+        here, at the one place the setting is read as a rate, and the two readers
+        — `Cycle.rate` and `_staffed_at` (`schedule.py`) — both come through it.
+
+        1.0 is this field's own default. Zero falls back too and always has: it
+        is the divisor in `size / staffed_at`, and the line it replaced ended
+        `or 1.0` for exactly that reason.
+        """
+        stated = self.nominal_availability
+        return stated if a_number(stated) and stated else 1.0
 
     def with_people(self, people: list[Person]) -> Config:
         """Carried on the config for the same reason cycles are: nothing
@@ -840,17 +960,28 @@ def read_config(
     """
     loaded, refused = readable(paths, lambda path: _config_mapping(path, text_of(path)))
     data: dict[str, object] = {}
+    # Where each accepted setting came from. Recorded as the merge happens rather
+    # than worked out afterwards: afterwards there is only the merged mapping,
+    # and which of four files a key was in is exactly what it no longer says.
+    came_from: dict[str, str] = {}
     for path, mapping in loaded:
         # Unknown keys are ignored so a repository with a half-written config
         # still loads rather than taking the whole index down.
-        candidate = {**data, **{k: v for k, v in mapping.items() if k in Config.model_fields}}
+        taken = {k: v for k, v in mapping.items() if k in Config.model_fields}
+        candidate = {**data, **taken}
         try:
             Config.model_validate(candidate)
         except ValidationError as error:
             refused.append(Unreadable(path=path, why=why_it_will_not_read(error, path)))
             continue
         data = candidate
-    return Config.model_validate(data), refused
+        # After the validation and not before it, so a file that is dropped
+        # leaves no claim behind on the keys it was going to set. Last write
+        # wins, which is the same rule the merge above runs on.
+        came_from.update(dict.fromkeys(taken, path))
+    config = Config.model_validate(data)
+    config._from = came_from
+    return config, refused
 
 
 def load_config(root: Path) -> Config:
@@ -1784,6 +1915,92 @@ def person_path(login: str) -> str | None:
     return f"{PEOPLE_DIR}/{login}.md" if LOGIN_PATTERN.match(login) else None
 
 
+def cycle_path(number: int) -> str:
+    """`cycles/0037.md` — the one flat name a cycle record has.
+
+    Here rather than in `web.py`, where it was written, because it now has a
+    second reader: `unusable_numbers` has to send somebody to the file a bad
+    availability is in, and it has only the cycle's number to go on. Two copies
+    of a path format is the defect this repository keeps paying for in a
+    different currency each time — the write door and the reader disagreeing
+    about which file is which — so the format is spelled once.
+    """
+    return f"{_CYCLE_DIR}/{number:04d}.md"
+
+
+# The settings a person types as a number, and what is drawn instead when the
+# number is not one. Data rather than four branches, so that a fifth float added
+# to `Config` is one line here and not a rule somebody forgets to write.
+#
+# Each sentence says the CONSEQUENCE and not the value: "cooldown_weeks is inf"
+# is the thing already on screen, and what a reader cannot see is which of the
+# dates in front of them came out of it.
+_CONFIG_NUMBERS = {
+    "cooldown_weeks": "so every cycle's cool-down is drawn at the end of the calendar",
+    "nominal_availability": (
+        "so everybody not named in a cycle is counted at one full-time person "
+        "instead, which is this setting's own default"
+    ),
+    "dates_within_weeks_of_a_cycle": (
+        "so no typed date is ever reported as falling outside the plan's cycles"
+    ),
+}
+
+
+def unusable_numbers(config: Config) -> list[Unusable]:
+    """Every number in this plan's configuration that is not a number.
+
+    Records are not walked here and that is the division `Unusable` exists for: a
+    record with `person_weeks: .inf` has a row, a page and a field to hang the
+    complaint on, so `_problems_for` reports it there like everything else wrong
+    with a record. A config file and a cycle file have no record between them.
+
+    **Nothing here raises and nothing here clamps.** By the time this runs the
+    arithmetic has already been made safe — `within_the_calendar` for the dates,
+    `_percent` for the bars — so the pages render either way. What was missing
+    was anybody being told, which is how five of these lived on `main` under a
+    green suite of 2400: `openproj check` reported byte-identical counts on a
+    corpus with `.inf` in it and on one without.
+
+    Sorted by path so the banner and `openproj check` list them in the order
+    somebody would open the files, the same rule `load_repo` sorts its
+    unreadable files by.
+    """
+    found = [
+        Unusable(
+            # `config/` when the setting is at its default and no file claimed
+            # it, which is not a state this can be reached in — a default is a
+            # literal in `Config` and every one of them is finite. It is the
+            # honest fallback rather than a name invented for the line.
+            path=config._from.get(field, "config/"),
+            field=field,
+            why=f"{field} is not a number, {said}",
+        )
+        for field, said in _CONFIG_NUMBERS.items()
+        if not a_number(getattr(config, field))
+    ]
+    found.extend(
+        Unusable(
+            path=cycle_path(number),
+            field="availability",
+            # What `Cycle.rate` does with it, and not what it would do without
+            # the guard: the page draws an ordinary bar off the nominal rate, so
+            # the sentence has to say that the bar is honest arithmetic on a
+            # number this person did not choose. "The bar is wrong" would send
+            # somebody looking at a bar that is right.
+            why=(
+                f"availability for {who} is not a number, so cycle {number} counts "
+                "them at the plan's nominal rate rather than at the rate this file "
+                "states"
+            ),
+        )
+        for number, cycle in sorted(config.plans.items())
+        for who, rate in sorted(cycle.availability.items())
+        if not a_number(rate)
+    )
+    return sorted(found, key=lambda one: (one.path, one.field))
+
+
 def login_of(source: str) -> str:
     """The login a person record is for, read off its path.
 
@@ -2032,7 +2249,24 @@ def size_weeks(record: Record) -> float | None:
     keeps answering on its behalf.
     """
     stated = getattr(record, "person_weeks", None)
-    return None if stated is None else float(stated)
+    # **`.inf` and `.nan` answer None here, and that is the source fix.** All
+    # three are legal YAML and all three pass a pydantic `float`, so a
+    # hand-edited size arrives as an ordinary number and every consumer below
+    # treated it as one: `_weighed` summed it into a rollup, `Progress.fraction`
+    # divided by it, and `round(100 * fraction)` raised — on the record page
+    # twice and on the deck once, which is every record at a review meeting.
+    #
+    # None rather than a clamp, because None is the answer this function already
+    # has for a size nobody can use and every caller already handles: an unsized
+    # rung is LEFT OUT of a rollup rather than counted at zero (see `_weighed`),
+    # so a parent's percentage stays a true statement about the children whose
+    # weeks are known instead of becoming a true statement about nothing.
+    #
+    # It does make this record read as unsized, which is a different sentence
+    # from "sized wrongly" — so the rule in `_problems_for` says which it is,
+    # beside the field, rather than leaving the reader with the ready gate's
+    # "needs person_weeks" over a file that plainly has one.
+    return None if not a_number(stated) else float(stated)
 
 
 def workers_on(record: Record) -> list[str]:
@@ -3898,6 +4132,44 @@ def _problems_for(
         yield "blocker", "id", f"id must match {ID_PATTERN.pattern}", 1
     elif not record.id.startswith(_PREFIX_FOR_KIND[record.kind] + "-"):
         yield "blocker", "id", f"id prefix must match kind {record.kind}", 1
+
+    # A size that is not a number. `.inf`, `-.inf` and `.nan` are legal YAML and
+    # pass a pydantic `float`, so this is the one thing a person can type into
+    # `person_weeks` that the model accepts and no arithmetic can use — and until
+    # this rule existed, `openproj check` reported byte-identical counts on a
+    # corpus holding one and on a corpus holding none, while the record page and
+    # the deck answered 500 off it.
+    #
+    # `getattr`, because only two of the six rungs declare the field at all and a
+    # product carries none; the rung loop above is what reports it on one that
+    # should not have it.
+    #
+    # **Stamped 1, and alone with the rung rule in being stamped below the
+    # current version.** Grandfathering exists so that a requirement invented
+    # today does not turn somebody's year-old file red — a rule about a field
+    # that did not have to be filled in when the file was written. No file
+    # predates arithmetic. `person_weeks: .inf` has never been a size anybody
+    # could plan against, at any schema version, and it broke pages on the day it
+    # was committed; stamped 6 it would report a warning where it means a
+    # blocker, on every record that exists today, for ever.
+    #
+    # A blocker and not a warning for the same reason: `size_weeks` now answers
+    # None for it, so the record is out of every rollup it belongs in and the
+    # plan is quietly smaller than it says it is.
+    size = getattr(record, "person_weeks", None)
+    if size is not None and not a_number(size):
+        yield (
+            "blocker",
+            "person_weeks",
+            # The value said back, because the three spellings YAML has for this
+            # do not all survive a round trip through a reader's eye: `.nan`,
+            # `.NaN` and `.NAN` are one value, and somebody looking for the
+            # literal they typed needs to be told which line to look at rather
+            # than which characters to search for.
+            f"person_weeks is {size}, which is not a size anything can be planned "
+            "against — this record is left out of every rollup it is under",
+            1,
+        )
 
     # What this rung is not allowed to carry, off the ladder rather than out of a
     # validator per field. A product is a container: it groups the codebases a

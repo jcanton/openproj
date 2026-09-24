@@ -1672,10 +1672,23 @@ def test_a_size_that_is_not_a_number_is_one_bad_row(size: float):
     every page 500'd on a committed value that no rule refuses.
 
     The route refuses the number now. This is the file somebody wrote by hand.
-    """
-    spans, _ = run([task("aaa001", size=size), task("aaa002", owner="bo")])
 
-    assert spans["task-aaa001"].unscheduled
+    **What the bad row is changed, and this is where it is recorded.** It used to
+    be a span flagged `unscheduled`: the clamp landed the record at the end of the
+    calendar and the timeline drew a bar with a mark on it. `size_weeks` answers
+    None for such a value now, so the record is exactly as unsized as one nobody
+    has typed a number for — no span, no bar, and a blocker beside it on its own
+    row saying the size is not a size. A record whose length is nonsense is not a
+    record with a nonsense length; asserted against a genuinely unsized task in
+    the same run, so the claim is "these two are the same thing" rather than a
+    literal nobody can check.
+    """
+    spans, _ = run(
+        [task("aaa001", size=size), task("aaa002", owner="bo"), task("aaa003", size=None)]
+    )
+
+    assert "task-aaa001" not in spans
+    assert "task-aaa003" not in spans, "the control moved, so this proves nothing"
     assert spans["task-aaa002"] == Span(
         start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
     )

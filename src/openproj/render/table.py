@@ -5238,4 +5238,5 @@ def render_table(
         links,
         "table",
         index.unreadable,
+        index.unusable,
     )

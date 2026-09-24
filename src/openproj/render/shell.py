@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from .. import __version__
 from ..index import Index
-from ..model import Unreadable
+from ..model import Unreadable, Unusable
 from ..themes import FAMILIES
 from ..vendor import _font_uri
 from .env import _compiled
@@ -3334,6 +3334,27 @@ function fitRoom() { roomSlack = 0; settleRoom(4); }
 <p class="hint">Fix them in git and reload. Everything else in the plan is here.</p>
 </section>
 {% endif -%}
+{#- Its sibling, and a second <section> rather than more <li>s in the one above:
+    the two say opposite things about the same kind of file. That banner says the
+    file is not in the plan; this one says it is, that everything else in it is in
+    force, and that one value in it is not a number — so the page in front of you
+    is drawing a date or a bar off a bound nobody chose. Folded into one list the
+    headline would have to be true of both, and the only sentence true of both is
+    "something is wrong with some files", which is not a sentence anybody can act
+    on.
+
+    `.unreadable` for the paint, because the two ARE the same weight and a second
+    colour would be a channel carrying nothing. The `id` differs so a test and a
+    reader can tell them apart, which is the only thing that has to. -#}
+{% if unusable %}<section id="unusable" class="unreadable">
+<p class="headline">{{ unusable_headline }}</p>
+<ul>{% for one in unusable %}
+  <li><code>{{ one.path }}</code> — {{ one.why }}</li>{% endfor %}
+</ul>
+<p class="hint">Fix them in git and reload. Everything else in the plan is here,
+  and so is the rest of each of these files.</p>
+</section>
+{% endif -%}
 {#- The pile banner: the loud middle of the deferred push's escalation, between
     the table's quiet per-row mark and the 503 the store answers past the pile
     ceiling (design/deferred-push.md, "Saying it on the page"). In the shell
@@ -4159,6 +4180,7 @@ def _page(
     links: Links = STATIC,
     current: str = "",
     unreadable: Sequence[Unreadable] = (),
+    unusable: Sequence[Unusable] = (),
     origin: str | None = None,
     fills: bool = False,
     cardtitles: dict[str, str] | None = None,
@@ -4194,6 +4216,15 @@ def _page(
     than by each page for the same reason the nav mark is decided here: eight
     entry points is eight places to forget, and the one page that forgot would be
     a page that silently draws a plan short.
+
+    `unusable` is its sibling and rides in the same banner: the config and cycle
+    files that READ, and hold a number nothing can compute with. A separate
+    parameter and a separate sentence, because every word of the one above is
+    false about it — those files are in the plan, their other settings are in
+    force, and this page is drawing dates and bars off the value rather than
+    leaving them out. Twelve entry points now, and
+    `test_every_page_says_so_when_a_config_file_holds_a_number_that_is_not_one`
+    is the tripwire that a thirteenth cannot forget it.
     """
     if current and current not in _PAGE_KEYS:
         raise ValueError(f"{current!r} is not a page: {sorted(_PAGE_KEYS)}")
@@ -4224,6 +4255,7 @@ def _page(
         hillgeom=hill_geometry(),
         fills=fills,
         unreadable=list(unreadable),
+        unusable=list(unusable),
         # The sentence is built here rather than in the template, because English
         # is not something Jinja should be doing arithmetic about and "1 files
         # are not records" is the kind of copy that tells a reader nobody looked.
@@ -4232,6 +4264,16 @@ def _page(
             if len(unreadable) == 1
             else f"{len(unreadable)} files in the plan are not records, "
             "so nothing in them is on this page."
+        ),
+        # Built here for the same reason, and worded from the reader's side of
+        # it: what is wrong is not that a file is broken but that a number on
+        # this page came from somewhere other than the plan.
+        unusable_headline=(
+            "One setting in the plan is not a number, so something on this page was "
+            "drawn without it."
+            if len(unusable) == 1
+            else f"{len(unusable)} settings in the plan are not numbers, so things on "
+            "this page were drawn without them."
         ),
         nav=[
             {"href": getattr(links, key), "label": label, "current": key == current}
