@@ -7138,6 +7138,14 @@ def test_a_view_that_is_off_is_off_everywhere(tmp_path: Path, view: str):
         if "deck" in off:
             refused.append(f"/detail/{PITCH}?view=slide")
         assert refused, f"{view} has no address to switch off"
+        # The switch is asked before the number: with the view off, a number no
+        # cycle can have is still this page, and not a 404 about which numbers
+        # a cycle may have, about a page the plan does not have at all.
+        refused += [
+            template.replace("{number}", "99999")
+            for template, one in SWITCHED.items()
+            if one in off and "{number}" in template
+        ]
         for url in refused:
             got = client.get(url)
             assert got.status_code == 404, f"{url}: {got.status_code}"
@@ -7254,6 +7262,24 @@ def test_a_kind_that_is_off_is_refused_at_every_door(tmp_path: Path, kind: str):
         ]
         assert record_id in listed, listed
 
+    # The create form asks the switch after the word and before the sign-in: a
+    # signed-out reader told to sign in would sign in and then be told the kind
+    # is off. Only a GitHub-authenticated app can say "sign in" — under `dev`
+    # every request may write — and nobody is signed in to this one.
+    signed_out = create_app(
+        repo,
+        auth="github",
+        org=ORG,
+        secret=SECRET,
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+    )
+    with TestClient(signed_out) as client:
+        form = client.get(f"/new?kind={kind}")
+        assert form.status_code == 404, form.status_code
+        assert _says(form.text, "kinds")
+        assert client.get("/new?kind=task").status_code == 403, "nobody is signed in"
+        assert client.get("/new?kind=milestone").status_code == 422, "a typo is a typo"
 
 
 @pytest.mark.parametrize("kind", OPTIONAL_KINDS)
