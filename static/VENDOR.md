@@ -20,6 +20,9 @@ of its own; "Mermaid, and why it is fetched," below.
 | `elk-LICENSE.txt` | 0.9.3 | EPL-2.0 | licence text for the file above |
 | `ace.js` | 1.44.0 | **BSD-3-Clause** | `src-min-noconflict/ace.js` from https://registry.npmjs.org/ace-builds/-/ace-builds-1.44.0.tgz |
 | `keybinding-vim.js` | 1.44.0 | BSD-3-Clause | `src-min-noconflict/keybinding-vim.js` from the same tarball |
+| `mode-python.js` | 1.44.0 | BSD-3-Clause | `src-min-noconflict/mode-python.js` from the same tarball |
+| `mode-sh.js` | 1.44.0 | BSD-3-Clause | `src-min-noconflict/mode-sh.js` from the same tarball |
+| `mode-yaml.js` | 1.44.0 | BSD-3-Clause | `src-min-noconflict/mode-yaml.js` from the same tarball |
 | `ace-LICENSE.txt` | 1.44.0 | BSD-3-Clause | `LICENSE` from the same tarball |
 | `inter-latin-wght-normal.woff2` | latin subset, variable 100–900 | OFL 1.1 | https://cdn.jsdelivr.net/fontsource/fonts/inter:vf@latest/latin-wght-normal.woff2 |
 | `inter-LICENSE.txt` | — | OFL 1.1 | licence text for the face above |
@@ -83,6 +86,22 @@ mode added and `ace/mode/javascript` set constructs one `blob:` Worker and logs
 the "empty `window.error`" recorded earlier and makes the point harder: the failure is
 completely silent. The forced failure is what makes the zero evidence rather than a check
 that could only pass.
+
+**Three language modes ARE here, for the fences, and only for their highlight rules.**
+jcanton, 2026-09-24, beside a screenshot of the same record in LazyVim: the editor pane
+drew a shaping document in one colour. The markdown half is not Ace's: `markdownMode` in
+`render/editor.py` is ~80 lines of our own rules, because the refusal above still stands
+on every count. What those rules cannot write for themselves is Python, Bash and YAML
+inside a fence, which are the only three languages the plan's own fences use (six, three
+and one fence respectively, counted 2026-09-24; two more are unlabelled). So
+`mode-python.js` (8,303 B), `mode-sh.js` (7,510 B) and `mode-yaml.js` (6,813 B) are
+inlined after the vim keymap — 22,626 B, 7,430 B gzipped — and the page `require`s
+their `*_highlight_rules` modules and nothing else. Scanned before wiring, the way every
+inlined file here is: no `cdn.`, no `url(`, no `eval(`, no `new Function`, no `import(`,
+no `WebSocket`, no `</script`. `mode-yaml.js` does define a `createWorker`, on its `Mode`;
+a highlight-rules module is not a mode and is never handed to `setMode`, so that worker
+is as unreachable as the four the refusal above counts, and for the same structural
+reason. Byte-identical to the tarball's, checksummed in `SHA256SUMS`, notice as for Ace.
 
 **Five of Ace's default commands are removed at construction**, in `render.py`, and that is
 application code rather than upstream behaviour — the bytes are verbatim, the behaviour

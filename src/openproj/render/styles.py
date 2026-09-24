@@ -229,9 +229,17 @@ def _code_css(prefix: str = "hl-") -> str:
                 break
             node = node.parent
     return "\n".join(
-        f"{', '.join(sorted(selectors))} {{ color: var(--code-{role}); }}"
+        f"{', '.join(sorted(selectors))} "
+        f"{{ color: var(--code-{role});{_CODE_STYLE.get(role, '')} }}"
         for role, selectors in grouped.items()
     )
+
+
+# A comment is the one role told apart by its shape as well as its colour, in the
+# preview and in the editor alike (`.ace_comment` in `render/editor.py`): its hue
+# is `--muted`, which is the colour of everything on the page that is not the
+# point, and italic is what says this grey is a comment rather than a caption.
+_CODE_STYLE = {"comment": " font-style: italic;"}
 
 
 # `nowrap`, so Pygments hands back the spans and nothing else: the `<pre><code>`

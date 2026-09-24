@@ -19,8 +19,10 @@ from mdit_py_plugins.attrs import attrs_plugin
 from mdit_py_plugins.dollarmath import dollarmath_plugin
 from mdit_py_plugins.tasklists import tasklists_plugin
 from pygments import highlight
+from pygments.filter import Filter
 from pygments.lexer import Lexer
 from pygments.lexers import get_lexer_by_name
+from pygments.token import Name
 from pygments.util import ClassNotFound
 
 from ..model import ID_PATTERN, Record, without_comments
@@ -72,6 +74,58 @@ def _with_unit(value: str) -> str:
     return value + "%" if value.isdigit() else value
 
 
+# A CapWords name, which has a lower-case letter somewhere, and an ALL_CAPS one,
+# which has none: the two patterns tree-sitter's own Python query uses for a type
+# and a constant, because the language itself says neither.
+_TYPE_NAME = re.compile(r"[A-Z]\w*[a-z]\w*")
+_CONSTANT_NAME = re.compile(r"[A-Z][A-Z0-9_]*")
+
+
+class _PythonShapes(Filter):
+    """What a Python name is, where Pygments calls every one of them `Name`.
+
+    jcanton, 2026-09-24, beside the same record in LazyVim: in the preview only
+    the keywords and the strings had colour, and `Annotated`, `EdgeKField`,
+    `quantity(` and `units=` were all the body ink. Pygments' lexer is a lexer and
+    knows no more than the characters; tree-sitter, which LazyVim draws with,
+    parses, and then still reaches for a regular expression to tell a type from a
+    variable. So the stream is read with one token either side, and a plain
+    `Name` becomes:
+
+    * a keyword argument — after `(` or `,` and before a lone `=`;
+    * a type — CapWords; and a constant — ALL_CAPS;
+    * a call — before `(`.
+
+    Each lands on a branch `_CODE_COLOURS` already colours, so nothing new is
+    asked of a scheme. A bare variable stays ink, which is the argument
+    `_CODE_COLOURS` makes for leaving `Name` out. The editor draws the same four
+    shapes by the same patterns (`markdownMode`, `render/editor.py`), so the two
+    panes of the split agree about a word.
+    """
+
+    def filter(self, lexer, stream):
+        tokens = list(stream)
+        solid = [at for at, (_, value) in enumerate(tokens) if value.strip()]
+        before = {here: tokens[there][1] for there, here in zip(solid, solid[1:], strict=False)}
+        after = {here: tokens[there][1] for here, there in zip(solid, solid[1:], strict=False)}
+        for at, (kind, value) in enumerate(tokens):
+            if kind is Name:
+                kind = _shape_of(value, before.get(at, ""), after.get(at, ""))
+            yield kind, value
+
+
+def _shape_of(name: str, before: str, after: str):
+    if after == "=" and before in ("(", ","):
+        return Name.Variable
+    if _TYPE_NAME.fullmatch(name):
+        return Name.Class
+    if _CONSTANT_NAME.fullmatch(name):
+        return Name.Constant
+    if after == "(":
+        return Name.Function
+    return Name
+
+
 @lru_cache(maxsize=64)
 def _lexer_for(language: str) -> Lexer | None:
     """The lexer for an info string's first word, or None if there is not one.
@@ -86,9 +140,12 @@ def _lexer_for(language: str) -> Lexer | None:
     registry of aliases on a miss.
     """
     try:
-        return get_lexer_by_name(language, stripnl=False)
+        lexer = get_lexer_by_name(language, stripnl=False)
     except ClassNotFound:
         return None
+    if "python" in lexer.aliases:
+        lexer.add_filter(_PythonShapes())
+    return lexer
 
 
 def _highlighted(code: str, language: str, attrs: str) -> str:
