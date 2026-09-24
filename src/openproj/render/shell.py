@@ -2123,10 +2123,11 @@ tr.nothing .hint { margin: 0 0 .75rem; }
   #controls .facetbox > summary .facetboxsaid:empty { display: none; }
   /* The footer holds the corner on a phone — see `stowCorner`. A row rather than
      a stack, and wrapping, because the three controls in it are narrow and the
-     version line beside them is short: on a 390px page they come out as two
+     footer's own line beside them is short: on a 390px page they come out as two
      lines where the nav was spending one on its own. `margin-left: auto` is the
-     corner's own rule and still right here — it pushes the controls away from
-     the version line, which is the only other thing on the row. */
+     corner's own rule and still right here — the corner is appended after
+     everything else on the row, so it pushes the controls away from all of it:
+     the version, the plan's sha, Help and Report issue. */
   #build { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; }
   /* The nav loses the element that was forcing it wide, so what is left is
      links. Nothing else changes: they were already wrapping. */
@@ -3693,8 +3694,9 @@ if (document.fonts) document.fonts.ready.then(() => fitRoom());
 // back link is the records list, exactly as it was before any of this.
 //
 // The switch is `ORIGIN`, which the shell fills in for a view and leaves empty
-// for the two pages that are reached from one. Nothing here decides between
-// them twice: a page with a name stamps, a page without one reads.
+// for the pages that are not one: the record page, the create form and Help,
+// which `_OFF_NAV` explains. Nothing here decides between them twice: a page
+// with a name stamps, a page without one reads.
 const ORIGIN_KEY = 'openproj:origin';
 const ORIGIN = {{ origin|tojson }};
 if (ORIGIN) {
@@ -4320,8 +4322,8 @@ def _page(
         # and not in the nav above: `nav` cannot carry it.
         help_here=current == "help",
         # What a record page reached from this one should call it, and empty on
-        # the pages that are not a view: the record page itself and the create
-        # form. That is the whole switch the script below turns on — a page with
+        # the pages that are not a view: the record page itself, the create form
+        # and Help. That is the whole switch the script below turns on — a page with
         # a name leaves it behind, a page without one picks it up. `current` and
         # not the route, because `/cycle/37` and `/deck/37` are both Cycles and
         # neither of them is the href of the link that leads there.

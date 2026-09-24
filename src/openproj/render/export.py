@@ -61,7 +61,7 @@ def render_static(
         ("issues.html", render_records(index, edited=edited, now=now, only="issue")),
         ("notes.html", render_records(index, edited=edited, now=now, only="note")),
         # The documentation, for the same reason the two inboxes are here: every
-        # exported page's nav names it. It is also the one page in this list that
+        # exported page's footer names it. It is also the one page in this list that
         # is not about the plan — an export is what a reader has left when the
         # service is gone, and instructions are the thing they will want first.
         ("help.html", render_help(index)),
