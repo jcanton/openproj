@@ -7212,7 +7212,7 @@ def test_a_kind_that_is_off_is_refused_at_every_door(tmp_path: Path, kind: str):
     """
     from pages import selects
 
-    from openproj.model import RUNG, Config, kind_refusal
+    from openproj.model import RUNG, Config, kind_off_warning, kind_refusal
     from openproj.web import SWITCHED
 
     kinds = [one for one in OPTIONAL_KINDS if one != kind]
@@ -7277,9 +7277,12 @@ def test_a_kind_that_is_off_is_refused_at_every_door(tmp_path: Path, kind: str):
 
         opened = client.get(f"/detail/{record_id}")
         assert opened.status_code == 200
-        # With the warning beside it, in the words every door uses.
+        # With the warning beside it: the words every door uses, and then how to
+        # settle it, which a door has no reason to say and a file already there does.
         warned = [one.text for one in elements(opened.text) if one.tag == "li"]
-        assert sentence in warned, "the record page does not say its kind is off"
+        said = kind_off_warning(kind, Config(kinds=frozenset(KIND_NAMES) - {kind}))
+        assert said is not None and said.startswith(sentence)
+        assert said in warned, "the record page does not say its kind is off"
         listed = [
             one.attrs["data-id"]
             for one in elements(client.get("/").text)

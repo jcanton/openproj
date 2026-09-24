@@ -933,7 +933,9 @@ def test_the_page_furniture_stands_outside_the_scroll_box(tmp_path: Path):
     with TestClient(create_app(path, auth="dev")) as client:
         page = client.get("/").text
     box = page.index('<div class="table-scroll"')
-    for furniture in ('<p class="hint">', 'class="editbar"', 'id="q"', "</nav>"):
+    # The description by its id: it carries one since it names the address's
+    # filters, and the empty-state hint inside the box is a `<p class="hint">` too.
+    for furniture in ('id="records-about"', 'class="editbar"', 'id="q"', "</nav>"):
         assert page.index(furniture) < box, furniture
     # And the box is measured by the shell into `--room`, like the table's.
     assert '<div class="table-scroll" data-fills>' in page
