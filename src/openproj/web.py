@@ -3320,10 +3320,13 @@ def create_app(
             raise HTTPException(422, f"{record_id} is already {_an(kind)}")
 
         base = _base_in(store, payload)
-        # The target is written, so it passes the same kind gate a create does.
-        # At `base`, as the dates are on a save: the plan the reader was looking
-        # at when they picked it from the menu.
-        if (refused := kind_refusal(kind, _config_at(store, base)[0])) is not None:
+        # The target is written, so it passes the same kind gate a create does,
+        # and at the same commit: HEAD, which is what the new record lands on.
+        # It was asked at `base`, and a base is whatever sha the caller sends —
+        # a tab drawn before `kinds: [note]` was committed still offers Issue on
+        # its chip, and `write_all` compares only the paths it writes, never the
+        # config, so that tab's rekind committed an issue into a plan with none.
+        if (refused := kind_refusal(kind, _config_at(store, store.head())[0])) is not None:
             raise HTTPException(422, refused)
         path = _path_for(store, base, record_id)
         if path is None:

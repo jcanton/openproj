@@ -7244,6 +7244,50 @@ def test_a_kind_that_is_off_is_refused_at_every_door(tmp_path: Path, kind: str):
         assert record_id in listed, listed
 
 
+@pytest.mark.parametrize("kind", OPTIONAL_KINDS)
+def test_a_kind_change_from_a_page_drawn_before_the_switch_is_refused(
+    repo_path: Path, client: TestClient, kind: str
+):
+    """The tab was drawn while the kind was on, so its chip still offers it, and
+    `kinds` was committed while the tab sat open. Its Change kind carries the
+    base it was drawn at, and the gate is asked at HEAD all the same, which is
+    what the new record would land on.
+
+    Asked at `base`, this went through: `write_all` compares only the paths it
+    writes, the config is never one of them, and the record was committed into
+    a plan that had turned its kind off. `confirming` walks the drops question,
+    so that the answer without the gate is the write and not a 409; and the task
+    is under nothing, because an issue or a note under a pitch is a 409 of its own.
+    """
+    from openproj.model import RUNG, Config, kind_refusal
+
+    loose = "task-f00009"
+    commit_directly(
+        repo_path,
+        {
+            **tree_now(repo_path),
+            f"tasks/{loose}.md": f"---\nid: {loose}\nkind: task\ntitle: Under nothing\n---\n",
+        },
+        "a task under nothing",
+    )
+    drawn_at = head(client)
+    kinds = [one for one in OPTIONAL_KINDS if one != kind]
+    tree = tree_now(repo_path)
+    assert not any(path.startswith(f"{RUNG[kind].directory}/") for path in tree)
+    setting = f"kinds: [{', '.join(kinds)}]\n"
+    commit_directly(
+        repo_path,
+        {**tree, "config/defaults.yaml": tree["config/defaults.yaml"] + setting},
+        f"turn {RUNG[kind].directory} off",
+    )
+    assert head(client) != drawn_at
+
+    moved = rekind(client, loose, kind, base=drawn_at, confirming=True)
+    assert moved.status_code == 422, moved.text
+    assert moved.json()["detail"] == kind_refusal(kind, Config(kinds=frozenset(kinds)))
+    assert not any(path.startswith(f"{RUNG[kind].directory}/") for path in tree_now(repo_path))
+
+
 def _offered_by(page: str, which) -> list[str]:
     """The values of the options in every `<select>` whose attributes `which`
     accepts, in document order.
