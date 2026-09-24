@@ -37,8 +37,12 @@ from test_store import commit_directly
 from openproj.index import build_index
 from openproj.model import (
     CALENDAR_DAYS,
+    KIND_NAMES,
+    VIEWS,
     Config,
+    kind_refusal,
     parse_text,
+    read_config,
     what_json_can_carry,
     within_the_calendar,
 )
@@ -504,6 +508,268 @@ def test_check_counts_a_setting_that_is_not_a_number_and_leaves_with_1(tmp_path,
     # Three: the config setting, the cycle's availability, and the record's size.
     assert said.splitlines()[-1].startswith("3 blockers,"), said
     assert "config/defaults.yaml" in said and "cycles/0037.md" in said, said
+
+
+# --------------------------------------------------------------------------- #
+# The two switches, `views` and `kinds`: resolved, and never taken as written
+# --------------------------------------------------------------------------- #
+
+_TODAY = date(2026, 8, 17)
+_PLANNED = ("product", "project", "pitch", "task")
+_NOT_A_VIEW = f"which is not a view openproj has ({', '.join(VIEWS)}), so it is left out"
+
+
+def _switched(defaults: str, **others: str):
+    """`read_config` over files held in memory, and the index built from it.
+
+    The index as well as the config, because it is what every reader of these
+    answers is handed — the banner, `openproj check`, the nav — and a view that
+    resolved correctly and then was not carried is a switch that does nothing.
+    """
+    files = {"config/defaults.yaml": defaults}
+    files |= {f"config/{name}.yaml": text for name, text in others.items()}
+    config, unreadable = read_config(list(files), files.__getitem__)
+    return config, unreadable, build_index([], config, _TODAY)
+
+
+@pytest.mark.parametrize(
+    ("written", "views", "said"),
+    [
+        pytest.param("schema_version: 5\n", VIEWS, [], id="absent is every view"),
+        pytest.param("views: []\n", (), [], id="empty is Records alone"),
+        pytest.param(
+            "views: [cycles, graph, timeline]\n",
+            ("cycles", "graph", "timeline"),
+            [],
+            id="the order is the nav order",
+        ),
+        pytest.param(
+            "views: [timeline, cycles, timeline]\n",
+            ("timeline", "cycles"),
+            ["views names timeline twice; it counts once, at its first place"],
+            id="a duplicate counts once, at its first place",
+        ),
+        pytest.param(
+            "views: [cycels]\n", (), [f"views names 'cycels', {_NOT_A_VIEW}"], id="a typo"
+        ),
+        pytest.param(
+            "views: [deck]\n",
+            (),
+            ["views names deck, which needs cycles, so the deck is off"],
+            id="the deck without cycles",
+        ),
+        pytest.param("views: [deck, cycles]\n", ("deck", "cycles"), [], id="the deck first"),
+        pytest.param(
+            "views: [records, help, detail]\n",
+            (),
+            [
+                "views names records, which is always on and always first",
+                "views names help, which is always on, in the footer",
+                "views names detail, which is always on: every record has its page",
+            ],
+            id="the three that are always on",
+        ),
+        pytest.param(
+            "views: cycles\n", VIEWS, ["views is not a list, so every view is on"], id="a word"
+        ),
+        pytest.param("views:\n", VIEWS, ["views is not a list, so every view is on"], id="null"),
+        pytest.param("views: [5]\n", (), [f"views names 5, {_NOT_A_VIEW}"], id="a number"),
+        pytest.param(
+            "views: [issues]\nkinds: [note]\n",
+            (),
+            ["views names issues, which needs the issue kind in kinds, so the Issues list is off"],
+            id="the list of a kind that is off",
+        ),
+        # D1: absent `views` follows `kinds` in silence. A plan that wrote only
+        # `kinds: []` asked nothing of the Issues or the Notes list, and two
+        # banner lines about views it never named would be noise on every page.
+        pytest.param(
+            "kinds: []\n",
+            ("table", "graph", "timeline", "cycles", "deck", "people"),
+            [],
+            id="absent follows kinds silently",
+        ),
+    ],
+)
+def test_views_resolve_to_what_the_setting_says_and_name_what_they_could_not_use(
+    written: str, views: tuple[str, ...], said: list[str]
+):
+    """Every row of the spec's two tables, and the WHOLE list of what was said —
+    not a filter on `views` — so a row that should be silent proves it is."""
+    config, unreadable, index = _switched(written)
+
+    assert unreadable == []
+    assert config.views == views
+    assert index.views == views, "resolved and not carried is a switch that does nothing"
+    assert [(one.path, one.field, one.why) for one in index.unusable] == [
+        ("config/defaults.yaml", "views", why) for why in said
+    ]
+    assert index.switches_from == {
+        key: "config/defaults.yaml" for key in ("views", "kinds") if f"{key}:" in written
+    }
+
+
+@pytest.mark.parametrize(
+    ("written", "kinds", "said"),
+    [
+        pytest.param("schema_version: 5\n", KIND_NAMES, [], id="absent is every kind"),
+        pytest.param("kinds: []\n", _PLANNED, [], id="empty is the planned four"),
+        pytest.param("kinds: [note]\n", (*_PLANNED, "note"), [], id="notes and no issues"),
+        # Somebody hoping to switch projects off has made a request the tool will
+        # not honour, and the branch that decides not to act has to say so.
+        pytest.param(
+            "kinds: [task, pitch]\n",
+            _PLANNED,
+            [
+                "kinds names task, which is always on — so are product, project and pitch",
+                "kinds names pitch, which is always on — so are product, project and task",
+            ],
+            id="a planned kind is always on",
+        ),
+        pytest.param(
+            "kinds: [bug]\n",
+            _PLANNED,
+            [
+                "kinds names 'bug', which is not a kind this setting switches (issue, note), "
+                "so it is left out"
+            ],
+            id="not a kind",
+        ),
+        pytest.param(
+            "kinds: note\n", KIND_NAMES, ["kinds is not a list, so every kind is on"], id="a word"
+        ),
+        pytest.param(
+            "kinds: [note, note]\n",
+            (*_PLANNED, "note"),
+            ["kinds names note twice"],
+            id="a duplicate",
+        ),
+    ],
+)
+def test_kinds_resolve_to_what_the_setting_says_and_name_what_they_could_not_use(
+    written: str, kinds: tuple[str, ...], said: list[str]
+):
+    """The resolved set, the one predicate every kind question asks, and what was
+    said — the whole list again, so `views` being absent is shown to say nothing
+    even where `kinds` switched a list's kind off."""
+    config, unreadable, index = _switched(written)
+
+    assert unreadable == []
+    assert config.kinds == index.kinds == frozenset(kinds)
+    assert {kind: config.allows(kind) for kind in KIND_NAMES} == {
+        kind: kind in kinds for kind in KIND_NAMES
+    }
+    assert [(one.path, one.field, one.why) for one in index.unusable] == [
+        ("config/defaults.yaml", "kinds", why) for why in said
+    ]
+
+
+@pytest.mark.parametrize(
+    "switch",
+    [
+        pytest.param("views: cycles", id="views is a word"),
+        pytest.param("views:", id="views is null"),
+        pytest.param("views: {cycles: true}", id="views is a mapping"),
+        # An item YAML hands back as a list cannot be hashed, so a resolver that
+        # put the items in a set would raise here and not report.
+        pytest.param("views: [[cycles]]", id="views holds a list"),
+        pytest.param("kinds: note", id="kinds is a word"),
+        pytest.param("kinds:", id="kinds is null"),
+        pytest.param("kinds: [[note]]", id="kinds holds a list"),
+    ],
+)
+def test_a_setting_that_is_not_a_list_costs_that_setting_and_not_the_file(switch: str):
+    """Handed to pydantic with the rest of the file, every one of these is a
+    ValidationError — and `read_config` drops a file for one, so a single word
+    in `views` would have taken `schema_version`, `cooldown_weeks` and
+    `repositories` down with it, and named the whole file as not in the plan."""
+    config, unreadable, index = _switched(
+        f"schema_version: 5\n{switch}\ncooldown_weeks: 3.0\nrepositories: [a/b]\n"
+    )
+
+    assert unreadable == []
+    assert config.schema_version == 5
+    assert config.cooldown_weeks == 3.0
+    assert config.repositories == ["a/b"]
+    assert [(one.path, one.field) for one in index.unusable] == [
+        ("config/defaults.yaml", switch.split(":")[0])
+    ]
+
+
+def test_a_config_file_that_is_dropped_switches_nothing():
+    """A file that is not in the plan does not get to turn a page off — the same
+    rule that keeps it from claiming the keys it was going to set."""
+    config, unreadable, index = _switched("views: [cycles]\nkinds: []\nholidays: [not-a-day]\n")
+
+    assert [one.path for one in unreadable] == ["config/defaults.yaml"]
+    assert config.views == VIEWS
+    assert config.kinds == frozenset(KIND_NAMES)
+    assert index.switches_from == {}
+    assert index.unusable == []
+
+
+def test_a_switch_is_answered_from_the_file_that_wrote_it():
+    """The four config files are merged key by key, so `kinds` in people.yaml is
+    as much in force as in defaults.yaml — and a sentence sending the reader to
+    defaults.yaml would send them to a file that does not say it."""
+    config, _, index = _switched("schema_version: 5\n", people="views: [cycels]\nkinds: [note]\n")
+
+    assert [(one.path, one.field) for one in index.unusable] == [("config/people.yaml", "views")]
+    assert index.switches_from == {"views": "config/people.yaml", "kinds": "config/people.yaml"}
+    assert kind_refusal("issue", config) == (
+        "Issues are turned off for this plan. "
+        "`kinds` in config/people.yaml decides which kinds of record it has."
+    )
+    assert kind_refusal("note", config) is None
+
+
+def test_a_record_of_a_kind_that_is_off_loads_and_is_warned_about(tmp_path: Path):
+    """Loaded, listed and warned about — never hidden. A list that drops rows and
+    looks normal is the thing `readable` exists to prevent, and a plan that has
+    switched issues off may still hold the four it wrote before it did.
+
+    The shelved one too: parked work is exempt from every rule about what a
+    record must contain, and this is not one of those. A file of a kind that is
+    off is off whatever its status says.
+    """
+    from openproj.model import load_repo
+
+    root = tmp_path / "plan"
+    issue = (
+        "---\nid: {id}\nkind: issue\ntitle: An issue\nstatus: {status}\n"
+        "reported_by: ann\nopened_on: 2026-08-01\n---\n\nBody.\n"
+    )
+    for where, text in {
+        "config/defaults.yaml": "schema_version: 5\nkinds: [note]\n",
+        "issues/issue-e00001.md": issue.format(id="issue-e00001", status="ready"),
+        "issues/issue-e00002.md": issue.format(id="issue-e00002", status="shelved"),
+        "notes/note-e00003.md": (
+            "---\nid: note-e00003\nkind: note\ntitle: A note, which is on\n"
+            "status: thinking\nwritten_by: ann\nwritten_on: 2026-08-01\n---\n\nBody.\n"
+        ),
+    }.items():
+        (root / where).parent.mkdir(parents=True, exist_ok=True)
+        (root / where).write_text(text, encoding="utf-8")
+
+    records, config, unreadable = load_repo(root)
+    index = build_index(records, config, _TODAY, unreadable)
+
+    assert unreadable == []
+    assert set(index.records) == {"issue-e00001", "issue-e00002", "note-e00003"}
+    refused = kind_refusal("issue", config)
+    assert refused == (
+        "Issues are turned off for this plan. "
+        "`kinds` in config/defaults.yaml decides which kinds of record it has."
+    )
+    warned = sorted(
+        (one.record_id, one.severity, one.message, one.rule_version)
+        for one in index.problems
+        if one.field == "kind"
+    )
+    assert warned == [
+        ("issue-e00001", "warning", refused, 5),
+        ("issue-e00002", "warning", refused, 5),
+    ]
 
 
 # --------------------------------------------------------------------------- #

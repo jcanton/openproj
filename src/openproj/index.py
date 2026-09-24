@@ -21,9 +21,12 @@ from typing import Any, NamedTuple
 from pydantic import BaseModel, model_validator
 
 from .model import (
+    _SWITCHES,
+    KIND_NAMES,
     PRIORITY_RANK,
     RUNG,
     STATUS_ORDER,
+    VIEWS,
     Config,
     Cycle,
     Problem,
@@ -319,6 +322,19 @@ class Index(BaseModel):
     # roster is: a renderer is handed an index and never a Config, and the pull
     # request completion has to know which repositories to ask about.
     repositories: list[str] = []
+    # Which views and which kinds this plan has, as `resolve_switches` answered —
+    # carried for the reason the repositories are: the nav, the create form's
+    # kind picker, the Help page's sentence and the export are all drawn from an
+    # index, and none of them is handed a Config. Everything on by default, the
+    # same answer `Config` gives, so an index built by hand in a test is a plan
+    # that never wrote either key.
+    views: tuple[str, ...] = VIEWS
+    kinds: frozenset[str] = frozenset(KIND_NAMES)
+    # The file each switch was read from, for the keys a file actually wrote.
+    # A sentence that says which setting turned a page off has to send its
+    # reader to the right one of four files; a key nobody wrote is absent here,
+    # and the reader names `SWITCHES_FILE` (`model.py`), which is where it goes.
+    switches_from: dict[str, str] = {}
     # The icon each person picked for themselves, login to icon name, from
     # `people/<login>.md`. The choice and not the record: the one page that draws
     # these wants the mark beside a name, and an index carrying the whole record
@@ -1191,7 +1207,14 @@ def build_index(
         # start date as passed on a plan whose whole calendar says otherwise.
         problems=validate_all(parsed, config, spans, today),
         unreadable=list(unreadable),
-        unusable=unusable_numbers(config),
+        # The numbers nothing can compute with, and the switches `read_config`
+        # could not use as written, in one list and one order — by file and then
+        # by setting, the order somebody would open them in. Stable, so a
+        # switch's own reports keep the order its list gave them.
+        unusable=sorted(
+            [*unusable_numbers(config), *config._unusable],
+            key=lambda one: (one.path, one.field),
+        ),
         facets={field: _ordered(field, values) for field, values in facets.items()}
         | {"predicate": sorted(COMPUTED_PREDICATES)},
         search_blob=search_blob,
@@ -1202,6 +1225,9 @@ def build_index(
         cooldown_weeks=config.cooldown_weeks,
         known_people=config.known_people,
         repositories=config.repositories,
+        views=config.views,
+        kinds=config.kinds,
+        switches_from={key: config._from[key] for key in _SWITCHES if key in config._from},
         icons={login: person.icon for login, person in config.people.items() if person.icon},
         today=today,
         holidays=config.holidays,

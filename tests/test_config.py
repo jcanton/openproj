@@ -1,7 +1,7 @@
 from datetime import date
 from pathlib import Path
 
-from openproj.model import Config, Problem, load_config
+from openproj.model import KIND_NAMES, VIEWS, Config, Problem, load_config
 
 
 def test_problem_carries_the_rule_version_that_introduced_the_rule():
@@ -26,6 +26,24 @@ def test_config_defaults_stand_alone():
     assert config.nominal_availability == 1.0
     assert config.holidays == []
     assert config.cycles == {}
+    # Everything on: `Config()` is built by hand in tests and by `Index._config`,
+    # and neither is a plan that asked for a page to be switched off.
+    assert config.views == VIEWS
+    assert config.kinds == frozenset(KIND_NAMES)
+
+
+def test_the_views_are_the_nav_in_the_nav_order():
+    """`VIEWS` is the order a plan with no `views` key draws its nav in, so it
+    has to be the nav's own order — or the upgrade that introduced the key
+    reorders every existing plan's nav without anybody writing a line. The deck
+    is a view with no slot, reached from its cycle's page."""
+    from openproj.render.shell import _NAV
+
+    nav = [key for key, _ in _NAV]
+
+    assert nav[0] == "records", "Records is always on and always first"
+    assert [view for view in VIEWS if view in nav] == nav[1:]
+    assert set(VIEWS) - set(nav) == {"deck"}
 
 
 def test_load_config_merges_the_three_seed_files(seed_root: Path):
