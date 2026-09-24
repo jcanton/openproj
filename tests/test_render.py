@@ -5521,6 +5521,88 @@ def test_every_page_keeps_its_nav_and_its_footer_where_the_reader_left_them(
         )
 
 
+# Whether each thing a reader has to find is inside the window and is what the
+# browser finds at its own centre. The second is the one that says painted: a box
+# that is clipped by the scroller it is in, covered by another, `visibility:
+# hidden` or pushed off its column all lay out with a rectangle, and none of them
+# is what `elementFromPoint` returns there. The first client rect and not the
+# bounding box, so an inline `<code>` that wrapped is asked where its text is
+# rather than at a point between its two lines.
+_PAINTED = """
+const root = document.documentElement;
+const vw = root.clientWidth, vh = root.clientHeight;
+const seen = el => {
+  if (!el) return null;
+  const box = el.getClientRects()[0] || el.getBoundingClientRect();
+  const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+  return {
+    text: el.textContent.trim(),
+    inside: box.width > 0 && box.height > 0 && box.left >= -1 && box.top >= -1
+      && box.right <= vw + 1 && box.bottom <= vh + 1,
+    painted: !!hit && (hit === el || el.contains(hit)),
+    // Only a block has a width of its own to overflow; an inline box is its text.
+    cut: getComputedStyle(el).display === 'inline' ? 0 : el.scrollWidth - el.clientWidth,
+  };
+};
+const off = document.querySelector('.switched-off');
+const way = off && off.querySelector('p:last-of-type a');
+return {
+  viewport: vw,
+  sideways: root.scrollWidth - vw,
+  nav: [...document.querySelectorAll('nav > a')].map(seen),
+  heading: seen(off && off.querySelector('h1')),
+  said: seen(off && off.querySelector('p')),
+  codes: off ? [...off.querySelectorAll('p code')].map(seen) : [],
+  out: way ? {...seen(way), href: way.getAttribute('href')} : null,
+};
+"""
+
+
+def test_a_short_nav_and_the_switched_off_page_are_drawn_where_a_reader_finds_them(
+    seed_index: Index, tmp_path: Path
+):
+    """Spec test 9's two claims about pixels, which the sweep above cannot make.
+    `every_page` draws every entry point with every view on, so no browser had
+    drawn a nav shorter than the whole one; and it measures the switched-off page
+    as a box that fills the window, never its heading, its sentence or its way
+    out, and never on a phone.
+
+    icon4py's own setting, and the page a reader of that plan meets at a
+    bookmarked `/table?owner=ann`: Records and three views in the nav, a heading,
+    the sentence naming `views` and its file, and the link that carries the
+    filter on. Each is asked whether it is inside the window and whether it is
+    what the browser finds at its own centre, on a laptop and through
+    `measured_on_a_phone`, where the corner's controls have moved to the footer
+    and the nav is the row that is left.
+    """
+    from browser import chrome, measured_in, measured_on_a_phone
+
+    links = links_for(("cycles", "graph", "timeline"), ROUTES)
+    page = render_switched_off(seed_index, links, view="table", query="owner=ann")
+    browser = chrome()
+    laptop = measured_in(browser, page, tmp_path / "off.html", 1280, _PAINTED)
+    phone = measured_on_a_phone(browser, {"off": page}, tmp_path / "phone", _PAINTED)["off"]
+
+    for width, got in ((1280, laptop), (390, phone)):
+        assert got["viewport"] == width, f"laid out at {got['viewport']}px, not {width}"
+        where = f"at {width}px"
+        assert got["sideways"] <= 0, f"{where}: the page scrolls {got['sideways']}px sideways"
+        assert [one["text"] for one in got["nav"]] == ["Records", "Cycles", "Graph", "Timeline"]
+        assert got["heading"]["text"] == "Table"
+        assert [one["text"] for one in got["codes"]] == ["views", "config/defaults.yaml"]
+        assert (got["out"]["href"], got["out"]["text"]) == (
+            "/?owner=ann",
+            "Show the same filters on Records",
+        )
+        for one in (*got["nav"], got["heading"], got["said"], *got["codes"], got["out"]):
+            assert one["inside"], f"{where}: {one['text']!r} is not inside the window"
+            assert one["painted"], (
+                f"{where}: {one['text']!r} is not what the browser finds at its own "
+                "centre, so it is covered, clipped or hidden"
+            )
+            assert one["cut"] <= 0, f"{where}: {one['text']!r} overflows its box by {one['cut']}px"
+
+
 def test_no_page_serves_a_stylesheet_with_a_comment_that_closes_nothing(seed_index: Index):
     """A `*/` outside a comment is not a no-op and it is not a parse error either.
 
