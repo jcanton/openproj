@@ -958,7 +958,12 @@ async function run(html, expression, options) {
       // a refusal that is accepted and then closed carries its reason in the
       // close event, and there is no other way for one to reach a page.
       refused: (code, reason) => {
-        if (wire.live && wire.live.onclose) wire.live.onclose({code, reason});
+        if (!wire.live) return;
+        // CLOSED before the close event, as a browser has it: a page that asks
+        // the socket whether it is open from inside its own `onclose` — or any
+        // time after — must not be told yes.
+        wire.live.readyState = DriverSocket.CLOSED;
+        if (wire.live.onclose) wire.live.onclose({code, reason});
       },
       // Parsed, because every frame this application sends is JSON and a test
       // asserting on strings would be asserting on key order.

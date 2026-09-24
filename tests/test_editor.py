@@ -4802,7 +4802,7 @@ def test_a_save_stays_where_it_was_made(client: TestClient):
         page,
         _SAVING_FROM_A_VIEW,
         page=True,
-        replies=[{"status": 200, "json": {"commit": "0" * 40}}],
+        replies=[{"status": 200, "json": {"commit": "0" * 40, "outcome": "committed"}}],
     )
     assert not saving["errors"], saving["errors"]
     assert [call["method"] for call in saving["calls"]] == ["PATCH"], (
@@ -4825,9 +4825,7 @@ def test_a_save_stays_where_it_was_made(client: TestClient):
     )
 
 
-# Saved, then typed some more, then left. The edit view and not the split, so
-# the preview pane is hidden and asks for nothing: the one `/api/preview` in
-# `calls` is the read view's.
+# Saved, then typed some more, then left.
 _LEFT_WITH_MORE_TYPED = """
 (async () => {
   chooseView('edit');
@@ -4838,45 +4836,132 @@ _LEFT_WITH_MORE_TYPED = """
   box.value = 'The paragraph that was saved.\\nAnd a line that was not.\\n';
   box.dispatchEvent(new Event('input', {bubbles: true}));
   chooseView('view');
-  // The redraw is a fetch and two `then`s; turns of the queue, not a timer.
-  for (let turn = 0; turn < 10; turn++) await Promise.resolve();
-  return {reloads: __reloads(), view: VIEW,
-          read: document.querySelector('.doc.read').innerHTML};
+  return {reloads: __reloads(), base: BASE.value};
 })()
 """
 
 
-def test_leaving_with_unsaved_work_redraws_the_read_view_without_a_reload(
-    client: TestClient,
-):
-    """The one way out that must not reload. A draft forces a session on load, so
-    reloading a page with unsaved work in it puts somebody who asked to read
-    straight back into the editor. The read view is still behind the save, so
-    the document alone is redrawn — from the body as COMMITTED, because that is
-    what a read view is, and the bar is what says there is more."""
+def test_leaving_with_unsaved_work_carries_it_across_the_reload(client: TestClient):
+    """The one way out that used to lose a reader to the editor. The read view is
+    behind the save, and a reload is the only thing that redraws all of it — the
+    diagrams' loader runs once, at load — but a draft forces a session on load,
+    so a plain reload would put somebody who asked to read straight back into
+    the editor.
+
+    So the draft is written NOW, on the commit just made — not on the draft
+    timer's next tick, which a reload would never reach — and a one-shot lands
+    the next page on the read view. The second half is that next page: the draft
+    back in the box, the session closed, and the bar saying there is work in it.
+    """
+    from test_injection import run_js
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    left = run_js(
+        page, _LEFT_WITH_MORE_TYPED, page=True,
+        replies=[{"status": 200, "json": {"commit": "0" * 40, "outcome": "committed"}}],
+    )
+    assert not left["errors"], left["errors"]
+    assert left["value"]["reloads"] == 1, "leaving after a save did not redraw the read view"
+    assert left["tabbed"].get("openproj:resumed") == "view", (
+        f"nothing says the next page is the read view, so the draft opens the editor: "
+        f"{left['tabbed']}"
+    )
+    draft = json.loads(left["stored"][f"openproj:draft:2:{TASK}"])
+    assert draft == {
+        "base": "0" * 40,
+        "text": "The paragraph that was saved.\nAnd a line that was not.\n",
+    }, f"the draft that goes across the reload is not the box on the new commit: {draft}"
+
+    landed = run_js(
+        page, _WHERE_IT_LANDS, page=True,
+        storage={f"openproj:draft:2:{TASK}": json.dumps(draft)},
+        session={"openproj:resumed": "view"},
+    )
+    assert not landed["errors"], landed["errors"]
+    assert landed["value"] == {"view": "view", "editing": False, "split": False}, (
+        f"the reload the reader left for did not land on the read view: {landed['value']}"
+    )
+
+
+def test_leaving_where_no_draft_can_be_kept_reloads_nothing(client: TestClient):
+    """A browser that keeps no drafts — a private window, a blocked store — would
+    lose the unsaved line to that reload. So there is no reload, and the page
+    says why the text under the box is older than the save it just made."""
     from test_injection import run_js
 
     page = client.get(f"/detail/{TASK}{PLAIN}").text
     got = run_js(
-        page,
-        _LEFT_WITH_MORE_TYPED,
-        page=True,
-        replies=[
-            {"status": 200, "json": {"commit": "0" * 40}},
-            {"status": 200, "json": {"html": "<p>The paragraph that was saved.</p>"}},
-        ],
+        page, _LEFT_WITH_MORE_TYPED, page=True, storage="denied",
+        replies=[{"status": 200, "json": {"commit": "0" * 40, "outcome": "committed"}}],
     )
     assert not got["errors"], got["errors"]
-    assert got["value"]["reloads"] == 0, (
-        "leaving with unsaved work reloaded, and the draft brings the editor back"
+    assert got["value"]["reloads"] == 0, "a reload threw away writing that exists nowhere else"
+
+
+# A save the store had to merge: somebody else's paragraph is in the commit and
+# not in the box.
+_SAVED_INTO_A_MERGE = """
+(async () => {
+  chooseView('both');
+  const box = document.querySelector('[name=body]');
+  box.value = 'Mine.\\n';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  await save();
+  return {reloads: __reloads()};
+})()
+"""
+
+
+def test_a_save_that_merged_reloads_to_show_what_it_merged(client: TestClient):
+    """Found in review of the save that stays put. A merged commit holds a
+    paragraph this page has never seen, and keeping the box as the baseline would
+    make the next save — against this very commit, so no conflict — write the
+    box verbatim and take that paragraph out of the file. The reload is what
+    brings it into the box, so a merge still reloads, into the same view."""
+    from test_injection import run_js
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    got = run_js(
+        page, _SAVED_INTO_A_MERGE, page=True,
+        replies=[{"status": 200, "json": {"commit": "0" * 40, "outcome": "merged"}}],
     )
-    assert got["value"]["view"] == "view", got["value"]
-    asked = [call for call in got["calls"] if call["url"] == "/api/preview"]
-    assert len(asked) == 1, f"the read view was not redrawn: {got['calls']}"
-    assert json.loads(asked[0]["body"])["body"] == "The paragraph that was saved.\n", (
-        "the read view was redrawn from the box and not from what was committed"
+    assert not got["errors"], got["errors"]
+    assert got["value"]["reloads"] == 1, (
+        "a merged save stayed in place, so somebody else's paragraph is in the file "
+        "and not in the box, and the next save deletes it"
     )
-    assert got["value"]["read"] == "<p>The paragraph that was saved.</p>", got["value"]
+    assert got["tabbed"].get("openproj:resumed") == "both", got["tabbed"]
+
+
+# Saved, and the session left before the answer came back.
+_LEFT_BEFORE_THE_ANSWER = """
+(async () => {
+  chooseView('edit');
+  const box = document.querySelector('[name=body]');
+  box.value = 'Saved on the way out.\\n';
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+  const pressed = save();
+  chooseView('view');
+  const before = __reloads();
+  await pressed;
+  return {before, after: __reloads()};
+})()
+"""
+
+
+def test_a_save_that_lands_after_the_session_was_left_still_redraws(client: TestClient):
+    """Save, then Escape before the answer: `freshen` ran on the way out while
+    there was nothing to freshen yet, and the read view on the screen is from
+    before the save — jcanton's report of 2026-08-20, by another road."""
+    from test_injection import run_js
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    got = run_js(
+        page, _LEFT_BEFORE_THE_ANSWER, page=True,
+        replies=[{"status": 200, "json": {"commit": "0" * 40, "outcome": "committed"}}],
+    )
+    assert not got["errors"], got["errors"]
+    assert got["value"] == {"before": 0, "after": 1}, got["value"]
 
 
 def test_a_reload_comes_back_into_the_view_it_left(client: TestClient):
@@ -7082,9 +7167,10 @@ def test_the_banners_reload_lands_back_in_the_view_it_was_pressed_from(
 
     `href=""` is the current address without its fragment, so it keeps `?edit`
     and `?both` for somebody who arrived by link. A session opened by pressing
-    Write is in no address at all: the mode lives in the page, and Save already
-    knows that — it calls `keepView()` before the reload IT needs, which puts the
-    mode in `sessionStorage` for `RESUMING` to pick up on the way back.
+    Write is in no address at all: the mode lives in the page, and Save knew that
+    — it called `keepView()` before the reload it needed then, which puts the
+    mode in `sessionStorage` for `RESUMING` to pick up on the way back. (Save
+    reloads only after a merge now; `test_a_save_stays_where_it_was_made`.)
 
     The banner's reload is the other reload on this page and it did not, so
     pressing it over an open editor closed the editor.

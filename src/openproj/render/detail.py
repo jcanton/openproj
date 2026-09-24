@@ -890,9 +890,11 @@ const RESUMED_AT = 'openproj:resumed-at';
 const RESUMING = (() => {
   const held = forThisTab.get(RESUMED);
   forThisTab.forget(RESUMED);
-  // Only the two session views. `view` is the landing and is what a page does
-  // anyway, and anything else is a hand-edited entry.
-  return held === 'edit' || held === 'both' ? held : null;
+  // The two session views, and `view` from `freshen`: a page with a draft in
+  // it opens a session on load, and one that was left for the read view goes
+  // back to it with the draft still in the box. Anything else is a hand-edited
+  // entry.
+  return held === 'edit' || held === 'both' || held === 'view' ? held : null;
 })();
 
 // Read and forgotten in the same breath, for the reason above it: a one-shot
@@ -950,33 +952,32 @@ function unsavedHere() {
   catch (error) { return true; }
 }
 
-// The read view, brought up to the last save before anybody reads it. A reload
-// when there is nothing unsaved, because it is the only thing that redraws the
-// facts too. Not when there is: a draft forces a session on load (see the
-// restore at the foot of the form script), so a reload would put somebody who
-// asked to read straight back into the editor. Then the document alone is
-// redrawn, through the same `/api/preview` the split view renders by, from the
-// body as committed rather than as typed. True when the page is going away.
+// The read view, brought up to the last save before anybody reads it — by a
+// reload, because it is the only thing that redraws all of it: the facts, the
+// title, the Progress section, and the diagrams, whose loader runs once at load.
+// True when the page is going away.
+//
+// **With unsaved work in the box the reload carries it**, as a draft written
+// now rather than on the draft timer's next tick, and a one-shot that lands the
+// page on the read view: a restored draft otherwise opens a session, and a
+// reload would put somebody who asked to read straight back into the editor.
+// Where this browser keeps no drafts the reload would lose that work, so there
+// is none, and the page says why the text under the box is older than the save.
 function freshen() {
   // The create form has no read view and never reaches the flag.
   if (!LANDING || !STALE) return false;
-  STALE = false;
-  if (!unsavedHere()) {
-    location.reload();
-    return true;
+  if (unsavedHere()) {
+    writeDraft();
+    if (!draftWritten) {
+      announce('The page under the editor is from before your last save. It will be '
+               + 'redrawn once what is in the box is saved.');
+      return false;
+    }
+    forThisTab.set(RESUMED, 'view');
   }
-  const title = 'title' in ORIGINAL ? JSON.parse(ORIGINAL.title) || '' : TITLED.value;
-  fetch('/api/preview', {
-    method: 'POST', headers: {'content-type': 'application/json'},
-    body: JSON.stringify({body: ORIGINAL_BODY, title}),
-  })
-    .then(response => (response.ok ? response.json() : null))
-    .then(answer => {
-      if (answer && typeof answer.html === 'string') LANDING.innerHTML = answer.html;
-      else STALE = true;
-    })
-    .catch(() => { STALE = true; });
-  return false;
+  STALE = false;
+  location.reload();
+  return true;
 }
 
 // And then the remembered one, which is the second half of the preference this
@@ -2558,6 +2559,9 @@ function savedHere(fields) {
   }
   STALE = true;
   dirty();
+  // The session was left while this was in the air, so the read view is on the
+  // screen already and `freshen` ran before there was anything to freshen.
+  if (VIEW === 'view') freshen();
 }
 
 async function save() {
@@ -2615,6 +2619,22 @@ async function save() {
     }
     if (!response.ok) { announce(refusal(answer, response.status)); return; }
     committed = answer.commit;
+    // **In place only when this page already holds what was committed**, and
+    // there are two ways it may not. A MERGE wrote somebody else's paragraph
+    // into the file beside ours, and it is not in the box: taking what was sent
+    // as the baseline would make the next save, against this very commit,
+    // write the box verbatim and take their paragraph out without a conflict.
+    // And a page that has been in a ROOM keeps a document of its own under the
+    // box, which this commit went round; on the next reconnect the room adds
+    // HEAD to a document that already holds the same lines, and commits both
+    // copies. Both are what the reload was quietly curing, so both still reload
+    // — into the view and onto the line, which is what `keepView` is for.
+    if (answer.outcome === 'merged' || COEDIT.joined()) {
+      forgetDraft();
+      keepView();
+      location.reload();
+      return;
+    }
     // Where you are, and no reload: see `STALE` in `_VIEWS`. The base and the
     // body move together, as `BASELINE`'s comment requires, and the body is the
     // one this request SENT — a keystroke made while it was in the air is not
@@ -2622,7 +2642,10 @@ async function save() {
     BASE.value = committed;
     BASELINE = committed;
     if (body !== null) ORIGINAL_BODY = body;
+    // And a draft of that keystroke is rewritten on the new base, or restoring
+    // it later would say somebody else had changed the record — this person did.
     if (SURFACE.text() === ORIGINAL_BODY) forgetDraft();
+    else writeDraft();
     box.hidden = true;
     savedHere(fields);
     announce('saved');
@@ -4195,7 +4218,10 @@ _PROMOTE = """
         body: JSON.stringify({
           source: {{ source|tojson }},
           kind: INTO ? INTO.value : {{ only|tojson }},
-          base_commit: {{ base_commit|tojson }},
+          // The newest commit this page knows the note's body at: a save no
+          // longer reloads, so the commit the page was rendered at can be one
+          // that is missing what was just saved.
+          base_commit: typeof BASELINE !== 'undefined' ? BASELINE : {{ base_commit|tojson }},
         }),
       });
       // `answerOf` and not a bare `response.json()`: a 500 answers in

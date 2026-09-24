@@ -5091,6 +5091,52 @@ def test_saving_in_a_room_leaves_the_read_view_showing_what_was_saved(
     )
 
 
+def test_a_save_made_without_the_room_it_left_reloads(client: TestClient, plan: Path):
+    """Found in review of the save that stays put, and reproduced against a real
+    `Room`. A page that was in a room keeps the room's document under the box.
+    The socket drops (Cloud Run closes every one at five minutes), a line is
+    typed, and Save goes by PATCH. On reconnect the warm room absorbs HEAD — the
+    line — into a document whose other copy of it is this tab's own insert, and
+    the quiet window commits both. The reload used to throw that document away,
+    so a page that has been in a room still reloads after a save made without it.
+    """
+    page = client.get(f"/detail/{TASK}?editor=plain").text
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = {
+        "t": "welcome",
+        "seed": room.seed,
+        "base": room.base,
+        "you": "ann",
+        "sv": base64.b64encode(room.state()).decode(),
+        "update": base64.b64encode(room.since(None)).decode(),
+    }
+    answer = run_js(
+        page,
+        "(async () => {"
+        "  flipEditing();"
+        "  __socket.opened();"
+        f" __socket.hear({json.dumps(welcome)});"
+        "  if (!COEDIT.live()) return 'the room never came up';"
+        "  __socket.refused(1006, '');"
+        "  if (COEDIT.live()) return 'the socket did not drop';"
+        "  const box = document.querySelector('[name=body]');"
+        "  box.value = box.value + 'Typed offline.\\n';"
+        "  box.dispatchEvent(new Event('input', {bubbles: true}));"
+        "  await save();"
+        "  return __reloads() + ' reloads';"
+        "})()",
+        page=True,
+        socket=True,
+        replies=[{"status": 200, "json": {"commit": "d" * 40, "outcome": "committed"}}],
+    )
+    assert not answer["errors"], answer["errors"]
+    assert answer["value"] == "1 reloads", (
+        "a save made by PATCH from a page that was in a room stayed in place, so the "
+        f"room's document under the box doubles the line on reconnect: {answer['value']}"
+    )
+
+
 def test_what_the_room_said_about_a_save_is_said_where_you_are(
     client: TestClient, plan: Path
 ):

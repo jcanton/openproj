@@ -1009,7 +1009,7 @@ _COEDIT = Markup(r"""
 const COEDIT = (() => {
   // What every refusal returns: an object that says it is not live, so `save()`
   // above takes the path it took before any of this existed.
-  const asleep = {live: () => false, save: () => {}};
+  const asleep = {live: () => false, joined: () => false, save: () => {}};
   if (typeof YJS === 'undefined' || typeof WebSocket === 'undefined') return asleep;
 
   const doc = new YJS.Doc();
@@ -2004,7 +2004,11 @@ const COEDIT = (() => {
     wanted = true;
     connect();
   }
-  return {live, save(fields) {
+  // Whether this page has a room's document under the box that a save made
+  // without the room would leave behind: it was seeded by a room and the room
+  // may come back. A room that has stopped does not reconnect.
+  const joined = () => seed !== null && !dead;
+  return {live, joined, save(fields) {
     // Anything typed since the last input event, then one commit over the
     // socket: the fields from this form, the body from the room, one
     // `store.write` against the room's base.
