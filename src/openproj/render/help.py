@@ -403,10 +403,14 @@ def _scope(index: Index, links: Links) -> Markup:
                 said += Markup(" in <code>{}</code>").format(kinds_from)
         said += Markup(".")
     else:
+        # Said as the switch and not as a count. A file of a kind that is off still
+        # loads and is listed on Records, so "this plan has no issues" was false of
+        # any plan that had some before it turned them off — and it is the words of
+        # `kind_refusal`, which every door and the warning beside such a file use.
         said = Markup(
-            "This plan has no {}: <code>kinds</code> in <code>{}</code> turns them off. "
+            "{} are turned off for this plan by <code>kinds</code> in <code>{}</code>. "
             "The guide below describes every kind of record openproj has."
-        ).format(lists, kinds_from)
+        ).format(lists.capitalize(), kinds_from)
     return Markup('<p class="hint scope">{}</p>').format(said)
 
 

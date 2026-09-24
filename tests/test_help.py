@@ -270,14 +270,14 @@ def test_help_says_which_views_this_plan_has_only_when_it_has_fewer(
     # sentence says so by the key that did it: this plan never wrote `views`.
     assert scope("kinds: []\n") == (
         [
-            "This plan has no issues and notes: kinds in config/defaults.yaml turns them "
-            "off. The guide below describes every kind of record openproj has."
+            "Issues and notes are turned off for this plan by kinds in config/defaults.yaml. "
+            "The guide below describes every kind of record openproj has."
         ],
         ["kinds"],
     )
     assert scope("kinds: [note]\n") == (
         [
-            "This plan has no issues: kinds in config/defaults.yaml turns them off. The "
+            "Issues are turned off for this plan by kinds in config/defaults.yaml. The "
             "guide below describes every kind of record openproj has."
         ],
         ["kinds"],
