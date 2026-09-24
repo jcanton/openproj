@@ -128,7 +128,8 @@ def _without_title(text: str) -> str:
 
 
 _HELP = """
-{#- Announced, not drawn: the lit nav item already says which view this is. -#}
+{#- Announced, not drawn: the footer's Help link, marked as the page you are on,
+    already says which page this is. -#}
 <h1 class="sr-only">Help</h1>
 <div class="helppanes">
 {#- A navigation landmark with a name on it, because this is the second set of

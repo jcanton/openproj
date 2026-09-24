@@ -200,7 +200,7 @@ def test_the_documents_own_title_line_is_not_drawn_twice(page: str):
 
 def test_the_page_is_the_same_in_both_modes(page: str, index: Index):
     """The one view that renders identically served and exported: it is about the
-    tool and not about a plan, which is why it can be a nav item at all — a nav
+    tool and not about a plan, which is why every page's footer can link to it — a
     link into a file nobody wrote is a dead link on every other exported page.
     """
     exported = render_help(index, STATIC)
@@ -260,6 +260,50 @@ def test_the_build_row_hides_a_fact_that_has_not_arrived(page: str):
     assert "Report issue" in page
     row = re.search(r"<footer id=\"build\">.*?</footer>", page, re.S)
     assert row and " · " not in row.group(0), "a separator was written into the markup"
+
+
+def test_the_build_row_draws_the_help_mark_around_the_word_and_not_its_separator(
+    page: str, index: Index, tmp_path: Path
+):
+    """Asked of Chrome, because every rule resolved as it was meant to and the
+    first screenshot of this page still read `openproj 0.64.0 [· Help] · Report
+    issue`, the dot inside the you-are-here box and drawn in its accent.
+
+    The row's separators are each child's own `::before`, and a `::before` is
+    inside the box of the element it belongs to, so a marked link that is a child
+    of the row draws its own separator inside its mark. As a flex item its padding
+    also made the row 31.5px tall here against 26.3 on every other page. The link
+    is inside a `<span>` now, and each reading below failed without it: the link
+    has no `::before` of its own, the element around it still has the dot, and the
+    row is the same height here as on a page that marks nothing in it.
+    """
+    from browser import chrome, measured_in
+
+    from openproj.render import render_table
+
+    script = """
+    const build = document.getElementById('build');
+    const help = [...build.querySelectorAll('a')].find(a => a.textContent.trim() === 'Help');
+    return {
+      marked: help.getAttribute('aria-current'),
+      own: getComputedStyle(help, '::before').content,
+      around: getComputedStyle(help.parentElement, '::before').content,
+      row: build.getBoundingClientRect().height,
+    };
+    """
+    browser = chrome()
+    here = measured_in(browser, page, tmp_path / "help.html", 1280, script, 800)
+    table = render_table(index, ROUTES)
+    elsewhere = measured_in(browser, table, tmp_path / "table.html", 1280, script, 800)
+
+    # The mark really is on this page and on no other, or nothing below is evidence.
+    assert here["marked"] == "page" and elsewhere["marked"] is None, (here, elsewhere)
+    assert here["own"] == "none", f"the separator is inside the mark: {here['own']}"
+    assert here["around"] == '"·"', f"the separator before Help is gone: {here['around']}"
+    assert abs(here["row"] - elsewhere["row"]) < 1, (
+        f"the row is {here['row']}px on the page that marks itself in it and "
+        f"{elsewhere['row']}px elsewhere"
+    )
 
 
 def test_the_banner_is_on_this_page_like_every_other(seed_root: Path):

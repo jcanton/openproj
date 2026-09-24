@@ -610,10 +610,10 @@ _DECK_STYLE = """
    two that were missing were missing for the same reason: nothing here asks
    "what else is on the page", it asks "what did somebody remember".
 
-   `#build` is the shell's footer — the version, the plan's sha and Report issue
-   — which `@media print` already takes away and this did not, so it was on the
-   wall under every slide. `.railgrip` is the handle beside the rail: the rail
-   itself was hidden and its handle was not, and the handle is a hairline in
+   `#build` is the shell's footer — the version, the plan's sha, Help and Report
+   issue — which `@media print` already takes away and this did not, so it was
+   on the wall under every slide. `.railgrip` is the handle beside the rail: the
+   rail itself was hidden and its handle was not, and the handle is a hairline in
    `--line` against a black screen, which is the vertical white stripe down the
    left of the projection. Both reported by jcanton, 2026-09-21, from the room.
 

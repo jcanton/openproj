@@ -59,19 +59,29 @@ def headings(page: str) -> list[tuple[frozenset[str], str]]:
 
 
 class _Nav(HTMLParser):
-    """The nav's links, as (label, href, marked-as-current)."""
+    """One landmark's links, as (label, href, marked-as-current) — the nav's by
+    default, or the element with the id `landmark` (the footer is `build`).
 
-    def __init__(self) -> None:
+    The footer is asked for by id and not by tag, because a slide or a shaping
+    document can carry a `<footer>` of its own and the shell's is the one Help
+    moved into, taking its you-are-here mark with it.
+    """
+
+    def __init__(self, landmark: str = "") -> None:
         super().__init__(convert_charrefs=True)
         self.found: list[tuple[str, str, bool]] = []
-        self._in_nav = False
+        self._landmark = landmark
+        # The tag of the landmark being read, and empty outside it.
+        self._inside = ""
         self._link: tuple[str, bool] | None = None
         self._text: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "nav":
-            self._in_nav = True
-        elif tag == "a" and self._in_nav:
+        if not self._inside and (
+            dict(attrs).get("id") == self._landmark if self._landmark else tag == "nav"
+        ):
+            self._inside = tag
+        elif tag == "a" and self._inside:
             found = dict(attrs)
             self._link = (found.get("href") or "", found.get("aria-current") == "page")
             self._text = []
@@ -81,8 +91,8 @@ class _Nav(HTMLParser):
             href, marked = self._link
             self.found.append(("".join(self._text).strip(), href, marked))
             self._link = None
-        elif tag == "nav":
-            self._in_nav = False
+        elif tag == self._inside:
+            self._inside = ""
 
     def handle_data(self, data: str) -> None:
         if self._link is not None:
@@ -92,6 +102,15 @@ class _Nav(HTMLParser):
 def nav_of(page: str) -> list[tuple[str, str, bool]]:
     """(label, href, marked) for every link in the nav, in document order."""
     parser = _Nav()
+    parser.feed(page)
+    return parser.found
+
+
+def footer_of(page: str) -> list[tuple[str, str, bool]]:
+    """(label, href, marked) for every link in the shell's footer, `#build`, in
+    document order. The shape `nav_of` answers in, because the question is the
+    same one: which links, where to, and which of them says it is this page."""
+    parser = _Nav("build")
     parser.feed(page)
     return parser.found
 
