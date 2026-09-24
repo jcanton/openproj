@@ -1316,6 +1316,32 @@ def _reject_undeclared_fields(fields: dict, known: tuple[str, ...], what: str) -
         )
 
 
+def _reject_a_new_kind(record_id: str, fields: dict) -> None:
+    """A save that would change what kind a record is, refused.
+
+    `kind` is a field every rung declares, so `_reject_undeclared_fields` lets it
+    through, and nothing else on a save ever asked about it. But the id carries
+    the kind — `task-c00001` cannot be a pitch — so a save that wrote `kind:
+    pitch` committed a file whose prefix and kind disagree, which `validate_all`
+    reports as a blocker only once it is in git, on a protected branch. It went
+    past everything Change kind does as well: no new id, no children repointed,
+    and no kind gate, so a kind the plan has turned off came in through the one
+    door that never asked. A kind changes through `POST /api/rekind` and nowhere
+    else.
+
+    Judged against the id's kind and not the file's. They differ only in a file
+    somebody got wrong in git, and a save that writes the id's kind back is the
+    repair, not a change. The same kind is let through, too: a form that sends
+    every field back is not asking for anything.
+    """
+    if "kind" in fields and fields["kind"] != _kind_for(record_id):
+        raise HTTPException(
+            422,
+            "A record's kind changes through Change kind, which gives it a new id, "
+            "not through a save.",
+        )
+
+
 async def _sent(request: Request) -> dict:
     """The JSON object a request carried, or a refusal that says so.
 
@@ -3099,6 +3125,7 @@ def create_app(
         # type to be wrong. It used to be written through to the file.
         _reject_undeclared_fields(fields, RECORD_FIELDS, "a record")
         _reject_bad_types(fields)
+        _reject_a_new_kind(record_id, fields)
         # `parse_text` below deliberately takes any word — a file that arrived
         # in git with one must still load — so without this the PATCH door
         # committed a status nobody defined, and the plan woke up with a
@@ -3534,6 +3561,7 @@ def create_app(
                     f"{record_id} is claimed by two files. Resolve it in git and reload — "
                     "a save here would edit a record that is not the one you were shown.",
                 )
+            _reject_a_new_kind(record_id, fields)
             _reject_bad_status(_kind_for(record_id), fields)
             content = _patched(store.read(base, path), fields, None, path)
             try:
@@ -5003,7 +5031,9 @@ def create_app(
                         _reject_bad_types(fields)
                         # The room writes through the same gate as PATCH — the
                         # comment on `writer` above says exactly that — so the
-                        # vocabulary stands here too.
+                        # vocabulary stands here too, and so does the kind, or
+                        # the socket would be the way round Change kind.
+                        _reject_a_new_kind(record_id, fields)
                         _reject_bad_status(_kind_for(record_id), fields)
                     except HTTPException as refused:
                         _to(connection, {"t": "refused", "why": refused.detail})

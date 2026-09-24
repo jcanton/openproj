@@ -7230,6 +7230,11 @@ def test_a_kind_that_is_off_is_refused_at_every_door(tmp_path: Path, kind: str):
         assert moved.status_code == 422, moved.text
         assert moved.json()["detail"] == sentence
 
+        # And a save that names the kind outright, which is not a way to change
+        # one at all (D5): refused whether or not the plan has it.
+        saved = save(client, TASK, {"kind": kind})
+        assert saved.status_code == 422, saved.text
+
         assert client.get(f"/detail/{record_id}").status_code == 200
         listed = [
             one.attrs["data-id"]
@@ -7328,3 +7333,38 @@ def test_a_switched_off_address_hands_its_filters_to_records(tmp_path: Path):
             ("Show the same filters on Records", "/?owner=ann&status=ready")
         ]
         assert ways_out("/table") == [("Go to Records", "/")]
+
+
+def test_a_records_kind_changes_through_change_kind_and_nowhere_else(
+    client: TestClient, repo_path: Path
+):
+    """`kind` is a field every rung declares, so a save could set it, and nothing
+    asked. The id carries the kind, so what that committed was a task's id over a
+    pitch's frontmatter — a blocker the plan woke up with, on a protected branch —
+    and it went past everything Change kind does: no new id, no children
+    repointed, and no kind gate.
+
+    Both save doors refuse it, and write nothing. The record's own kind is let
+    through, because a form that sends every field back is not asking for
+    anything; the co-editing room is the third door, and `test_coedit` holds it.
+    """
+    before = git_head(repo_path)
+    said = (
+        "A record's kind changes through Change kind, which gives it a new id, not through a save."
+    )
+
+    one = save(client, TASK, {"kind": "pitch"})
+    assert one.status_code == 422, one.text
+    assert one.json()["detail"] == said
+
+    # One record in the selection that is not a task refuses all of it: the
+    # batch is one commit.
+    many = save_many(client, [TASK, PITCH], {"kind": "task"})
+    assert many.status_code == 422, many.text
+    assert many.json()["detail"] == said
+    assert git_head(repo_path) == before, "a refusal writes nothing"
+
+    same = save(client, TASK, {"kind": "task", "priority": "low"})
+    assert same.status_code == 200, same.text
+    both = save_many(client, [TASK, OTHER], {"kind": "task", "priority": "high"})
+    assert both.status_code == 200, both.text
