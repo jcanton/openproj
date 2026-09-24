@@ -524,8 +524,10 @@ def test_every_route_says_which_nav_item_it_is(client: TestClient):
     # controls, so the tab went and the page stayed — every title links to it,
     # and in the export `detail.html` is the whole corpus in one file. A page
     # that lights nothing is a state the nav must draw, not a page that forgot
-    # to say where it is. `/new` has always been in that position.
-    for route in ("/detail", f"/detail/{TASK}", "/new?kind=task"):
+    # to say where it is. `/new` has always been in that position. `/help` is in it
+    # since Help moved to the footer, where its own link carries the mark instead —
+    # `test_help_is_in_the_footer_of_every_page_and_marks_itself_there` holds that half.
+    for route in ("/detail", f"/detail/{TASK}", "/new?kind=task", "/help"):
         assert lit(client.get(route).text) == [], route
 
 

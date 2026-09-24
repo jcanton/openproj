@@ -29,11 +29,11 @@ with the search box above it. It is how you get back to the thing you were writi
 PM work happens in the tabs, which are the same records seen several ways: **Table** is the one
 people live in, **Graph** is the dependency diagram, where dependencies are drawn and removed in a
 mode of its own, **Timeline** the derived Gantt, **Cycles** one page per cycle with its bets and
-its capacity, **People** who is on what and who is full, and **Help**, which is the four documents
-under `docs/`, drawn on one page inside the app. Every filter is in the URL, so a view is a link,
-and a field can be asked for more than one value at a time — two statuses means either of them.
-Pointing at a row, a node or a bar opens the same card in all three: what the record is, who is on
-it, when it runs, and its shaping document under a rule.
+its capacity, and **People** who is on what and who is full. **Help**, in the footer of every page
+beside Report issue, is the four documents under `docs/`, drawn on one page inside the app. Every
+filter is in the URL, so a view is a link, and a field can be asked for more than one value at a
+time — two statuses means either of them. Pointing at a row, a node or a bar opens the same card in
+all three: what the record is, who is on it, when it runs, and its shaping document under a rule.
 
 The search box is a small language, and it is the same language on the server and in the browser:
 bare words match a record's fields — its id, title, tags, PR references and the people named on it,

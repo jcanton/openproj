@@ -29,6 +29,7 @@ from openproj.render import (
     render_detail,
     render_static,
 )
+from openproj.render.shell import Links
 
 PAGES = (
     "index.html",
@@ -4254,6 +4255,40 @@ def test_a_nav_item_that_is_not_a_nav_item_is_refused():
         _page("t", "", current="cycle")
 
 
+def test_help_is_in_the_footer_of_every_page_and_marks_itself_there(seed_index: Index):
+    """Help left the nav for the footer — jcanton, 2026-09-24: "we move help to the
+    footer, before `report issue` and it stays always on there". A link that is on
+    every page is a link one entry point can forget, so this is every entry point,
+    read off the namespace, in both modes, with the footer parsed rather than
+    searched: exactly one Help, pointing where that mode's links say Help is, and
+    immediately before Report issue.
+
+    The you-are-here mark moved with it. The nav used to light Help on the Help
+    page, and with no Help in the nav nothing there can, so the footer's link
+    carries `aria-current="page"` on that page — and on no other, because a mark
+    on every page is a mark on none.
+    """
+    from pages import footer_of, nav_of
+
+    for links in (STATIC, ROUTES):
+        mode = "served" if links.served else "exported"
+        drawn = every_page(seed_index, links)
+        assert "render_help" in drawn and len(drawn) >= 10, sorted(drawn)
+        for name, page in drawn.items():
+            where = f"{name} ({mode})"
+            footer = footer_of(page)
+            labels = [label for label, _, _ in footer]
+            helps = [(href, marked) for label, href, marked in footer if label == "Help"]
+            assert len(helps) == 1, f"{where}: the footer reads {labels}"
+            href, marked = helps[0]
+            assert href == links.help, f"{where}: Help points at {href!r}, not {links.help!r}"
+            after = labels[labels.index("Help") + 1 :]
+            assert after[:1] == ["Report issue"], f"{where}: the footer reads {labels}"
+            wrong = "marks a page that is not Help" if marked else "does not mark the Help page"
+            assert marked == (name == "render_help"), f"{where}: the footer's Help link {wrong}"
+            assert "Help" not in [label for label, _, _ in nav_of(page)], f"{where}: in the nav"
+
+
 def test_the_live_page_is_live_whatever_its_links_say():
     """The event stream, the pile and the health poll were switched on by
     whether `links.table` began with a slash. A plan that switches its Table off
@@ -4927,7 +4962,7 @@ def test_the_box_each_view_fills_stops_where_the_window_does(
             )
 
 
-def every_page(index: Index) -> dict[str, str]:
+def every_page(index: Index, links: Links | None = None) -> dict[str, str]:
     """Every page the renderer can draw, keyed by the entry point that drew it.
 
     Read off `render.py`'s namespace rather than listed here, which is
@@ -4936,6 +4971,10 @@ def every_page(index: Index) -> dict[str, str]:
     page missing from a hand-written list is exactly the page that will forget.
     Six of them already had — the nav mark went missing on two routes the same
     way.
+
+    `links` draws every one of them in that mode; left out, each entry point
+    draws in its own default, which is the export's for some and the server's
+    for the pages the export never writes.
     """
     import inspect
 
@@ -4953,6 +4992,8 @@ def every_page(index: Index) -> dict[str, str]:
             arguments |= {"number": 37}
         if "record_id" in wanted:
             arguments |= {"record_id": next(iter(index.records))}
+        if links is not None:
+            arguments |= {"links": links}
         pages[name] = entry(**arguments)
     return pages
 

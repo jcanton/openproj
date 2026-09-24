@@ -50,8 +50,8 @@ class Links(BaseModel):
     # not an empty string like `new` and `deck` below: the documentation is about
     # the tool rather than about a plan, so it is the same page in both modes and
     # an exported plan that has outlived the service carries its own instructions
-    # with it. It is also the reason it can be a nav item at all — a nav link into
-    # a file nobody wrote is a dead link on every other page of the export.
+    # with it. It is also the reason every page's footer can link to it — a link
+    # into a file nobody wrote is a dead link on every other page of the export.
     help: str = "help.html"
     # Prefix in front of a repository-relative embed path. Empty in the static
     # export, where a rendered file sits beside the `assets/` and `drawings/`
@@ -726,8 +726,20 @@ nav a, nav a:visited { color: var(--muted); }
    about: the box is 24.69px against a sibling's 19.5, and the nav is 28 either
    way because the theme toggle is a 28px circle and it is the tallest thing in
    the row. Giving a row of space back at the heading and taking it again here
-   would be the change undoing itself, so a test measures this too. */
-nav a[aria-current="page"], nav a[aria-current="page"]:visited {
+   would be the change undoing itself, so a test measures this too.
+   The footer's Help link wears the same mark on the Help page, which left the
+   nav for the footer and took its you-are-here with it. One rule and not a copy
+   of it, because two copies of a mark are two marks that drift. In the footer it
+   is fighting `#build a, #build a:visited`, which is (1,0,1) and (1,1,1), and it
+   wins both on weight at (1,1,1) and (1,2,1) — it is written above them, so a
+   tie would have gone to them on order. The `:visited` twin also outweighs
+   `#build a:hover` (1,1,1), and a link to the page you are on is nearly always
+   visited. The link sits inside a `<span>` in the footer — see the template —
+   so it is an inline box there and not a flex item, and the padding widens the
+   mark without making the row taller: measured in Chrome, the footer is 26.3px
+   on the Help page and on the Table alike, where as a flex item it was 31.5. */
+nav a[aria-current="page"], nav a[aria-current="page"]:visited,
+#build a[aria-current="page"], #build a[aria-current="page"]:visited {
   color: var(--accent); font-weight: 600; text-decoration: none;
   background: var(--surface-2); border: 1px solid var(--accent);
   border-radius: 3px; padding: .1rem .45rem; }
@@ -3416,13 +3428,14 @@ function fitRoom() { roomSlack = 0; settleRoom(4); }
     In the footer because it is reference and not news. It is on every page, out
     of the reading column, and it is the first thing anybody asks for when a
     page behaves unexpectedly. -#}
-{#- Three facts, and the separators between them are the stylesheet's rather than
-    the template's. Written as literal ` · ` text this row said `openproj 0.37.0 ·
-    · Report issue` for the whole of the second or two before the health poll
-    answered, and permanently on any page where it never did — a dangling
-    separator beside an empty box, which reads as a page that failed to draw
-    something rather than as a fact that has not arrived. `#planhead:empty` takes
-    the span out and `* + *::before` takes its dot with it. -#}
+{#- A row of facts and links, and the separators between them are the
+    stylesheet's rather than the template's. Written as literal ` · ` text this
+    row said `openproj 0.37.0 · · Report issue` for the whole of the second or two
+    before the health poll answered, and permanently on any page where it never
+    did — a dangling separator beside an empty box, which reads as a page that
+    failed to draw something rather than as a fact that has not arrived.
+    `#planhead:empty` takes the span out and `* + *::before` takes its dot with
+    it. -#}
 <footer id="build">
   <a href="https://github.com/jcanton/openproj/releases/tag/v{{ version }}">openproj
     {{ version }}</a>
@@ -3431,7 +3444,21 @@ function fitRoom() { roomSlack = 0; settleRoom(4); }
       you reach for at the moment the page in front of you is wrong, which is the
       moment you are already reading this row for the version to quote. `issues/new`
       on the TOOL's repository and never the plan's — a bug in the app is not a
-      record in somebody's plan, and the two repositories stay two. -#}
+      record in somebody's plan, and the two repositories stay two.
+
+      Help immediately before it, for the same reason: the documentation is what
+      you open when a page is not doing what you expected. It left the nav for
+      this row (see `_OFF_NAV`), so this is also where the Help page marks itself.
+
+      **In a `<span>`, and the span is the whole of a defect.** The row's dots are
+      each child's own `::before`, and a `::before` is drawn inside the box of the
+      element it belongs to — so with the link a child of the row, the Help page
+      drew its separator inside the you-are-here box, in the accent and at 600, as
+      `[· Help]`. Seen on a screenshot, not in a test: every rule resolved the way
+      it was meant to. The span takes the dot and the link inside it takes the
+      box, and as an inline box inside a flex item the link's padding widens the
+      mark without making the row any taller on the one page that draws it. -#}
+  <span><a href="{{ links.help }}"{% if help_here %} aria-current="page"{% endif %}>Help</a></span>
   <a href="https://github.com/jcanton/openproj/issues/new">Report issue</a>
 </footer>
 <script>
@@ -4134,13 +4161,6 @@ _NAV = (
     # the end, where they sat before the records flip retired their own pages.
     ("issues", "Issues"),
     ("notes", "Notes"),
-    # Last, and after the two inboxes, because it is the one item that is not a
-    # view of the plan: everything to its left answers "what is in the plan" and
-    # this answers "what is this tool". jcanton, 2026-08-27, given the choice
-    # between a nav item and a `?` in the corner beside the sign-in — the corner
-    # already wraps at 500px with three controls in it, and an item here gets the
-    # `aria-current` mark every other page has for free.
-    ("help", "Help"),
 )
 _NAV_KEYS = frozenset(key for key, _ in _NAV)
 # What a record page's back link calls the view it was opened from. The nav's own
@@ -4172,10 +4192,21 @@ _ORIGIN_PATH = r"^/($|[^/\\])"
 # export `detail.html` is the whole corpus in one file — so the page stays and
 # only the nav slot goes.
 #
+# `help` was the last nav item and is in the footer now, immediately before Report
+# issue, on jcanton's word, 2026-09-24: "we move help to the footer, before
+# `report issue` and it stays always on there". It is the thing you reach for when
+# the page in front of you is not what you expected — the same argument that put
+# Report issue there — and it was the one item in the nav that was not a view of
+# the plan. Its you-are-here mark moved with it: `help_here` puts
+# `aria-current="page"` on the footer's link. Off the nav it has no word in `_NAV`
+# either, so it stamps no back-link origin, and a record page reached after it
+# goes back to the view the tab stood on before Help; Help itself has no
+# `a.origin` for a stamp to rewrite.
+#
 # The distinction is worth encoding rather than deleting the guard: `/deck/<n>`
 # is in the same position already, and the next page will be too. A `current`
 # that is neither a nav item nor a page is still a typo and still raises.
-_OFF_NAV = frozenset({"detail"})
+_OFF_NAV = frozenset({"detail", "help"})
 _PAGE_KEYS = _NAV_KEYS | _OFF_NAV
 
 
@@ -4285,6 +4316,9 @@ def _page(
             {"href": getattr(links, key), "label": label, "current": key == current}
             for key, label in _NAV
         ],
+        # The Help page's own mark, on the one link to it, which is in the footer
+        # and not in the nav above: `nav` cannot carry it.
+        help_here=current == "help",
         # What a record page reached from this one should call it, and empty on
         # the pages that are not a view: the record page itself and the create
         # form. That is the whole switch the script below turns on — a page with

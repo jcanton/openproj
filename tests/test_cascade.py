@@ -475,6 +475,78 @@ def test_the_nav_marks_where_you_are_even_on_a_link_you_have_already_used(index:
             )
 
 
+def test_the_footer_marks_where_you_are_even_on_a_link_you_have_already_used(index: Index):
+    """The nav's test again, one landmark down, because Help took its mark with it.
+
+    Help is in the footer now and carries `aria-current="page"` there on the Help
+    page, and the footer has rules of its own that know nothing about a mark:
+    `#build a, #build a:visited { color: inherit }`, which is (1,0,1) and (1,1,1).
+    The nav's rule alone reaches no link in the footer, so without a footer twin
+    the mark would be in the accessibility tree and nowhere on screen — Help
+    drawn in the same muted ink as the version beside it. The twins are (1,1,1)
+    and (1,2,1), and written above the footer's rules in the sheet, so a tie
+    would have gone to the footer on order; this asks that they win on weight.
+
+    Both themes, as far as this engine can see them. The toggle's
+    `:root[data-theme="dark"]` is a selector and is asked here, through a root
+    element carrying the attribute; the media query a reader who never touches
+    the toggle matches is an at-rule, which `tests/cascade.py` does not read.
+
+    The Help link is described inside its `<span>`, because that is where it is:
+    the span carries the row's separator so that the box does not (see the
+    footer in `_SHELL`), and a selector qualified by `#build > a` would reach the
+    other two links and silently miss this one.
+    """
+    from openproj.render import render_help
+
+    drawn = pages(index) | {"help": render_help(index, ROUTES)}
+    for theme in ("light", "dark"):
+        root = el("html", states="root", data_theme=theme)
+        footer = [root, el("body"), el("footer", id="build")]
+        help_at = footer + [el("span")]
+        for name, page in drawn.items():
+            sheet = sheet_of(page)
+            where = f"{name}, {theme}"
+            for states in ("", "visited"):
+                said = f"{where} ({states or 'unvisited'})"
+                # The version and Report issue, and Help on every page but its own.
+                others = [at + [el("a", states=states)] for at in (footer, help_at)]
+                for other in others:
+                    assert sheet.value(other, "color") == "inherit", (
+                        f"{said}: {says(sheet, other, 'color')}"
+                    )
+                    # None of them is handed the box.
+                    assert sheet.value(other, "border") is None, said
+                    assert sheet.value(other, "background") is None, said
+                here = help_at + [el("a", states=states, aria_current="page")]
+                assert sheet.value(here, "color") == "var(--accent)", (
+                    f"{said}: {says(sheet, here, 'color')}"
+                )
+                # All three channels, as in the nav: a mark that is only a hue is
+                # one this app does not accept anywhere.
+                assert sheet.value(here, "font-weight") == "600", said
+                assert sheet.value(here, "border") == "1px solid var(--accent)", said
+                assert sheet.value(here, "background") == "var(--surface-2)", said
+                assert sheet.value(here, "text-decoration") == "none", said
+
+            # Heavier than everything it beats, and not merely later — the claim
+            # the `:visited` twin exists for. A link to the page you are on is
+            # nearly always visited, and hovered is the one state left in which
+            # `#build a:hover` reaches it, with an underline the mark does not have.
+            for states in ("visited", "visited hover"):
+                here = help_at + [el("a", states=states, aria_current="page")]
+                for prop, wanted in (("color", "var(--accent)"), ("text-decoration", "none")):
+                    won = sheet.winner(here, prop)
+                    assert won and won.value == wanted, f"{where} ({states}) {prop}: {won}"
+                    for rule in sheet.selectors_reaching(here, prop):
+                        assert (
+                            rule.selector == won.selector or rule.specificity < won.specificity
+                        ), (
+                            f"{where} ({states}) {prop}: `{won.selector}` only beats "
+                            f"`{rule.selector}` on source order — both are {won.specificity}"
+                        )
+
+
 @pytest.mark.parametrize("kind", ["project", "pitch", "task"])
 def test_every_kind_chip_is_the_same_shape(index: Index, kind: str):
     """Three answers to one question, drawn three ways: a project chip carried
