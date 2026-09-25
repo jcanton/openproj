@@ -3667,40 +3667,54 @@ function stowCorner(narrow) {
 // somebody presses on a phone in the dark.
 //
 // A relocation and not a copy, for the reason `stowCorner` gives: one element,
-// one id, one listener. Each item leaves a comment where it was, so it goes back
-// to exactly that place. That still works after the corner has moved between the
-// nav and the footer, because the marks inside the corner move with it. Only
-// items whose mark is in the footer are candidates: the corner in the nav is not
-// this row's to fold.
-const BUILD_FOLDS = ['#planhead', '#version', '#report', '#buildhelp', '.corner .schemepick',
-               '#who', '#theme']
+// one id, one listener. `BUILD_ITEMS` is where each one lives, in the order it
+// is drawn: the footer's own four, then the corner's three. An item goes back
+// in front of the next of its neighbours that is still at home, or else to the
+// end of its home. In the footer the end is just before the corner, or before
+// the fold button when the corner is in the nav. Only items whose home is in the
+// footer can fold: the corner in the nav is not this row's to fold.
+//
+// Remembered as homes and an order, and not as comment nodes left behind as
+// place markers, which was the first version of this. `tests/js/drive.js`
+// builds these pages without comment nodes, and every page it drove stopped
+// on `document.createComment` before its interesting half had run.
+const BUILD_ITEMS = ['#version', '#planhead', '#buildhelp', '#report',
+                     '#who', '.corner .schemepick', '#theme']
   .map(selector => document.querySelector(selector))
   .filter(Boolean)
-  .map(el => {
-    const mark = document.createComment('');
-    el.before(mark);
-    return {el, mark};
-  });
+  .map(el => ({el, home: el.parentElement}));
+const BUILD_FOLDS = ['#planhead', '#version', '#report', '#buildhelp', '.corner .schemepick',
+                     '#who', '#theme']
+  .map(selector => document.querySelector(selector))
+  .map(el => BUILD_ITEMS.find(one => one.el === el))
+  .filter(Boolean);
+
+function unshelve(one) {
+  const later = BUILD_ITEMS.slice(BUILD_ITEMS.indexOf(one) + 1)
+    .find(other => other.home === one.home && other.el.parentElement === one.home);
+  const end = one.home !== BUILD ? null
+    : CORNER && CORNER.parentElement === BUILD ? CORNER : BUILD_MORE;
+  one.home.insertBefore(one.el, later ? later.el : end);
+}
 
 function foldBuild() {
-  if (!BUILD_MORE || !BUILD_SHELF || !BUILD) return;
-  for (const one of BUILD_FOLDS) if (one.el.parentElement === BUILD_SHELF) one.mark.after(one.el);
+  // A row nothing is drawing has nothing to fold. This is the test `measureRoom`
+  // makes of its box, and for the same reason.
+  if (!BUILD_MORE || !BUILD_SHELF || !BUILD || !BUILD.getClientRects().length) return;
+  for (const one of BUILD_ITEMS) if (one.el.parentElement === BUILD_SHELF) unshelve(one);
   BUILD_MORE.hidden = true;
   const fits = () => BUILD.scrollWidth <= BUILD.clientWidth;
   if (fits()) { BUILD_MORE.open = false; return; }
   BUILD_MORE.hidden = false;
-  const shelved = [];
   for (const one of BUILD_FOLDS) {
-    if (!BUILD.contains(one.mark)) continue;
-    shelved.push(one);
+    if (one.home !== BUILD && one.home.parentElement !== BUILD) continue;
     BUILD_SHELF.append(one.el);
     if (fits()) break;
   }
   // In the menu they read in the order the row had them, not in the order they
   // were taken off it.
-  shelved.sort((a, b) =>
-    a.mark.compareDocumentPosition(b.mark) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
-  BUILD_SHELF.append(...shelved.map(one => one.el));
+  BUILD_SHELF.append(...BUILD_ITEMS
+    .filter(one => one.el.parentElement === BUILD_SHELF).map(one => one.el));
 }
 
 // For the two things that change the row's width after load without the window
