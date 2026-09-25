@@ -912,7 +912,18 @@ addEventListener('keydown', event => {
 // Full page is the first thing Escape leaves, ahead of the view it is a size of:
 // one press gives the page back, a second ends the session, and neither discards
 // anything.
+//
+// **Not under vim, which owns Escape.** Vim's insert mode takes the key before
+// this is ever dispatched, but its normal mode does not, and Escape in normal mode
+// is what a vim hand presses without thinking — to cancel a half-typed command, or
+// just to be sure. Moving the listener off `BODY` made each of those presses end
+// the session: `test_a_vim_yank_reaches_the_system_clipboard` presses Escape to
+// reach normal mode and found itself on the read view, yanking nothing. So a
+// keymap of its own claims the key outright, and the page leaves full page and the
+// session by its buttons. That is exactly what vim on Ace had before, when the
+// listener was deaf to it.
 SURFACE.el.addEventListener('openproj:escaped', event => {
+  if (SURFACE.setKeymap && EDITOR.keymap !== 'default') return;
   if (VIEW_ARTICLE.classList.contains('whole-page')) {
     event.preventDefault();
     wholePage(false);

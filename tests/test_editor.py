@@ -4435,13 +4435,17 @@ def test_a_view_change_tells_the_seat_layer_the_box_moved(client: TestClient):
     The count is asked of Chrome in
     `test_the_three_views_are_one_of_three_and_each_pane_scrolls_on_its_own`,
     which listens for the event through eight of them. This is the static half:
-    that the dispatch is in the one function every view change goes through, and
-    that the line that caused the defect is gone from the page altogether.
+    that the dispatch is in the one function every view change goes through —
+    `reshaped`, since the full-page toggle changes the box's size too and calls
+    the same list — and that the line that caused the defect is gone from the page
+    altogether.
     """
     page = client.get(f"/detail/{TASK}").text
     switching = re.search(r"function showView\(mode\) \{.*?\n\}", page, re.S).group(0)
+    reshaping = re.search(r"function reshaped\(\) \{.*?\n\}", page, re.S).group(0)
 
-    assert "dispatchEvent(new Event('openproj:editing'))" in switching
+    assert "reshaped();" in switching
+    assert "dispatchEvent(new Event('openproj:editing'))" in reshaping
     # The box is taken away by a class the seat layer can see, never behind its back.
     assert "BODY.hidden" not in page
     # And `drawSeats` is still listening for it, which is the other end of the
@@ -10450,6 +10454,60 @@ def test_the_editor_takes_the_whole_page_and_escape_gives_it_back(
     assert not got["read"]["whole"] and got["read"]["inert"] == [False, False], (
         f"the read view kept full page, with no bar to leave it by: {got['read']}"
     )
+
+
+_WHOLE_PAGE_UNDER_VIM = """
+flipEditing();
+await new Promise(go => setTimeout(go, 300));
+const keymap = [...document.querySelectorAll('#statusbar button')]
+  .find(b => b.textContent.startsWith('Keymap'));
+keymap.click();
+await new Promise(go => setTimeout(go, 150));
+const toggle = document.getElementById('editor-size');
+toggle.click();
+await new Promise(go => setTimeout(go, 150));
+const input = SURFACE.el.querySelector('textarea');
+const state = () => ({
+  keymap: EDITOR.keymap,
+  whole: document.querySelector('article.record').classList.contains('whole-page'),
+  view: VIEW,
+});
+input.focus();
+for (let at = 0; at < 3; at++) {
+  input.dispatchEvent(new KeyboardEvent('keydown',
+    {key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true}));
+  await new Promise(go => setTimeout(go, 80));
+}
+const escaped = state();
+toggle.click();
+await new Promise(go => setTimeout(go, 150));
+return {escaped, pressed: state()};
+"""
+
+
+def test_escape_under_vim_leaves_neither_full_page_nor_the_session(
+    client: TestClient, tmp_path: Path
+):
+    """Vim owns Escape. Its insert mode takes the key before the page sees it; its
+    normal mode does not, and Escape pressed in normal mode is a reflex — it
+    cancels a half-typed command or just makes sure. With the page answering
+    those, every reflex press threw a vim writer out of full page and then out of
+    the session: `test_a_vim_yank_reaches_the_system_clipboard` found itself on
+    the read view, yanking nothing, the first time the page's Escape reached Ace.
+
+    Three presses, because the first puts vim in normal mode and the next two are
+    the ones a normal-mode hand makes. The button is how full page ends here, and
+    it still does.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "whole-vim.html", 1200,
+        _WHOLE_PAGE_UNDER_VIM, height=800, patience=2500,
+    )
+    assert got["escaped"]["keymap"] == "vim", f"vim never came on: {got}"
+    assert got["escaped"]["whole"] and got["escaped"]["view"] == "edit", (
+        f"Escape under vim left full page or the session: {got['escaped']}"
+    )
+    assert not got["pressed"]["whole"], "and the button no longer gives the page back"
 
 
 def test_the_full_page_toggle_is_on_the_record_editor_and_not_the_slide_editor(
