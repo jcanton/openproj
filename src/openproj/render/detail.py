@@ -1548,7 +1548,7 @@ _DETAIL = """
           view machine's `LANDING` looks for exactly this element, and the
           create form having nothing to land on is what keeps its `view` a
           draft preview instead of a sessionless page. -#}
-      {% if not creating %}<div class="doc read">{{ e.body }}</div>{% endif %}
+      {% if not creating %}<div class="doc read syntax">{{ e.body }}</div>{% endif %}
       {% if editable %}
       {#- Who else is in this document, by name. A name is the channel that
           survives every reader; a colour is not, and a caret drawn one line off
@@ -1608,7 +1608,7 @@ _DETAIL = """
                     {% endif %}aria-label="Shaping document">{{ e.raw_body }}</textarea>
         </div>
         {{ splitter }}
-        <div id="body-preview" class="field doc" hidden></div>
+        <div id="body-preview" class="field doc syntax" hidden></div>
       </div>
       {#- The strip along the foot of the box. Filled by `attachStatus`, which
           wraps whatever the page put in it — here the draft's interval, because

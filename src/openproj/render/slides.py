@@ -268,7 +268,7 @@ _SLIDE = """
           {% endfor %}</ul>
       </section>
       {% endif %}
-      <div class="doc read">{{ e.body }}</div>
+      <div class="doc read syntax">{{ e.body }}</div>
     </section>
 
     {#- The two joins, and the same control the record page's split view uses:
