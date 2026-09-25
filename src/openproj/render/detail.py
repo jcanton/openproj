@@ -199,6 +199,60 @@ const LANDING = VIEW_ARTICLE.querySelector('.doc.read');
 const GROUND = LANDING ? 'view' : null;
 let VIEW = GROUND;
 
+// --- full page -----------------------------------------------------------------
+//
+// The writing box and its bars over the whole window, on a button — jcanton,
+// 2026-09-25, "similar to that of the excalidraw drawing pane". So it is what that
+// toggle is: full PAGE and not the Fullscreen API, which was his call for the
+// drawing ("so we don't have the browser going to a different space on mac"); the
+// same two bracket drawings from `DRAWING_SIZE_MARKS`, naming the next press
+// rather than the state, and for the reason `drawPopup` gives it is not
+// `aria-pressed`.
+//
+// **What stays is the two bars and the box, which is his answer to a question.**
+// The switcher's row stays above the formatting bar — Save, Reset and the count of
+// what is unsaved are in it, and a page that shows its save model and then hides
+// it at the one moment somebody is writing hardest is two save models. The title,
+// the fields, the nav and the footer go.
+//
+// **Not remembered, which is the other answer, and it is where this differs from
+// the drawing.** Remembered, every Edit on every record would open over the whole
+// window, which is the full-page surface he had taken out on 2026-08-24 ("the nav
+// bar disappears when entering edit or side-by-side modes, should not do that").
+// It lasts until the button is pressed again, Escape, or the read view.
+//
+// **A class and not a surface.** Nothing moves out of the article and nothing is
+// built: `whole-page` makes the article `position: fixed` over the window and the
+// stylesheet leaves only the two bars and the box drawn, so turning it off is
+// removing one class. The nav, the skip link and the footer go `inert` with it,
+// because they are behind an opaque box and still in the tab order — a focus ring
+// nobody can see is the floor broken.
+//
+// Looked up at each press and not once here: this script is inside `<main>`, and
+// the footer comes after it, so at this line it has not been parsed yet — a list
+// taken now left the footer's links in the tab order behind the box.
+const WHOLE = document.getElementById('editor-size');
+function wholePage(on) {
+  VIEW_ARTICLE.classList.toggle('whole-page', on);
+  for (const outside of document.querySelectorAll('body > .skip, body > nav, body > footer')) {
+    outside.inert = on;
+  }
+  WHOLE.innerHTML = on ? DRAW_SIZE_ART.small : DRAW_SIZE_ART.full;
+  const says = on ? 'Smaller' : 'Full page';
+  WHOLE.setAttribute('aria-label', says);
+  WHOLE.title = says;
+}
+wholePage(false);
+WHOLE.onclick = () => {
+  wholePage(!VIEW_ARTICLE.classList.contains('whole-page'));
+  reshaped();
+  // Back into the writing, the way the drawing's toggle hands the keyboard back to
+  // the canvas: the press left focus on this button, and the point of it was to
+  // write in the bigger box. Ace's own input is the textarea inside its host.
+  const into = SURFACE.el.matches('textarea') ? SURFACE.el : SURFACE.el.querySelector('textarea');
+  if (into) into.focus();
+};
+
 function showView(mode) {
   // Out of a session and onto the read view, which a save in place left behind.
   if (mode === 'view' && VIEW !== 'view' && freshen()) return;
@@ -207,6 +261,11 @@ function showView(mode) {
     VIEW_ARTICLE.classList.toggle('view-' + name, mode === name);
     document.getElementById(VIEW_IDS[name]).setAttribute('aria-pressed', String(mode === name));
   }
+  // Full page is a size for the writing box, and the reading view has none: its
+  // `.markbar` is `display: none`, so staying whole there would be a window-sized
+  // page with no way back but Escape. Edit and split keep it, since the box is in
+  // both and the switcher is on screen to move between them.
+  if (mode !== 'edit' && mode !== 'both') wholePage(false);
   // A view is the classes above and nothing else. This function used to build a
   // full-page surface here — `.full` on the article, `body.fullpage`, an
   // `inert` sweep of `body > nav, body > a.skip`, and `#theme` and `#who`
@@ -238,6 +297,14 @@ function showView(mode) {
     if ((mode === 'edit' || mode === 'both') && !editing) showEditing(true);
     if (mode === 'view' && editing) showEditing(false);
   }
+  reshaped();
+  refreshPreview(true);
+}
+
+// What has to be told when the box changes size without the window changing: a
+// view change, and full page going on or off. One list, because a second copy for
+// full page is the copy that forgets the splitter.
+function reshaped() {
   // The room's bands are measured against a box that has a size, and a view
   // change is exactly when the box changes size. The Preview button this
   // replaces took the box away by setting its `hidden` attribute and dispatched
@@ -269,7 +336,6 @@ function showView(mode) {
   // The room under the preview is this view's: it exists in the split and
   // nowhere else, and the box it is measured against has just changed size.
   fitPreviewTail();
-  refreshPreview(true);
 }
 
 // --- where the join between the two panes is --------------------------------
@@ -834,7 +900,25 @@ addEventListener('keydown', event => {
 // is the sessionless landing, so Escape ends the session — and ends it without
 // discarding anything, which every door out of a session now does. Putting a
 // record back is `resetEdits`, a button that says so and does nothing else.
-BODY.addEventListener('openproj:escaped', event => {
+//
+// **On the surface's element, and it was on `BODY`.** `attachEditing` dispatches
+// this on `surface.el`, which is `BODY` only for the plain box. On Ace — what
+// nearly everybody writes in — it is the host `div` beside the hidden textarea, an
+// event dispatched on one sibling never reaches the other, and so Escape in Ace
+// opened the Tab hatch and never left the view. Measured in Chrome on 2026-09-25,
+// both surfaces, one press each: the plain box landed on `view`, Ace stayed in
+// `edit` saying "Press Tab to leave the document".
+//
+// Full page is the first thing Escape leaves, ahead of the view it is a size of:
+// one press gives the page back, a second ends the session, and neither discards
+// anything.
+SURFACE.el.addEventListener('openproj:escaped', event => {
+  if (VIEW_ARTICLE.classList.contains('whole-page')) {
+    event.preventDefault();
+    wholePage(false);
+    reshaped();
+    return;
+  }
   if (VIEW === GROUND) return;
   event.preventDefault();
   showView(GROUND);
@@ -1593,6 +1677,16 @@ _DETAIL = """
             not in a banner: a gutter that simply vanishes on a long document is
             the one somebody reports as broken. -#}
         <span class="hint" id="gutter-note" role="status" aria-live="polite"></span>
+        {#- Full page, the drawing popup's toggle brought to the writing box —
+            jcanton, 2026-09-25: "can we add a full screen button similar to that
+            of the excalidraw drawing pane? next to the other editor buttons on
+            the bar with bold etc. the buttons bar stays visible in full screen".
+            In this row and not in `#marks`, whose buttons are all things done TO
+            the document; this changes how much room there is to do them in. Its
+            drawing, its name and what it does are `wholePage` in `_VIEWS`. Here
+            and not in the slide editor's markup, which is the "only on the
+            /details page" of the same message. -#}
+        <button type="button" id="editor-size" class="mark grow"></button>
       </p>
       {#- The two panes of the split view, in one box so the view can hand them a
           column each and so each scrolls on its own. The box, and a layer over it
@@ -1748,7 +1842,10 @@ function place() {
   // typed fields, can you remove it from there and only leave it for edit and
   // preview views?" The width control in this view is `#splitter`, which is
   // between the two panes where there is something on both sides of it.
-  grip.hidden = !article || article.classList.contains('view-both');
+  // Off in full page too, where the box is the window's width and the measure it
+  // would drag decides nothing.
+  grip.hidden = !article || article.classList.contains('view-both')
+    || article.classList.contains('whole-page');
   if (!grip.hidden) grip.style.left = column(article).getBoundingClientRect().right + 'px';
 }
 place();

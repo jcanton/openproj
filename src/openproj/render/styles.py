@@ -930,6 +930,62 @@ article.record.editing .bodysplit { flex: 1; min-height: 16rem; }
    `.bodysplit` is definite in both: it is the growing row of `.main`. */
 article.record.editing .bodywrap { height: 100%; min-height: 0; }
 article.record.editing textarea.body-field { height: 100%; min-height: 0; resize: none; }
+/* **Full page: the article over the whole window, and only the writing left in
+   it.** jcanton, 2026-09-25, the drawing popup's toggle for the record editor
+   (`wholePage` in `_VIEWS` has the argument). `position: fixed`, and it is an
+   overlay the way `.drawpopup` is, not a layout: the page under it is left
+   exactly as it was, still filling the window, so taking the class off is the
+   whole of the way back.
+
+   z-index 15: over the nav's menus at 12, which it covers; under everything
+   parked on the body that has to open OVER the writing — the `[` completion
+   (20), the card (20), the right-click menu (25) and the drawing popup (40). A
+   menu that opens behind the box it was opened from is a menu that does not
+   open. The commit bar's sticky 10 is not in that list because it is inside
+   this box, in the stacking context the box makes.
+
+   `.editing` in every selector, so a `whole-page` left on an article that has
+   stopped editing draws nothing. */
+article.record.editing.whole-page {
+  position: fixed; inset: 0; z-index: 15;
+  margin: 0; padding: .75rem 1.25rem; box-sizing: border-box;
+  background: var(--bg);
+}
+/* What is left is named, and everything else goes: the switcher's row with Save
+   in it, the delete question that row can open, and inside the form the panes'
+   writing column. Named rather than listing what to hide, so the next thing
+   somebody adds to the header is off the full page until somebody decides it
+   belongs there, rather than on it because nobody did. Inside the writing
+   column the list is the other way round, and short: `.hints` and `.progress`
+   sit above the bars and are reading, not writing, and everything else in that
+   column is the writing or news about saving it. */
+article.record.editing.whole-page > :not(.toolrow, .confirming, form),
+article.record.editing.whole-page > form > :not(.panes),
+article.record.editing.whole-page .panes > :not(.main),
+article.record.editing.whole-page .panes > .main > :is(.hints, .progress) { display: none; }
+/* The window's width, and one row. Which way the cascade resolves: these are
+   (0,4,1) and (0,5,1), against the split's `article.record.view-both .panes`
+   width and the editing `grid-template-rows`, both (0,3,1), and the two-column
+   query's `grid-row: 1 / -1` at (0,4,1) — so full page wins in all three views
+   without relying on order. One row because the facts are gone: the editing template's
+   `fit-content(30%)` first row would otherwise be where the writing column lands
+   when stacked, and the box would be 30% of the window. */
+article.record.editing.whole-page .panes { width: auto; grid-template-rows: minmax(0, 1fr); }
+article.record.editing.whole-page .panes > .main { grid-row: 1; grid-column: 1; }
+/* The toggle, at the right-hand end of the formatting row: the bar is packed
+   left, so `margin-left: auto` on its last child is the edge of the box it sizes.
+   Centred and sized the way `.marks .hist` is, so it comes out the height of the
+   undo button, which is what sets the height of the toolbar's row.
+
+   `flex-start` and not `stretch`, and that is measured. The row is
+   `baseline`-aligned and a drawing has no baseline to sit on, so it needs an
+   alignment of its own; `stretch` matched `#marks` exactly on one row and, on a
+   phone where `#marks` wraps to three, drew a bordered box three rows tall. */
+.markbar .grow {
+  margin-left: auto; align-self: flex-start; flex: none;
+  display: inline-flex; align-items: center; justify-content: center; line-height: 0;
+}
+.markbar .grow svg { display: block; width: 13px; height: 13px; }
 """
 
 

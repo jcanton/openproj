@@ -10295,6 +10295,178 @@ def test_the_drawing_popup_takes_the_whole_page_and_remembers_that_it_did(
         )
 
 
+# The record editor's full-page toggle, pressed, measured, and left by Escape.
+#
+# Escape is dispatched at the element a keystroke really arrives at — Ace's own
+# hidden input, or the plain box — and not at the page's listener, because which
+# element that listener was on is exactly the defect this caught on Ace.
+_WHOLE_PAGE = """
+if (typeof flipEditing === 'function') flipEditing();
+const segment = document.getElementById('view-edit');
+if (segment.getAttribute('aria-pressed') !== 'true') segment.click();
+await new Promise(go => setTimeout(go, 150));
+const article = document.querySelector('article.record');
+const toggle = document.getElementById('editor-size');
+const drawn = el => !!el && el.getClientRects().length > 0;
+const into = SURFACE.el.matches('textarea') ? SURFACE.el : SURFACE.el.querySelector('textarea');
+const escape = async () => {
+  into.focus();
+  into.dispatchEvent(
+    new KeyboardEvent('keydown', {key: 'Escape', bubbles: true, cancelable: true}));
+  await new Promise(go => setTimeout(go, 150));
+};
+const state = () => {
+  const box = article.getBoundingClientRect();
+  const writing = SURFACE.el.getBoundingClientRect();
+  const foot = document.getElementById('statusbar').getBoundingClientRect();
+  const nav = document.querySelector('nav');
+  // What is on top where the nav is drawn, which is the question an overlay
+  // answers or does not: a class and a `position` can both be right while the
+  // box paints under the page it was meant to cover.
+  const navBox = nav.getBoundingClientRect();
+  const over = document.elementFromPoint(navBox.left + 4, navBox.top + navBox.height / 2);
+  return {
+    whole: article.classList.contains('whole-page'),
+    view: VIEW,
+    position: getComputedStyle(article).position,
+    covers: [box.left, box.top, box.width, box.height].map(Math.round).join(' ')
+      === [0, 0, innerWidth, innerHeight].join(' '),
+    overNav: !!over && article.contains(over),
+    says: toggle.getAttribute('aria-label'),
+    titled: toggle.title,
+    words: toggle.textContent.trim(),
+    drawings: toggle.querySelectorAll('svg path').length,
+    marks: drawn(document.getElementById('marks')),
+    save: drawn(document.querySelector('.toolrow')),
+    title: drawn(article.querySelector('h1')),
+    facts: drawn(article.querySelector('.facts')),
+    grip: drawn(document.getElementById('grip')),
+    rows: Math.round(writing.height / 20),
+    writingFits: writing.top >= 0 && foot.bottom <= innerHeight + 1,
+    inert: ['nav', 'footer'].map(name => document.querySelector(name).inert),
+    scrolls: document.documentElement.scrollHeight - document.documentElement.clientHeight,
+  };
+};
+const out = {before: state()};
+toggle.click();
+await new Promise(go => setTimeout(go, 150));
+out.whole = state();
+out.focused = into === document.activeElement;
+await escape();
+out.firstEscape = state();
+// The create form has no read view for a second press to land on.
+if (LANDING) await escape();
+out.secondEscape = state();
+// And the read view takes it off on its own, since the bar it lives in is gone.
+if (typeof flipEditing === 'function') flipEditing();
+if (segment.getAttribute('aria-pressed') !== 'true') segment.click();
+await new Promise(go => setTimeout(go, 150));
+toggle.click();
+await new Promise(go => setTimeout(go, 150));
+document.getElementById('view-both').click();
+await new Promise(go => setTimeout(go, 200));
+out.split = state();
+document.getElementById('preview').click();
+await new Promise(go => setTimeout(go, 150));
+out.read = state();
+return out;
+"""
+
+
+@pytest.mark.parametrize("surface", ["", PLAIN])
+@pytest.mark.parametrize("where", ["detail", "new"])
+def test_the_editor_takes_the_whole_page_and_escape_gives_it_back(
+    client: TestClient, tmp_path: Path, where: str, surface: str
+):
+    """jcanton, 2026-09-25: "can we add a full screen button similar to that of
+    the excalidraw drawing pane? next to the other editor buttons on the bar with
+    bold etc. the buttons bar stays visible in full screen". Asked, and answered:
+    the Save row stays too, it is not remembered, and the create form has it.
+
+    Full page as the drawing's is, and asked of the pixels the way that test asks:
+    the article covers the window and is what is hit where the nav was drawn, the
+    two bars and the writing box are drawn and fit, and the title, the fields and
+    the width grip are not. The nav and the footer are behind an opaque box, so
+    they leave the tab order with it.
+
+    **Escape is two presses, and the second is the regression.** The first leaves
+    full page and stays in the session. The second leaves the session, which on
+    Ace it never did: the page listened for the editor's Escape on the hidden
+    textarea while Ace dispatched it on its host, so Ace opened the Tab hatch and
+    stayed in `edit`. Two surfaces, because one of them passed with that defect in
+    place. The create form has no read view to land on, so its second press is not
+    asked about.
+
+    Leaving for the read view takes it off without a press — the bar it lives in
+    is not drawn there — and the split keeps it.
+    """
+    path = f"/detail/{TASK}{surface}" if where == "detail" else f"/new{surface}"
+    got = measured_in(
+        chrome(), client.get(path).text, tmp_path / f"whole-{where}.html", 1200,
+        _WHOLE_PAGE, height=800, patience=3000,
+    )
+
+    before = got["before"]
+    assert not before["whole"] and before["position"] == "relative", (
+        f"the editor opened at full page, which is the surface taken out on 2026-08-24: {before}"
+    )
+    assert before["marks"] and before["title"] and not before["inert"][0]
+    assert before["words"] == "" and before["drawings"] == 4, (
+        f"the toggle is not the drawing's four brackets and no words: {before}"
+    )
+    assert before["says"] == "Full page" and before["titled"] == "Full page"
+
+    whole = got["whole"]
+    assert whole["whole"] and whole["covers"], f"full page does not cover the window: {whole}"
+    assert whole["overNav"], "the box is drawn under the nav it was meant to cover"
+    assert whole["marks"], "the formatting bar went with the page; it was asked to stay"
+    assert whole["save"], "the Save row went, and with it the only sign of what is unsaved"
+    assert not whole["title"] and not whole["facts"], (
+        f"the header or the fields are still drawn at full page: {whole}"
+    )
+    assert not whole["grip"], "the width grip is drawn over a box whose width it cannot set"
+    assert whole["writingFits"] and whole["rows"] >= 25, (
+        f"the writing box does not fill the window below the bars: {whole}"
+    )
+    assert whole["scrolls"] == 0, f"the document scrolls {whole['scrolls']}px at full page"
+    assert whole["inert"] == [True, True], "the nav or the footer is still in the tab order"
+    assert whole["says"] == "Smaller" and whole["drawings"] == 4
+    assert got["focused"], "the toggle kept the keyboard; the press was made to write"
+
+    first = got["firstEscape"]
+    assert not first["whole"] and first["view"] == "edit", (
+        f"the first Escape did not give the page back, or left the session with it: {first}"
+    )
+    assert first["inert"] == [False, False] and first["says"] == "Full page"
+    if where == "detail":
+        assert got["secondEscape"]["view"] == "view", (
+            f"the second Escape did not leave the session on {surface or 'Ace'}: "
+            f"{got['secondEscape']}"
+        )
+
+    assert got["split"]["whole"] and got["split"]["view"] == "both", (
+        f"the split view dropped full page: {got['split']}"
+    )
+    assert not got["read"]["whole"] and got["read"]["inert"] == [False, False], (
+        f"the read view kept full page, with no bar to leave it by: {got['read']}"
+    )
+
+
+def test_the_full_page_toggle_is_on_the_record_editor_and_not_the_slide_editor(
+    client: TestClient,
+):
+    """"Only on the /details page", and then yes to the create form too. The slide
+    editor at `?view=slide` is the same address and a different editor, and it has
+    no toggle: its markup is its own and carries none."""
+
+    def toggles(path: str) -> list:
+        return [e for e in elements(client.get(path).text) if e.attrs.get("id") == "editor-size"]
+
+    assert len(toggles(f"/detail/{TASK}")) == 1
+    assert len(toggles("/new")) == 1
+    assert toggles(f"/detail/{TASK}?view=slide") == []
+
+
 def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
     live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
     tmp_path: Path,
