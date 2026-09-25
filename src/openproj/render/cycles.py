@@ -392,7 +392,7 @@ _CYCLE = """
   placeholder="What came up at the betting table — why a pitch was left out,
 what would make it a bet next time. Markdown.">{{ c.raw_body }}</textarea>
 {% else %}
-<div class="doc read">{{ c.body }}</div>
+<div class="doc read syntax">{{ c.body }}</div>
 {% endif %}
 
 {% if editable %}

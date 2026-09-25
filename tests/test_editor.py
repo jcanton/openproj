@@ -7652,31 +7652,31 @@ const rows = element => {
   const box = element.getBoundingClientRect();
   return Math.round(box.height / parseFloat(getComputedStyle(area).lineHeight));
 };
-const state = () => ({
-  rows: rows(area),
-  factsWhole: Math.round(facts.getBoundingClientRect().height) >= facts.scrollHeight - 1,
-  // **Can the reader get the facts on screen?** Asked by scrolling whatever
-  // actually scrolls and looking, rather than by arithmetic against a box named
-  // here. Which box that is now depends on the width: side by side the facts
-  // column scrolls inside itself, stacked it is `.panes` that scrolls, and the
-  // document scrolls in neither. Two rewrites of this line have already named
-  // the wrong one — it was `document.documentElement` when the page stopped
-  // scrolling, then `.pagefill` when the frame stopped scrolling — so it names
-  // none and walks up to the first ancestor with travel in it.
-  factsReachable: (() => {
-    let box = facts.parentElement;
-    for (; box; box = box.parentElement) {
-      const how = getComputedStyle(box).overflowY;
-      if ((how === 'auto' || how === 'scroll') && box.scrollHeight > box.clientHeight) break;
-    }
-    box = box || document.scrollingElement;
-    const was = box.scrollTop;
-    box.scrollTop = box.scrollHeight;
-    const reached = facts.getBoundingClientRect().bottom <= innerHeight + 1;
-    box.scrollTop = was;
-    return reached;
-  })(),
-});
+// **Stacked, the facts are a share of the height and scroll inside it.** They
+// used to be a row as tall as all of their fields, with the writing box pushed
+// below the window onto its floor, and you reached it by scrolling past every
+// field. jcanton, 2026-09-25: the editor "can become too short".
+const state = () => {
+  const box = area.getBoundingClientRect();
+  const panes = document.querySelector('.panes').getBoundingClientRect();
+  const shelf = facts.getBoundingClientRect();
+  // The last field, scrolled to, has to come into sight inside the facts' own
+  // box. That is what makes a list longer than its share still usable.
+  const last = [...facts.querySelectorAll('dd')].pop() || facts.lastElementChild;
+  const was = facts.scrollTop;
+  facts.scrollTop = facts.scrollHeight;
+  const end = last.getBoundingClientRect();
+  const reached = end.bottom <= facts.getBoundingClientRect().bottom + 1
+    && end.bottom <= innerHeight + 1;
+  facts.scrollTop = was;
+  return {
+    rows: rows(area),
+    inView: box.top >= 0 && box.bottom <= innerHeight + 1,
+    factsShare: shelf.height / panes.height,
+    factsScroll: facts.scrollHeight > facts.clientHeight + 1,
+    factsReachable: reached,
+  };
+};
 
 // The create form is always editing; the record page opens a session here.
 if (typeof flipEditing === 'function') flipEditing();
@@ -7718,12 +7718,16 @@ def test_the_writing_views_are_usable_at_a_window_that_is_not_wide(
 
     Under the old full-page grid this was where the writing box measured 50px —
     a `height: 100%` box in an `auto` track, under six hundred pixels of
-    metadata. The surface is gone; what holds the box open now is the one
-    `--writing` height it has at every width, and what keeps the facts usable
-    is that they are ordinary page content the page scrolls to. The article
-    must stay in the page's own flow (`position: relative`) and must not force
-    a sideways scrollbar — the split's grown width has `max-width: 100%` to
-    answer to.
+    metadata. Then the facts were a row as tall as every field they hold, and
+    the box sat below the window on its floor. jcanton, 2026-09-25: stacked, the
+    editor "can become too short", so the fields should take a share and scroll.
+    They take at most 30% of the panes and scroll inside it, and the box is on
+    screen with the rest. The article must stay in the page's own flow
+    (`position: relative`) and must not force a sideways scrollbar — the split's
+    grown width has `max-width: 100%` to answer to.
+
+    `factsScroll` is the guard on the share. A form with few enough fields to fit
+    in 30% would pass that assertion by never being asked it.
 
     Asked of Chrome and not of `tests/cascade.py`, because the stacked layout
     lives behind a container query, which that engine skips by construction.
@@ -7737,10 +7741,16 @@ def test_the_writing_views_are_usable_at_a_window_that_is_not_wide(
         assert got[view]["rows"] >= 12, (
             f"the {view} view gives the document {got[view]['rows']} lines at a 900px window"
         )
-        assert got[view]["factsWhole"], (
-            "the facts grew a scrollbar of their own: fifteen fields in a box a few lines tall"
+        assert got[view]["inView"], (
+            f"the {view} view's writing box is not on screen at a 900px window"
         )
-        assert got[view]["factsReachable"], "and there is no way to scroll down to them"
+        assert got[view]["factsScroll"], (
+            "the fields fit in their share, so this says nothing about a share"
+        )
+        assert got[view]["factsShare"] <= 0.31, (
+            f"the fields take {got[view]['factsShare']:.0%} of the panes, over their 30%"
+        )
+        assert got[view]["factsReachable"], "and the last field cannot be scrolled into view"
     assert got["paneRows"] >= 12, "the rendered half of the split is not readable either"
     if where == "new":
         assert got["read"]["paneRows"] >= 12, "the create form's preview is not readable"
@@ -11190,6 +11200,78 @@ def test_the_editor_colours_a_document_and_the_python_in_it(client: TestClient, 
             f"the editor draws a {name} in {colour} and its role is {got['roles'][name]}: "
             "Ace's own theme won the cascade"
         )
+
+
+# One of each thing the editor colours outside a fence, in source.
+_WORN_DOC = "\n".join([
+    "# A heading",
+    "- a point with `code`, **bold**, *italic* and a [link](https://example.com)",
+    "> a quote",
+    "",
+    "~~gone~~",
+])
+
+_WORN = (
+    f"const DOC = {json.dumps(_WORN_DOC)}; const HTML = {json.dumps(preview_html(_WORN_DOC))};"
+    + r"""
+  flipEditing();
+  await new Promise(r => setTimeout(r, 300));
+  const editor = SURFACE.editor;
+  editor.session.setValue(DOC);
+  editor.renderer.$loop._flush();
+  await new Promise(r => setTimeout(r, 200));
+  // The same document rendered by the preview's own renderer, put where the
+  // two rendered surfaces draw a body: the read view and the preview pane.
+  const boxes = {read: document.querySelector('.doc.read'),
+                 preview: document.getElementById('body-preview')};
+  for (const box of Object.values(boxes)) box.innerHTML = HTML;
+  const PAIRS = {heading: ['.ace_heading', 'h1, h2, h3'], list: ['.ace_list', 'li', '::marker'],
+                 code: ['.ace_md-code', 'code'], bold: ['.ace_md-bold', 'strong'],
+                 italic: ['.ace_md-italic', 'em'], link: ['.ace_md-link-text', 'a'],
+                 quote: ['.ace_md-quote', 'blockquote'], strike: ['.ace_md-strike', 's, del']};
+  const colour = (found, pseudo) => found ? getComputedStyle(found, pseudo || null).color : null;
+  const out = {ink: colour(boxes.read), editor: {}};
+  for (const [name, [token]] of Object.entries(PAIRS))
+    out.editor[name] = colour(document.querySelector('.ace_editor ' + token));
+  for (const [where, box] of Object.entries(boxes)) {
+    out[where] = {};
+    for (const [name, [, element, pseudo]] of Object.entries(PAIRS))
+      out[where][name] = colour(box.querySelector(element), pseudo);
+  }
+  return out;
+"""
+)
+
+
+def test_the_preview_draws_a_body_in_the_colours_the_editor_does(
+    client: TestClient, tmp_path: Path
+):
+    """jcanton, 2026-09-25: "now the editor colours syntax nicely, and the preview
+    does but only in the code blocks. can the preview use the same colours as the
+    editor?"
+
+    Asked as the claim he made, and not as "the preview resolves the right role".
+    Each rendered element is compared with the Ace token for the same markdown, in
+    the same page, so a role renamed on one side fails here. A preview that agrees
+    with the editor by both being ink passes that comparison too, so the heading
+    must also differ from the body's own ink. `.doc.read` and `#body-preview` are
+    both asked, because they are two elements and the rule has to name both.
+    """
+    page = client.get(f"/detail/{TASK}?editor=ace").text
+    got = measured_in(
+        chrome(), page, tmp_path / "worn.html", 1400, _WORN, query="?editor=ace", patience=4800
+    )
+    assert got["editor"]["heading"] != got["ink"], (
+        f"the editor draws a heading in the body's own ink, {got['ink']}, so agreeing "
+        "with it proves nothing"
+    )
+    for where in ("read", "preview"):
+        for name, drawn in got["editor"].items():
+            assert drawn, f"the editor drew no {name} token, so there is nothing to agree with"
+            assert got[where][name] == drawn, (
+                f"the {where} view draws a {name} in {got[where][name]} and the editor "
+                f"draws it in {drawn}"
+            )
 
 
 def test_j_and_k_walk_the_screen_line_under_vim(client: TestClient, tmp_path: Path):

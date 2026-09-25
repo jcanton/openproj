@@ -944,10 +944,42 @@ pre.mermaid[data-processed] svg { height: auto; }
    element and of the body includes it. The rule that mattered was never "how far
    from the content" — it was "be measurable". */
 #build {
-  display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .5rem;
+  display: flex; flex-wrap: nowrap; align-items: center; gap: .3rem .5rem;
   margin: 0; padding: .55rem 0 0;
   border-top: 1px solid var(--line);
   font-size: 11px; color: var(--muted); font-family: var(--font-mono);
+}
+/* **One line, at every width.** It wrapped, and on a phone, with the corner
+   parked here, it came out three lines tall. jcanton, 2026-09-25: "only one line
+   with a meatball/hamburger/arrow menu where the items that do not fit get
+   hidden". `foldBuild` in the shell's script does the hiding, and all it asks is
+   whether the row is wider than the footer.
+
+   That question only has an honest answer if nothing on the row can give. The
+   corner and its picker are `min-width: 0` so that they shrink in the nav, and
+   left to do that here they would squeeze the picker to a sliver before the row
+   ever reported that it did not fit. So nothing shrinks, and the row either fits
+   or overflows. */
+#build > *, #build .corner > * { flex-shrink: 0; }
+#build .corner { flex-wrap: nowrap; }
+#build > #buildmore::before { content: none; }
+#buildmore { position: relative; }
+#buildmore > summary {
+  list-style: none; cursor: pointer; padding: 0 .4rem; border-radius: 3px;
+  font-size: 16px; line-height: 1;
+}
+#buildmore > summary::-webkit-details-marker { display: none; }
+#buildmore > summary:hover, #buildmore[open] > summary { color: var(--accent); }
+/* Upwards, because the footer is the last row of the window and there is nothing
+   below it to open into. Absolutely placed, so opening it adds nothing to the
+   footer's height and `measureRoom`, which skips positioned elements, never
+   sees it. The right edge is the button's, and the button is the last thing on
+   the row. */
+.buildshelf {
+  position: absolute; right: 0; bottom: calc(100% + .45rem); z-index: 40;
+  display: flex; flex-direction: column; align-items: flex-end; gap: .55rem;
+  padding: .6rem .75rem; white-space: nowrap;
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: 4px;
 }
 #build a, #build a:visited { color: inherit; text-decoration: none; }
 #build a:hover { color: var(--accent); text-decoration: underline; }
@@ -2196,14 +2228,12 @@ tr.nothing .hint { margin: 0 0 .75rem; }
      the whole risk of folding this away is a filter somebody forgot. */
   #controls .facetbox > summary .facetboxsaid { color: var(--accent); margin-left: .35rem; }
   #controls .facetbox > summary .facetboxsaid:empty { display: none; }
-  /* The footer holds the corner on a phone — see `stowCorner`. A row rather than
-     a stack, and wrapping, because the three controls in it are narrow and the
-     footer's own line beside them is short: on a 390px page they come out as two
-     lines where the nav was spending one on its own. `margin-left: auto` is the
-     corner's own rule and still right here — the corner is appended after
-     everything else on the row, so it pushes the controls away from all of it:
-     the version, the plan's sha, Help and Report issue. */
-  #build { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; }
+  /* The footer holds the corner on a phone — see `stowCorner`. Still one line:
+     what does not fit is folded into `#buildmore` rather than wrapped onto a
+     second one. `margin-left: auto` is the corner's own rule and still right
+     here. The corner comes after everything but the fold, so it pushes the
+     controls away from the version, the plan's sha, Help and Report issue. */
+  #build { gap: .5rem .75rem; }
   /* The nav loses the element that was forcing it wide, so what is left is
      links. Nothing else changes: they were already wrapping. */
   #build .corner { font-size: 13px; }
@@ -3386,7 +3416,34 @@ function measureRoom() {
 // `fitRoom` takes no arguments on purpose: it is handed straight to
 // `addEventListener`, and a counter as a default parameter would have been
 // re-seeded with an Event on every resize.
-function settleRoom(passes) {
+//
+// **A correction is kept only if the page took it.** The slack assumes that
+// whatever the document overflows by is height the box can give back, and that
+// is not always so: something outside the box can overflow the document on its
+// own. On a phone the likely one is the browser's toolbar: once it slides away
+// `100dvh` is taller than the root's `clientHeight`, which stays the height of
+// the window with the toolbar showing. Taking height off the box changes
+// neither number, so the same overflow came back on every pass and was added
+// again each time: three passes, three times the overflow, all of it drawn as
+// empty page between the box and the footer. jcanton, 2026-09-25, with phone
+// screenshots of the graph and of a record: "very visible on mobile but also on
+// PC, especially in the record edit view". Measured in Chrome, a stray 41px
+// overflow on the edit view left a 123px band.
+//
+// So each pass says what it took off and what it was paying for, and the next
+// pass checks whether the overflow actually shrank. If it did not, the
+// overflow was never the box's to fix: the correction is handed back and the
+// settle stops.
+//
+// `turn` is which settle this is. Every `resize` starts one, a phone's toolbar
+// fires a burst of them while it slides, and a settle already waiting on a frame
+// used to go on adding to the one `roomSlack` the newer settle had just reset.
+// Five resizes in one burst left the band at 205px, which is why the gap was
+// "sometimes enlarged": its size depended on how many events the gesture fired.
+// A newer settle ends every older one.
+let roomTurn = 0;
+function settleRoom(passes, turn, owed) {
+  if (turn !== roomTurn) return;
   const moved = measureRoom();
   // What the page still overflows by, asked AFTER the box has been given its
   // height. Anything here is height the subtraction did not know about, so it
@@ -3395,18 +3452,23 @@ function settleRoom(passes) {
   // going to, and a correction that keeps growing is better stopped than
   // trusted.
   const over = ROOT.scrollHeight - ROOT.clientHeight;
-  if (over > 0 && passes > 1) {
-    roomSlack += over;
-    requestAnimationFrame(() => settleRoom(passes - 1));
+  if (owed && over >= owed.over) {
+    roomSlack -= owed.took;
+    measureRoom();
     return;
   }
-  if (moved && passes > 1) requestAnimationFrame(() => settleRoom(passes - 1));
+  if (over > 0 && passes > 1) {
+    roomSlack += over;
+    requestAnimationFrame(() => settleRoom(passes - 1, turn, {over, took: over}));
+    return;
+  }
+  if (moved && passes > 1) requestAnimationFrame(() => settleRoom(passes - 1, turn));
 }
 // The slack is forgotten before each fresh settle and learned again. It corrects
 // for whatever the current layout hides, and a window that has just grown may
 // hide less — so carrying the old number forward would leave the box short of
 // the room it now has, for ever, with nothing on screen to say why.
-function fitRoom() { roomSlack = 0; settleRoom(4); }
+function fitRoom() { roomSlack = 0; settleRoom(4, ++roomTurn); }
 </script>
 <main id="main">
 {#- What the plan holds that is not a record, on every page because the shell
@@ -3515,7 +3577,7 @@ function fitRoom() { roomSlack = 0; settleRoom(4); }
     `#planhead:empty` takes the span out and `* + *::before` takes its dot with
     it. -#}
 <footer id="build">
-  <a href="https://github.com/jcanton/openproj/releases/tag/v{{ version }}">openproj
+  <a id="version" href="https://github.com/jcanton/openproj/releases/tag/v{{ version }}">openproj
     {{ version }}</a>
   {%- if live %}<span id="planhead" title="the plan's own commit"></span>{% endif %}
   {#- jcanton, 2026-08-27, asking for it here and not in the nav: it is the thing
@@ -3536,8 +3598,20 @@ function fitRoom() { roomSlack = 0; settleRoom(4); }
       it was meant to. The span takes the dot and the link inside it takes the
       box, and as an inline box inside a flex item the link's padding widens the
       mark without making the row any taller on the one page that draws it. -#}
-  <span><a href="{{ links.help }}"{% if help_here %} aria-current="page"{% endif %}>Help</a></span>
-  <a href="https://github.com/jcanton/openproj/issues/new">Report issue</a>
+  <span id="buildhelp"><a href="{{ links.help }}"
+    {%- if help_here %} aria-current="page"{% endif %}>Help</a></span>
+  <a id="report" href="https://github.com/jcanton/openproj/issues/new">Report issue</a>
+  {#- What does not fit on the row, folded away. jcanton, 2026-09-25: the footer
+      "on mobile takes up too much space: I'd rather it be only one line with a
+      meatball/hamburger/arrow menu where the items that do not fit get hidden".
+      Hidden until `foldBuild` below finds something that does not fit, so a
+      window wide enough for the whole row draws no button at all. A
+      `<details>` because it is how every other thing on a phone folds away
+      here: the filter bar, the key and the window controls. -#}
+  <details id="buildmore" hidden>
+    <summary title="More" aria-label="More">⋯</summary>
+    <div class="buildshelf"></div>
+  </details>
 </footer>
 <script>
 // **Sign-in, the plan picker and the theme toggle move to the footer on a
@@ -3568,15 +3642,98 @@ const CORNER = document.querySelector('nav .corner');
 const NAVBAR = document.querySelector('nav');
 const BUILD = document.getElementById('build');
 
+const BUILD_MORE = document.getElementById('buildmore');
+const BUILD_SHELF = BUILD_MORE && BUILD_MORE.querySelector('.buildshelf');
+
 function stowCorner(narrow) {
   if (!CORNER || !BUILD || !NAVBAR) return;
   const home = narrow ? BUILD : NAVBAR;
   // Appending a node that is already the last child of `home` is a no-op that
   // still moves focus off it in some browsers, so the question is asked first.
-  if (CORNER.parentElement !== home) home.append(CORNER);
+  // In the footer it goes before the fold, which stays the last thing on the row.
+  if (CORNER.parentElement !== home) home.insertBefore(CORNER, home === BUILD ? BUILD_MORE : null);
 }
+
+// **The footer is one line, and what does not fit goes into `#buildmore`.**
+// The row cannot wrap (see `#build`), so "does not fit" is simply the row being
+// wider than the footer, and the fold takes items off it one at a time until it
+// is not.
+//
+// This is the order they go in, first to last, and it is the whole of the
+// design. The build facts go first because they are reference and not news:
+// nobody reads the version until something behaves oddly. Then the two links you
+// reach for when a page is wrong, then the palette, then who you are. The theme
+// toggle goes last, because it is one small button and the one control here
+// somebody presses on a phone in the dark.
+//
+// A relocation and not a copy, for the reason `stowCorner` gives: one element,
+// one id, one listener. Each item leaves a comment where it was, so it goes back
+// to exactly that place. That still works after the corner has moved between the
+// nav and the footer, because the marks inside the corner move with it. Only
+// items whose mark is in the footer are candidates: the corner in the nav is not
+// this row's to fold.
+const BUILD_FOLDS = ['#planhead', '#version', '#report', '#buildhelp', '.corner .schemepick',
+               '#who', '#theme']
+  .map(selector => document.querySelector(selector))
+  .filter(Boolean)
+  .map(el => {
+    const mark = document.createComment('');
+    el.before(mark);
+    return {el, mark};
+  });
+
+function foldBuild() {
+  if (!BUILD_MORE || !BUILD_SHELF || !BUILD) return;
+  for (const one of BUILD_FOLDS) if (one.el.parentElement === BUILD_SHELF) one.mark.after(one.el);
+  BUILD_MORE.hidden = true;
+  const fits = () => BUILD.scrollWidth <= BUILD.clientWidth;
+  if (fits()) { BUILD_MORE.open = false; return; }
+  BUILD_MORE.hidden = false;
+  const shelved = [];
+  for (const one of BUILD_FOLDS) {
+    if (!BUILD.contains(one.mark)) continue;
+    shelved.push(one);
+    BUILD_SHELF.append(one.el);
+    if (fits()) break;
+  }
+  // In the menu they read in the order the row had them, not in the order they
+  // were taken off it.
+  shelved.sort((a, b) =>
+    a.mark.compareDocumentPosition(b.mark) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
+  BUILD_SHELF.append(...shelved.map(one => one.el));
+}
+
+// For the two things that change the row's width after load without the window
+// changing: the plan's sha arriving and the sign-in being filled in. The room
+// is measured again after, because the row's height is its tallest item and the
+// fold can take the tallest one, the theme toggle, off it.
+function refoldBuild() {
+  foldBuild();
+  if (typeof fitRoom === 'function') fitRoom();
+}
+
 stowCorner(NARROW.matches);
-NARROW.addEventListener('change', event => stowCorner(event.matches));
+foldBuild();
+NARROW.addEventListener('change', event => { stowCorner(event.matches); refoldBuild(); });
+// Before the shell's own `resize` listener, which is registered further down, so
+// the room is measured against a footer that has already folded.
+addEventListener('resize', foldBuild);
+if (document.fonts) document.fonts.ready.then(foldBuild);
+// A menu closes the way the others on these pages do: a press anywhere else, or
+// Escape, which hands focus back to the button that opened it. The Escape stops
+// here, because on the record page Escape also ends an editing session, and
+// closing a menu must not do that.
+if (BUILD_MORE) {
+  document.addEventListener('pointerdown', event => {
+    if (BUILD_MORE.open && !BUILD_MORE.contains(event.target)) BUILD_MORE.open = false;
+  });
+  BUILD_MORE.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || !BUILD_MORE.open) return;
+    event.stopPropagation();
+    BUILD_MORE.open = false;
+    BUILD_MORE.querySelector('summary').focus();
+  });
+}
 
 // No third state to cycle through: with nothing stored the page follows the
 // system, and the first click stores the opposite of whatever is on screen.
@@ -3686,6 +3843,7 @@ if (SCHEME) {
     WHO.append(form);
   }
   WHO.hidden = false;
+  refoldBuild();
 })();
 
 // `2026-09-01` as `01.09.2026` — `_read_date`'s twin, and the second copy of a
@@ -3987,7 +4145,13 @@ const PILE_POLL_MS = 60000;
 // A second request for seven characters would be a second request.
 function showHead(health) {
   const at = document.getElementById('planhead');
-  if (at && health.head) at.textContent = 'plan ' + String(health.head).slice(0, 7);
+  if (!at || !health.head) return;
+  const said = 'plan ' + String(health.head).slice(0, 7);
+  // Refolded only when the text changes: this runs on every poll, and a refold
+  // that moves nothing still re-measures the room.
+  if (at.textContent === said) return;
+  at.textContent = said;
+  refoldBuild();
 }
 
 function showPile(health) {

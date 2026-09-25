@@ -5530,6 +5530,117 @@ def test_every_page_keeps_its_nav_and_its_footer_where_the_reader_left_them(
         )
 
 
+# Something outside the filling box that overflows the document by 40px, and a
+# burst of resizes, which is what a phone's toolbar fires while it slides away.
+_STRAY = """
+const root = document.documentElement;
+const room = () => root.style.getPropertyValue('--room');
+const before = room();
+const stray = document.createElement('div');
+stray.style.cssText = `position: absolute; left: 0; width: 1px; height: 1px;
+  top: ${innerHeight + 40}px`;
+document.body.append(stray);
+for (let at = 0; at < 5; at++) setTimeout(() => dispatchEvent(new Event('resize')), at * 8);
+await new Promise(done => setTimeout(done, 800));
+return {before, after: room(), over: root.scrollHeight - root.clientHeight};
+"""
+
+
+def test_an_overflow_the_box_did_not_cause_is_not_taken_out_of_the_box(
+    phone_pages: dict[str, str], tmp_path: Path
+):
+    """jcanton, 2026-09-25, with phone screenshots of the graph and a record page:
+    an empty band above the footer, "very visible on mobile but also on PC,
+    especially in the record edit view", that "sometimes becomes enlarged".
+
+    `settleRoom` takes whatever the document still overflows by off the box, and
+    asks again. An overflow that is not the box's comes back unchanged however
+    small the box gets. So it was paid three times over, once a pass, and a burst
+    of resizes ran several settles at once into the same slack: 41px of stray
+    overflow was a 123px band, and five resizes made it 205. On a phone the
+    likely stray is `100dvh` outgrowing the root's `clientHeight` once the
+    toolbar slides away. A stray absolute element stands in for it here, since no
+    harness has a toolbar.
+
+    The room has to come out exactly where it started. `over` is the control: a
+    stray that overflowed nothing would pass this for the wrong reason.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    found = measured_on_a_phone(chrome(), phone_pages, tmp_path / "stray", _STRAY)
+    for page, got in found.items():
+        assert got["over"] > 0, f"{page}: the stray overflowed nothing, so this proves nothing"
+        assert got["after"] == got["before"], (
+            f"{page}: an overflow outside the box took the room from {got['before']} to "
+            f"{got['after']}, which is drawn as empty page above the footer"
+        )
+
+
+# The footer's row, and where each item on it ended up.
+_FOLDED = """
+const build = document.getElementById('build');
+const more = document.getElementById('buildmore');
+const shelf = more.querySelector('.buildshelf');
+const shown = [...build.children].filter(el => el.getClientRects().length)
+  .map(el => el.getBoundingClientRect());
+const ids = ['version', 'buildhelp', 'report', 'theme'];
+const where = Object.fromEntries(ids.map(id => {
+  const el = document.getElementById(id);
+  // `nav` as well, because above the phone breakpoint the corner is in the nav.
+  return [id, shelf.contains(el) ? 'shelf' : el.closest('#build, nav') ? 'row' : 'gone'];
+}));
+more.open = true;
+const box = shelf.getBoundingClientRect();
+const hit = document.elementFromPoint(box.left + box.width / 2, box.top + 3);
+return {
+  viewport: innerWidth,
+  oneLine: shown.every(a => shown.every(b => a.top < b.bottom && b.top < a.bottom)),
+  over: build.scrollWidth - build.clientWidth,
+  hidden: more.hidden,
+  where,
+  shelved: [...shelf.children].map(el => el.id).filter(id => ids.includes(id)),
+  shelfInside: box.height > 0 && box.top >= 0 && box.left >= 0 && box.right <= innerWidth,
+  shelfPainted: !!hit && shelf.contains(hit),
+};
+"""
+
+
+def test_the_footer_is_one_line_and_folds_what_does_not_fit(
+    phone_pages: dict[str, str], tmp_path: Path
+):
+    """jcanton, 2026-09-25: "the footer itself on mobile takes up too much space:
+    I'd rather it be only one line with a meatball/hamburger/arrow menu where the
+    items that do not fit get hidden". It was three lines on a phone, with the
+    corner parked in it.
+
+    Asked of the drawn row: every item on one line, nothing wider than the footer,
+    and every item either on the row or in the menu, none lost. The theme toggle
+    is the last to go, so on a phone it is still on the row. The menu, once open,
+    has to be on screen and be what the browser finds there, since a menu clipped
+    by the footer's box lays out with a rectangle all the same. At 900px everything
+    fits, and there is no button at all.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    browser = chrome()
+    narrow = measured_on_a_phone(browser, phone_pages, tmp_path / "folded", _FOLDED)
+    wide = measured_on_a_phone(browser, phone_pages, tmp_path / "unfolded", _FOLDED, width=900)
+    for page, got in narrow.items():
+        at = f"{page} at {got['viewport']}px"
+        assert got["oneLine"], f"{at}: the footer is more than one line"
+        assert got["over"] <= 0, f"{at}: the footer's row is {got['over']}px wider than it"
+        assert not got["hidden"] and got["shelved"], f"{at}: nothing was folded away"
+        assert "gone" not in got["where"].values(), f"{at}: an item left the footer: {got}"
+        assert got["where"]["theme"] == "row", f"{at}: the theme toggle folded before the rest"
+        order = [name for name in ("version", "buildhelp", "report") if name in got["shelved"]]
+        assert got["shelved"] == order, f"{at}: the menu reads {got['shelved']}, out of order"
+        assert got["shelfInside"] and got["shelfPainted"], f"{at}: the open menu is not seen"
+    for page, got in wide.items():
+        at = f"{page} at {got['viewport']}px"
+        assert got["hidden"] and not got["shelved"], f"{at}: folds a row that fits: {got}"
+        assert set(got["where"].values()) == {"row"}, f"{at}: {got['where']}"
+
+
 # Whether each thing a reader has to find is inside the window and is what the
 # browser finds at its own centre. The second is the one that says painted: a box
 # that is clipped by the scroller it is in, covered by another, `visibility:

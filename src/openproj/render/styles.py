@@ -1201,6 +1201,46 @@ article.record > form { display: flex; flex-direction: column; flex: 1; min-heig
      scrollport, and the overflow is handed back to the page. */
   article.record .panes > .main,
   article.record .panes > .facts { overflow: auto; min-height: 0; }
+  /* Both columns span both of the editing rows below, so side by side each is
+     the full height of the pair, as it was when there was one implicit row.
+     Spanning a `1fr` row keeps these items out of the auto row's sizing, so
+     that row comes out 0 and the flexible one takes all of it. */
+  article.record.editing .panes > .main,
+  article.record.editing .panes > .facts { grid-row: 1 / -1; }
+}
+/* **Stacked and editing, the fields get a share of the height and the writing
+   gets the rest.** jcanton, 2026-09-25: "if the edit view page gets narrow, the
+   fields go on top of the text body editor, but with the previous instructions
+   of making the editor fill height, this can become too short". It was worse
+   than short. Stacked, the facts were a row as tall as all of their fields, 765px
+   at a 900px window, and the editor was pushed below the window onto its 16rem
+   floor. You reached it by scrolling `.panes` past every field.
+
+   30% and not the 40% first proposed, on his word. `fit-content`, so a record
+   with few fields takes only what it needs and hands the rest to the editor. Its
+   own scrollport is what makes the other fields reachable. The `1fr` is
+   everything else, and its floor is `.main`'s own minimum: the bars plus
+   `.bodysplit`'s 16rem, written once, in the rule that already holds it. Below
+   that floor `.panes` scrolls as it always did.
+
+   `1fr` and not `minmax(min-content, 1fr)`, which was the first version. Side by
+   side both items span this row, and a `min-content` floor takes the min-content
+   of EVERY item crossing it. The facts are 1116px of content, so both columns
+   came out 1116px tall and neither scrolled. `1fr` floors at `auto`, and that is
+   each item's own `min-height`: 0 side by side, and min-content on `.main` only
+   when stacked (the query below).
+
+   On `.panes` and outside any query, because a container cannot answer its own
+   query (see `.panes` above). Side by side both items span both rows, in the
+   block just above, so the template is inert there. */
+article.record.editing .panes { grid-template-rows: fit-content(30%) 1fr; }
+/* Inside the stacked query because side by side the facts are already their own
+   scrollport, in the two-column block above. The 6rem is a floor on the share:
+   on a window short enough that 30% is a sliver, two fields are still in sight,
+   and past that `.panes` scrolls rather than the list shrinking to nothing. */
+@container (width < 56rem) {
+  article.record.editing .panes > .facts { overflow: auto; min-height: 6rem; }
+  article.record.editing .panes > .main { min-height: min-content; }
 }
 /* A handle, not a border. It was a full-height 2px rule in --line, which is
    exactly how a page draws the edge of a pane; this is a short grip that says
@@ -1718,6 +1758,33 @@ textarea.body-field { resize: none; }
    a stylesheet of their own, and it went with the stylesheet. */
 .doc blockquote { margin: 0 0 1rem; padding-left: .8rem; color: var(--muted);
                   border-left: 2px solid var(--line-strong); }
+/* **A body reads in the colours it was written in.** jcanton, 2026-09-25, with
+   the same record in the editor and in its preview: "the editor colours syntax
+   nicely, and the preview does but only in the code blocks. can the preview use
+   the same colours as the editor?"
+
+   So each element wears the role its source wears in the editor (`.ace_heading`,
+   `.ace_list`, `.ace_md-*` in `render/editor.py`). There are no new colours
+   here. A scheme that recolours one recolours the other, and the roles are AA
+   against `--surface-2`, which is the harder ground of the two a body sits on.
+
+   `.syntax` and not all of `.doc`: it goes where a record or cycle body is read
+   back, which is the read view, the preview pane and the slide editor's record
+   pane. The deck's slides are `.doc` on white paper, and Help is the user guide
+   rather than something written in the editor.
+
+   The list marker and not the item, because the editor colours the `-` and the
+   `1.` and leaves the words ink. A link gets its hover back. `.doc.syntax a` is
+   (0,2,1) and would otherwise beat the shell's `a:hover`. */
+.doc.syntax :is(h1, h2, h3, h4, h5, h6) { color: var(--code-function); }
+.doc.syntax li::marker { color: var(--code-name); }
+.doc.syntax a, .doc.syntax a:visited { color: var(--code-name); }
+.doc.syntax a:hover { color: var(--accent); }
+.doc.syntax strong { color: var(--code-type); }
+.doc.syntax em { color: var(--code-keyword); }
+.doc.syntax :is(del, s) { color: var(--muted); }
+.doc.syntax :not(pre) > code { color: var(--code-string); }
+.doc.syntax :is(blockquote, math) { color: var(--code-escape); }
 /* --- maths -----------------------------------------------------------------
 
    Drawn by the browser: `$…$` and `$$…$$` become MathML on the server, so there
