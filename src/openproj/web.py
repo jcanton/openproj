@@ -62,7 +62,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from pydantic import BaseModel
 from starlette.websockets import WebSocketDisconnect
 
-from . import __version__, coedit, render, vendor
+from . import __version__, coedit, render, tailnet, vendor
 from .auth import (
     OAuthError,
     User,
@@ -409,16 +409,22 @@ _SOCKET_REFUSALS = {
 _CLOSE_REASON_BYTES = 123
 
 
-async def _refuse_socket(socket: WebSocket, refused: HTTPException | None, record_id: str) -> None:
+async def _refuse_socket(
+    socket: WebSocket, refused: HTTPException | None, record_id: str, said: str = ""
+) -> None:
     """Turn a co-editing socket away, saying which of the reasons it was.
 
     `refused` is None when `_path_for` simply found no file, which is not an
-    exception and is the one refusal that names the record back.
+    exception and is the one refusal that names the record back. `said`
+    replaces the sentence and keeps the code, for a refusal whose reason only
+    the caller has: the 403 sentence above is about a GitHub org, and under
+    `--auth tailscale` there is no org — there is the tailnet's own reason.
     """
     code, why = _SOCKET_REFUSALS.get(
         refused.status_code if refused is not None else 404,
         (4404, f"{record_id} is not in the plan any more — reload the page"),
     )
+    why = said or why
     await socket.accept()
     # The frame first and the close code second, because they answer two
     # different vintages of this page and only one of them is deployable.
@@ -1775,7 +1781,7 @@ def switched_off(request: Request, index: Index, links: render.Links) -> HTMLRes
 def create_app(
     repo: Path,
     *,
-    auth: Literal["dev", "github"] = "dev",
+    auth: Literal["dev", "github", "tailscale"] = "dev",
     org: str = "",
     secret: str = "dev-secret",
     client_id: str = "",
@@ -1785,6 +1791,9 @@ def create_app(
     dev_login: str = "dev",
     today: date | None = None,
     github_transport: httpx.BaseTransport | None = None,
+    tailscale_users: dict[str, str] | None = None,
+    tailscale_socket: str = tailnet.SOCKET,
+    tailscale_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     if auth == "github":
         if secret in _DEV_SECRETS:
@@ -1822,7 +1831,27 @@ def create_app(
             f"{'it' if len(absent) == 1 else 'them'}, or drop OPENPROJ_REMOTE to run "
             "against the local repository."
         )
-    store = Store(Path(repo), remote=remote or None, credentials=credentials)
+    tailscale: tailnet.Tailnet | None = None
+    if auth == "tailscale":
+        if not tailscale_users:
+            # The list is the whole of the write permission, the way the org is
+            # under `github`. Empty, it is not "anybody on the tailnet may
+            # write" — it is a server on which nobody ever can, and which says
+            # so only at the first save.
+            raise ValueError(
+                "refusing to start: auth='tailscale' without OPENPROJ_TAILSCALE_USERS — "
+                "the list of tailnet logins and the plan login each writes as is what "
+                "decides who may write."
+            )
+        tailscale = tailnet.Tailnet(
+            tailscale_users, socket=tailscale_socket, transport=tailscale_transport
+        )
+    store = Store(
+        Path(repo),
+        remote=remote or None,
+        credentials=credentials,
+        addresses=tailscale.addresses() if tailscale else None,
+    )
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -1886,8 +1915,12 @@ def create_app(
         yield
         pusher.close()
         store.close()
+        if tailscale is not None:
+            await tailscale.close()
 
     app = FastAPI(title="openproj", lifespan=lifespan)
+    if tailscale is not None:
+        app.add_middleware(tailnet.Identify, tailnet=tailscale)
 
     @app.middleware("http")
     async def say_what_this_page_may_do(request: Request, call_next):
@@ -2083,7 +2116,15 @@ def create_app(
         after the first costs a session nothing and saves the one case where the
         two disagree: a server that used to be plain HTTP and is now behind TLS,
         where the browser is still holding yesterday's bare cookie.
+
+        Under `tailscale` no cookie is read at all. The tailnet's answer is
+        already in the scope (`tailnet.Identify`), and a session would be a
+        second, forgeable-by-anybody-with-the-secret way of saying who someone
+        is on a server whose whole premise is that the network already said it.
         """
+        if auth == "tailscale":
+            seen = tailnet.seen_in(request.scope)
+            return User(login=seen.login, member=True) if seen.login else None
         for name in (SESSION_COOKIE, SESSION_COOKIE_INSECURE):
             user = read_session(request.cookies.get(name), secret)
             if user is not None:
@@ -2107,6 +2148,19 @@ def create_app(
         user = viewer(request)
         if auth == "dev":
             return user or User(login=dev_login, member=True)
+        if auth == "tailscale":
+            # 403 and not 401: there is no sign-in that would change the answer,
+            # only a different device or a different list. The sentence says
+            # which, and it is the tailnet's own reason rather than a guess.
+            #
+            # The co-editing socket asks this again every `RECHECK_SECONDS` and
+            # gets the answer its handshake got, because the scope is the
+            # handshake's. That is the right answer rather than a stale one: an
+            # address belongs to one node for the node's life, and a node taken
+            # off the tailnet takes its socket with it.
+            if user is None:
+                raise HTTPException(403, tailnet.seen_in(request.scope).refusal)
+            return user
         if user is None:
             raise HTTPException(401, "sign in to make changes")
         if not user.member:
@@ -4340,7 +4394,14 @@ def create_app(
             finally:
                 watchers.discard(queue)
 
-        return StreamingResponse(stream(), media_type="text/event-stream")
+        # `X-Accel-Buffering: no` is nginx's own switch for this one response.
+        # Behind an nginx that buffers what it proxies — a Synology's reverse
+        # proxy does, and offers no setting to stop it — every frame sat in the
+        # buffer until 4 KB of keepalives had piled up behind it, so a save in one
+        # tab reached the next minutes late. Cloud Run's frontend ignores it.
+        return StreamingResponse(
+            stream(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"}
+        )
 
     # -- co-editing ---------------------------------------------------------
     #
@@ -4663,8 +4724,7 @@ def create_app(
                 # in the author field, so `git log --format='%an'` is unchanged
                 # and `git shortlog` sees both halves.
                 trailers = "\n".join(
-                    f"Co-authored-by: {login} <{login}@users.noreply.github.com>"
-                    for login in others
+                    f"Co-authored-by: {login} <{store.address(login)}>" for login in others
                 )
                 message = f"{message}\n\n{trailers}"
             # Inside the try, which is the whole of this change: the write is
@@ -4835,7 +4895,10 @@ def create_app(
             # merely dropped, and the sentence is how it does.
             refused, path = error, None
         if path is None:
-            await _refuse_socket(socket, refused, record_id)
+            said = ""
+            if auth == "tailscale" and refused is not None and refused.status_code == 403:
+                said = refused.detail
+            await _refuse_socket(socket, refused, record_id, said)
             return
 
         await socket.accept()
@@ -5107,6 +5170,15 @@ def create_app(
         it: "not a member" is only useful when it says of what.
         """
         who = viewer(request)
+        if auth == "tailscale":
+            # Its own shape, because the corner has to draw something different:
+            # no Sign in, since there is nothing to sign in to, and no Sign out,
+            # since only leaving the tailnet does that. A reader the tailnet did
+            # not name is told why they may only read, in the tailnet's words.
+            if who is None:
+                refusal = tailnet.seen_in(request.scope).refusal
+                return JSONResponse({"auth": "tailscale", "refusal": refusal})
+            return JSONResponse({"auth": "tailscale", "login": who.login, "member": True})
         if who is None:
             return JSONResponse({"org": org})
         return JSONResponse({"login": who.login, "member": who.member, "org": org})

@@ -732,13 +732,20 @@ class Store:
         repo_path: Path,
         remote: str | None = None,
         credentials: object | None = None,
+        addresses: dict[str, str] | None = None,
     ) -> None:
         """`credentials` is anything with a `callbacks()` returning pygit2's, or
         None for a remote that needs none — a `file://` path, or no remote at all,
         which is every test and every development run. One that also has an
         `offer_pull_request` — `GitHubApp` does — is how a parked branch becomes
-        a pull request; without it the branch simply goes unannounced."""
+        a pull request; without it the branch simply goes unannounced.
+
+        `addresses` is {login: email} for the people whose address the server
+        knows — under `--auth tailscale`, the account each of them signed in to
+        Tailscale with. Anybody else is the GitHub `noreply` address, which is
+        what every login was before there was a second way to sign in."""
         self._path = Path(repo_path)
+        self._addresses = dict(addresses or {})
         # NO_SEARCH, because the default is to walk UP until it finds a
         # repository. Pointed at a directory that is not one — `--repo seed`, as
         # the README told people to do — it found the openproj checkout instead,
@@ -1725,7 +1732,7 @@ class Store:
             blob = self._repo.create_blob(data)
             parent = self.head()
             tree = self._insert(self._repo, self._tree(parent), name.split("/"), blob)
-            who = pygit2.Signature(author, f"{author}@users.noreply.github.com")
+            who = self._signature(author)
             self._repo.create_commit(_BRANCH, who, _BOT, f"upload {name}", tree, [parent])
             self._freshen(parent, self.head())
             # Through `_finish`, so an upload pokes the pusher and joins the
@@ -1847,7 +1854,7 @@ class Store:
                 # changed is the commonest way to make one.
                 return WriteResult(commit=parent, outcome="committed", pushed=False), str(blob)
             tree = self._insert(self._repo, self._tree(parent), path.split("/"), blob)
-            who = pygit2.Signature(author, f"{author}@users.noreply.github.com")
+            who = self._signature(author)
             self._repo.create_commit(_BRANCH, who, _BOT, message, tree, [parent])
             self._freshen(parent, self.head())
             written = self._finish(self.head(), "committed")
@@ -2004,10 +2011,24 @@ class Store:
         # Author is the person, committer is the bot: `git log --format='%an'` is
         # then a per-person audit trail for free, while a future push credential
         # stays a bot that no human's departure invalidates.
-        who = pygit2.Signature(author, f"{author}@users.noreply.github.com")
+        who = self._signature(author)
         oid = self._repo.create_commit(_BRANCH, who, _BOT, message, tree, [parent])
         self._freshen(parent, str(oid))
         return str(oid)
+
+    def address(self, login: str) -> str:
+        """The email a commit by `login` carries, in the author field and in a
+        `Co-authored-by:` trailer alike.
+
+        One function, because it was one f-string written out four times — three
+        signatures here and the room's trailer in `web.py` — and a second way to
+        sign in arrived with an address of its own. Four copies would have been
+        four places to forget it.
+        """
+        return self._addresses.get(login) or f"{login}@users.noreply.github.com"
+
+    def _signature(self, login: str) -> pygit2.Signature:
+        return pygit2.Signature(login, self.address(login))
 
     def _freshen(self, parent: str, landed: str) -> None:
         """A checkout follows the branch it is serving; a bare clone has nothing to follow.

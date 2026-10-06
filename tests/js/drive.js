@@ -35,6 +35,8 @@
 //                            under a green suite for exactly that reason.
 //          {health: [...]}   what `/api/health` answers, one body per ask in
 //                            order, the quiet day once the list runs out.
+//          {me: {...}}       what `/api/me` answers; a stranger on a GitHub
+//                            server, `{org: 'kilnlab'}`, by default.
 //          {storage: {...}}  localStorage starts holding these; "denied" makes
 //                            reading the property itself throw, the way a
 //                            private window and a blocked-cookies policy do —
@@ -637,19 +639,21 @@ async function run(html, expression, options) {
   const calls = [];
   const replies = (options.replies || []).slice();
   const healths = (options.health || []).slice();
+  const me = options.me || {org: 'kilnlab'};
 
   function answer(url, init) {
     // The shell asks `/api/me` on every page load, to draw who is signed in.
     // That is not the write path any of these tests are about: recorded, it
     // shifts every assertion about `calls` by one, and answered from `replies`
     // it eats the refusal the test scripted for the save. Answered here, signed
-    // out, which is what a driven page with no session is.
+    // out, which is what a driven page with no session is — unless the test
+    // says who the page is, which is how the corner itself is asked about.
     if (String(url) === '/api/me') {
       return Promise.resolve({
         ok: true,
         status: 200,
-        json: () => Promise.resolve({org: 'kilnlab'}),
-        text: () => Promise.resolve('{"org":"kilnlab"}'),
+        json: () => Promise.resolve(me),
+        text: () => Promise.resolve(JSON.stringify(me)),
       });
     }
     // And the shell's pile banner asks `/api/health` once at load, for the

@@ -60,6 +60,11 @@ from .model import (
     validate_all,
 )
 
+# The ways `serve` can know who somebody is. One tuple, read by the parser's
+# `choices` and by `_serve`'s refusal, because the environment spelling never
+# passes through `choices` at all.
+AUTH_MODES = ("dev", "github", "tailscale")
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="openproj", description=__doc__.splitlines()[0])
@@ -169,7 +174,19 @@ def _parser() -> argparse.ArgumentParser:
 
     serve = commands.add_parser("serve", help="run the editable server")
     serve.add_argument("--repo", type=Path, required=True, help="a bare clone of the plan repo")
-    serve.add_argument("--auth", choices=("dev", "github"), default="dev")
+    # No default, for the reason `--org` has none, and with more at stake: the
+    # default was `dev`, so a bare `openproj serve` signed every request in as
+    # somebody who may write. Asked as a flag or as OPENPROJ_AUTH, and refused at
+    # startup when neither says — argparse never checks a default against
+    # `choices`, so `_serve` checks both spellings in one place.
+    serve.add_argument(
+        "--auth",
+        choices=AUTH_MODES,
+        default=os.environ.get("OPENPROJ_AUTH"),
+        help="how a person is known: `dev` signs everybody in, for a machine only you can "
+        "reach; `github` is sign-in plus org membership; `tailscale` asks the tailnet who "
+        "the client is and maps it through OPENPROJ_TAILSCALE_USERS (default: OPENPROJ_AUTH)",
+    )
     # No default. Membership of the org is the write permission, and a default
     # of one team's org made every other deployment that team's — silently, with
     # `--auth github` refusing everybody outside it.
@@ -894,8 +911,49 @@ def _serve(args) -> int:
     """
 
     from .github import GitHubApp
+    from .tailnet import SOCKET, parse_users
     from .web import create_app
 
+    if args.auth not in AUTH_MODES:
+        said = (
+            "nothing says how people sign in"
+            if not args.auth
+            else f"OPENPROJ_AUTH={args.auth!r} is not a way to sign in"
+        )
+        print(
+            f"refusing to start: {said}. Pass --auth dev, --auth github or --auth "
+            "tailscale, or set OPENPROJ_AUTH — `dev` lets anybody who can reach the "
+            "port write.",
+            file=sys.stderr,
+        )
+        return 2
+    tailscale_users: dict[str, str] = {}
+    if args.auth == "tailscale":
+        try:
+            tailscale_users = parse_users(os.environ.get("OPENPROJ_TAILSCALE_USERS", ""))
+        except ValueError as error:
+            print(f"refusing to start: {error}", file=sys.stderr)
+            return 2
+        if not tailscale_users:
+            print(
+                "refusing to start: --auth tailscale needs OPENPROJ_TAILSCALE_USERS, the "
+                "tailnet logins that may write and the plan login each writes as — "
+                "`you@example.com=you,them@example.com=them`.",
+                file=sys.stderr,
+            )
+            return 2
+        if os.environ.get("OPENPROJ_FORWARDED_ALLOW_IPS", "").strip() == "*":
+            # Under `*` uvicorn takes the client from the LEFTMOST entry of
+            # X-Forwarded-For, which is the one the client wrote — nginx's
+            # `$proxy_add_x_forwarded_for` appends to whatever arrived. With the
+            # address as the identity, that is anybody writing as anybody.
+            print(
+                "refusing to start: --auth tailscale knows a person by their address, and "
+                "OPENPROJ_FORWARDED_ALLOW_IPS=* believes whatever address a client claims. "
+                "Name the proxy instead (the default, 127.0.0.1, is a proxy on this machine).",
+                file=sys.stderr,
+            )
+            return 2
     if args.auth == "github" and not args.org:
         print(
             "refusing to start: --auth github needs the org whose members may write. "
@@ -915,6 +973,8 @@ def _serve(args) -> int:
         # development run needs neither and a deployment sets both or is refused.
         remote=os.environ.get("OPENPROJ_REMOTE", ""),
         credentials=credentials,
+        tailscale_users=tailscale_users,
+        tailscale_socket=os.environ.get("OPENPROJ_TAILSCALE_SOCKET", SOCKET),
     )
     # After `create_app`, so a path that is no repository at all is refused by
     # the store in its own words rather than warned about here and then refused.
