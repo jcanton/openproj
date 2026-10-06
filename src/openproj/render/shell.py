@@ -3838,7 +3838,21 @@ if (SCHEME) {
   };
 
   WHO.replaceChildren();
-  if (!me.login) {
+  if (me.auth === 'tailscale') {
+    // The tailnet said who this is, so there is nothing to sign in to and
+    // nothing to sign out of: a Sign in here would lead to a GitHub sign-in no
+    // tailnet server has configured, and Sign out would answer with the same
+    // person on the next request. Somebody it did not name reads, and the
+    // reason is the tailnet's own sentence — visible as a word, whole on hover
+    // and to a screen reader, because it is long and names an address.
+    if (me.login) {
+      WHO.append(element('span', me.login));
+    } else {
+      const reading = element('span', 'read-only', 'warn');
+      reading.title = me.refusal || '';
+      WHO.append(reading);
+    }
+  } else if (!me.login) {
     // A link and not a form: `/login` starts an OAuth redirect, which is a
     // navigation, and the state cookie it sets is what makes the callback safe.
     const link = element('a', 'Sign in');

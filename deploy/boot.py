@@ -71,10 +71,14 @@ def main() -> int:
             "serve",
             "--repo",
             str(repo),
-            "--auth",
-            os.environ.get("OPENPROJ_AUTH", "github"),
-            # `serve` reads OPENPROJ_ORG itself and refuses github auth without
-            # one; nothing here supplies a team's org on a deployment's behalf.
+            # No `--auth`: `serve` reads OPENPROJ_AUTH itself and refuses to start
+            # when nothing says how people sign in. This line used to fill in
+            # `github` when the variable was missing, which was the right guess
+            # for Cloud Run and the wrong kind of thing to guess — the same
+            # image on a machine inside a tailnet would have come up asking for
+            # a GitHub sign-in nobody had configured. `gcloud_deploy.sh` sets it.
+            # Likewise OPENPROJ_ORG: nothing here supplies a team's org on a
+            # deployment's behalf.
             "--host",
             "0.0.0.0",
             "--port",

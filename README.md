@@ -124,6 +124,21 @@ uv run openproj serve --repo plan.git --auth dev
 because that membership is the whole of the write gate, and the org is a fact about a team rather
 than about the tool. `OPENPROJ_ORG` in the environment is the other way to say it.
 
+`--auth` has no default either: `serve` refuses to start until the flag or `OPENPROJ_AUTH` says how
+people are known. It used to default to `dev`, which made a bare `openproj serve` a server anybody
+who reached the port could write to.
+
+Inside a tailnet there is a third way, with no password and no GitHub. `--auth tailscale` asks the
+Tailscale daemon on the same machine whose device the client's address is, and
+`OPENPROJ_TAILSCALE_USERS` — `you@example.com=you,them@example.com=them` — says which plan login each
+tailnet login writes as; the tailnet login is also the address on that person's commits. Anybody
+else reads: a device on the LAN, a device of somebody not on the list. Because the address is the
+identity, the server has to see the real one — run it on the loopback behind a proxy on the same
+machine, since uvicorn believes `X-Forwarded-For` from 127.0.0.1 and from nothing else, and never
+with `OPENPROJ_FORWARDED_ALLOW_IPS=*`, which `serve` refuses in this mode. It needs read access to
+tailscaled's socket, `OPENPROJ_TAILSCALE_SOCKET` (default `/var/run/tailscale/tailscaled.sock`), and
+no more: `whois` is in the half of the daemon's API a process that is not root may use.
+
 Putting it on Cloud Run reads the deployment from the plan rather than from here. `init` writes
 `deploy/openproj.env` into the plan when asked, or when given `--deploy KEY=VALUE`, and
 `deploy/example.env` in this repository is the same file with every value blank. From a checkout of

@@ -224,7 +224,10 @@ openproj serve --repo plan.git --auth dev
 
 `--auth dev` skips sign-in and is for a local run only. `--auth github` is the other, and it refuses
 to start without an org — `--org`, or `OPENPROJ_ORG` — because membership of that org is the whole
-of the write gate and there is no default that could stand in for it. A deployment is described in
+of the write gate and there is no default that could stand in for it. On a server inside a tailnet,
+`--auth tailscale` asks nobody to sign in at all: the tailnet says whose device you are on, and
+`OPENPROJ_TAILSCALE_USERS` says which plan login that is. There is no default among the three —
+`serve` refuses to start until one is named, by the flag or by `OPENPROJ_AUTH`. A deployment is described in
 the plan repository, not here: `deploy/RUNBOOK.md` in the tool's repository is the walk-through.
 To see the tool with no plan to point it at,
 `openproj demo` serves a bundled corpus offline, in a temporary directory it builds for itself.

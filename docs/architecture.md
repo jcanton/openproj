@@ -94,7 +94,10 @@ ships in the wheel. Since 0.43.0 the wheel carries `static/` and `seed/`, so `uv
 `render` and `demo` work without a checkout. `--auth dev` is for a local run only; a deployment
 runs `--auth github`, which refuses to start without a signing secret, an OAuth client, and the org
 whose membership decides who may write — `--org`, or `OPENPROJ_ORG`, with no default, because a
-default would be one team's. `deploy/RUNBOOK.md` has the rest.
+default would be one team's. A server inside a tailnet can run `--auth tailscale` instead, which
+asks the local tailscaled whose device each client address is and maps that through
+`OPENPROJ_TAILSCALE_USERS`; the README's section on serving a plan of your own has the conditions it
+needs. None of the three is a default. `deploy/RUNBOOK.md` has the rest.
 
 On Cloud Run the container clones the plan repo on boot and pushes on write, which is also why the
 running service is close to stateless — the durable data is the git remote, not the disk. It is
