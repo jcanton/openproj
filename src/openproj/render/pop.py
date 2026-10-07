@@ -1948,7 +1948,8 @@ function popForm(spec) {
     // status turning one box into another — would re-open the title over
     // whatever the reader had just been asked for.
     opens: spec.opens || (spec.mode === 'new' ? ['title'] : []),
-    controls: new Map(), marks: new Map(), why: null, save: null, hill: null,
+    controls: new Map(), marks: new Map(), why: null, save: null, cancel: null,
+    hill: null,
   };
   popDrawForm();
 }
@@ -2038,15 +2039,16 @@ function popDrawForm() {
   // one `submit` however it was reached. Enter inside a FIELD does not get here:
   // it takes that field's answer and closes it — see `popOpenField`.
   form.save.type = 'submit';
-  const cancel = popPress('form-cancel', 'Cancel', 'popcancel');
+  form.cancel = popPress('form-cancel', 'Cancel', 'popcancel');
   // `askFor`'s own sentence for the same press, because it is the same news.
-  cancel.onclick = () => { announce('nothing was changed'); popDone(); };
-  acts.append(form.save, cancel);
+  form.cancel.onclick = () => { announce('nothing was changed'); popDone(); };
+  acts.append(form.save, form.cancel);
   box.append(acts);
   box.addEventListener('submit', event => {
     event.preventDefault();
     popSave();
   });
+  box.addEventListener('keydown', popTab);
   POP.classList.add('popforming');
   // **`role="dialog"` and not `menu`, and the swap is not cosmetic**: a `<form>`
   // is not a child a `role="menu"` may have, and a reader arriving inside one
@@ -2255,10 +2257,11 @@ function popDressChip(chip, name, value) {
 }
 
 // Take the control away again, having either read it or thrown it away.
-// The answer taken and the control closed, which is Enter. **It stages and does
-// not write**: `form.values` is what Save sends, and until Save is pressed the
-// only thing that has happened is that a word on the card now reads what was
-// typed instead of what the record holds.
+// The answer taken and the control closed, which is Enter — and Tab, on its way
+// to the next field (`popTab`). **It stages and does not write**: `form.values`
+// is what Save sends, and until Save is pressed the only thing that has happened
+// is that a word on the card now reads what was typed instead of what the record
+// holds.
 //
 // The whole box is drawn again rather than the one slot rewritten, because what
 // that word looks like is `cardHtml`'s answer — a chip with its tint and its
@@ -2267,9 +2270,9 @@ function popDressChip(chip, name, value) {
 // one. The redraw rebuilds every control from `popFormRow`, so every OTHER open
 // control is staged first or the redraw would rewrite its answer back to the
 // record's.
-function popTakeField(name) {
+function popTakeField(name, then) {
   const form = POP_FORM;
-  if (!form.controls.has(name)) return;
+  if (!form.controls.has(name)) return false;
   // **A half-written date must not clear the date that is there.** A native
   // picker answers `value === ''` for `2026-0` exactly as it does for a box
   // somebody emptied on purpose — the defect `openEditor` (`table.py`) records
@@ -2284,15 +2287,74 @@ function popTakeField(name) {
     if (!(box.validity && box.validity.badInput)) continue;
     popFormSays([`${popLabel(other)} is half-written — finish it, or press Escape in it.`]);
     box.focus();
-    return;
+    return false;
   }
   for (const [other, box] of form.controls) form.values[other] = popReadOf(other, box);
   form.controls.delete(name);
   // What is still open stays open, and `popDrawForm` opens exactly this list.
-  form.opens = [...form.controls.keys()];
+  // `then` is the field Tab is moving to, and it goes LAST whether or not it was
+  // already open, because each field `popDrawForm` opens takes the keyboard and
+  // the last one keeps it.
+  form.opens = [...form.controls.keys()].filter(other => other !== then);
+  if (then) form.opens.push(then);
   // And the keyboard is `popDrawForm`'s to place: it re-opens what was open, or
   // hands it to `popFirstSlot` when this was the last control.
   popDrawForm();
+  return true;
+}
+
+// Tab walks the card the way it walks a web form: into the next field, open and
+// ready to be typed over, with the answer in the one it left taken onto the card
+// exactly as Enter takes it. jcanton, 2026-10-07: "the new create child / create
+// record pop window doesn't allow for tab-bing between fields to fill them in in
+// order as in a web form. can we have that somehow? even though enter/escape are
+// special keys?" Enter and Escape keep their meanings; this is the third key of
+// the set, and like Enter it stages and never writes.
+//
+// **Every stop is answered here, and the browser's own Tab is never left to
+// run**, for two reasons. A field's part is `.card-fact`, which is `display:
+// contents` — no box, and Chrome will not focus an element without one (see
+// `popFirstSlot`), so the browser's walk skips every row of the list and goes
+// from the status chip straight to Create. And a control Tab leaves is
+// a control that has to be staged and drawn as a word, which redraws the card,
+// which replaces the element the browser was about to move to.
+//
+// **The walk wraps, and it was asked which way.** Past Cancel is the title
+// again, and Shift+Tab from the title is Cancel — the dialog pattern, and
+// jcanton's pick over letting Tab leave the box like an ordinary form's. This
+// box already refuses every close that is not a decision (see `popClose`), and
+// a keyboard that fell onto the table behind it is one Escape cannot reach,
+// because this box's listener is on `#pop`.
+//
+// The stops are `.popopens` in document order, which is the card's reading
+// order — title, the two chips, then the list left to right and down, because
+// `.card-facts` is a row-major grid. A locked field carries `.poplocked` and is
+// not a stop: it is drawn to be read, and a field that cannot be opened is not
+// one Tab can fill. A date box's own segments are walked by the arrows, and
+// Chrome advances them as digits are typed.
+function popTab(event) {
+  const form = POP_FORM;
+  if (!form || event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey) return;
+  const stops = [...POP.querySelectorAll('.popopens'), form.save, form.cancel];
+  const here = stops.findIndex(stop => stop.contains(document.activeElement));
+  // Somewhere that is not a stop — the refusal list, which takes the keyboard
+  // when a refusal arrives — and the browser's own next is the right one: it is
+  // Create, the next thing in the document.
+  if (here < 0) return;
+  event.preventDefault();
+  const next = stops[(here + (event.shiftKey ? -1 : 1) + stops.length) % stops.length];
+  const leaving = stops[here].dataset.field;
+  const going = next.matches('.popopens') ? next.dataset.field : null;
+  // Asked before the redraw replaces both buttons, and answered after it.
+  const button = next === form.save ? 'save' : 'cancel';
+  if (leaving && form.controls.has(leaving)) {
+    // A half-written date refuses, says so, and keeps the keyboard — Tab is not
+    // a way round the one answer Enter may not take.
+    if (!popTakeField(leaving, going)) return;
+  } else if (going) {
+    popOpenField(going);
+  }
+  if (!going) form[button].focus();
 }
 
 function popShutField(name, slot, was) {
