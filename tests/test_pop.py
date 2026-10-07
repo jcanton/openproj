@@ -3864,6 +3864,153 @@ def test_enter_takes_the_answer_and_closes_the_field_without_writing(
     ), got["landed"]
 
 
+_TAB_WALKS = """
+const parent = rowWhere(one => (POP_SCHEMA.child_kinds[one.kind] || []).includes('task'));
+if (!parent) return {error: 'no row on this table may hold a task'};
+const somebody = POP_SCHEMA.people[0];
+if (!somebody) return {error: 'the corpus knows nobody'};
+openOn(parent.id);
+itemIn('new-child').click();
+itemIn('new-child-task').click();
+// Tab, the way a browser delivers it, to whatever has the keyboard. **A
+// synthetic Tab moves nothing by itself**, so a box that left the key to the
+// browser would leave the keyboard exactly where it was, and the walk below
+// would read as one stop repeated — which is the failure this is written to
+// see. The return of `dispatchEvent` is the claim the key was answered here.
+const tab = (back = false) => !document.activeElement.dispatchEvent(
+  new KeyboardEvent('keydown', {key: 'Tab', shiftKey: back, bubbles: true, cancelable: true}));
+const whereNow = () => {
+  const one = document.activeElement;
+  const box = one.getBoundingClientRect();
+  return {at: one.dataset.field || one.dataset.kind || one.tagName,
+          inside: POP.contains(one), open: opensNow(),
+          fact: !!one.closest('.card-fact'), top: box.top, left: box.left};
+};
+const stops = opensInForm();
+const start = whereNow();
+const title = 'Typed, then tabbed past';
+typeInto('title', title);
+const walk = [];
+// From the title to the title again: every other field, Create, Cancel, and
+// round.
+for (let n = 0; n < stops.length + 2; n++) {
+  const prevented = tab();
+  walk.push(Object.assign({prevented}, whereNow()));
+  if (document.activeElement.dataset.field === 'owner') typeInto('owner', somebody);
+}
+const round = {title: valueIn('title'), owner: valueIn('owner'),
+               sent: patches().length + posts().length};
+const back = [];
+for (let n = 0; n < 3; n++) back.push(Object.assign({prevented: tab(true)}, whereNow()));
+// A half-written date, which Enter refuses to take, and so must Tab.
+openField('start_date');
+const date = boxIn('start_date');
+date.value = '';
+Object.defineProperty(date, 'validity', {value: {badInput: true}, configurable: true});
+const half = {prevented: tab(), ...whereNow(), why: whyLines()};
+Object.defineProperty(date, 'validity', {value: {badInput: false}, configurable: true});
+date.value = '2026-03-02';
+const finished = {prevented: tab(), ...whereNow(), says: valueIn('start_date')};
+const before = patches().length + posts().length;
+pressSave();
+await rest(1000);
+return {parent: parent.id, somebody, title, opens: POP_SCHEMA.opens.task,
+        stops, start, walk, round, back, half, finished, before,
+        sent: posts(), patched: patches().length, open: popIsOpen()};
+"""
+
+
+def test_tab_walks_the_card_field_by_field_and_wraps_inside_the_box(
+    index: Index, tmp_path: Path
+):
+    """jcanton, 2026-10-07: *"the new create child / create record pop window
+    doesn't allow for tab-bing between fields to fill them in in order as in a web
+    form. can we have that somehow? even though enter/escape are special keys?"*
+
+    Tab is the third key of the set Enter and Escape began. It takes the answer in
+    the field it leaves — onto the card as a word, exactly as Enter does, and
+    without writing — and opens the next field ready to be typed over. The
+    browser's own Tab could not do it: every row of the list is a `.card-fact`,
+    `display: contents`, with no box to focus, so it skipped all of them and went
+    from the status chip to Create.
+
+    **The order is the card's reading order**, and that is asserted in pixels as
+    well as in the DOM: `.card-facts` is a grid, and a grid's placement is the
+    stylesheet's to decide, so each stop in the list has to sit right of the one
+    before it on the same row or on a row below it.
+
+    **It wraps, which was asked.** Past Cancel is the title again and Shift+Tab
+    goes the other way round. This box refuses every close that is not a
+    decision, and a keyboard that fell onto the table behind it could no longer
+    press Escape, because this box's listener is on `#pop`.
+
+    **A half-written date stops it**, for the reason it stops Enter: the picker
+    answers `''` for `2026-0` exactly as for a box emptied on purpose, and taking
+    that would stage a deletion nobody asked for. And what Save sends at the end
+    is what was typed, and nothing for the dozen fields Tab only walked through:
+    opening a field is not answering it.
+    """
+    got = _at_a_form(index, tmp_path / "tabwalks.html", _TAB_WALKS, patience=6000)
+
+    assert not got.get("error"), got
+    stops = got["stops"]
+    assert "parent" not in stops, f"the locked parent is a Tab stop: {stops}"
+    assert got["start"]["at"] == "title", got["start"]
+    walked = [one["at"] for one in got["walk"]]
+    assert walked == stops[1:] + ["form-save", "form-cancel", "title"], (
+        f"Tab from the title went {walked}; the card's fields in order, then Create and "
+        f"Cancel, then round to the title, is {stops[1:] + ['form-save', 'form-cancel', 'title']}"
+    )
+    for one in got["walk"]:
+        assert one["prevented"] is True, f"Tab at {one['at']} was left to the browser"
+        assert one["inside"] is True, f"Tab put the keyboard outside the box: {one}"
+        wanted = [one["at"]] if one["at"] in stops else []
+        assert one["open"] == wanted, (
+            f"at {one['at']} the open fields are {one['open']} — Tab opens the field it "
+            "lands on and takes the one it leaves"
+        )
+    facts = [(one["top"], one["left"], one["at"]) for one in got["walk"] if one["fact"]]
+    assert len(facts) >= 4, f"the walk crossed {len(facts)} rows of the list"
+    for (top, left, was), (below, right, now) in zip(facts, facts[1:], strict=False):
+        assert (abs(below - top) < 8 and right > left) or below > top + 8, (
+            f"Tab went from {was} at ({left:.0f}, {top:.0f}) to {now} at "
+            f"({right:.0f}, {below:.0f}), which is not the next field in reading order"
+        )
+    assert got["round"] == {"title": got["title"], "owner": got["somebody"], "sent": 0}, (
+        f"after one lap the card reads {got['round']} — what was typed has to be on it, "
+        "and nothing may have been written"
+    )
+    assert [one["at"] for one in got["back"]] == ["form-cancel", "form-save", stops[-1]], (
+        f"Shift+Tab from the title went {[one['at'] for one in got['back']]}"
+    )
+    assert all(one["prevented"] and one["inside"] for one in got["back"]), got["back"]
+    assert got["back"][-1]["open"] == [stops[-1]], got["back"][-1]
+    assert got["half"]["at"] == "start_date" and "start_date" in got["half"]["open"], (
+        f"Tab took a half-written date and moved on to {got['half']['at']}"
+    )
+    assert len(got["half"]["why"]) == 1 and "half-written" in got["half"]["why"][0], (
+        got["half"]["why"]
+    )
+    after = stops[stops.index("start_date") + 1]
+    assert got["finished"]["at"] == after, got["finished"]
+    assert got["finished"]["says"] == "02.03.2026", got["finished"]
+    assert got["before"] == 0, "walking the card wrote to the plan"
+    assert got["patched"] == 0
+    assert len(got["sent"]) == 1, got["sent"]
+    assert got["sent"][0]["body"]["fields"] == {
+        "kind": "task",
+        "title": got["title"],
+        "status": got["opens"],
+        "owner": got["somebody"],
+        "start_date": "2026-03-02",
+        "parent": got["parent"],
+    }, (
+        "Save sent something other than the three answers typed and the two the box "
+        f"holds by itself: {got['sent'][0]['body']['fields']}"
+    )
+    assert got["open"] is False, "the box stayed up after its Create landed"
+
+
 # --------------------------------------------------------------------------- #
 # The shape of it, which is the card's
 # --------------------------------------------------------------------------- #
