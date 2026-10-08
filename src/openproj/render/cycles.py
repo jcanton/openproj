@@ -1403,6 +1403,14 @@ button.drop:hover { color: var(--danger); }
      lines tall. */
   .betsearch { flex-wrap: wrap; }
   .betsearch input { width: 100%; }
+  /* "Start a cycle": three labelled boxes and a button on one wrapping line,
+     which on a phone put each box wherever its label happened to end — three
+     boxes at three different x's, 24px tall. One to a line, the label over its
+     box, and both the boxes and Start it a thumb's height. */
+  .editbar:has(> #start) { flex-direction: column; align-items: stretch; }
+  .editbar:has(> #start) > label.facet { display: flex; flex-direction: column; gap: .25rem; }
+  .editbar:has(> #start) input { min-height: 40px; box-sizing: border-box; }
+  #start { min-height: 40px; align-self: flex-start; }
 }
 #joining { font: inherit; font-size: 13px; width: 10rem; }
 /* **The two wide tables scroll themselves, not the document.** The roster is

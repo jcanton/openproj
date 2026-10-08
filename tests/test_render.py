@@ -7622,6 +7622,31 @@ def test_a_card_still_says_a_save_has_not_reached_github(views: dict[str, str], 
     assert got["id"] == 0, "a card holding a landing mark draws the id beside it"
 
 
+def test_starting_a_cycle_on_a_phone_is_one_box_to_a_line(seed_index: Index, tmp_path: Path):
+    """The "Start a cycle" row put three labelled boxes and a button on one
+    wrapping line, so on a phone each box started wherever its label happened
+    to end: three boxes at three different x's, each 24px tall. One to a line,
+    the label above, all the boxes on one left edge, and a thumb's height."""
+    from browser import chrome, measured_on_a_phone
+
+    from openproj.render import render_cycles
+
+    page = render_cycles(seed_index, ROUTES, base_commit="deadbee")
+    script = """
+    const boxes = ['number', 'starts', 'reviews', 'start'].map(id => document.getElementById(id));
+    return boxes.map(el => {
+      const box = el.getBoundingClientRect();
+      return [Math.round(box.left), Math.round(box.top), Math.round(box.height)];
+    });
+    """
+    got = measured_on_a_phone(chrome(), {"cycles": page}, tmp_path / "c", script)["cycles"]
+
+    lefts, tops, heights = zip(*got, strict=True)
+    assert len(set(lefts)) == 1, f"the form's boxes start at {lefts} on a phone"
+    assert list(tops) == sorted(tops) and len(set(tops)) == 4, f"not one to a line: {tops}"
+    assert min(heights) >= 40, f"the boxes are {heights}px tall on a phone"
+
+
 def test_a_thumb_can_hit_everything_on_a_phone(phone_pages: dict[str, str], tmp_path: Path):
     """Nothing a reader is meant to tap on a phone is too small to tap.
 
