@@ -7573,9 +7573,6 @@ return {viewport: document.documentElement.clientWidth, small: [...new Set(small
 _TAPPABLE_LATER = {
     "records": "the phone cards (PR B) replace its table",
     "table": "the phone cards (PR B) replace its table",
-    "graph": "the graph's phone start and folded key (PR C)",
-    "record": "the record page's folded fields and view toggles (PR C)",
-    "record with code": "the record page's folded fields and view toggles (PR C)",
 }
 
 
