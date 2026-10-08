@@ -67,9 +67,18 @@ def _elements(index: Index) -> list[dict]:
 # the button, so the page explained one mode twice and moved the whole canvas
 # down a line to do it. The remaining one was still a row, and a row here is
 # canvas: it stood between the heading and the filters with nothing beside it.
+#
+# Two sentences, one per pointer, and the stylesheet draws the one that is true:
+# on a touchscreen there is no double-click and no scroll wheel, and the gestures
+# that stand in for them — a double tap, a pinch — are what cytoscape answers
+# (`dbltap` is the event that opens a node, and it is the touch one too). Both
+# spans are in the page so neither depends on a script, and `display: none` takes
+# the other one away from a screen reader as well as from the eye.
 _GRAPH_HINT = Markup(
-    '<p class="hint" id="panhint">Double-click a node to open it. Drag to pan, '
-    "scroll to zoom, drag a node to move it.</p>"
+    '<p class="hint" id="panhint"><span class="by-mouse">Double-click a node to open'
+    " it. Drag to pan, scroll to zoom, drag a node to move it.</span>"
+    '<span class="by-touch">Double-tap a node to open it. Drag to pan, pinch to'
+    " zoom, drag a node to move it.</span></p>"
 )
 
 _GRAPH = """
@@ -141,6 +150,13 @@ _GRAPH = """
     rows maybe?)". This is that table: `display: contents` on each list hands its
     keys to the grid, so the markup stays two labelled lists and the layout is
     one set of columns. -#}
+{#- Folded on a phone, as the timeline's key is, and by the same script —
+    `.keyfold` is in `FOLDS` (`controls.py`), so `foldOnAPhone` shuts it there and
+    opens it everywhere else. Open, the two rows took the top of a 390px canvas
+    as five wrapped lines of veil over the drawing; shut, they are one word in
+    the corner, and a reader who has learned the colours never opens it again. -#}
+<details class="keyfold" open>
+<summary>Key</summary>
 <div class="legends">
 <ul class="legend" aria-label="What a node's colour and mark mean">
   <li class="legendname">status</li>
@@ -161,6 +177,7 @@ _GRAPH = """
   {% endfor %}
 </ul>
 </div>
+</details>
 {#- **No count here.** It rode with the keys from 2026-08-20, when taking it out
     of a row of its own was worth a corner of the canvas. jcanton, 2026-08-25,
     asked for the three plan views to share one bar — "search box+description (to
@@ -617,6 +634,44 @@ function edgesByContainer(edges) {
 
 const elk = new ELK();
 
+// **On a phone the drawing is framed by its height, and never below a size it
+// can be read at.** Fitted whole, as everywhere else, a plan two groups wide
+// came out 300x150 on a 350x500 canvas with every label about 3px tall: a
+// picture of the plan's shape and nothing anybody could read or tap. jcanton,
+// 2026-10-08, chose fit to height — the drawing as tall as the canvas and wider
+// than it, met at its left edge, so the reader pans sideways along it.
+//
+// Fit to height alone was measured at 6.8px labels on the demo plan, two and a
+// half screens wide: tappable, not readable. So there is a floor, and the zoom
+// is whichever is larger — the height's, or the one at which a node's label
+// reads at 11px. Anything that fits whole at that zoom is simply fitted, which is
+// the same picture a laptop starts from.
+//
+// Met at the left edge always, and CENTRED top to bottom when the floor makes the
+// drawing taller than the canvas as well. Its top-left corner was the first
+// answer, and on the demo plan that corner is one lone record ELK packed above
+// the two groups, with 240px of nothing under it: a phone opening on the emptiest
+// part of the drawing. The middle of a laid-out plan is where its groups are.
+//
+// `env.PHONE`, the question every phone rule here asks. Named for what it frames
+// rather than `PHONE`, which `_FILTER_JS` declares on this same page.
+const FRAMED_ON_A_PHONE = matchMedia({{ phone|tojson }});
+// The size a node's label is drawn at, at zoom 1 — the `node` style says it, and
+// the floor below is a multiple of it.
+const NODE_LABEL = 10;
+const LEGIBLE = 11 / NODE_LABEL;
+// `drawn` is what `cy.fit` would be handed, `undefined` included — so off a phone
+// this is that call and nothing else.
+function frame(drawn, pad) {
+  const box = (drawn || cy.elements(':visible')).boundingBox();
+  if (!FRAMED_ON_A_PHONE.matches || !box.w || !box.h) { cy.fit(drawn, pad); return; }
+  const room = {w: cy.width() - 2 * pad, h: cy.height() - 2 * pad};
+  const zoom = Math.min(cy.maxZoom(), Math.max(room.h / box.h, LEGIBLE));
+  if (box.w * zoom <= room.w && box.h * zoom <= room.h) { cy.fit(drawn, pad); return; }
+  const top = (cy.height() - box.h * zoom) / 2;
+  cy.viewport({zoom, pan: {x: pad - box.x1 * zoom, y: top - box.y1 * zoom}});
+}
+
 // Which arrangement is the current one. `relayout` awaits ELK in the middle, so
 // two of them can be in flight at once and the one that finishes LAST wins —
 // which is not the one that was asked for last: `cy.fit` at the bottom fits
@@ -680,7 +735,7 @@ async function relayout() {
     });
   });
 
-  cy.fit(undefined, 24);
+  frame(undefined, 24);
 }
 
 // THE ROUTER THAT WAS HERE, and why the drawing is straight lines now.
@@ -758,7 +813,7 @@ const cy = cytoscape({
   maxZoom: 2,
   style: [
     { selector: 'node', style: {
-        'label': labelOf, 'font-size': 10, 'shape': 'round-rectangle',
+        'label': labelOf, 'font-size': NODE_LABEL, 'shape': 'round-rectangle',
         // One typeface for the whole app, this canvas included — and the ruler
         // above measures group labels in it, so a second stack here would put
         // every group label a few pixels off the box it belongs to.
@@ -1177,7 +1232,7 @@ applyFilter();
 addEventListener('openproj:room', () => {
   cy.resize();
   const drawn = cy.elements(':visible');
-  if (drawn.length) cy.fit(drawn, 30);
+  if (drawn.length) frame(drawn, 30);
 });
 
 const CONNECT = document.getElementById('connect');
@@ -1919,9 +1974,41 @@ _GRAPH_STYLE = """
      canvas and the title inside it takes the ellipsis it is already set up for,
      while the button — the way out — keeps its whole width. */
   .focusbar { top: auto; bottom: .5rem; right: .75rem; }
-  .keys { left: .75rem; align-items: stretch; }
+  /* Both edges only while the key is open. Shut, it is one word in the corner,
+     and a veil the width of the canvas around one word would be a strip of the
+     drawing hidden for nothing. */
+  .keys:has(> .keyfold[open]) { left: .75rem; align-items: stretch; }
   .keys .legends { display: block; }
   .keys .legends .legend { display: flex; }
+}
+/* The key's handle takes the pointer the box gives away (`pointer-events: none`
+   on `.keys`, so the veil cannot swallow a tap on a node): it is a control, and a
+   control that cannot be pressed is a word. Drawn by the shell's phone block and
+   nowhere else, like every fold handle. */
+.keys .keyfold > summary { pointer-events: auto; }
+/* The sentence for the pointer this is. `pointer: coarse` and not `env.PHONE`:
+   it is a question about what is in the reader's hand, and a tablet's answer is
+   a finger at any width. */
+#panhint .by-touch { display: none; }
+@media (pointer: coarse) {
+  #panhint .by-mouse { display: none; }
+  #panhint .by-touch { display: inline; }
+}
+@media {{ phone }} {
+  /* Edit dependencies, Save and Reset at a thumb's height — they were 27px. */
+  #commitbar button { min-height: 2.5rem; }
+}
+/* **A phone on its side.** 390px is the whole window, and the commit bar's
+   1.5rem of margin was most of the 17px that pushed the footer below it once the
+   filters had folded. The bar keeps its own padding and loses the gap above it:
+   the fold handle over it is padded already. */
+@media {{ short_phone }} {
+  #commitbar { margin-top: 0; padding-block: .2rem; }
+  /* And the gap the shell leaves under the search bar, here only: the fold
+     handle at the foot of it is padded already. `#controls` is (1,0,0) in the
+     shell and here, and this sheet is inlined after the shell's, so it wins on
+     order — the one tie this file lets order decide, and said so. */
+  #controls { margin-bottom: 0; }
 }
 """
 

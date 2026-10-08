@@ -6,6 +6,7 @@ from pygments.formatters import HtmlFormatter
 from pygments.token import STANDARD_TYPES, Token
 
 from ..themes import FAMILIES, contrast
+from .env import PHONE
 
 # Which hue each status wears. The one place taste enters the derivation: the
 # format's eight hues are red, orange, yellow, green, cyan, blue, magenta, brown,
@@ -988,6 +989,75 @@ article.record.editing.whole-page .panes > .main { grid-row: 1; grid-column: 1; 
 .markbar .grow svg { display: block; width: 13px; height: 13px; }
 """
 
+
+# The record page on a phone: its fields folded — `.factsfold` in `_DETAIL`, shut
+# by the script beside it — and its controls the size of a thumb. Joined to
+# `env.PHONE` rather than spelling the query, because this sheet is inlined and
+# not rendered, and a second spelling of "a phone" is two answers to it.
+_RECORD_ON_A_PHONE = (
+    """
+/* Off a phone the box ships open and stays open, and its handle is not drawn: a
+   summary there would be a control saying "17 fields" over seventeen fields that
+   are already on the screen. `display: none` on a summary does not close its
+   details or hide what is in it — only the handle goes — so a laptop sees the
+   column it always saw. */
+.factsfold > summary { display: none; }
+/* The warnings the handle carries, in the colour the overrun row is drawn in. */
+.factswarn { color: var(--sev-warn); font-weight: 600; margin-left: .4rem; }
+/* Written out, because `[hidden]` is a UA rule and loses to the author `display`
+   any later rule might give a span — the trap `.focusbar[hidden]` documents. */
+.factsneed[hidden] { display: none; }
+@media """
+    + PHONE
+    + """ {
+  /* `list-item`, so the browser's own disclosure triangle is the mark that says
+     the row opens — the shape the filter bar's handle takes, and for its
+     reasons. Padded to a thumb's height: it is the one way to the fields. */
+  .factsfold > summary {
+    display: list-item; list-style-position: inside; cursor: pointer;
+    padding: .7rem .1rem; border-bottom: 1px solid var(--line);
+    font-size: 14px; line-height: 1.45;
+  }
+  .factsfold[open] > summary { margin-bottom: .75rem; }
+  .factsfold > summary .factscount {
+    float: right; margin-left: .5rem; color: var(--muted); font-size: 12px;
+  }
+  /* Stacked and editing, the fields hold a 6rem floor so two of them stay in
+     sight above the document box (see `.panes`). Shut, there is one row to keep
+     in sight and it is 44px: the floor would be 52px of nothing between the
+     handle and the editor, on the screen with least room for either. (0,6,1)
+     with the `:has`, over the floor's (0,4,1) — it wins on weight, not order. */
+  article.record.editing .panes > .facts:has(> .factsfold:not([open])) { min-height: 0; }
+  /* And its own height, not 30% of the box: the share is a cap meant for a list
+     of fields, and on a short box it cut the one-line handle in half — 36px of
+     a 44px row on a phone on its side, 22px with the keyboard up. A handle cut
+     in half is a sentence about the fields nobody can read. */
+  article.record.editing .panes:has(> .facts > .factsfold:not([open])) {
+    grid-template-rows: auto 1fr;
+  }
+  /* **The row of controls above the record, at a thumb's size.** The three
+     view segments and Slide were 33x25 with Delete six pixels to their right:
+     a row a finger meant for Write could land on as Delete. 2.5rem tall, as wide
+     as tall, and Delete a clear gap away from the rest — the confirmation it
+     opens is the second guard, and this is the first. Save, Reset and Create
+     beside them are the same height so the row is one line of one size.
+
+     `.views .seg` is (0,2,0) and `.editbar .slide-view` (0,2,0) in the sheet
+     above; these are (0,3,1)-(0,3,2) with the `article.record` prefix, so they
+     win on weight and not on being inlined later. */
+  article.record .views .seg, article.record .editbar .slide-view {
+    min-width: 2.75rem; min-height: 2.5rem; box-sizing: border-box;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  article.record .editbar button.delete { min-height: 2.5rem; margin-left: 1.25rem; }
+  article.record .commitbar button { min-height: 2.5rem; }
+  /* The way back is a line of text on its own, and on a phone a line of 13px
+     text is a 15px target. Padded rather than enlarged: the box grows and the
+     words stay the size of the breadcrumb they are. */
+  .back a.origin { display: inline-block; padding: .4rem 0; }
+}
+"""
+)
 
 _DETAIL_STYLE = (
     """
@@ -2033,4 +2103,5 @@ button.kindchip[hidden] { display: none; }
 #promote .hint { margin: 0; }
 """
     + _EDITING_STYLE
+    + _RECORD_ON_A_PHONE
 )

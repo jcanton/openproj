@@ -1803,6 +1803,10 @@ def _a_bare_date_box(index: Index) -> str:
 # So the indicator is measured the way a reader meets it: as room inside the box.
 # Chrome's default date box is 125.3px wide and 108px with the indicator hidden.
 _UNDER_A_THUMB = """
+  // A record's fields are folded on a phone, the create form's included, and a
+  // date box inside a shut fold has no box at all — so they are opened first,
+  // the way a reader reaching for a date does.
+  for (const fold of document.querySelectorAll('.factsfold')) fold.open = true;
   const all = [...document.querySelectorAll('input[type="date"]')];
   const box = all.find(one => one.getClientRects().length);
   if (!box) return {missing: true, boxes: all.length};
