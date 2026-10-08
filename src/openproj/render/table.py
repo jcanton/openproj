@@ -15,11 +15,11 @@ from .controls import (
     _facets_html,
     _summary_html,
 )
-from .env import _compiled
+from .env import PHONE, _compiled
 from .pop import _POP_STYLE, _pop_js
 from .rows import _row
 from .shell import STATIC, Links, _page, _titles
-from .styles import _SCROLL_STYLE, _SUGGEST_STYLE, _TREE_STYLE
+from .styles import _CARD_STYLE, _SCROLL_STYLE, _SUGGEST_STYLE, _TREE_STYLE
 from .tokens import (
     _KIND_MODELS,
     DRAFT_MARKS,
@@ -183,9 +183,16 @@ _TABLE_SHOWS = {
 # nobody: a drag has no name written on it anywhere, and the grip beside an id is
 # 8px of dotted rule. The `+` row at the foot of the table says what it is by
 # being a control, so it is the one that needs no sentence.
+#
+# A phone has none of the three — no double-click, no Enter, and no id column for
+# a grip to be beside — so the cards are told what a thumb CAN do. Both sentences
+# ship and the stylesheet shows one, because which one is true changes when the
+# phone is turned and a sentence chosen once at load would then be the other's.
 _TABLE_HINT = Markup(
-    '<p class="hint">Double-click a cell, or press Enter on it, to edit it · '
-    "drag a row by the grip beside its id onto another to change parents.</p>"
+    '<p class="hint"><span class="for-desk">Double-click a cell, or press Enter on it, '
+    "to edit it · drag a row by the grip beside its id onto another to change "
+    'parents.</span><span class="for-thumb">Tap a title to open its record, which is '
+    "where it is edited.</span></p>"
 )
 
 # Every column the table draws, in the order it draws them, and whether it sorts.
@@ -341,7 +348,7 @@ _TABLE = """
     the arrow keys — a screen reader hands them to the page inside a grid and
     keeps them for its own cursor inside a table — and on a rendered file there
     is no editor for them to reach. -#}
-<div class="table-scroll" data-fills><table id="rows"{% if editable %} role="grid"{%
+<div class="table-scroll carded" data-fills><table id="rows"{% if editable %} role="grid"{%
   endif %}><thead><tr>
   {#- A real button inside every sortable header, not a click handler on the cell:
       there is no way to tab to a table cell, so sorting was mouse-only. The
@@ -1129,7 +1136,13 @@ function rowHtml(place) {
     // a drop that did not take.
     row.id === WRITING ? 'writing' : '',
   ].filter(Boolean).join(' ');
-  return `<tr data-id="${esc(row.id)}"${classes ? ` class="${classes}"` : ''}>` +
+  // Every sentence on the row, for the one reader who cannot see the cells they
+  // hang on: a card draws four of the fifteen columns, and a problem is usually
+  // on one of the other eleven. The phone sheet draws this under the card.
+  const trouble = Object.values(MARKS[row.id] || {})
+    .flatMap(mark => mark.messages).join(' · ');
+  return `<tr data-id="${esc(row.id)}"${classes ? ` class="${classes}"` : ''}` +
+    `${trouble ? ` data-trouble="${esc(trouble)}"` : ''}>` +
     keys.map(key => cell(row, key, place)).join('') + '</tr>';
 }
 
@@ -2537,6 +2550,7 @@ function openEditor(cell) {
 // themselves — see `_new_row_fields` — so what a project has no box for here and
 // what the create form hides there are one answer to one question.
 const NEW_ROW = DATA.new_row || {};
+const NEW_RECORD = {{ links.new|tojson }};
 const DEFAULTS = DATA.defaults || {};
 const TEMPLATES = DATA.templates || {};
 // The check and the cross the draft row's two controls are drawn with, rendered
@@ -2671,8 +2685,15 @@ function adderHtml() {
     // than written out here, because the words are the same words `startMoving`
     // needs mid-drag, when the table must not be redrawn at all: one function
     // owns them, and a redraw and a pick-up leave this row saying the same thing.
+    //
+    // A card has no cells to type a new row into — the draft row is fifteen
+    // columns wide and a card draws four — so on a phone the same place opens
+    // the create form instead, and is named for what that makes. Both are drawn
+    // and the stylesheet shows one, for the reason the hint above the table
+    // carries two sentences: which is true changes when the phone is turned.
     return `<tr class="adder"><td${wide}>` +
       `<button type="button" id="add-row" class="add">+ New row</button>` +
+      `<a class="button thumb-add" href="${esc(NEW_RECORD)}">+ New record</a>` +
       `<button type="button" id="unparent" hidden></button>` +
       `<span class="hint" id="rootless" hidden></span>` +
       `</td></tr>`;
@@ -3742,6 +3763,10 @@ function trustworthy(stored) {
 let automatic = !Object.keys(WIDTHS).length;
 let dragging = false;
 const table = document.getElementById('rows');
+// `env.PHONE`, the query the card stylesheet is written under, so the fit and
+// the cards cannot disagree about which one is on the screen. Not `PHONE`, which
+// `_FILTER_JS` declares in the same global scope.
+const CARDS = matchMedia({{ phone|tojson }});
 const headers = [...table.querySelectorAll('th')];
 // The box the rows scroll in. It is what the table is fitted to, and what says
 // whether the frozen columns are holding anything back yet.
@@ -4344,6 +4369,18 @@ draw();
 // One name for "make the table the width of the room it is in", so the load, the
 // resize and the moment the real face lands cannot answer it differently.
 function refit() {
+  // **Cards have no columns to fit.** On a phone the rows are drawn as cards
+  // (`_CARD_STYLE`), and everything below writes widths onto the headers and
+  // the table: an inline `width` on a table that is now a block is a card list
+  // 1029px wide inside a 350px box, scrolling sideways again. So the fit stands
+  // down and takes back what it wrote, and the same query turning false — the
+  // phone turned, a window widened — hands the table back to it.
+  if (CARDS.matches) {
+    table.style.width = '';
+    table.style.tableLayout = '';
+    headers.forEach(th => { th.style.width = ''; });
+    return;
+  }
   if (automatic) fitWidths();
   else applyWidths(scaledWidths(scroller.clientWidth - chromeOverhead()) || WIDTHS);
   stickyOffset();
@@ -4370,6 +4407,7 @@ if (document.fonts) document.fonts.ready.then(refit);
 // in: a gap down the right of a widened page, and a table hanging off the edge
 // of a narrowed one.
 addEventListener('resize', refit);
+CARDS.addEventListener('change', refit);
 // The rule down the right of the frozen title column says "what is to the left
 // of this is being held still while the rest passes under it". At scrollLeft 0
 // nothing is passing under anything and it reads as a stray separator between
@@ -4386,6 +4424,7 @@ frozenEdge();
 _TABLE_STYLE = (
     _SCROLL_STYLE
     + _TREE_STYLE
+    + _CARD_STYLE
     + """
 th[data-sort] { cursor: pointer; user-select: none; }
 /* (0,1,1) over the shared block's bare `th` at (0,0,1): the sorted column keeps
@@ -5090,6 +5129,65 @@ tr.draft > td.draft-none {
    next to — so it lands in the bar, where the button that caused it is. */
 #draft-problems { margin: .25rem 0 0; padding-left: 1.1rem; color: var(--sev-blocker);
                   font-size: 12px; }
+/* The hint's two sentences, one per kind of hand — see `_TABLE_HINT`. */
+.hint .for-thumb { display: none; }
+/* The create form's door, which only a card list opens — see `adderHtml`. */
+#rows .thumb-add { display: none; }
+"""
+    # **The plan as cards.** `_CARD_STYLE` is the mechanism; this is what this
+    # table puts on a card. Under the title, one line — status, priority, owner,
+    # jcanton's choice of the three a reader scans a plan for — and a third line
+    # only on a row with something wrong with it. `#rows > tbody > tr > td[…]` is
+    # (1,1,3) and beats the mechanism's (0,1,4) on the id, so these three cells
+    # come back beside the title and the other eleven stay folded away.
+    + "@media "
+    + PHONE
+    + """ {
+  /* The title wraps. `#rows tbody td` (1,0,2) puts every cell on this table on
+     one line with an ellipsis — jcanton's call for the laptop's columns — and
+     the card's whole point is a title read to its end. The link is a block, so
+     letting IT wrap is enough: the cell's own `nowrap` and clip then have one
+     wrapped box inside them and nothing to cut. (1,1,4) over (1,0,2). */
+  #rows > tbody > tr > td[data-col="title"] > a { white-space: normal; }
+  #rows > tbody > tr > td[data-col="status"] { display: block; order: 1; }
+  #rows > tbody > tr > td[data-col="priority"] { display: block; order: 2; }
+  #rows > tbody > tr > td[data-col="owner"] { display: block; order: 3; color: var(--muted); }
+  /* The tree's indent moves from the title cell to the card, so the line under
+     the title starts where the title does. (1,1,2) over the mechanism's own
+     padding at (0,2,3). */
+  #rows > tbody > tr.d1 { padding-left: calc(.5rem + 14px); }
+  #rows > tbody > tr.d2 { padding-left: calc(.5rem + 28px); }
+  #rows > tbody > tr.d3 { padding-left: calc(.5rem + 42px); }
+  /* The stub points at the title's first line, not at the middle of a card that
+     is two or three lines tall — `top: 50%` in `_TREE_STYLE` was measured
+     against a row exactly one line high. The card's top padding, the link's,
+     and half of a 15px line at 1.35: 8 + 3.2 + 10. (1,2,1) over (0,2,1). */
+  #rows .tree .tee::after, #rows .tree .end::after { top: 21px; }
+  #rows .tree .end::before { height: 21px; }
+  /* What is wrong, in words, under the line that shows it. On the laptop the
+     sentence is on the cell it is about, and on a card that cell is folded
+     away — which left an orange stripe down the card's edge saying something
+     was wrong and nothing on the screen saying what. Generated content because
+     the sentence is already on the row (`rowHtml` writes it), and a cell built
+     only to be shown here would be a sixteenth column on the laptop's table. */
+  #rows > tbody > tr[data-trouble]::after {
+    content: "\\26A0\\FE0E  " attr(data-trouble); order: 9; flex: 1 0 100%;
+    font-size: 13px; line-height: 1.35; color: var(--muted);
+  }
+  /* A row kept for context is dimmed as a card rather than as a patch behind
+     each chip — the mechanism takes the cells' grounds away. */
+  #rows > tbody > tr.context { background: var(--surface-2); }
+  /* The create control stays at the foot of the box. The cell's own `sticky`
+     is held inside a row that is now its own height, so it is the row that
+     sticks. */
+  #rows > tbody > tr.adder { position: sticky; bottom: 0; z-index: 2;
+                             background: var(--surface); }
+  #add-row { display: none; }
+  #rows .thumb-add { display: inline-flex; align-items: center; min-height: 40px;
+                     padding: 0 .9rem; }
+  .hint .for-desk { display: none; }
+  .hint .for-thumb { display: inline; }
+}
 """
 )
 
