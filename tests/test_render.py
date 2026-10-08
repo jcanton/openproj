@@ -7968,7 +7968,8 @@ const box = el => { const r = el.getBoundingClientRect();
   return {w: Math.round(r.width), h: Math.round(r.height),
           left: Math.round(r.left), right: Math.round(r.right)}; };
 const row = [...document.querySelectorAll(
-  '.editbar .slide-view, .editbar .views .seg, .editbar button.delete')];
+  '.editbar .slide-view, .editbar .views .seg, .editbar button.delete')]
+  .filter(el => el.getClientRects().length);
 return {
   row: row.map(el => ({name: el.getAttribute('aria-label') || el.textContent.trim(),
                        ...box(el)})),
@@ -7978,7 +7979,10 @@ return {
     got = measured_on_a_phone(
         chrome(), {"pitch": record_pages["pitch"]}, tmp_path / "thumb", script
     )["pitch"]
-    assert len(got["row"]) == 5, f"expected Slide, three views and Delete: {got['row']}"
+    # Slide is asked if it is drawn, and not demanded: whether a phone gets the
+    # slide editor at all is the editing branch's question.
+    names = [one["name"] for one in got["row"]]
+    assert names[-4:] == ["Write", "Write and preview", "Preview", "Delete"], names
     for one in got["row"]:
         assert one["h"] >= 40 and one["w"] >= 40, (
             f"{one['name']} is {one['w']}x{one['h']} on a phone, under a thumb's 40px"
