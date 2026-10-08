@@ -27,7 +27,7 @@ from ..model import (
     workers_on,
 )
 from .cycles import _proposed
-from .env import _compiled
+from .env import PHONE, _compiled
 from .markdown import _drop_repeated_title, _inlined_assets, _markdown, _markdown_line, _pr_link
 from .shell import ROUTES, Links, _page
 from .styles import _DETAIL_STYLE
@@ -119,7 +119,8 @@ _ARTICLE = """
   <ul class="points">
     {% for point in s.points %}
     <li class="{{ 'ticked' if point.done else '' }}"><span class="box"
-      aria-hidden="true">{{ '\u2611' if point.done else '\u2610' }}</span>{{ point.text }}</li>
+      aria-hidden="true">{{ '\u2611' if point.done else '\u2610' }}</span><span
+      class="said">{{ point.text }}</span></li>
     {% endfor %}
   </ul>
   {% endif %}
@@ -379,6 +380,13 @@ _DECK_STYLE = """
    reading it from the third row. */
 .slide .points li.ticked { color: var(--paper-muted); text-decoration: line-through; }
 .slide .points .box { flex: none; text-decoration: none; }
+/* The sentence in ONE box. Without it every text run and every `<code>` in a
+   point was a flex item of its own: none of them could wrap into the next, each
+   was pushed `.5rem` from its neighbour as though it were a separate column, and
+   on a phone's fluid slide "green on `embedded`" ran its last word 75px off the
+   sheet and was clipped. `min-width: 0` so the box may be narrower than its
+   longest word, which `.doc code`'s wrapping then breaks. */
+.slide .points .said { min-width: 0; }
 
 .slide .prs { list-style: none; margin: 0 0 1rem; padding: 0; font-size: 1.15rem; }
 .slide .prs li { margin: .2rem 0; }
@@ -581,6 +589,25 @@ _DECK_STYLE = """
 }
 .zoomer button:hover { color: var(--accent); }
 #zoomfit { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+/* `flex: none`, or a narrow column squeezes the four buttons below their own
+   text: measured on a phone, each was 26px wide and the readout's "100%" ran
+   out of its box and over the `+` beside it. */
+.zoomer button { flex: none; }
+/* **A phone reads the deck; it does not project it.** The fixed canvas is a
+   1280px slide scaled to the column, and a phone's column is about 350px: the
+   whole slide drawn at a quarter size, its text about 4px tall, beside a rail of
+   thumbnails smaller still. Nothing on it could be read. So on a phone the
+   script leaves the canvas off (see `READING`), and what is left is the fluid
+   slide every reader without JavaScript already gets — the record's own text at
+   the page's own size, one slide under the next. The rail, its handle and the
+   zoom go with the canvas: they navigate and scale a drawing that is not there.
+   Present still puts the canvas back, because a projector is a projector
+   whatever is driving it. The query is `env.PHONE`, joined in because this sheet
+   is inlined rather than rendered. */
+@media """ + PHONE + """ {
+  .rail, .railgrip, .zoomer { display: none; }
+  .slide { min-height: 0; padding: 1rem 1.1rem; }
+}
 .rail .slide { margin: 0; border: 0; border-radius: 3px; pointer-events: none; }
 /* Dropped from the deck: greyed rather than hidden, on the rail and on the page,
    because a slide nobody can see is a slide nobody can put back. Presentation
@@ -746,8 +773,14 @@ const PANE_BORDER = 2;
 let ZOOM = 1;
 const ZOOM_MIN = 0.4, ZOOM_MAX = 4;
 
+// The phone's question, from `env.PHONE`: while it matches, the deck is read as
+// fluid slides and not drawn as scaled canvases — see the stylesheet's phone
+// block for why. Presenting is the exception, so it is asked here and not only
+// by the stylesheet, which cannot see the `presenting` class change the answer.
+const READING = matchMedia({{ phone|tojson }});
+
 function fit() {
-  WRAP.classList.add('sized');
+  WRAP.classList.toggle('sized', !READING.matches || presenting());
   // **Measured on a box whose width does not depend on the answer.** The rail's
   // scale was computed from `THUMBS.clientWidth`, and the thumbnails' width is
   // set BY that scale — so every call multiplied its own previous output.
@@ -1076,10 +1109,13 @@ function present(on) {
     // and nothing else. Swallowed for the same reason: there is nothing a
     // presenter can do about it and a red line in the console is not news.
     document.documentElement.requestFullscreen?.().catch(() => {});
-    show(at);
+    // `fit` and not `show` alone: on a phone the canvas is off until now, and
+    // `fit` is what puts it on before it shows the slide.
+    fit();
   } else {
     for (const slide of slides()) slide.classList.remove('showing');
     if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    fit();
   }
 }
 
@@ -1279,6 +1315,7 @@ RAILGRIP.hidden = false;
 railed();
 watch();
 addEventListener('resize', fit);
+READING.addEventListener('change', fit);
 // The shell re-measures `--room` on its own schedule — on load, on resize, and
 // again until it settles. The slides are scaled against the box that number
 // sizes, so they have to be re-scaled when it moves.

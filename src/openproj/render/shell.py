@@ -2236,6 +2236,13 @@ tr.nothing .hint { margin: 0 0 .75rem; }
      here. The corner comes after everything but the fold, so it pushes the
      controls away from the version, the plan's sha, Help and Report issue. */
   #build { gap: .5rem .75rem; }
+  /* The fold's `⋯` is a target and was 22x16, two pixels from the theme
+     toggle's 28px circle: the one control on the row a thumb is sent to when the
+     row runs out of room. As big as that circle, and centred like it. */
+  #buildmore > summary {
+    display: flex; align-items: center; justify-content: center;
+    min-width: 28px; min-height: 28px; padding: 0;
+  }
   /* The nav loses the element that was forcing it wide, so what is left is
      links. Nothing else changes: they were already wrapping. */
   #build .corner { font-size: 13px; }
@@ -4148,8 +4155,29 @@ function showMoved(message) {
   };
 }
 
-const source = new EventSource('/api/events');
-source.onmessage = event => {
+// **Closed while the page is in the back/forward cache, and opened again when it
+// comes out.** Chrome keeps a page it has navigated away from alive for the Back
+// button, and this stream lives on with it. Six of them is Chrome's whole
+// allowance of connections to one HTTP/1.1 host, so the seventh page a tab
+// opened on `openproj serve` or `demo` asked for a socket that never came, and
+// sat on a blank screen for as long as anybody waited — measured, 2026-10-08,
+// and gone the moment the cache was switched off. Cloud Run speaks HTTP/2 to the
+// browser and multiplexes every stream over one connection, which is why the
+// deployed service never showed it.
+//
+// What a stream misses while closed is not replayed — no stream here ever is,
+// see `PILE_POLL_MS` — so a page brought back by Back is the plan as it was when
+// you left it, which is what Back has always meant. A save from it is checked
+// against the commit it was drawn from, like any other.
+let source = null;
+function listen() {
+  source = new EventSource('/api/events');
+  source.onmessage = onPlanNews;
+}
+addEventListener('pagehide', () => { if (source) source.close(); source = null; });
+addEventListener('pageshow', event => { if (event.persisted && !source) listen(); });
+
+function onPlanNews(event) {
   const message = JSON.parse(event.data);
   // The pusher's landed frame — {t: 'landed', landed, remapped, parked},
   // defined at web.py's `broadcast` — re-broadcast as a DOM event because its
@@ -4161,7 +4189,8 @@ source.onmessage = event => {
     dispatchEvent(new CustomEvent('openproj:landed', {detail: message}));
   }
   if (movedWriting) movedHeld.push(message); else showMoved(message);
-};
+}
+listen();
 </script>
 <script>
 // The pile banner (design/deferred-push.md, "Saying it on the page"): loud when
@@ -4256,6 +4285,9 @@ setInterval(readPile, PILE_POLL_MS);
 // frame follows every save, and a health read per save per open tab is a poll
 // pretending to be an event.
 addEventListener('openproj:landed', () => { if (!pile.hidden) readPile(); });
+// Back from the back/forward cache, the numbers are as old as the visit away
+// was long — and the interval was frozen with the page, so ask now.
+addEventListener('pageshow', event => { if (event.persisted) readPile(); });
 </script>
 {% endif %}
 {% if mermaid %}
@@ -4726,6 +4758,41 @@ _OFF_STYLE = ".switched-off code { font-family: var(--font-mono); }\n"
 # `FILTERS` in `_FILTER_JS` plus `predicate`, and the search box. What a
 # switched-off address hands on to Records, and nothing else.
 _RECORDS_READS = frozenset({*_PLAN_FACETS, "q"})
+
+
+def render_not_found(index: Index, links: Links = STATIC, said: str = "", path: str = "") -> str:
+    """What a page address answers when there is nothing at it.
+
+    It was FastAPI's own answer: `{"detail":"no record 'nope'"}` as the whole
+    document, with no viewport tag, so on a phone it was a 980px-wide line of
+    JSON in tiny type and no way back into the plan but the browser's Back. A
+    stale link in a chat message is the most ordinary way to arrive here.
+
+    The same shell and the same shape as `render_switched_off` — one heading,
+    one sentence, one way out — and still a 404. `said` is the route's own
+    reason when it gave one; `path` is what is said when it did not, because a
+    mistyped address has no reason but the address.
+    """
+    sentence = (
+        Markup("{}.").format(said[:1].upper() + said[1:].rstrip("."))
+        if said
+        else Markup("There is no page at <code>{}</code>.").format(path or "this address")
+    )
+    body = Markup(
+        '<section class="switched-off">\n<h1>Not in this plan</h1>\n<p>{}</p>\n'
+        "<p>A link to something renamed or deleted in git lands here too.</p>\n"
+        '<p><a href="{}">Go to Records</a></p>\n</section>'
+    )
+    return _page(
+        "openproj — not found",
+        body.format(sentence, links.records),
+        _OFF_STYLE,
+        links,
+        "",
+        index.unreadable,
+        index.unusable,
+        fills=True,
+    )
 
 
 def render_switched_off(

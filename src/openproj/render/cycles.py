@@ -21,7 +21,7 @@ from ..query import plain
 from ..schedule import build_end
 from .calendar import _CALENDAR_STYLE, _calendar_js
 from .controls import _FILTER_JS, _combobox_html, _cycle_numbers, _facets_html
-from .env import _compiled
+from .env import PHONE, _compiled
 from .icons import _ICON_ART, ICONS, icon_svg
 from .markdown import _markdown
 from .shell import ROUTES, STATIC, Links, _page
@@ -1391,6 +1391,19 @@ input.rate { width: 4rem; }
 button.drop { border: none; background: none; cursor: pointer; padding: 0 .2rem;
               color: var(--muted); font-size: 13px; line-height: 1; }
 button.drop:hover { color: var(--danger); }
+/* A thumb's worth of box on a phone. Both pass WCAG's spacing test at their
+   drawn size — 22x13 and 13x13 with nothing else within reach — and a review on
+   a phone still landed a tap on them only by aiming at the exact centre, which
+   is the test being right about the rule and wrong about the thumb. */
+@media """ + PHONE + """ {
+  button.drop { min-width: 24px; min-height: 24px; }
+  input.bet { width: 20px; height: 20px; }
+  /* The search box over the explanation rather than beside it: a 12rem box on
+     one flex row with the sentence left the sentence a 148px column eighteen
+     lines tall. */
+  .betsearch { flex-wrap: wrap; }
+  .betsearch input { width: 100%; }
+}
 #joining { font: inherit; font-size: 13px; width: 10rem; }
 /* **The two wide tables scroll themselves, not the document.** The roster is
    seven columns and the betting table is eight, and both were written down as

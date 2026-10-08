@@ -1852,7 +1852,14 @@ article.record h1 input.title-field {
 textarea.body-field { resize: none; }
 .doc { border-top: 1px solid var(--line); padding-top: 1rem; }
 .doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
-.doc code { background: var(--surface-2); padding: 0 .25em; }
+/* `overflow-wrap: anywhere` because an identifier has no space to break at. One
+   unbreakable span in backticks — a test name, a CI line of `KEY=value;`s — ran
+   past the column on a 390px phone, and the whole reading pane scrolled sideways
+   under the thumb (217px of it on task-0a1001), on a plan whose pitches are made
+   of identifiers. A fence is untouched: `pre` does not wrap at all, so the
+   property has nothing to do there and `.doc pre`'s own scroll is what a long
+   line in a fence gets. */
+.doc code { background: var(--surface-2); padding: 0 .25em; overflow-wrap: anywhere; }
 /* **A fence is one box, and the rule above was drawing it a line at a time.**
    `.doc code` is the inline rule — a tint and a quarter-em either side, so an
    identifier in running prose reads as code. A `<code>` inside a `<pre>` is the
