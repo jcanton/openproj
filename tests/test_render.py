@@ -7573,6 +7573,40 @@ _TAPPABLE_LATER = {
 }
 
 
+def test_a_card_still_says_a_save_has_not_reached_github(views: dict[str, str], tmp_path: Path):
+    """The landing mark is drawn into the id cell, and a card folds the id cell
+    away. So a save made from the table on a phone said nothing about whether
+    it had reached GitHub, and a commit parked on a branch said nothing at all,
+    on the one view where a phone reader made it.
+
+    The mark is put into the cell the way `landingMark` writes it, and the
+    question is whether a phone paints it — the save that puts it there is
+    `test_table.py`'s, and is the same at every width.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    script = """
+    const row = document.querySelector('#rows tbody tr[data-id]');
+    const cell = row.querySelector('td[data-col="id"]');
+    const quiet = cell.querySelector('.eid').getClientRects().length;
+    cell.insertAdjacentHTML('beforeend',
+      ' <span class="stranded" role="img" aria-label="parked"></span>');
+    const mark = cell.querySelector('.stranded').getBoundingClientRect();
+    return {quiet, mark: [Math.round(mark.width), Math.round(mark.height)],
+            id: cell.querySelector('.eid').getClientRects().length,
+            cards: getComputedStyle(row).display};
+    """
+    got = measured_on_a_phone(chrome(), {"table": views["table"]}, tmp_path / "t", script)
+    got = got["table"]
+
+    assert got["cards"] == "flex", f"the table is not drawn as cards here: {got}"
+    assert got["quiet"] == 0, "a card with no mark draws its id cell"
+    assert got["mark"][0] > 0 and got["mark"][1] > 0, (
+        f"a card does not paint the landing mark it holds: {got['mark']}"
+    )
+    assert got["id"] == 0, "a card holding a landing mark draws the id beside it"
+
+
 def test_a_thumb_can_hit_everything_on_a_phone(phone_pages: dict[str, str], tmp_path: Path):
     """Nothing a reader is meant to tap on a phone is too small to tap.
 
