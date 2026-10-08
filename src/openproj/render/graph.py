@@ -1877,6 +1877,14 @@ _GRAPH_STYLE = """
    margin goes with it; `align-items: flex-end` on `.keys` already puts every
    row on the right edge. */
 .keys .legends { margin: 0; }
+/* `grid` and not the shell's `inline-grid`, since the key went into a fold. As a
+   flex item of `.keys` the legend was blockified and the keyword never mattered;
+   inside `<details>` it is an inline box on a line of its own, and the line's
+   strut held it 3.5px further out of the corner than its padding does. (0,2,0)
+   over the shell's `.legends` (0,1,0) — and deliberately no heavier: the phone
+   block's `.keys .legends { display: block }` is the same weight and later, and
+   has to win there on order. */
+.keys .legends { display: grid; }
 
 .canvas { position: relative; }
 /* The room the window actually has left, not 78vh of it. A fraction of the window

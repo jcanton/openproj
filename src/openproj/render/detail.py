@@ -1840,11 +1840,10 @@ for (const kind of ['input', 'change']) {
     setTimeout(sayFacts);
   });
 }
-// Entering and leaving Write changes which rows exist, without any control
-// changing — the class on the article is the only thing that moves.
-const FACTS_ARTICLE = document.querySelector('article.record');
-if (FACTS_ARTICLE) new MutationObserver(() => setTimeout(sayFacts))
-  .observe(FACTS_ARTICLE, {attributes: true, attributeFilter: ['class']});
+// Entering and leaving Write changes which rows exist without any control
+// changing. `openproj:session` is the page's own word for exactly that — a
+// session began or ended — so it is heard rather than the class it flips.
+addEventListener('openproj:session', () => setTimeout(sayFacts));
 setTimeout(sayFacts);
 {%- endif %}
 </script>

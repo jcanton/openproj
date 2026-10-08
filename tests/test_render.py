@@ -729,7 +729,15 @@ def test_the_corner_of_the_graph_holds_the_legend_and_nothing_else(rendered: Pat
     legends = next(
         i for i, el in enumerate(parsed) if el.tag == "div" and el.attrs.get("class") == "legends"
     )
-    assert legends == keys + 1, (
+    # Inside the key's fold since 2026-10-08, which a phone shuts: the fold is the
+    # first thing in the corner, its handle the first thing in it, and then the
+    # legend. Off a phone the handle is not drawn, so the legend is still the first
+    # thing a reader sees there.
+    fold, handle = parsed[keys + 1], parsed[keys + 2]
+    assert (fold.tag, fold.attrs.get("class"), handle.tag) == ("details", "keyfold", "summary"), (
+        f"the corner does not open on the key's fold: {fold.tag}.{fold.attrs.get('class')}"
+    )
+    assert legends == keys + 3, (
         f"the legend is not the first thing in the corner: keys at {keys}, legends at {legends}"
     )
     # The count is in the control bar, which is above the canvas rather than in
@@ -821,8 +829,11 @@ def test_a_group_name_is_readable_inside_its_own_box(rendered: Path):
     assert "'text-margin-x'" in parent, "pulled inside the box rather than left of it"
     assert "'text-background-color': token('--surface')" in parent, "on its own ground"
     assert "'font-size': GROUP_SIZE" in parent
+    # A node's size is a constant since the phone's zoom floor became a multiple
+    # of it, so the number is read where it is defined.
+    assert "'font-size': NODE_LABEL" in node
     assert int(re.search(r"const GROUP_SIZE = (\d+)", graph).group(1)) > int(
-        re.search(r"'font-size': (\d+)", node).group(1)
+        re.search(r"const NODE_LABEL = (\d+)", graph).group(1)
     ), "the group is the heading of what is inside it"
 
 
