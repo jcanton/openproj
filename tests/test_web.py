@@ -553,6 +553,53 @@ def test_a_record_that_does_not_exist_is_a_404_and_not_an_empty_page(client: Tes
 
 
 @pytest.mark.parametrize(
+    ("address", "says"),
+    [
+        ("/detail/task-ffffff", "No record 'task-ffffff'."),
+        ("/cycle/99999", "A cycle is numbered 0 to 9999."),
+        ("/records", "There is no page at /records."),
+    ],
+)
+def test_an_address_with_nothing_at_it_answers_a_page(
+    client: TestClient, address: str, says: str
+):
+    """A browser asking for a page that is not there gets a page, and a 404.
+
+    It got FastAPI's default — `{"detail": "no record 'task-ffffff'"}` as the
+    whole document, with no viewport tag, so a stale link opened on a phone was a
+    980px line of JSON in tiny type and no way back into the plan but Back.
+
+    Asked of the parsed document: the shell's viewport tag, the nav, a heading,
+    the route's own reason as a sentence, and the way out. A program asking the
+    same address for JSON still gets JSON, and an `/api/` address gets JSON
+    whatever it asks for — the handler is about addresses a person types.
+    """
+    answer = client.get(address, headers={"Accept": "text/html,*/*;q=0.8"})
+    assert answer.status_code == 404
+    assert answer.headers["content-type"].startswith("text/html")
+    found = elements(answer.text)
+    assert any(
+        one.tag == "meta" and one.attrs.get("name") == "viewport" for one in found
+    ), "the not-found page has no viewport tag, so a phone lays it out at 980px"
+    assert any(one.tag == "nav" for one in found), "the not-found page has no nav"
+    assert any(one.tag == "h1" and one.text == "Not in this plan" for one in found)
+    assert any(one.tag == "p" and one.text == says for one in found), (
+        f"the page does not say {says!r}: {[one.text for one in found if one.tag == 'p']}"
+    )
+    assert any(one.tag == "a" and one.text == "Go to Records" for one in found)
+
+    program = client.get(address, headers={"Accept": "application/json"})
+    assert program.status_code == 404
+    assert program.headers["content-type"] == "application/json"
+
+
+def test_an_api_address_with_nothing_at_it_stays_json_for_a_browser(client: TestClient):
+    answer = client.get("/api/body/task-ffffff", headers={"Accept": "text/html"})
+    assert answer.status_code == 404
+    assert answer.json() == {"detail": "no such record"}
+
+
+@pytest.mark.parametrize(
     "route",
     [
         "/",

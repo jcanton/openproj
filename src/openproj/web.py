@@ -58,8 +58,10 @@ from urllib.parse import quote
 import httpx
 import pygit2
 from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.websockets import WebSocketDisconnect
 
 from . import __version__, coedit, render, tailnet, vendor
@@ -2033,6 +2035,38 @@ def create_app(
         commit, index, links = _build_index_at(commit, drawn)
         held = (commit, drawn, index, links)
         return commit, index, links
+
+    # A 404 is for a person or for a program, and the address says which. These
+    # are the program's: JSON routes, files, the sign-in round trip.
+    not_pages = ("/api/", "/static/", "/assets/", "/drawings/", "/auth/")
+
+    @app.exception_handler(StarletteHTTPException)
+    async def nothing_here(request: Request, exc: StarletteHTTPException) -> Response:
+        """A page address with nothing at it answers a page.
+
+        It answered `{"detail": "no record 'nope'"}` — FastAPI's default, the
+        whole document, with no viewport tag, so a stale link opened on a phone
+        was a 980px line of JSON in tiny type with no way back into the plan.
+
+        Only a GET that asks for HTML and is not under a program's prefix: a
+        script calling `/api/…` reads `detail` out of the JSON and must go on
+        getting it, and every other status keeps the default too — this is
+        about addresses, not about errors in general.
+        """
+        if (
+            exc.status_code != 404
+            or request.method not in ("GET", "HEAD")
+            or request.url.path.startswith(not_pages)
+            or "text/html" not in request.headers.get("accept", "")
+        ):
+            return await http_exception_handler(request, exc)
+        _, index, links = await asyncio.to_thread(plan_now)
+        # Starlette's own 404 for an address no route matches carries the
+        # status phrase and nothing else; a route's raise carries its reason.
+        said = "" if exc.detail == "Not Found" else str(exc.detail)
+        return HTMLResponse(
+            render.render_not_found(index, links, said, request.url.path), status_code=404
+        )
 
     def index_now() -> tuple[str, Index]:
         """The commit and its index, for every caller that draws no page."""

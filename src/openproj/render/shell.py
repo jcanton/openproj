@@ -4753,6 +4753,41 @@ _OFF_STYLE = ".switched-off code { font-family: var(--font-mono); }\n"
 _RECORDS_READS = frozenset({*_PLAN_FACETS, "q"})
 
 
+def render_not_found(index: Index, links: Links = STATIC, said: str = "", path: str = "") -> str:
+    """What a page address answers when there is nothing at it.
+
+    It was FastAPI's own answer: `{"detail":"no record 'nope'"}` as the whole
+    document, with no viewport tag, so on a phone it was a 980px-wide line of
+    JSON in tiny type and no way back into the plan but the browser's Back. A
+    stale link in a chat message is the most ordinary way to arrive here.
+
+    The same shell and the same shape as `render_switched_off` — one heading,
+    one sentence, one way out — and still a 404. `said` is the route's own
+    reason when it gave one; `path` is what is said when it did not, because a
+    mistyped address has no reason but the address.
+    """
+    sentence = (
+        Markup("{}.").format(said[:1].upper() + said[1:].rstrip("."))
+        if said
+        else Markup("There is no page at <code>{}</code>.").format(path or "this address")
+    )
+    body = Markup(
+        '<section class="switched-off">\n<h1>Not in this plan</h1>\n<p>{}</p>\n'
+        "<p>A link to something renamed or deleted in git lands here too.</p>\n"
+        '<p><a href="{}">Go to Records</a></p>\n</section>'
+    )
+    return _page(
+        "openproj — not found",
+        body.format(sentence, links.records),
+        _OFF_STYLE,
+        links,
+        "",
+        index.unreadable,
+        index.unusable,
+        fills=True,
+    )
+
+
 def render_switched_off(
     index: Index,
     links: Links = STATIC,
