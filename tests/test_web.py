@@ -2529,6 +2529,80 @@ def live_server(repo_path: Path):
         yield url
 
 
+def test_a_tab_can_open_more_pages_than_one_host_gets_sockets(live_server: str, tmp_path: Path):
+    """Nine pages in one tab, on one HTTP/1.1 server, each of them answered.
+
+    Every served page opens an `EventSource`, and Chrome keeps a page it has
+    navigated away from alive in its back/forward cache — stream and all. Six
+    open streams is Chrome's whole allowance of connections to one HTTP/1.1 host,
+    so the seventh page asked for a socket that was never coming and the tab sat
+    blank for as long as anybody waited. Found driving the demo at a phone's
+    width on 2026-10-08 (it was never about phones: it hangs at any width), and
+    proved by `--disable-features=BackForwardCache` making it go away.
+
+    It needs a real server and a real browser and nothing less: the limit is the
+    browser's, the cache is the browser's, and HTTP/1.1 is uvicorn's — Cloud Run
+    speaks HTTP/2 to the browser and multiplexes, which is why the deployed
+    service never showed it and why a test against the deployment would pass.
+
+    Distinct addresses, because a page is cached per entry: walking one URL over
+    and over keeps replacing the same entry and never fills anything. And a
+    second on each, because a reader stays that long and a walk that does not is
+    not this defect: measured, the same nine pages left the instant each one
+    finished loading never hang, and left 0.8s later hang at the ninth.
+    """
+    from browser import _devtools, _evaluated, chrome
+
+    walk = ["/", "/issues", "/notes", "/table", "/graph", "/timeline", "/cycles", "/help"]
+    walk.append("/people")
+    with _devtools(chrome(), live_server + "/help?start", tmp_path / "profile") as (call, _):
+        call("Page.enable")
+        for step, path in enumerate(walk, 1):
+            try:
+                call("Page.navigate", {"url": live_server + path})
+            except TimeoutError:
+                pytest.fail(
+                    f"page {step} of the walk, {path}, never answered: the tab ran out of "
+                    f"connections to the server before it got there"
+                )
+            deadline = time.monotonic() + 10
+            arrived = None
+            while time.monotonic() < deadline and not arrived:
+                arrived = _evaluated(
+                    call,
+                    f"document.readyState === 'complete' && location.pathname === {path!r}",
+                    patient=True,
+                )
+                time.sleep(0.1)
+            assert arrived, f"page {step} of the walk, {path}, did not finish loading in 10s"
+            # A mark in this page's own heap, which survives only if Back brings
+            # back this very page rather than loading it again.
+            _evaluated(call, f"window.walked = {step}")
+            time.sleep(1)
+
+        # And Back brings a page out of the cache with its stream open again —
+        # closing it on the way in is only half of the fix. The mark is how this
+        # knows it was the cache that answered: a page loaded afresh opens a new
+        # stream anyway, and would pass for the wrong reason.
+        history = call("Page.getNavigationHistory")["result"]
+        previous = history["entries"][history["currentIndex"] - 1]
+        call("Page.navigateToHistoryEntry", {"entryId": previous["id"]})
+        deadline = time.monotonic() + 10
+        back = None
+        while time.monotonic() < deadline and not back:
+            back = _evaluated(
+                call,
+                f"window.walked === {len(walk) - 1} && ({{state: source && source.readyState}})",
+                patient=True,
+            )
+            time.sleep(0.1)
+        assert back, "Back loaded the page again instead of bringing it out of the cache"
+        assert back["state"] in (0, 1), (
+            f"the page Back brought out of the cache has no live stream (readyState "
+            f"{back['state']}), so nothing that changes the plan reaches it"
+        )
+
+
 def test_a_record_page_goes_back_to_the_view_a_real_browser_came_from(
     live_server: str,
     tmp_path: Path,

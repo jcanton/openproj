@@ -4148,8 +4148,29 @@ function showMoved(message) {
   };
 }
 
-const source = new EventSource('/api/events');
-source.onmessage = event => {
+// **Closed while the page is in the back/forward cache, and opened again when it
+// comes out.** Chrome keeps a page it has navigated away from alive for the Back
+// button, and this stream lives on with it. Six of them is Chrome's whole
+// allowance of connections to one HTTP/1.1 host, so the seventh page a tab
+// opened on `openproj serve` or `demo` asked for a socket that never came, and
+// sat on a blank screen for as long as anybody waited — measured, 2026-10-08,
+// and gone the moment the cache was switched off. Cloud Run speaks HTTP/2 to the
+// browser and multiplexes every stream over one connection, which is why the
+// deployed service never showed it.
+//
+// What a stream misses while closed is not replayed — no stream here ever is,
+// see `PILE_POLL_MS` — so a page brought back by Back is the plan as it was when
+// you left it, which is what Back has always meant. A save from it is checked
+// against the commit it was drawn from, like any other.
+let source = null;
+function listen() {
+  source = new EventSource('/api/events');
+  source.onmessage = onPlanNews;
+}
+addEventListener('pagehide', () => { if (source) source.close(); source = null; });
+addEventListener('pageshow', event => { if (event.persisted && !source) listen(); });
+
+function onPlanNews(event) {
   const message = JSON.parse(event.data);
   // The pusher's landed frame — {t: 'landed', landed, remapped, parked},
   // defined at web.py's `broadcast` — re-broadcast as a DOM event because its
@@ -4161,7 +4182,8 @@ source.onmessage = event => {
     dispatchEvent(new CustomEvent('openproj:landed', {detail: message}));
   }
   if (movedWriting) movedHeld.push(message); else showMoved(message);
-};
+}
+listen();
 </script>
 <script>
 // The pile banner (design/deferred-push.md, "Saying it on the page"): loud when
@@ -4256,6 +4278,9 @@ setInterval(readPile, PILE_POLL_MS);
 // frame follows every save, and a health read per save per open tab is a poll
 // pretending to be an event.
 addEventListener('openproj:landed', () => { if (!pile.hidden) readPile(); });
+// Back from the back/forward cache, the numbers are as old as the visit away
+// was long — and the interval was frozen with the page, so ask now.
+addEventListener('pageshow', event => { if (event.persisted) readPile(); });
 </script>
 {% endif %}
 {% if mermaid %}
