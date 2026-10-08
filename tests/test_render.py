@@ -7415,11 +7415,13 @@ const off = keys ? [...keys.querySelectorAll('li')].filter(li => {
 // the only thing that can: the record page reads inside `.panes`, which is
 // `overflow: auto` so that it can scroll DOWN, and one unbreakable identifier
 // made it scroll 62px across as well while the document stayed exactly 390 wide.
-// The boxes that are meant to — the table's and the timeline's, the cycle's two
-// tables, a fence — are named by what they are and left out.
+// The boxes that are meant to — the roles table's, the timeline's, the cycle's
+// two tables, a fence — are named by what they are and left out. Not a carded
+// box: on a phone the records list and the plan's table are cards that wrap, and
+// one of those scrolling sideways is the 1299px table in a 350px box coming back.
 const wobbles = [];
 for (const el of document.querySelectorAll('body *')) {
-  if (el.matches('[data-sideways], .sideways, .table-scroll, .scroll, pre')) continue;
+  if (el.matches('[data-sideways], .sideways, .table-scroll:not(.carded), .scroll, pre')) continue;
   if (/(auto|scroll)/.test(getComputedStyle(el).overflowX)
       && el.scrollWidth > el.clientWidth + 1) {
     wobbles.push(name(el) + ' ' + el.clientWidth + ' wide holding ' + el.scrollWidth);
@@ -7580,11 +7582,10 @@ return {viewport: document.documentElement.clientWidth, small: [...new Set(small
 
 # The pages whose targets belong to a branch that is still in review, and only
 # until it lands: each name here is a page this test does not ask yet. The set
-# is meant to be emptied, and a page added to it needs the reason beside it.
-_TAPPABLE_LATER = {
-    "records": "the phone cards (PR B) replace its table",
-    "table": "the phone cards (PR B) replace its table",
-}
+# is meant to be emptied, and a page added to it needs the reason beside it. It
+# was emptied on 2026-10-08, when the phone cards and the folded record and graph
+# landed; it stays as the place a page in review waits, with its reason.
+_TAPPABLE_LATER: dict[str, str] = {}
 
 
 def test_a_thumb_can_hit_everything_on_a_phone(phone_pages: dict[str, str], tmp_path: Path):
@@ -8091,6 +8092,161 @@ def test_a_phone_reads_the_graph_at_a_size_it_can_be_read_at(
     )
 
 
+@pytest.fixture
+def card_pages(seed_index: Index) -> dict[str, str]:
+    """The two lists a plan is read down, served and writable — the table's create
+    control and the records list's time column are both only drawn by a server."""
+    from openproj.render import render_records, render_table
+
+    stamped = {record_id: 1_790_000_000 for record_id in seed_index.records}
+    return {
+        "records": render_records(
+            seed_index, ROUTES, base_commit="deadbee", edited=stamped, now=1_790_000_600,
+            may_write=True,
+        ),
+        "table": render_table(seed_index, ROUTES, base_commit="deadbee", may_write=True),
+    }
+
+
+# What a card list is, asked of the boxes: which cells a card draws, whether the
+# title reads to its end, and whether the line under it starts where it does.
+_THE_CARDS = """
+const box = document.querySelector('.carded');
+const rows = [...box.querySelectorAll('tbody tr[data-id]')]
+  .filter(tr => tr.getClientRects().length);
+const title = tr => tr.querySelector('td[data-col="title"]');
+const link = tr => title(tr).querySelector('a');
+const others = tr => [...tr.children].filter(td => td !== title(tr) && td.getClientRects().length);
+const hint = document.querySelector('#controls .aside');
+const thumb = box.querySelector('.thumb-add');
+const add = document.getElementById('add-row');
+const drawn = el => !!el && el.getClientRects().length > 0;
+return {
+  viewport: document.documentElement.clientWidth,
+  sideways: box.scrollWidth - box.clientWidth,
+  display: rows.length ? getComputedStyle(rows[0]).display : null,
+  cells: [...new Set(rows.map(tr => [...tr.children]
+    .filter(td => td.getClientRects().length).map(td => td.dataset.col).join(' ')))],
+  clipped: rows.filter(tr => link(tr).scrollWidth > link(tr).clientWidth + 1)
+    .map(tr => tr.dataset.id),
+  wrapped: rows.filter(tr => link(tr).getBoundingClientRect().height
+    > 1.6 * parseFloat(getComputedStyle(link(tr)).lineHeight)).length,
+  misaligned: rows.filter(tr => others(tr).length
+    && Math.abs(Math.min(...others(tr).map(td => td.getBoundingClientRect().left))
+                - link(tr).getBoundingClientRect().left) > 1)
+    .map(tr => tr.dataset.id),
+  beside: rows.filter(tr => others(tr).some(td =>
+    td.getBoundingClientRect().top < title(tr).getBoundingClientRect().bottom - 1))
+    .map(tr => tr.dataset.id),
+  trouble: [...box.querySelectorAll('tr[data-trouble]')].map(tr =>
+    [tr.dataset.trouble, getComputedStyle(tr, '::after').content]),
+  hint: hint ? hint.innerText : '',
+  thumb: drawn(thumb)
+    ? [Math.round(thumb.getBoundingClientRect().height), thumb.getAttribute('href')] : null,
+  add: drawn(add),
+  small: [...box.querySelectorAll('a[href], button')].filter(drawn).filter(el => {
+    const r = el.getBoundingClientRect();
+    return r.width < 24 || r.height < 24;
+  }).map(el => el.textContent.trim().slice(0, 30)),
+};
+"""
+
+
+def test_a_phone_reads_the_plan_as_cards_and_not_as_columns(
+    card_pages: dict[str, str], tmp_path: Path
+):
+    """On a phone a row is a card: the title across the whole of it, wrapped to its
+    end, and one line under it — jcanton's choice of status, priority and owner on
+    the table, and kind, who and when on the records list.
+
+    Measured at 390px before this, on the demo plan: the records list was a 1299px
+    table in a 350px box, so the screen held a kind chip and the first twenty-odd
+    characters of each title, cut mid-word with no ellipsis; the table gave its
+    title about fifteen characters and cut its status to `IN PROGR`.
+
+    At 360 because that is where a title on this plan has to wrap — `wrapped` is
+    the proof the no-clipping claim is not vacuous — and on its side at 844x390,
+    which is a phone by `env.PHONE` and was a laptop by the width. `misaligned` is
+    the tree's indent: it moves from the title cell to the card, and the first
+    version left it on both, so a nested title started 28px to the right of the
+    line under it. `sideways` is the table's column fit, which writes a width onto
+    the table and has to stand down while the rows are cards.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    browser = chrome()
+    upright = measured_on_a_phone(browser, card_pages, tmp_path / "upright", _THE_CARDS, width=360)
+    turned = measured_on_a_phone(
+        browser, card_pages, tmp_path / "turned", _THE_CARDS, width=844, height=390
+    )
+    keeps = {"records": "kind title who edited", "table": "title priority status owner"}
+    for got in (upright, turned):
+        for page, one in got.items():
+            at = f"{page} at {one['viewport']}px"
+            assert one["display"] == "flex", f"{at} still draws its rows as {one['display']}"
+            assert one["cells"] == [keeps[page]], f"{at} draws {one['cells']} on a card"
+            assert one["sideways"] <= 0, f"{at} scrolls {one['sideways']}px sideways"
+            assert not one["clipped"], f"{at} cuts the titles of {one['clipped']} short"
+            assert not one["misaligned"], (
+                f"{at} starts the line under the title somewhere else on {one['misaligned']}"
+            )
+            assert not one["beside"], f"{at} puts a cell beside the title on {one['beside']}"
+            assert not one["small"], f"{at} has targets under 24px on a card: {one['small']}"
+    assert upright["records"]["wrapped"] and upright["table"]["wrapped"], (
+        "no title wrapped at 360px, so nothing here showed that a long one is read to its end"
+    )
+
+    # A column layout somebody dragged on a laptop is remembered, and the fit
+    # replays it onto whatever window it finds: onto headers a card list does not
+    # draw, so every width is 0 and the table is written `width: 0px`. The fit
+    # stands down while the rows are cards; this asks it to replay one anyway.
+    remembered = measured_on_a_phone(
+        browser,
+        {"table": card_pages["table"]},
+        tmp_path / "remembered",
+        "automatic = false; WIDTHS.title = 900; WIDTHS.status = 120; refit();" + _THE_CARDS,
+        width=360,
+    )["table"]
+    assert remembered["sideways"] <= 0 and not remembered["clipped"], (
+        f"a remembered column layout reaches a card list: {remembered['sideways']}px "
+        f"sideways, {len(remembered['clipped'])} titles cut short"
+    )
+
+    # The table's three phone-only answers. The warning is the sentence that was
+    # on a cell the card folds away: drawn under the card, from the row's own copy.
+    table = upright["table"]
+    assert table["trouble"], "the demo plan has a warning, and no row carries its sentence"
+    for said, drawn in table["trouble"]:
+        assert said and said in drawn, f"a card carries {said!r} and draws {drawn!r}"
+    assert "Double-click" not in table["hint"] and "grip" not in table["hint"], (
+        f"a phone is told {table['hint']!r}, which names gestures a thumb does not have"
+    )
+    assert "Tap a title" in table["hint"]
+    assert table["thumb"] == [table["thumb"][0], "/new"] and table["thumb"][0] >= 40, (
+        f"the phone's way to create a record is {table['thumb']}, not a 40px door to /new"
+    )
+    assert not table["add"], "the draft row's button is on a phone, which has no cells to type in"
+
+
+def test_a_laptop_still_reads_the_plan_as_columns(card_pages: dict[str, str], tmp_path: Path):
+    """The other half of the card list, and the one a phone test cannot see: none
+    of it reaches a laptop. The rows are table rows, the hint names the gestures a
+    mouse has, the draft row's own button is the create control, and no card's
+    warning sentence is drawn — it is on the cell it is about there."""
+    from browser import chrome, measured_in
+
+    browser = chrome()
+    for page, html in card_pages.items():
+        got = measured_in(browser, html, tmp_path / f"{page}.html", 1280, _THE_CARDS)
+        assert got["display"] == "table-row", f"{page} draws a laptop's rows as {got['display']}"
+        assert all(drawn == "none" for _, drawn in got["trouble"]), (
+            f"{page} draws a card's warning line on a laptop"
+        )
+        if page == "table":
+            assert "Double-click" in got["hint"] and "Tap a title" not in got["hint"]
+            assert got["add"] and got["thumb"] is None, "the laptop's create control is the row"
+
+
 def test_a_folded_filter_bar_says_how_many_fields_are_set(views: dict[str, str], tmp_path: Path):
     """A closed bar over a filtered view is a page lying about what it shows.
 
@@ -8168,6 +8324,12 @@ def test_what_the_table_freezes_leaves_something_to_scroll_into(
     Asked at 900 as well, and that is not decoration: the rule has to be one a
     laptop never meets. At 900 the pair is 372 of 860 and the id stays, which is
     exactly what the same table did before any of this.
+
+    **A phone has no frozen pair any more.** Since 2026-10-08 it draws this table
+    as cards (`_CARD_STYLE`): no header row, nothing sticky, the fit standing down,
+    and the title on a line of its own across the whole card. So what the phone
+    half asks now is that — nothing drawn as a column and nothing wider than the
+    box — and the card list's own test asks the rest.
     """
     from browser import chrome, measured_on_a_phone
 
@@ -8176,18 +8338,16 @@ def test_what_the_table_freezes_leaves_something_to_scroll_into(
     phone = measured_on_a_phone(browser, one, tmp_path / "frozen-390", _FROZEN)["table"]
     laptop = measured_on_a_phone(browser, one, tmp_path / "frozen-900", _FROZEN, width=900)["table"]
 
-    for got in (phone, laptop):
-        assert got["frozen"] <= got["box"] * 2 / 3, (
-            f"at {got['viewport']}px the table freezes {got['frozen']}px of a {got['box']}px "
-            f"box, so under a third of it is left to scroll into"
-        )
-        assert "title" in got["drawn"], (
-            f"at {got['viewport']}px the table sheds the column that names the row"
-        )
-
-    assert "id" not in phone["drawn"], (
-        "a phone still draws the id column, which with the title is wider than the box "
-        "the two are frozen inside"
+    assert not phone["drawn"] and phone["table"] <= phone["box"], (
+        f"a phone draws {phone['drawn']} as columns in a {phone['table']}px table, "
+        f"inside a {phone['box']}px box that holds cards"
+    )
+    assert laptop["frozen"] <= laptop["box"] * 2 / 3, (
+        f"at {laptop['viewport']}px the table freezes {laptop['frozen']}px of a "
+        f"{laptop['box']}px box, so under a third of it is left to scroll into"
+    )
+    assert "title" in laptop["drawn"], (
+        f"at {laptop['viewport']}px the table sheds the column that names the row"
     )
     assert "id" in laptop["drawn"], (
         f"a {laptop['viewport']}px window sheds the id column, which is the drag grip and "
@@ -8201,7 +8361,10 @@ _THE_CHROME = """
 const corner = document.querySelector('.corner');
 const nav = document.querySelector('nav');
 const line = cell => parseFloat(getComputedStyle(cell).lineHeight) || 16;
-const tables = [...document.querySelectorAll('table.unfitted')].map(table => {
+// Not the card list's: on a phone the records list is cards, whose titles wrap by
+// design — `test_a_phone_reads_the_plan_as_cards_and_not_as_columns` asks those.
+const tables = [...document.querySelectorAll('table.unfitted')]
+  .filter(table => !table.closest('.carded')).map(table => {
   const box = table.closest('.table-scroll, .sideways');
   const cells = [...table.querySelectorAll('tbody td')]
     .filter(cell => cell.getClientRects().length);
@@ -8283,6 +8446,9 @@ def test_a_table_with_no_fit_of_its_own_scrolls_rather_than_wraps(
     `#rows` is deliberately not in this set: its widths are set inline by the fit,
     and `white-space: nowrap` on its cells would undo the clamped columns it
     draws instead of wrapping.
+
+    Three now and not four: the records list left the set on 2026-10-08, when a
+    phone started drawing it as cards whose titles wrap on purpose.
     """
     from browser import chrome, measured_on_a_phone
 
@@ -8300,7 +8466,7 @@ def test_a_table_with_no_fit_of_its_own_scrolls_rather_than_wraps(
                 f"{where} is {table['over']}px wider than its box, so it fitted by "
                 f"wrapping something rather than by having room"
             )
-    assert seen >= 4, f"only {seen} unfitted tables were measured, and there are four"
+    assert seen >= 3, f"only {seen} unfitted tables were measured, and there are three"
 
 
 # **Which pointer the reader has, said at launch.** The wash is inside

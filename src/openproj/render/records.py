@@ -7,9 +7,9 @@ from markupsafe import Markup
 from ..index import Index, holder_fields, predicates_of
 from ..model import OPTIONAL_KINDS, RUNG, unread_fields
 from .controls import _FILTER_JS, _PLAN_FACETS, _facets_html
-from .env import _compiled
+from .env import PHONE, _compiled
 from .shell import _NAV, STATIC, Links, _page, _titles
-from .styles import _SCROLL_STYLE
+from .styles import _CARD_STYLE, _SCROLL_STYLE
 from .tokens import LABELS, _ago, _human
 
 _RECORDS = """
@@ -34,7 +34,7 @@ _RECORDS = """
 {%- if creatable %}
 <p class="editbar"><a class="button" href="{{ create.href }}">{{ create.label }}</a></p>
 {%- endif %}
-<div class="table-scroll" data-fills><table id="records" class="unfitted"><thead><tr>
+<div class="table-scroll carded" data-fills><table id="records" class="unfitted"><thead><tr>
   {%- for column in columns %}
   <th data-col="{{ column }}">{{ label(column) }}</th>
   {%- endfor %}
@@ -159,6 +159,7 @@ recordsApply();
 
 _RECORDS_STYLE = (
     _SCROLL_STYLE
+    + _CARD_STYLE
     + """
 /* One row per record: chip, title, who, tags, time. The chips come from the
    shell (`.chip.kind-…`), so a kind added to the ladder arrives here already
@@ -193,6 +194,20 @@ _RECORDS_STYLE = (
 #records td[data-col="edited"] { color: var(--muted); font-size: 12px;
                                  white-space: nowrap;
                                  font-variant-numeric: tabular-nums; }
+"""
+    # The card under the title, jcanton's choice: what kind of thing it is, who is
+    # behind it and how long ago it moved. Tags stay on the laptop's table — a
+    # comma list is the one cell that would wrap a card onto a third line, and
+    # the search box already finds a record by its tags. (1,1,3) beats the card
+    # mechanism's (0,1,4) on the id, so these three come back and nothing else.
+    + "@media "
+    + PHONE
+    + """ {
+  #records > tbody > tr > td[data-col="kind"],
+  #records > tbody > tr > td[data-col="who"],
+  #records > tbody > tr > td[data-col="edited"] { display: block; }
+  #records > tbody > tr > td[data-col="who"] { color: var(--muted); }
+}
 """
 )
 
