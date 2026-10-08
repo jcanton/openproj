@@ -645,7 +645,8 @@ function theBrowsersMenu(event) {
 }
 
 // Returns whether this module answered the press, and the call site is
-// `if (!theBrowsersMenu(event) && popMenu(event.clientX, event.clientY, id)) event.preventDefault();`
+// `if (!theBrowsersMenu(event) && popMenu(x, y, id)) event.preventDefault();`,
+// with `x` and `y` the event's `clientX` and `clientY`
 // — a press on something this view has no row for gets the browser's own menu
 // rather than an empty box of ours.
 function popMenu(x, y, id) {
