@@ -1545,6 +1545,26 @@ _DETAIL = """
           the id is a hook rather than a rule. A hook that answers the wrong
           element is worse than no hook, and `{% if single %}` is what an id
           means. -#}
+      {#- **Folded on a phone, and open everywhere else.** The fields came first
+          and the document — what a pitch page is opened to read — started two
+          screens down under seventeen of them. Shut, the handle says the status,
+          the priority and the owner in words, how many fields are behind it, and
+          anything among them that is wrong; open, it is the list it always was.
+
+          Ships `open`, and the script shuts it, for the reason the filter bar's
+          fold gives: a reader whose script did not run has no other way to these
+          fields. Off a phone the handle is not drawn at all — `_RECORD_ON_A_PHONE`
+          in `styles.py` — so a laptop sees exactly the column it saw before. -#}
+      <details class="factsfold" open>
+      <summary><span class="factssaid">{{ e.fold.said }}</span>
+        {%- for warn in e.fold.warn %} <span class="factswarn"><span
+          class="sev-mark sev-mark-warn" aria-hidden="true">▲</span> {{ warn }}</span>
+        {%- endfor %}
+        {%- if editable %} <span class="factswarn factsneed" hidden><span
+          class="sev-mark sev-mark-warn" aria-hidden="true">▲</span> <span
+          class="factsneedsaid"></span></span>{% endif %}
+        <span class="factscount">{{ e.fold.count }} field
+        {{- '' if e.fold.count == 1 else 's' }}</span></summary>
       <dl{% if single %} id="facts"{% endif %}>
         {#- The label only where the control it names is on the page. In read
             mode there is no control and a `<label for>` would point at nothing;
@@ -1602,6 +1622,7 @@ _DETAIL = """
         {% endif %}
         {% endfor %}
       </dl>
+      </details>
     </aside>
     <div class="main">
       {#- What the form or the server refused a create with: empty markup filled
@@ -1736,6 +1757,91 @@ _DETAIL = """
   {{ e.promote }}
 </article>
 {% endfor %}
+<script>
+// **The fields fold away on a phone** — `.factsfold` above. Shut here and
+// nowhere else, both ways, whenever the window crosses the query: a phone turned
+// on its side with the box shut would otherwise keep a fold the stylesheet has
+// stopped drawing a handle for, which is seventeen fields with no way in. The
+// query is `env.PHONE`, the one the filter bar's fold asks.
+//
+// `FACTS_PHONE` and not `PHONE`, which `_FILTER_JS` declares: every script on a
+// page shares one global scope, and this page not loading that one is a fact
+// about today.
+const FACTS_PHONE = matchMedia({{ phone|tojson }});
+function foldFacts(phone) {
+  for (const box of document.querySelectorAll('.factsfold')) box.open = !phone;
+}
+foldFacts(FACTS_PHONE.matches);
+FACTS_PHONE.addEventListener('change', event => foldFacts(event.matches));
+{%- if editable %}
+
+// While there is a form, the handle says what the form says. The server wrote
+// the stored record's words, and they stay until somebody changes a control —
+// after that the box is about the record as it will be saved, which is the one
+// a person editing with the fields folded away needs to see.
+//
+// The status word from the hill's checked stop, and only from there. A locked
+// status has no stops and draws a state derived from a link (`_STATE_HINT`), so
+// its hidden input holds a word the picture deliberately does not show; the
+// server's word is the right one for it and is kept.
+//
+// Read after the event rather than inside it: `markRequired` sets
+// `aria-required` from its own `change` listener, and the count of required
+// fields left empty is a question about what it decided.
+let factsTouched = false;
+function sayFacts() {
+  const form = document.getElementById('edit');
+  const box = form && form.querySelector('.factsfold');
+  if (!box) return;
+  const live = control => control && !control.closest('[data-kinds]')?.hidden;
+  const word = typeof cardWord === 'function' ? cardWord : value => value;
+  const said = box.querySelector('.factssaid');
+  if (factsTouched) {
+    const words = [];
+    const stop = box.querySelector('input[type=radio]:checked');
+    words.push(stop ? word(stop.value) : said.textContent.split(' · ')[0]);
+    const priority = form.querySelector('[data-type][name=priority]');
+    if (live(priority)) words.push(word(priority.value));
+    const owner = form.querySelector('[data-type][name=owner]');
+    if (live(owner)) words.push(owner.value.trim() || 'no owner');
+    said.textContent = words.join(' · ');
+  }
+  // `display` rather than `getClientRects`: inside a shut fold nothing has a
+  // box, and what is being counted is the rows the open list would draw — the
+  // editing-only ones while editing, and only this kind's on the create form.
+  const rows = [...box.querySelectorAll('dl > dt')]
+    .filter(dt => !dt.hidden && getComputedStyle(dt).display !== 'none');
+  box.querySelector('.factscount').textContent =
+    `${rows.length} field${rows.length === 1 ? '' : 's'}`;
+  // `#kind` is the create form's picker and nothing else's; `CREATING` is the
+  // same answer, declared by a script further down the page than this one.
+  const writing = document.getElementById('kind')
+    || document.querySelector('article.record.editing');
+  const empty = writing ? [...form.querySelectorAll('[aria-required="true"]')]
+    .filter(control => live(control) && !String(control.value).trim()).length : 0;
+  // The span is the server's, drawn hidden beside the other warnings and in
+  // their shape, so this sets words and nothing else.
+  const need = box.querySelector('.factsneed');
+  need.hidden = !empty;
+  need.querySelector('.factsneedsaid').textContent =
+    `${empty} required field${empty === 1 ? '' : 's'} empty`;
+}
+// Only from the fields and the kind picker: the document box is in the same
+// form, and a recount per keystroke of the body is work for a line nobody moved.
+for (const kind of ['input', 'change']) {
+  document.addEventListener(kind, event => {
+    if (!event.target.closest?.('.factsfold, #kind')) return;
+    factsTouched = true;
+    setTimeout(sayFacts);
+  });
+}
+// Entering and leaving Write changes which rows exist without any control
+// changing. `openproj:session` is the page's own word for exactly that — a
+// session began or ended — so it is heard rather than the class it flips.
+addEventListener('openproj:session', () => setTimeout(sayFacts));
+setTimeout(sayFacts);
+{%- endif %}
+</script>
 <div id="grip" title="drag to set the width"></div>
 <script>
 // What this page is looking at, for the shell's "somebody else changed this"
@@ -3400,6 +3506,9 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
             display = escape(field["text"]) if field["text"] not in ("", None) else empty
         rows.append(
             {
+                # Which field, for `_folded`: the label is the reader's word for
+                # it and is free to change.
+                "name": name,
                 "label": LABELS.get(name, name),
                 # What the `<dt>`'s label points at. The derived rows below have
                 # no control, so they get no label — a `for` naming nothing is a
@@ -3490,6 +3599,15 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
                 "gates": (),
                 "derived": True,
                 "editing_only": False,
+                # The same overrun, as words the folded fields can say on a phone
+                # — see `_folded`. A fold that hid this row's warning would be a
+                # closed box over the one sentence on the page saying a bet does
+                # not fit.
+                "warn": (
+                    f"overruns cycle {span.overruns_cycle}"
+                    if span and span.overruns_cycle_weeks
+                    else ""
+                ),
             }
         )
     if why:
@@ -3749,6 +3867,35 @@ def _shaping_hints(record: Record, has_tasks: bool = False) -> list[str]:
     return notes
 
 
+def _folded(state: str, priority: str, owner: str | None, rows: list[dict]) -> dict:
+    """What a record's fields say while a phone has them folded away.
+
+    The fields came first on a phone, so the document — the thing a pitch page is
+    opened to read — started 1172px into the reading box at 390x844, under
+    seventeen rows; and the hill, which says the status by where its ball sits,
+    said it in no word at all on a screen with no pointer to hover it with. So the
+    fold's handle carries the three things a reader scans a record for, in words,
+    and how many fields are behind it.
+
+    Only the ones the page draws a row for, asked of `rows` and not of the model:
+    every record type carries a priority and an owner, and a product's page shows
+    neither, so "Medium · no owner" on one would be a sentence about two rows that
+    are not there. And the warnings by name, because a closed box must not look
+    like a fine one — the overrun is the one computed row that is a problem (F1).
+    """
+    drawn = {row.get("name") for row in rows}
+    said = [_human(state)]
+    if "priority" in drawn:
+        said.append(_human(priority))
+    if "owner" in drawn:
+        said.append(owner or "no owner")
+    return {
+        "said": " · ".join(said),
+        "count": sum(1 for row in rows if not row.get("editing_only")),
+        "warn": [row["warn"] for row in rows if row.get("warn")],
+    }
+
+
 def _detail_rows(index: Index, links: Links = STATIC, only: str | None = None) -> list[dict]:
     """One entry per record: what the page's own furniture needs, and nothing else.
 
@@ -3882,6 +4029,7 @@ def _new_rows() -> list[dict]:
             row = rows.setdefault(
                 field["name"],
                 {
+                    "name": field["name"],
                     "label": LABELS.get(field["name"], field["name"]),
                     # Empty for status, for the reason the `<dt>` above gives: its
                     # control is a group, and a label names one element.
@@ -4127,6 +4275,8 @@ def render_detail(
         # A blank record through the same row machinery. No id (the server
         # mints it), no cascade (nothing to delete), no problems (nothing has
         # been refused yet).
+        fields = _KIND_MODELS[creating].model_fields
+        blank_rows = _new_rows()
         rows: list[dict] = [
             {
                 "id": "",
@@ -4138,7 +4288,15 @@ def render_detail(
                 "hints": [],
                 "progress": None,
                 "body": Markup(""),
-                "rows": _new_rows(),
+                "rows": blank_rows,
+                # The blank the kind would be. The script restates it from the
+                # controls as soon as there are any, and on every change after.
+                "fold": _folded(
+                    fields["status"].default,
+                    fields["priority"].default,
+                    None,
+                    [row for row in blank_rows if creating in row["kinds"].split()],
+                ),
                 "raw_body": "",
                 "also": [],
                 "reach": [],
@@ -4159,6 +4317,9 @@ def render_detail(
         for row in rows:
             record = index.records[row["id"]]
             row["rows"] = _fact_rows(index, record, links, signed_in)
+            row["fold"] = _folded(
+                record.state(index.records), record.priority, record.owner, row["rows"]
+            )
             row["raw_body"] = record.body
             # What deleting it would take with it, drawn into the confirmation
             # before anybody presses anything — the ids that go back to the

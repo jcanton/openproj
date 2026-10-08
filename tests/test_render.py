@@ -729,7 +729,15 @@ def test_the_corner_of_the_graph_holds_the_legend_and_nothing_else(rendered: Pat
     legends = next(
         i for i, el in enumerate(parsed) if el.tag == "div" and el.attrs.get("class") == "legends"
     )
-    assert legends == keys + 1, (
+    # Inside the key's fold since 2026-10-08, which a phone shuts: the fold is the
+    # first thing in the corner, its handle the first thing in it, and then the
+    # legend. Off a phone the handle is not drawn, so the legend is still the first
+    # thing a reader sees there.
+    fold, handle = parsed[keys + 1], parsed[keys + 2]
+    assert (fold.tag, fold.attrs.get("class"), handle.tag) == ("details", "keyfold", "summary"), (
+        f"the corner does not open on the key's fold: {fold.tag}.{fold.attrs.get('class')}"
+    )
+    assert legends == keys + 3, (
         f"the legend is not the first thing in the corner: keys at {keys}, legends at {legends}"
     )
     # The count is in the control bar, which is above the canvas rather than in
@@ -821,8 +829,11 @@ def test_a_group_name_is_readable_inside_its_own_box(rendered: Path):
     assert "'text-margin-x'" in parent, "pulled inside the box rather than left of it"
     assert "'text-background-color': token('--surface')" in parent, "on its own ground"
     assert "'font-size': GROUP_SIZE" in parent
+    # A node's size is a constant since the phone's zoom floor became a multiple
+    # of it, so the number is read where it is defined.
+    assert "'font-size': NODE_LABEL" in node
     assert int(re.search(r"const GROUP_SIZE = (\d+)", graph).group(1)) > int(
-        re.search(r"'font-size': (\d+)", node).group(1)
+        re.search(r"const NODE_LABEL = (\d+)", graph).group(1)
     ), "the group is the heading of what is inside it"
 
 
@@ -7392,6 +7403,10 @@ const wide = el => Math.round(el.getBoundingClientRect().width);
 const search = document.getElementById('q');
 const column = document.querySelector('main');
 const keys = document.querySelector('.keys');
+// The graph's key is folded on a phone. Opened here, because the claim is about
+// where its keys land when somebody opens it — asked of a shut fold, every key
+// has no box and the answer is an empty list that proves nothing.
+for (const fold of document.querySelectorAll('.keys .keyfold')) fold.open = true;
 const off = keys ? [...keys.querySelectorAll('li')].filter(li => {
   const box = li.getBoundingClientRect();
   return box.width > 0 && (box.left < -1 || box.right > vw + 1);
@@ -7421,6 +7436,8 @@ return {
   labels: timeline ? wide(timeline.querySelector('.labels')) : null,
   chart: timeline ? wide(timeline.querySelector('.scroll')) : null,
   keysOffPage: off,
+  keysShown: keys ? [...keys.querySelectorAll('li')]
+    .filter(li => li.getBoundingClientRect().width > 0).length : 0,
   search: search ? wide(search) : null,
   column: column ? Math.round(column.clientWidth) : null,
 };
@@ -7565,12 +7582,10 @@ return {viewport: document.documentElement.clientWidth, small: [...new Set(small
 
 # The pages whose targets belong to a branch that is still in review, and only
 # until it lands: each name here is a page this test does not ask yet. The set
-# is meant to be emptied, and a page added to it needs the reason beside it.
-_TAPPABLE_LATER = {
-    "graph": "the graph's phone start and folded key (PR C)",
-    "record": "the record page's folded fields and view toggles (PR C)",
-    "record with code": "the record page's folded fields and view toggles (PR C)",
-}
+# is meant to be emptied, and a page added to it needs the reason beside it. It
+# was emptied on 2026-10-08, when the phone cards and the folded record and graph
+# landed; it stays as the place a page in review waits, with its reason.
+_TAPPABLE_LATER: dict[str, str] = {}
 
 
 def test_a_card_still_says_a_save_has_not_reached_github(views: dict[str, str], tmp_path: Path):
@@ -7713,8 +7728,13 @@ def test_the_graphs_legend_is_on_the_page_a_phone_can_see(on_a_phone: dict[str, 
     The keys are what is asked about rather than the box: a legend is a list of
     names, and one that is drawn where a reader cannot see it says nothing at all
     while looking exactly like a legend from the corner of the eye.
+
+    The key is folded on a phone since 2026-10-08, so the script opens it before
+    asking — and the count is asserted too, because a shut fold answers this
+    with no keys at all and no keys are never off the page.
     """
     got = on_a_phone["graph"]
+    assert got["keysShown"], "the graph's key, opened on a phone, draws no keys"
     assert not got["keysOffPage"], (
         f"{len(got['keysOffPage'])} of the graph's legend keys are off the page on a "
         f"{got['viewport']}px phone, at: {got['keysOffPage']}"
@@ -7829,11 +7849,10 @@ def test_a_phone_on_its_side_is_still_a_phone(views: dict[str, str], tmp_path: P
     footer was pushed below the bottom of the screen — on the one layout whose
     premise is that the nav and the footer never move.
 
-    The table and the timeline are asked to FIT as well, because folding was not
-    the whole of it: the timeline still ran 46px past the window with every fold
-    shut, until Window and Key shared a row and the drag hint stepped aside. The
-    graph is asked to fold and not to fit — its commit bar and its legend are the
-    furniture it has left, and both are the graph's own question.
+    All three are asked to FIT as well, because folding was not the whole of it:
+    the timeline still ran 46px past the window with every fold shut, until
+    Window and Key shared a row and the drag hint stepped aside, and the graph ran
+    17px past it until its commit bar gave up the gaps above it.
 
     The other half is a laptop window dragged just as short. It has a mouse in it
     and keeps the laptop's layout: `pointer: coarse` is the whole difference
@@ -7854,11 +7873,10 @@ def test_a_phone_on_its_side_is_still_a_phone(views: dict[str, str], tmp_path: P
         assert got["handles"] == len(got["folds"]), (
             f"{view} draws {got['handles']} handles for {len(got['folds'])} folds on its side"
         )
-        if view != "graph":
-            assert got["scrolls"] <= 0, (
-                f"{view} runs {got['scrolls']}px past a 390px-tall phone, so its footer is "
-                f"off the screen"
-            )
+        assert got["scrolls"] <= 0, (
+            f"{view} runs {got['scrolls']}px past a 390px-tall phone, so its footer is "
+            f"off the screen"
+        )
 
     for view, page in views.items():
         short = measured_in(browser, page, tmp_path / f"{view}-short.html", 1280, _THE_FOLD, 390)
@@ -7867,6 +7885,245 @@ def test_a_phone_on_its_side_is_still_a_phone(views: dict[str, str], tmp_path: P
             f"a mouse and the room to show them"
         )
         assert short["handles"] == 0, f"{view} draws fold handles in a short laptop window"
+
+
+# A record page on a phone: is the fold shut, what does its handle say, and how
+# far down the window does the document start. `innerText` for the handle, so the
+# words are the ones drawn — a `hidden` warning is in `textContent` and not on
+# the screen.
+_THE_RECORD = """
+const fold = document.querySelector('.factsfold');
+const handle = fold && fold.querySelector(':scope > summary');
+const doc = document.querySelector('.doc.read');
+return {
+  viewport: document.documentElement.clientWidth,
+  window: innerHeight,
+  open: fold ? fold.open : null,
+  handle: handle && handle.getClientRects().length
+    ? handle.innerText.replace(/\\s+/g, ' ').trim() : null,
+  docTop: doc ? Math.round(doc.getBoundingClientRect().top) : null,
+};
+"""
+
+
+@pytest.fixture
+def record_pages(seed_index: Index) -> dict[str, str]:
+    """A pitch as its writer and as a reader see it, and a task whose span runs
+    past its cycle — the one fact row that is a warning."""
+    return {
+        "pitch": render_detail(
+            seed_index, ROUTES, only="pitch-6f2d18", base_commit="deadbee", may_write=True
+        ),
+        "overrun": render_detail(
+            seed_index, ROUTES, only="task-53a9f0", base_commit="deadbee", may_write=True
+        ),
+        "reader": render_detail(seed_index, ROUTES, only="pitch-6f2d18"),
+    }
+
+
+def test_a_phone_reads_the_record_before_its_fields(
+    record_pages: dict[str, str], seed_index: Index, tmp_path: Path
+):
+    """The document is what a pitch page is opened to read, and on a phone it
+    started two screens down: 1172px into the reading box at 390x844, under all
+    seventeen fields. The hill above them said the status by where its ball sat
+    and in no word at all, on a screen with no pointer to hover it with.
+
+    So the fields fold, and the handle carries what a reader scans a record for
+    — the status, the priority and the owner, in words — and what is wrong among
+    the fields it hides. The overrun is that case: a closed box over the one row
+    saying a bet does not fit its cycle would be a box that looks fine (F1).
+
+    Off a phone the fold is open and draws no handle, so a laptop's column is the
+    one it always was.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    from openproj.render.tokens import _human
+
+    browser = chrome()
+    phone = measured_on_a_phone(browser, record_pages, tmp_path / "phone", _THE_RECORD)
+    for page, got in phone.items():
+        assert got["viewport"] == 390, f"{page} laid out at {got['viewport']}px"
+        assert got["open"] is False, f"{page} leaves its fields open on a phone"
+        assert got["docTop"] < got["window"], (
+            f"{page} starts its document {got['docTop']}px down a {got['window']}px phone"
+        )
+    pitch = seed_index.records["pitch-6f2d18"]
+    said = f"{_human(pitch.state(seed_index.records))} · {_human(pitch.priority)} · {pitch.owner}"
+    for page in ("pitch", "reader"):
+        assert phone[page]["handle"].startswith(said), (
+            f"{page}'s folded fields say {phone[page]['handle']!r}, not {said!r}"
+        )
+    assert "overruns cycle" in phone["overrun"]["handle"], (
+        f"the fields fold over an overrun and say only {phone['overrun']['handle']!r}"
+    )
+
+    wide = measured_on_a_phone(browser, record_pages, tmp_path / "wide", _THE_RECORD, width=900)
+    for page, got in wide.items():
+        assert got["open"] is True, f"{page} folds its fields away at 900px"
+        assert got["handle"] is None, f"{page} draws a fold handle at 900px"
+
+
+def test_folded_fields_say_what_the_form_will_save(
+    record_pages: dict[str, str], tmp_path: Path
+):
+    """Writing on a phone, the fields stay folded and the editor sits under them
+    — so the handle is the only place a change to them shows. It says the record
+    as it will be saved, not as it was loaded, and it says when a field this
+    status demands has been left empty: the server would refuse that save, and a
+    refusal is the worst moment to find out what the folded box was hiding.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    script = """
+document.getElementById('view-edit').click();
+await new Promise(done => setTimeout(done, 300));
+const priority = document.querySelector('[data-type][name=priority]');
+priority.value = 'low';
+priority.dispatchEvent(new Event('change', {bubbles: true}));
+const assignees = document.querySelector('[data-type][name=assignees]');
+assignees.value = '';
+assignees.dispatchEvent(new Event('input', {bubbles: true}));
+await new Promise(done => setTimeout(done, 100));
+""" + _THE_RECORD
+    got = measured_on_a_phone(
+        chrome(), {"pitch": record_pages["pitch"]}, tmp_path / "edit", script
+    )["pitch"]
+    assert got["open"] is False, "starting to write opened the fields on a phone"
+    assert " · Low · " in got["handle"], f"the handle still says {got['handle']!r}"
+    assert "1 required field empty" in got["handle"], (
+        f"an emptied required field is not on the folded handle: {got['handle']!r}"
+    )
+
+
+def test_a_thumb_can_hit_the_record_pages_controls(
+    record_pages: dict[str, str], tmp_path: Path
+):
+    """The view segments and Slide were 33x25 on a phone, with Delete six pixels
+    to the right of them: a row where a finger meant for Write could land on
+    Delete. Each one is a thumb's height now and Delete stands a clear gap away —
+    the confirmation it opens is the second guard, and this is the first. The way
+    back to the list was a 15px line of text, and is at least the 24px WCAG 2.5.8
+    asks of a target that stands alone.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    script = """
+const box = el => { const r = el.getBoundingClientRect();
+  return {w: Math.round(r.width), h: Math.round(r.height),
+          left: Math.round(r.left), right: Math.round(r.right)}; };
+const row = [...document.querySelectorAll(
+  '.editbar .slide-view, .editbar .views .seg, .editbar button.delete')]
+  .filter(el => el.getClientRects().length);
+return {
+  row: row.map(el => ({name: el.getAttribute('aria-label') || el.textContent.trim(),
+                       ...box(el)})),
+  back: box(document.querySelector('.back a.origin')),
+};
+"""
+    got = measured_on_a_phone(
+        chrome(), {"pitch": record_pages["pitch"]}, tmp_path / "thumb", script
+    )["pitch"]
+    # Slide is asked if it is drawn, and not demanded: whether a phone gets the
+    # slide editor at all is the editing branch's question.
+    names = [one["name"] for one in got["row"]]
+    assert names[-4:] == ["Write", "Write and preview", "Preview", "Delete"], names
+    for one in got["row"]:
+        assert one["h"] >= 40 and one["w"] >= 40, (
+            f"{one['name']} is {one['w']}x{one['h']} on a phone, under a thumb's 40px"
+        )
+    *views, delete = got["row"]
+    assert delete["left"] - views[-1]["right"] >= 16, (
+        f"Delete starts {delete['left'] - views[-1]['right']}px after the view it sits beside"
+    )
+    assert got["back"]["h"] >= 24, f"the way back is a {got['back']['h']}px target"
+
+
+# The graph once ELK has answered and the shell has measured the room: the
+# viewport is read until two looks 150ms apart agree, because both of those
+# re-frame the drawing and neither raises a flag when it is done.
+_THE_GRAPH = """
+let last = null;
+for (let i = 0; i < 40; i++) {
+  const now = JSON.stringify([cy.zoom(), cy.pan()]);
+  if (now === last) break;
+  last = now;
+  await new Promise(done => setTimeout(done, 150));
+}
+const drawn = cy.elements(':visible').renderedBoundingBox();
+const key = document.querySelector('.keys .keyfold');
+const handle = key && key.querySelector(':scope > summary');
+const shown = el => el.getClientRects().length > 0;
+let pressable = false;
+if (handle && shown(handle)) {
+  const r = handle.getBoundingClientRect();
+  pressable = handle.contains(document.elementFromPoint(r.left + r.width / 2,
+                                                       r.top + r.height / 2));
+}
+return {
+  viewport: document.documentElement.clientWidth,
+  label: cy.zoom() * 10,
+  whole: drawn.x1 >= -1 && drawn.y1 >= -1
+    && drawn.x2 <= cy.width() + 1 && drawn.y2 <= cy.height() + 1,
+  left: Math.round(drawn.x1),
+  shut: key ? !key.open : null,
+  pressable,
+  hint: [...document.querySelectorAll('#panhint > span')].filter(shown).map(el => el.textContent),
+  buttons: [...document.querySelectorAll('#commitbar button')].filter(shown)
+    .map(el => Math.round(el.getBoundingClientRect().height)),
+};
+"""
+
+
+def test_a_phone_reads_the_graph_at_a_size_it_can_be_read_at(
+    views: dict[str, str], tmp_path: Path
+):
+    """Fitted whole, the plan came out 300x150 on a 350x500 canvas with every
+    label about 3px tall — the shape of the plan and nothing anybody could read
+    or tap. jcanton chose fit to height, met at the left edge, panned sideways;
+    fit to height alone was then measured at 6.8px labels on the demo plan, so
+    the zoom has a floor where a node's 10px label reads at 11px.
+
+    And the key folds: open, its two rows took the top of the canvas as five
+    wrapped lines of veil over the drawing. Folded, the handle has to be the
+    thing under a finger that presses it — it lives in a box that gives the
+    pointer away so it cannot swallow a tap on a node. Where the keys land once
+    it is opened is `test_the_graphs_legend_is_on_the_page_a_phone_can_see`'s.
+
+    A laptop's start is the whole plan, exactly as before. A finger is told to
+    double-tap and pinch, and a mouse to double-click and scroll.
+    """
+    from browser import chrome, measured_in, measured_on_a_phone
+
+    browser = chrome()
+    page = {"graph": views["graph"]}
+    phone = measured_on_a_phone(browser, page, tmp_path / "phone", _THE_GRAPH)["graph"]
+    assert phone["shut"] is True, "the graph's key is open on a phone"
+    assert phone["pressable"], "the folded key's handle is not what a tap on it reaches"
+    # Unconditional: a plan that fits whole at the floor is fitted, and a fit of it
+    # is at least that zoom — so a phone below 11px is always the defect.
+    assert phone["label"] >= 11 - 0.01, (
+        f"a phone starts the graph with {phone['label']:.1f}px labels"
+    )
+    assert phone["whole"] or 20 <= phone["left"] <= 34, (
+        f"a phone starts the graph with its left edge at {phone['left']}px, not at the canvas's"
+    )
+    assert all(text.startswith("Double-tap") for text in phone["hint"]) and phone["hint"], (
+        f"a finger is told {phone['hint']}"
+    )
+    assert phone["buttons"] and min(phone["buttons"]) >= 40, (
+        f"the commit bar's buttons are {phone['buttons']}px tall on a phone"
+    )
+
+    laptop = measured_in(
+        browser, views["graph"], tmp_path / "laptop.html", 1280, _THE_GRAPH, 900, patience=6000
+    )
+    assert laptop["whole"], "a laptop no longer starts with the whole plan in view"
+    assert laptop["shut"] is False, "a laptop's key is folded away"
+    assert laptop["hint"] and all(t.startswith("Double-click") for t in laptop["hint"]), (
+        f"a mouse is told {laptop['hint']}"
+    )
 
 
 @pytest.fixture
