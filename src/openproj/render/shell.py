@@ -1083,7 +1083,7 @@ body:has([data-fills]) { padding-bottom: 2px; }
 #controls .aside > * { margin: 0; }
 #controls .facets { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: baseline;
                     margin-top: .5rem; }
-/* The fold's handle, and above 40rem there is nothing to fold: the `<details>`
+/* The fold's handle, and off a phone there is nothing to fold: the `<details>`
    ships `open` and stays open, so a summary here would be a control that says
    "Filters" over filters that are already on the screen. `display: none` on a
    summary does not close its details or hide the content — only the marker and
@@ -1848,7 +1848,7 @@ table.tight-priority td[data-col="priority"] .chip.pri { padding: .1rem .3rem; }
    on a row that has only one key and would push a lone legend to the right edge
    for no reason anybody asked for. */
 .keyrow > .legend + .legend { margin-left: auto; }
-/* Nothing to fold above 40rem, and nothing to say so. Same shape as the filter
+/* Nothing to fold off a phone, and nothing to say so. Same shape as the filter
    bar's summary and for the same reason — see `#controls .facetbox > summary`.
    `.keyrow` keeps its own top margin, so the folded box adds none of its own. */
 .keyfold > summary, .windowfold > summary { display: none; }
@@ -2186,7 +2186,9 @@ tr.nothing .hint { margin: 0 0 .75rem; }
   table.unfitted { width: max-content; min-width: 100%; }
   table.unfitted th, table.unfitted td { white-space: nowrap; }
 }
-@media (max-width: 40rem) {
+/* `phone` is `env.PHONE`: below 40rem, or a touch screen under 32rem tall — a
+   phone on its side, which is wider than 40rem and has least room of all. */
+@media {{ phone }} {
   input, select, textarea { font-size: 16px !important; }
   /* The search box is `min-width: 16rem`, which was 256px of 13px text and is
      256px of 16px text — the same box holding a fifth fewer characters, so
@@ -2246,6 +2248,21 @@ tr.nothing .hint { margin: 0 0 .75rem; }
     font-size: 11px; color: var(--muted);
     text-transform: uppercase; letter-spacing: .04em;
   }
+  /* Window and Key share a row while both are shut. They were a 31px row each,
+     and on a phone on its side that second row was most of what pushed the
+     timeline's footer off the screen. An open one is a block again, so what it
+     holds still drops in underneath its own handle rather than beside the
+     other's. */
+  .windowfold:not([open]), .windowfold:not([open]) + .keyfold:not([open]) {
+    display: inline-block; margin-right: 1.5rem;
+  }
+}
+/* The furniture a phone on its side cannot spare. 390px is the whole window
+   there, and a sentence about how to drag is the one line above the plan that
+   says nothing about the plan — the reader turning the phone has already read
+   it upright. */
+@media {{ short_phone }} {
+  #controls .aside > .hint { display: none; }
 }
 /* A reader who has told their operating system they want less motion gets none.
    It is a system setting and not a preference this app keeps, so there is no

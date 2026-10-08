@@ -7554,6 +7554,7 @@ return {
   folds: shut,
   handles: handles.length,
   said: said ? said.textContent.trim() : null,
+  scrolls: document.documentElement.scrollHeight - innerHeight,
 };
 """
 
@@ -7629,6 +7630,56 @@ def test_what_a_phone_folds_away_is_open_on_anything_wider(views: dict[str, str]
             f"{view} draws {got['handles']} fold handles at {got['viewport']}px, over controls "
             f"that are already on the screen"
         )
+
+
+def test_a_phone_on_its_side_is_still_a_phone(views: dict[str, str], tmp_path: Path):
+    """844x390 is a phone turned over, and it is wider than 40rem.
+
+    While the folds asked the width alone, that phone got the laptop's layout in
+    a window 390px tall. Measured on the demo plan at v0.70.0: all twelve filters,
+    the timeline's window controls and its key were open, the table's rows, the
+    graph's canvas and the timeline's chart all sat on their 144px floor, and the
+    footer was pushed below the bottom of the screen — on the one layout whose
+    premise is that the nav and the footer never move.
+
+    The table and the timeline are asked to FIT as well, because folding was not
+    the whole of it: the timeline still ran 46px past the window with every fold
+    shut, until Window and Key shared a row and the drag hint stepped aside. The
+    graph is asked to fold and not to fit — its commit bar and its legend are the
+    furniture it has left, and both are the graph's own question.
+
+    The other half is a laptop window dragged just as short. It has a mouse in it
+    and keeps the laptop's layout: `pointer: coarse` is the whole difference
+    between the two, and without that clause in `env.PHONE` the second loop here
+    is the bug pointing the other way.
+    """
+    from browser import chrome, measured_in, measured_on_a_phone
+
+    browser = chrome()
+    turned = measured_on_a_phone(
+        browser, views, tmp_path / "turned", _THE_FOLD, width=844, height=390
+    )
+    for view, got in turned.items():
+        assert got["viewport"] == 844, f"{view} laid out at {got['viewport']}px, not 844"
+        assert got["folds"] and all(one.endswith(":shut") for one in got["folds"]), (
+            f"{view} leaves {got['folds']} open on a phone turned to landscape"
+        )
+        assert got["handles"] == len(got["folds"]), (
+            f"{view} draws {got['handles']} handles for {len(got['folds'])} folds on its side"
+        )
+        if view != "graph":
+            assert got["scrolls"] <= 0, (
+                f"{view} runs {got['scrolls']}px past a 390px-tall phone, so its footer is "
+                f"off the screen"
+            )
+
+    for view, page in views.items():
+        short = measured_in(browser, page, tmp_path / f"{view}-short.html", 1280, _THE_FOLD, 390)
+        assert all(one.endswith(":open") for one in short["folds"]), (
+            f"{view} folds {short['folds']} away in a laptop window 390px tall, which has "
+            f"a mouse and the room to show them"
+        )
+        assert short["handles"] == 0, f"{view} draws fold handles in a short laptop window"
 
 
 def test_a_folded_filter_bar_says_how_many_fields_are_set(views: dict[str, str], tmp_path: Path):

@@ -91,6 +91,24 @@ _ENV = Environment(autoescape=True)
 # data block in a `<script>`, which is exactly what `_json` is for.
 _ENV.filters["tojson"] = _script_json
 
+# **What every phone rule asks, written once.** Width alone was the question
+# until 2026-10-08, and a phone on its side is 844px wide — above 40rem — so it
+# got the desktop layout in a window 390px tall: twelve filters, the window
+# controls and the key all unfolded, the table, the timeline and the graph sat
+# on their 144px floor, and the footer was pushed off the screen. The second
+# clause is that phone. `pointer: coarse` is what keeps it one: a desktop window
+# dragged short is the same height with a mouse in it, and folding its filters
+# away would be the same bug pointing the other way.
+#
+# Only the rules that are about *a phone* read this. The ones that are about a
+# measured width — the editor's toolbar wrapping, a `dl` going one column, a
+# table that would rather scroll than wrap — keep `max-width: 40rem`, because an
+# 844px row has the room those numbers were measured against.
+SHORT_PHONE = "(max-height: 32rem) and (pointer: coarse)"
+PHONE = f"(max-width: 40rem), {SHORT_PHONE}"
+_ENV.globals["phone"] = PHONE
+_ENV.globals["short_phone"] = SHORT_PHONE
+
 
 @cache
 def _compiled(source: str) -> Template:
