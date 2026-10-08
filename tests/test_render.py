@@ -7335,7 +7335,27 @@ def phone_pages(seed_index: Index) -> dict[str, str]:
         "record": render_detail(
             seed_index, ROUTES, only=next(iter(seed_index.plan)), base_commit="deadbee"
         ),
+        "record with code": render_detail(
+            seed_index, ROUTES, only=_longest_inline_code(seed_index), base_commit="deadbee"
+        ),
     }
+
+
+def _longest_inline_code(index: Index) -> str:
+    """The record whose prose carries the longest unbreakable code span — read
+    off the corpus rather than named, so the page asked about is the worst one
+    there is and not whichever was the worst on the day this was written.
+
+    An identifier in backticks has no space in it to wrap at, and it is the one
+    thing a pitch here is reliably full of. A body that only fences its code is
+    not asked about by this: `pre` scrolls inside its own box by design.
+    """
+
+    def longest(record) -> int:
+        spans = re.findall(r"`([^`\n]+)`", record.body or "")
+        return max((len(word) for span in spans for word in span.split()), default=0)
+
+    return max(index.plan.values(), key=longest).id
 
 
 # What a 390px viewport gets, per page. One script, because one Chrome answering
@@ -7376,9 +7396,24 @@ const off = keys ? [...keys.querySelectorAll('li')].filter(li => {
   const box = li.getBoundingClientRect();
   return box.width > 0 && (box.left < -1 || box.right > vw + 1);
 }).map(li => li.textContent.trim() + ' ' + Math.round(li.getBoundingClientRect().left)) : [];
+// A box that scrolls sideways when it was not built to. The document is not
+// the only thing that can: the record page reads inside `.panes`, which is
+// `overflow: auto` so that it can scroll DOWN, and one unbreakable identifier
+// made it scroll 62px across as well while the document stayed exactly 390 wide.
+// The boxes that are meant to — the table's and the timeline's, the cycle's two
+// tables, a fence — are named by what they are and left out.
+const wobbles = [];
+for (const el of document.querySelectorAll('body *')) {
+  if (el.matches('[data-sideways], .sideways, .table-scroll, .scroll, pre')) continue;
+  if (/(auto|scroll)/.test(getComputedStyle(el).overflowX)
+      && el.scrollWidth > el.clientWidth + 1) {
+    wobbles.push(name(el) + ' ' + el.clientWidth + ' wide holding ' + el.scrollWidth);
+  }
+}
 return {
   viewport: vw,
   scrollWidth: root.scrollWidth,
+  wobbles,
   over: [...new Set(over)].slice(0, 8),
   small: [...new Set(small)],
   labels: timeline ? wide(timeline.querySelector('.labels')) : null,
@@ -7434,12 +7469,130 @@ def test_no_read_surface_scrolls_sideways_on_a_phone(on_a_phone: dict[str, dict]
     that legitimately scroll — the table's columns and the timeline's chart —
     scroll INSIDE a box, which is why this asks the document and not the
     elements: `over` exists to name a culprit, `scrollWidth` is the claim.
+
+    **And then the boxes, because the document was not the whole of it.** The
+    record page is read inside `.panes`, a box that scrolls so the page does not,
+    and on 2026-10-08 a 48-character test name in backticks made that box scroll
+    62px sideways while the document stayed exactly 390px wide and this test
+    passed. A box built to scroll down that also scrolls across is the same
+    defect one level in, so `wobbles` names every one that does and was not built
+    to. `record with code` is the corpus's worst case for it, found by reading
+    the bodies — see `_longest_inline_code`.
     """
     for page, got in on_a_phone.items():
         assert got["scrollWidth"] <= got["viewport"], (
             f"{page} is {got['scrollWidth']}px wide on a {got['viewport']}px phone, so the "
             f"whole page scrolls sideways. Past the edge: {got['over'] or 'nothing named'}"
         )
+        assert not got["wobbles"], (
+            f"{page} keeps a box that scrolls sideways on a phone when it was built to "
+            f"scroll down: {got['wobbles']}"
+        )
+
+
+# What a thumb cannot hit, per WCAG 2.5.8 (Target Size, Minimum): a target is
+# at least 24x24 CSS px, OR a 24px circle centred on it touches no other target.
+# A link inside a sentence is the criterion's own exception — its height is the
+# line's, and making it taller would be making the prose's leading taller.
+#
+# "In a sentence" is asked of the text around it rather than of its tag: a title
+# alone in a table cell is a link with nothing else in its block, and it is
+# exactly the target this exists for, while the same `<a>` in a paragraph of
+# prose is not.
+_TAPPABLE = """
+const name = el => el.tagName.toLowerCase()
+  + (el.id ? '#' + el.id : '')
+  + (typeof el.className === 'string' && el.className.trim()
+     ? '.' + el.className.trim().split(/\\s+/).slice(0, 2).join('.') : '');
+const said = el => (el.getAttribute('aria-label') || el.textContent || el.value || '')
+  .trim().replace(/\\s+/g, ' ').slice(0, 30);
+const shown = el => {
+  if (el.closest('[inert], [aria-hidden="true"]')) return false;
+  const box = el.getBoundingClientRect();
+  const style = getComputedStyle(el);
+  return box.width > 0 && box.height > 0 && style.visibility !== 'hidden';
+};
+const block = el => {
+  for (let up = el.parentElement; up; up = up.parentElement) {
+    if (!/^inline/.test(getComputedStyle(up).display)) return up;
+  }
+  return document.body;
+};
+const inSentence = el => {
+  if (el.tagName !== 'A') return false;
+  const around = block(el).textContent.replace(el.textContent, '');
+  return /[A-Za-z]{2,}/.test(around);
+};
+const targets = [...document.querySelectorAll(
+  'a[href], button, input:not([type=hidden]), select, textarea, summary, '
+  + '[role=button], [role=radio], [tabindex="0"]')].filter(shown);
+const boxes = targets.map(el => el.getBoundingClientRect());
+// Which box clips each target. Nothing on these pages scrolls the document —
+// every list scrolls in a box of its own — so a row scrolled under the footer
+// is laid out right beside the footer's links and is not beside them on the
+// screen: its own box clips it. Two targets crowd each other only inside one
+// clipping box, which keeps every row asked about wherever it is scrolled to.
+const clipOf = el => {
+  for (let up = el.parentElement; up; up = up.parentElement) {
+    const style = getComputedStyle(up);
+    if (style.overflowX !== 'visible' || style.overflowY !== 'visible') return up;
+  }
+  return null;
+};
+const clips = targets.map(clipOf);
+const small = [];
+targets.forEach((el, i) => {
+  const box = boxes[i];
+  if ((box.width >= 24 && box.height >= 24) || inSentence(el)) return;
+  const cx = box.left + box.width / 2, cy = box.top + box.height / 2;
+  // The 24px circle, asked as the nearest point of every other target's box.
+  const crowded = boxes.some((other, j) => {
+    if (j === i || clips[j] !== clips[i]) return false;
+    if (targets[j].contains(el) || el.contains(targets[j])) return false;
+    const dx = Math.max(other.left - cx, 0, cx - other.right);
+    const dy = Math.max(other.top - cy, 0, cy - other.bottom);
+    return Math.hypot(dx, dy) < 12;
+  });
+  if (crowded) {
+    small.push(name(el) + ' "' + said(el) + '" ' + Math.round(box.width) + 'x'
+      + Math.round(box.height));
+  }
+});
+return {viewport: document.documentElement.clientWidth, small: [...new Set(small)]};
+"""
+
+# The pages whose targets belong to a branch that is still in review, and only
+# until it lands: each name here is a page this test does not ask yet. The set
+# is meant to be emptied, and a page added to it needs the reason beside it.
+_TAPPABLE_LATER = {
+    "records": "the phone cards (PR B) replace its table",
+    "table": "the phone cards (PR B) replace its table",
+    "graph": "the graph's phone start and folded key (PR C)",
+    "record": "the record page's folded fields and view toggles (PR C)",
+    "record with code": "the record page's folded fields and view toggles (PR C)",
+}
+
+
+def test_a_thumb_can_hit_everything_on_a_phone(phone_pages: dict[str, str], tmp_path: Path):
+    """Nothing a reader is meant to tap on a phone is too small to tap.
+
+    Measured at 390px on 2026-10-08: the nav's links were 20px tall, the
+    footer's Help 27x13 beside a 22x16 fold, the timeline's row labels 14px tall
+    on a 22px pitch, the cycle page's bet boxes 13x13 and its "take this person
+    out" button 22x13 — the last two found by a review that could only land a
+    tap on them by aiming at the exact centre.
+
+    WCAG 2.5.8's own test and not a flat 44px: a small target with room around
+    it is a target a thumb can hit, and a 44px floor would have meant redrawing
+    every chip on the plan for a rule nobody sets.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    asked = {page: html for page, html in phone_pages.items() if page not in _TAPPABLE_LATER}
+    assert set(_TAPPABLE_LATER) <= set(phone_pages), "a page waits here that no longer exists"
+    found = measured_on_a_phone(chrome(), asked, tmp_path / "taps", _TAPPABLE)
+    small = {page: got["small"] for page, got in found.items() if got["small"]}
+    assert not small, f"targets a thumb cannot hit on a phone: {small}"
 
 
 def test_nothing_a_phone_can_focus_is_small_enough_to_zoom_the_page(on_a_phone: dict[str, dict]):
@@ -7554,6 +7707,7 @@ return {
   folds: shut,
   handles: handles.length,
   said: said ? said.textContent.trim() : null,
+  scrolls: document.documentElement.scrollHeight - innerHeight,
 };
 """
 
@@ -7629,6 +7783,56 @@ def test_what_a_phone_folds_away_is_open_on_anything_wider(views: dict[str, str]
             f"{view} draws {got['handles']} fold handles at {got['viewport']}px, over controls "
             f"that are already on the screen"
         )
+
+
+def test_a_phone_on_its_side_is_still_a_phone(views: dict[str, str], tmp_path: Path):
+    """844x390 is a phone turned over, and it is wider than 40rem.
+
+    While the folds asked the width alone, that phone got the laptop's layout in
+    a window 390px tall. Measured on the demo plan at v0.70.0: all twelve filters,
+    the timeline's window controls and its key were open, the table's rows, the
+    graph's canvas and the timeline's chart all sat on their 144px floor, and the
+    footer was pushed below the bottom of the screen — on the one layout whose
+    premise is that the nav and the footer never move.
+
+    The table and the timeline are asked to FIT as well, because folding was not
+    the whole of it: the timeline still ran 46px past the window with every fold
+    shut, until Window and Key shared a row and the drag hint stepped aside. The
+    graph is asked to fold and not to fit — its commit bar and its legend are the
+    furniture it has left, and both are the graph's own question.
+
+    The other half is a laptop window dragged just as short. It has a mouse in it
+    and keeps the laptop's layout: `pointer: coarse` is the whole difference
+    between the two, and without that clause in `env.PHONE` the second loop here
+    is the bug pointing the other way.
+    """
+    from browser import chrome, measured_in, measured_on_a_phone
+
+    browser = chrome()
+    turned = measured_on_a_phone(
+        browser, views, tmp_path / "turned", _THE_FOLD, width=844, height=390
+    )
+    for view, got in turned.items():
+        assert got["viewport"] == 844, f"{view} laid out at {got['viewport']}px, not 844"
+        assert got["folds"] and all(one.endswith(":shut") for one in got["folds"]), (
+            f"{view} leaves {got['folds']} open on a phone turned to landscape"
+        )
+        assert got["handles"] == len(got["folds"]), (
+            f"{view} draws {got['handles']} handles for {len(got['folds'])} folds on its side"
+        )
+        if view != "graph":
+            assert got["scrolls"] <= 0, (
+                f"{view} runs {got['scrolls']}px past a 390px-tall phone, so its footer is "
+                f"off the screen"
+            )
+
+    for view, page in views.items():
+        short = measured_in(browser, page, tmp_path / f"{view}-short.html", 1280, _THE_FOLD, 390)
+        assert all(one.endswith(":open") for one in short["folds"]), (
+            f"{view} folds {short['folds']} away in a laptop window 390px tall, which has "
+            f"a mouse and the room to show them"
+        )
+        assert short["handles"] == 0, f"{view} draws fold handles in a short laptop window"
 
 
 def test_a_folded_filter_bar_says_how_many_fields_are_set(views: dict[str, str], tmp_path: Path):

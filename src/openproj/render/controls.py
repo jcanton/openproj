@@ -8,7 +8,7 @@ from markupsafe import Markup
 
 from ..index import Index
 from ..model import MAX_BODY_BYTES, Record
-from .env import _fragment
+from .env import PHONE, _fragment
 from .hill import _hill_html
 from .tokens import (
     DRAWING_ART,
@@ -538,13 +538,15 @@ const FOLDS = '.facetbox, .windowfold, .keyfold';
 //
 // **The listener is not a nicety.** Closed at 390 and then turned to landscape,
 // or opened on a desktop window that was narrow, the summary goes — the
-// stylesheet only draws it below 40rem — while the box is still closed. That is
+// stylesheet only draws it on a phone — while the box is still closed. That is
 // eleven filters with nothing on the page that can reach them. So the same query
 // that draws the handle decides the state, both ways, whenever it changes.
 //
-// It does not fight the reader: `change` fires when the WIDTH crosses 40rem, not
-// when a summary is clicked, so a fold opened by hand on a phone stays open.
-const PHONE = matchMedia('(max-width: 40rem)');
+// It does not fight the reader: `change` fires when the window crosses the
+// query, not when a summary is clicked, so a fold opened by hand on a phone stays
+// open. The query is `env.PHONE`, joined in rather than written out, so the
+// stylesheet's handle and this state cannot disagree about what a phone is.
+const PHONE = matchMedia(""" + json.dumps(PHONE) + r""");
 function foldOnAPhone(narrow) {
   for (const box of document.querySelectorAll(FOLDS)) box.open = !narrow;
   refitAroundTheFold();
