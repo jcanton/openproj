@@ -7998,12 +7998,20 @@ def test_folded_fields_say_what_the_form_will_save(
     as it will be saved, not as it was loaded, and it says when a field this
     status demands has been left empty: the server would refuse that save, and a
     refusal is the worst moment to find out what the folded box was hiding.
+
+    Write on a phone opens over the whole window (jcanton, 2026-10-08), which
+    has no fields in it at all; "Smaller" is the way back to the page they are
+    folded in, and it is that page this asks about.
     """
     from browser import chrome, measured_on_a_phone
 
     script = """
 document.getElementById('view-edit').click();
 await new Promise(done => setTimeout(done, 300));
+if (document.querySelector('article.record').classList.contains('whole-page')) {
+  document.getElementById('editor-size').click();
+  await new Promise(done => setTimeout(done, 100));
+}
 const priority = document.querySelector('[data-type][name=priority]');
 priority.value = 'low';
 priority.dispatchEvent(new Event('change', {bubbles: true}));
@@ -8050,10 +8058,11 @@ return {
     got = measured_on_a_phone(
         chrome(), {"pitch": record_pages["pitch"]}, tmp_path / "thumb", script
     )["pitch"]
-    # Slide is asked if it is drawn, and not demanded: whether a phone gets the
-    # slide editor at all is the editing branch's question.
+    # Slide is asked if it is drawn, and not demanded. The editing branch
+    # answered it for a phone: no slide editor and no side by side (jcanton,
+    # 2026-10-08), so the row a thumb meets is the three below.
     names = [one["name"] for one in got["row"]]
-    assert names[-4:] == ["Write", "Write and preview", "Preview", "Delete"], names
+    assert names == ["Write", "Preview", "Delete"], names
     for one in got["row"]:
         assert one["h"] >= 40 and one["w"] >= 40, (
             f"{one['name']} is {one['w']}x{one['h']} on a phone, under a thumb's 40px"
