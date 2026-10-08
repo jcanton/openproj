@@ -2236,6 +2236,13 @@ tr.nothing .hint { margin: 0 0 .75rem; }
      here. The corner comes after everything but the fold, so it pushes the
      controls away from the version, the plan's sha, Help and Report issue. */
   #build { gap: .5rem .75rem; }
+  /* The fold's `⋯` is a target and was 22x16, two pixels from the theme
+     toggle's 28px circle: the one control on the row a thumb is sent to when the
+     row runs out of room. As big as that circle, and centred like it. */
+  #buildmore > summary {
+    display: flex; align-items: center; justify-content: center;
+    min-width: 28px; min-height: 28px; padding: 0;
+  }
   /* The nav loses the element that was forcing it wide, so what is left is
      links. Nothing else changes: they were already wrapping. */
   #build .corner { font-size: 13px; }
