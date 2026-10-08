@@ -31,7 +31,7 @@ from .editor import (
     _ace_wanted,
     _editing_possible,
 )
-from .env import _compiled, _fragment
+from .env import PHONE, _compiled, _fragment
 from .hill import _HILL_JS, _LADDER_OF, _STATE_HINT, _hill_html
 from .markdown import _body_html, _pr_link
 from .shell import ROUTES, STATIC, Links, _page
@@ -198,6 +198,13 @@ const LANDING = VIEW_ARTICLE.querySelector('.doc.read');
 // of a session all come here.
 const GROUND = LANDING ? 'view' : null;
 let VIEW = GROUND;
+// **How a phone writes** — jcanton, 2026-10-08. Write opens over the whole
+// window: with the keyboard up, the page layout left Ace 8 to 116px under the
+// title and the fields, and the full-page box measured 224px with Save still at
+// the top. And side by side is not offered: at 390px it was two 163px slivers,
+// an editor nobody could read beside a preview nobody could read. `env.PHONE`,
+// joined in because this script is inlined rather than rendered.
+const WRITE_PHONE = matchMedia(""" + json.dumps(PHONE) + r""");
 
 // --- full page -----------------------------------------------------------------
 //
@@ -256,6 +263,8 @@ WHOLE.onclick = () => {
 function showView(mode) {
   // Out of a session and onto the read view, which a save in place left behind.
   if (mode === 'view' && VIEW !== 'view' && freshen()) return;
+  if (mode === 'both' && WRITE_PHONE.matches) mode = 'edit';
+  const was = VIEW;
   VIEW = mode;
   for (const name of VIEWS) {
     VIEW_ARTICLE.classList.toggle('view-' + name, mode === name);
@@ -266,6 +275,10 @@ function showView(mode) {
   // page with no way back but Escape. Edit and split keep it, since the box is in
   // both and the switcher is on screen to move between them.
   if (mode !== 'edit' && mode !== 'both') wholePage(false);
+  // Into Write on a phone, over the whole window — see `WRITE_PHONE`. Only on the
+  // way IN, so "Smaller" stays smaller until the reader leaves Write; and never
+  // on the create form, whose title box is part of the page full page hides.
+  if (mode === 'edit' && was !== 'edit' && LANDING && WRITE_PHONE.matches) wholePage(true);
   // A view is the classes above and nothing else. This function used to build a
   // full-page surface here — `.full` on the article, `body.fullpage`, an
   // `inert` sweep of `body > nav, body > a.skip`, and `#theme` and `#who`
