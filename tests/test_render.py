@@ -7400,11 +7400,13 @@ const off = keys ? [...keys.querySelectorAll('li')].filter(li => {
 // the only thing that can: the record page reads inside `.panes`, which is
 // `overflow: auto` so that it can scroll DOWN, and one unbreakable identifier
 // made it scroll 62px across as well while the document stayed exactly 390 wide.
-// The boxes that are meant to — the table's and the timeline's, the cycle's two
-// tables, a fence — are named by what they are and left out.
+// The boxes that are meant to — the roles table's, the timeline's, the cycle's
+// two tables, a fence — are named by what they are and left out. Not a carded
+// box: on a phone the records list and the plan's table are cards that wrap, and
+// one of those scrolling sideways is the 1299px table in a 350px box coming back.
 const wobbles = [];
 for (const el of document.querySelectorAll('body *')) {
-  if (el.matches('[data-sideways], .sideways, .table-scroll, .scroll, pre')) continue;
+  if (el.matches('[data-sideways], .sideways, .table-scroll:not(.carded), .scroll, pre')) continue;
   if (/(auto|scroll)/.test(getComputedStyle(el).overflowX)
       && el.scrollWidth > el.clientWidth + 1) {
     wobbles.push(name(el) + ' ' + el.clientWidth + ' wide holding ' + el.scrollWidth);
@@ -7565,8 +7567,6 @@ return {viewport: document.documentElement.clientWidth, small: [...new Set(small
 # until it lands: each name here is a page this test does not ask yet. The set
 # is meant to be emptied, and a page added to it needs the reason beside it.
 _TAPPABLE_LATER = {
-    "records": "the phone cards (PR B) replace its table",
-    "table": "the phone cards (PR B) replace its table",
     "graph": "the graph's phone start and folded key (PR C)",
     "record": "the record page's folded fields and view toggles (PR C)",
     "record with code": "the record page's folded fields and view toggles (PR C)",
