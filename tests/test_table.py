@@ -2828,7 +2828,7 @@ def test_the_header_and_the_two_identity_columns_stay_put(page: str):
     # What that bound actually produces is checked in a browser, by
     # `test_render.test_the_box_each_view_fills_stops_where_the_window_does`.
     assert "max-height: var(--room)" in page, "the body scrolls in the container"
-    assert '<div class="table-scroll" data-fills>' in page, (
+    assert '<div class="table-scroll carded" data-fills>' in page, (
         "and the shell is told which box that is"
     )
     assert "thead th {\n  position: sticky; top: 0; z-index: 3; background: var(--surface);" in page

@@ -6,6 +6,7 @@ from pygments.formatters import HtmlFormatter
 from pygments.token import STANDARD_TYPES, Token
 
 from ..themes import FAMILIES, contrast
+from .env import PHONE
 
 # Which hue each status wears. The one place taste enters the derivation: the
 # format's eight hues are red, orange, yellow, green, cyan, blue, magenta, brown,
@@ -394,6 +395,76 @@ _TREE_STYLE = """
   background: var(--line-strong);
 }
 """
+
+
+# **On a phone a row is a card**, on the two tables a plan is read down: the
+# records list and the plan's table. At 390px the records list was a 1299px table
+# in a 350px box, so a reader saw a kind chip and the first twenty-odd characters
+# of each title, cut mid-word with no ellipsis; the plan's table gave its title
+# about fifteen characters and cut its status to `IN PROGR`. A title is the thing
+# being read, and a phone has room for one column.
+#
+# So the title wraps across the whole card and a few cells follow it on one line.
+# The SAME rows, restyled — not a second list drawn beside the table. Every filter,
+# every live redraw, every row mark and every empty state on these pages is
+# written against `<tr>`s, and a second builder for the phone would be each of
+# those written twice. Which cells follow the title is each table's own choice,
+# and it says so in its own sheet with `order` (title first, at -1) and by putting
+# `display: block` back on the cells it keeps; everything here is the mechanism.
+#
+# Specificity, resolved rather than guessed: `.carded > table > tbody > tr > td`
+# is (0,1,4), which beats every rule that sets padding, a border, a ground or a
+# position on these cells — the shared `th, td` at (0,0,2), the frozen columns'
+# bare `[data-col]` at (0,1,0), the severity grounds' `td.sev-cell-…` at (0,1,1),
+# the dimmed row's `tr.context > td` at (0,1,2). The tree's indent, `tr.dN >
+# td[data-col="title"]` at (0,2,2), is the one it does not beat, and it
+# needs the title's own (0,2,4) below, which says `padding: 0` again for exactly
+# that reason — (0,1,4) loses to it on the class. The grounds go because a ground
+# on one chip inside a card is a patch, not a state: the card says it instead.
+#
+# `:not([hidden])` on the row because the browser's own `[hidden]` is (0,1,0) and
+# the row rule below is (0,2,3) without it — any `hidden` row on a carded table
+# would come back on a phone. The records list pins its own `tr[hidden]` at
+# (1,1,2) and would survive; the table pins nothing, and is what this is for.
+_CARD_STYLE = (
+    """
+@media """
+    + PHONE
+    + """ {
+  /* (0,2,1), one class over `table.unfitted`'s phone rule in the shell, which
+     sizes the records list to its content: a card list that wide is one line
+     of title per card and a box that scrolls sideways again. */
+  .table-scroll.carded > table, .carded > table > tbody { display: block; width: auto; }
+  /* The headers sort and size columns, and a card has no columns. */
+  .carded > table > thead { display: none; }
+  .carded > table > tbody > tr:not([hidden]) {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .6rem;
+    /* The tree's containing block, now that the title cell is not sticky: the
+       connectors are drawn down the whole card rather than down the title. */
+    position: relative;
+    padding: .5rem .5rem .6rem; border-bottom: 1px solid var(--line);
+  }
+  .carded > table > tbody > tr > td {
+    display: none; padding: 0; border: 0; background: none;
+    white-space: nowrap;
+  }
+  /* The title takes the whole first line and wraps there. Static, not sticky:
+     a frozen column is a column, and `position: sticky` here would also keep
+     being the box the tree's connectors are measured against. */
+  .carded > table > tbody > tr > td[data-col="title"] {
+    display: block; order: -1; flex: 1 0 100%; position: static; padding: 0;
+    white-space: normal; font-size: 15px; line-height: 1.35;
+  }
+  /* The link is the card's target: a block with room above and below it, so
+     the thing a thumb aims at is the line it reads and not twenty pixels of
+     underlined text. */
+  .carded > table > tbody > tr > td[data-col="title"] a { display: block; padding: .2rem 0; }
+  /* The rows that are not records — nothing matched, or the create control —
+     keep their one cell. */
+  .carded > table > tbody > tr:not([data-id]) > td { display: block; flex: 1 0 100%; }
+}
+"""
+)
 
 
 _SUGGEST_STYLE = """

@@ -3115,7 +3115,7 @@ def test_the_bet_table_wears_no_class_the_page_cannot_draw(client: TestClient):
 
     assert 'class="table-scroll"' not in page
     # The class still exists, on the one table with a sticky header to hold up.
-    assert 'class="table-scroll"' in client.get("/table").text
+    assert 'class="table-scroll carded"' in client.get("/table").text
     assert re.search(r'<input class="live wide" data-field="assignees"[^>]*data-suggest', page), (
         "and this is the reason: the popups live inside the cells"
     )
