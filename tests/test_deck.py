@@ -1585,6 +1585,78 @@ def test_nothing_the_app_draws_is_on_the_wall_when_the_deck_is_presented(
         assert found[part] is None or found[part]["area"] == 0, (part, found[part])
 
 
+def test_a_phone_reads_the_deck_rather_than_projecting_it(tmp_path: Path):
+    """On a phone the slides are the record's own text at the page's size.
+
+    The fixed canvas is a 1280px slide scaled to its column, and a phone's column
+    is about 350px: measured on the demo at v0.70.0, every slide was drawn at a
+    quarter of its size with text about 4px tall, beside a rail of thumbnails
+    smaller still and a zoom readout whose "100%" had been squeezed out of its
+    button and over the `+`. So a phone leaves the canvas off, and with it the
+    rail and the zoom, which navigate and scale a drawing that is not there.
+
+    One progress point here is the demo's own, the one that ran its last word
+    off the sheet: every text run and `<code>` in a point was a flex item of its
+    own and none could wrap. Written into the deck rather than found in a
+    corpus, because the frozen corpus has no such point and the demo is free to
+    lose it. It is asked about by the sheet column's scroll width, because the
+    column clips and would otherwise say nothing.
+
+    And Present still projects: the canvas comes back for the projector, and
+    goes again when the presenter stops.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    pointed = Task(
+        id="task-0c1001",
+        kind="task",
+        title="Port the bed solver",
+        owner="ann",
+        person_weeks=4.0,
+        parent="pitch-0c0001",
+        status="in_progress",
+        start_date=TODAY,
+        reviewers=["bo"],
+        body="## Progress\n\n- [x] `ScanPrefixLowering`, block-local pass, green on "
+        "`embedded`\n",
+    )
+    other = [e for e in corpus() if e.id != "task-0c1001"]
+    config = Config(known_people=["ann", "bo", "cy"]).with_plans([plan_of()])
+    page = render_deck(build_index([*other, pointed], config, TODAY), 37, ROUTES)
+    script = """
+    const wrap = document.querySelector('.deckwrap');
+    const sheets = document.getElementById('sheets');
+    const drawn = sel => document.querySelector(sel).getClientRects().length > 0;
+    const heading = sheets.querySelectorAll('.slide')[1].querySelector('h2');
+    const reading = {
+      sized: wrap.classList.contains('sized'),
+      rail: drawn('#rail'), zoom: drawn('#zoomer'),
+      heading: Math.round(heading.getBoundingClientRect().height),
+      clipped: sheets.scrollWidth - sheets.clientWidth,
+    };
+    document.getElementById('present').click();
+    const projecting = wrap.classList.contains('sized');
+    document.getElementById('present').click();
+    return {...reading, projecting, after: wrap.classList.contains('sized')};
+    """
+    found = measured_on_a_phone(chrome(), {"deck": page}, tmp_path / "deck", script)["deck"]
+
+    assert not found["sized"], "a phone draws the deck as quarter-size canvases"
+    assert not found["rail"] and not found["zoom"], (
+        f"a phone draws the rail ({found['rail']}) or the zoom ({found['zoom']}) beside "
+        f"slides that are not scaled"
+    )
+    assert found["heading"] >= 24, (
+        f"a slide's heading is {found['heading']}px tall on a phone, which is not reading"
+    )
+    assert found["clipped"] <= 0, (
+        f"a slide runs {found['clipped']}px past the column on a phone, and the column "
+        f"clips it"
+    )
+    assert found["projecting"], "Present on a phone does not put the canvas back"
+    assert not found["after"], "leaving Present on a phone leaves the canvas on"
+
+
 def test_walking_the_rail_with_the_arrows_moves_the_slide_beside_it(deck: str, tmp_path: Path):
     """The rail is navigation, and the keyboard half of it navigated nothing.
 
