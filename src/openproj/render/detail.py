@@ -1559,7 +1559,11 @@ _DETAIL = """
       <summary><span class="factssaid">{{ e.fold.said }}</span>
         {%- for warn in e.fold.warn %} <span class="factswarn"><span
           class="sev-mark sev-mark-warn" aria-hidden="true">▲</span> {{ warn }}</span>
-        {%- endfor %} <span class="factscount">{{ e.fold.count }} field
+        {%- endfor %}
+        {%- if editable %} <span class="factswarn factsneed" hidden><span
+          class="sev-mark sev-mark-warn" aria-hidden="true">▲</span> <span
+          class="factsneedsaid"></span></span>{% endif %}
+        <span class="factscount">{{ e.fold.count }} field
         {{- '' if e.fold.count == 1 else 's' }}</span></summary>
       <dl{% if single %} id="facts"{% endif %}>
         {#- The label only where the control it names is on the page. In read
@@ -1815,21 +1819,12 @@ function sayFacts() {
     || document.querySelector('article.record.editing');
   const empty = writing ? [...form.querySelectorAll('[aria-required="true"]')]
     .filter(control => live(control) && !String(control.value).trim()).length : 0;
-  // The server's warnings wear `.sev-mark` hidden from a screen reader, which
-  // reads the words; this one is built the same way, out of nodes and not markup.
-  let need = box.querySelector('.factsneed');
-  if (!need) {
-    need = document.createElement('span');
-    need.className = 'factswarn factsneed';
-    const mark = document.createElement('span');
-    mark.className = 'sev-mark sev-mark-warn';
-    mark.setAttribute('aria-hidden', 'true');
-    mark.textContent = '▲';
-    need.append(mark, document.createTextNode(''));
-    box.querySelector('.factscount').before(need);
-  }
+  // The span is the server's, drawn hidden beside the other warnings and in
+  // their shape, so this sets words and nothing else.
+  const need = box.querySelector('.factsneed');
   need.hidden = !empty;
-  need.lastChild.textContent = ` ${empty} required field${empty === 1 ? '' : 's'} empty`;
+  need.querySelector('.factsneedsaid').textContent =
+    `${empty} required field${empty === 1 ? '' : 's'} empty`;
 }
 // Only from the fields and the kind picker: the document box is in the same
 // form, and a recount per keystroke of the body is work for a line nobody moved.
