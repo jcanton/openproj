@@ -2011,8 +2011,11 @@ function attachStatus(surface, bar) {
   // by typing a parameter nothing on the page mentioned; it is the switch beside
   // the three view segments now, so the way to a keymap is on the page as well.
   if (surface.setKeymap) {
+    const keymap = document.createElement('button');
+    // Named so a phone can take it away — see `.statusbar .keymap`.
+    keymap.classList.add('keymap');
     bar.append(statusPick(
-      document.createElement('button'), 'Keymap', surface.keymaps, EDITOR.keymap,
+      keymap, 'Keymap', surface.keymaps, EDITOR.keymap,
       // Nothing announced. The sentence that was here explained what vim mode
       // takes — Escape, Tab, every printable key in NORMAL mode — to somebody who
       // had just switched to vim mode on purpose. jcanton, 2026-08-21: "we don't
@@ -3160,7 +3163,12 @@ function attachDrawing(surface, status) {
   // promises there is none.
   function place() {
     const at = button.getBoundingClientRect();
-    menu.style.left = (at.left + scrollX) + 'px';
+    // Kept on the screen. Hung from the button's left edge, the menu opened
+    // from the right half of a phone's toolbar ran past the right edge — 230 to
+    // 392 on a 390px screen — and the page grew a sideways scroll to reach it.
+    // A hidden menu measures 0 wide and is placed as before.
+    const room = document.documentElement.clientWidth - menu.offsetWidth - 8;
+    menu.style.left = (Math.max(8, Math.min(at.left, room)) + scrollX) + 'px';
     menu.style.top = (at.bottom + scrollY) + 'px';
   }
 

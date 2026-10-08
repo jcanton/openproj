@@ -11713,3 +11713,229 @@ def test_the_slide_editor_commits_in_the_bar_every_other_editor_commits_in(
     assert got["typed"]["said"] == "1 unsaved change", got["typed"]["said"]
     assert not got["typed"]["resetOff"], "Reset stayed dead over a change it could undo"
     assert got["typed"]["amber"], "the bar did not say that closing the tab would lose something"
+
+
+_THE_EDITOR_ON_A_PHONE = """
+const rest = ms => new Promise(done => setTimeout(done, ms));
+for (let i = 0; i < 40 && !document.querySelector('#marks button'); i++) await rest(50);
+const rowsOf = box => new Set([...box.children]
+  .filter(el => el.getClientRects().length)
+  .map(el => Math.round(el.getBoundingClientRect().top))).size;
+const marks = document.getElementById('marks');
+const bar = document.querySelector('.statusbar');
+const wobbles = [...document.querySelectorAll('body *')].filter(el =>
+  /(auto|scroll)/.test(getComputedStyle(el).overflowX) && !el.closest('pre, .ace_editor')
+  && el.scrollWidth > el.clientWidth + 1).map(el => el.tagName + '.' + el.className);
+const drawing = document.getElementById('drawing');
+let menu = null;
+if (drawing) {
+  // Parked at the right edge of the screen first, which is where it sat when the
+  // menu ran off it: the toolbar's own layout moves the button with every
+  // change to the marks, and the claim is about any place it can be pressed.
+  drawing.style.position = 'fixed';
+  drawing.style.right = '0';
+  drawing.click();
+  await rest(50);
+  const box = document.querySelector('.drawmenu:not([hidden])');
+  menu = box ? {left: Math.round(box.getBoundingClientRect().left),
+                right: Math.round(box.getBoundingClientRect().right)} : 'did not open';
+}
+return {
+  viewport: document.documentElement.clientWidth,
+  scrollWidth: document.documentElement.scrollWidth,
+  toolbarRows: rowsOf(marks),
+  statusRows: rowsOf(bar),
+  wobbles, menu,
+};
+"""
+
+
+def test_the_editor_gives_a_phone_its_height_and_stays_on_the_screen(page: str, tmp_path: Path):
+    """Writing on a phone, measured at 390px in Write mode on 2026-10-08.
+
+    - The toolbar ran to three rows, the third holding a single `—`: sixteen
+      30px buttons and three group separators at 350px. On a phone the
+      separators go, and the marks fit on two rows.
+    - The status strip wrapped onto a second line to fit "Keymap: default", a
+      setting for keys a phone has no keyboard for. On a phone that picker goes.
+    - The "review waived" checkbox was drawn `width: 100%`, and the fields box
+      scrolled sideways by 7px with nothing to scroll to.
+    - The Drawings menu was hung from its button's left edge and ran to 392 on a
+      390px screen, so the page grew a sideways scroll to reach it.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    got = measured_on_a_phone(
+        chrome(), {"editor": page}, tmp_path / "editor", _THE_EDITOR_ON_A_PHONE, query="?edit"
+    )["editor"]
+
+    assert got["viewport"] == 390, got
+    assert got["toolbarRows"] <= 2, f"the toolbar runs to {got['toolbarRows']} rows on a phone"
+    assert got["statusRows"] == 1, f"the status strip wraps to {got['statusRows']} lines"
+    assert not got["wobbles"], f"a box scrolls sideways in Write on a phone: {got['wobbles']}"
+    assert isinstance(got["menu"], dict), f"the Drawings menu: {got['menu']}"
+    assert got["menu"]["right"] <= got["viewport"], (
+        f"the Drawings menu runs to {got['menu']['right']} on a {got['viewport']}px phone"
+    )
+    assert got["scrollWidth"] <= got["viewport"], "the page scrolls sideways in Write"
+
+
+_WRITE_ON_A_PHONE = """
+const rest = ms => new Promise(done => setTimeout(done, ms));
+for (let i = 0; i < 40 && !document.getElementById('view-edit'); i++) await rest(50);
+const article = document.querySelector('article.record');
+const drawn = sel => {
+  const el = document.querySelector(sel);
+  return !!el && el.getClientRects().length > 0;
+};
+const offered = {both: drawn('#view-both'), slide: drawn('.editbar .slide-view')};
+document.getElementById('view-edit').click();
+// Whichever writing box is drawn: Ace hides the textarea it replaces, and the
+// textarea comes first in the document.
+const shownBox = () => [...document.querySelectorAll('.ace_editor, textarea.body-field')]
+  .find(el => el.getClientRects().length > 0 && el.getBoundingClientRect().height > 0);
+for (let i = 0; i < 40 && !shownBox(); i++) await rest(50);
+await rest(300);
+const box = shownBox();
+const strip = document.querySelector('.statusbar').getBoundingClientRect();
+const writing = {whole: article.classList.contains('whole-page'),
+                 top: Math.round(box.getBoundingClientRect().top),
+                 height: Math.round(box.getBoundingClientRect().height),
+                 strip: Math.round(strip.bottom), window: innerHeight};
+showView('both');
+await rest(100);
+return {offered, writing, splitIs: VIEW};
+"""
+
+
+@pytest.mark.parametrize(
+    "size", [(390, 844), (844, 390), (390, 420)], ids=["upright", "turned", "keyboard-up"]
+)
+def test_a_phone_writes_over_the_whole_window(page: str, tmp_path: Path, size: tuple[int, int]):
+    """Write on a phone opens the full-page editor — jcanton, 2026-10-08.
+
+    With the keyboard up (390x420), or with the phone turned (844x390), the
+    page layout left Ace somewhere between 8 and 116px under the title and the
+    fields: no visible line to type on. So on a phone, Write opens over the
+    whole window. The box has to fill the window and the status strip has to
+    stay on it.
+
+    Measuring that found two layout bugs inside full page. The folded fields'
+    `auto 1fr` grid outranked full page's own grid, which left the box at a
+    256px floor with half a 844px phone empty under it. And that floor, written
+    for the stacked layout, pushed the strip off a 420px window.
+
+    Side by side is not offered on a phone (two 163px slivers), and asking for
+    it anyway gets Write. The slide editor stays desktop-only.
+    """
+    from browser import measured_on_a_phone
+
+    width, height = size
+    got = measured_on_a_phone(
+        chrome(), {"record": page}, tmp_path / "w", _WRITE_ON_A_PHONE, width=width, height=height
+    )["record"]
+
+    assert got["offered"] == {"both": False, "slide": False}, (
+        f"a phone offers views it cannot use: {got['offered']}"
+    )
+    w = got["writing"]
+    assert w["whole"], f"Write on a {width}x{height} phone stayed in the page layout"
+    assert w["strip"] <= w["window"], (
+        f"the status strip ends at {w['strip']} on a {w['window']}px window"
+    )
+    assert w["height"] >= w["window"] - w["top"] - 60, (
+        f"the box is {w['height']}px from {w['top']} on a {w['window']}px window: "
+        f"it does not fill what full page gives it"
+    )
+    assert got["splitIs"] == "edit", f"side by side on a phone became {got['splitIs']!r}"
+
+
+def test_a_laptop_and_the_create_form_keep_the_page_layout(
+    page: str, client: TestClient, tmp_path: Path
+):
+    """Full page by default is a phone's. A laptop's Write stays in the page —
+    jcanton took the full-page surface out on 2026-08-24 for exactly that — and
+    the create form stays in the page on a phone too, because full page hides
+    the title box a new record is nothing without."""
+    from browser import measured_on_a_phone
+
+    laptop = measured_in(chrome(), page, tmp_path / "laptop.html", 1280, _WRITE_ON_A_PHONE)
+    assert laptop["writing"]["whole"] is False, "Write on a laptop opened over the whole window"
+    assert laptop["offered"]["both"] is True, "a laptop lost side by side"
+
+    form = client.get("/new?kind=task").text
+    script = (
+        "const rest = ms => new Promise(done => setTimeout(done, ms)); await rest(500);"
+        "return {whole: document.querySelector('article.record').classList.contains('whole-page'),"
+        " title: document.querySelector('input.title-field').getClientRects().length > 0};"
+    )
+    got = measured_on_a_phone(chrome(), {"new": form}, tmp_path / "n", script)["new"]
+    assert got == {"whole": False, "title": True}, f"the create form on a phone: {got}"
+
+
+def test_a_finger_drags_the_ball_along_the_hill(page: str, tmp_path: Path):
+    """Dragging the hill by touch moved nothing: the browser took the gesture to
+    pan with, sent `pointercancel`, and the ball went back. Tapping a stop
+    worked; dragging did not. A real touch, through DevTools, from the ball to
+    another stop, and the status it lands on is the one saved."""
+    where = tmp_path / "hill.html"
+    where.write_text(page)
+    with _devtools(chrome(), "about:blank", tmp_path / "profile") as (call, _said):
+        call(
+            "Emulation.setDeviceMetricsOverride",
+            {"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": True},
+        )
+        call("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
+        call("Page.enable")
+        call("Page.navigate", {"url": where.as_uri() + "?edit"})
+        time.sleep(1.5)
+        # Out of full page and into the folded fields, where the hill is.
+        where_to = _evaluated(
+            call,
+            """(async () => {
+              const rest = ms => new Promise(done => setTimeout(done, ms));
+              const article = document.querySelector('article.record');
+              if (article.classList.contains('whole-page')) {
+                document.getElementById('editor-size').click();
+              }
+              for (const fold of document.querySelectorAll('.factsfold')) fold.open = true;
+              await rest(200);
+              const hill = document.querySelector('.hill-control');
+              hill.scrollIntoView({block: 'center'});
+              await rest(200);
+              const value = document.querySelector('[name=status]:checked, input[name=status]');
+              const stops = [...hill.querySelectorAll('label, .hill-stop')]
+                .map(one => [one.getBoundingClientRect(), one.querySelector('input')])
+                .filter(([box, input]) => box.width > 0 && input);
+              const here = stops.find(([, input]) => input.checked) || stops[0];
+              const gap = one => Math.abs(one[0].left - here[0].left);
+              const there = stops.reduce((far, one) => gap(one) > gap(far) ? one : far);
+              const mid = box => [Math.round(box.left + box.width / 2),
+                                  Math.round(box.top + box.height / 2)];
+              return {from: mid(here[0]), to: mid(there[0]),
+                      was: here[1].value, wants: there[1].value};
+            })()""",
+        )
+        assert where_to and where_to["was"] != where_to["wants"], where_to
+        (x0, y0), (x1, y1) = where_to["from"], where_to["to"]
+        def touch(kind: str, points: list[dict]) -> None:
+            call("Input.dispatchTouchEvent", {"type": kind, "touchPoints": points})
+
+        touch("touchStart", [{"x": x0, "y": y0}])
+        for step in range(1, 11):
+            x = x0 + (x1 - x0) * step / 10
+            y = y0 + (y1 - y0) * step / 10
+            touch("touchMove", [{"x": x, "y": y}])
+            time.sleep(0.02)
+        touch("touchEnd", [])
+        time.sleep(0.3)
+        now = _evaluated(
+            call,
+            "(() => { const on = document.querySelector('.hill-control input:checked');"
+            " return on ? on.value : null; })()",
+        )
+
+    assert now == where_to["wants"], (
+        f"a finger dragged the ball from {where_to['was']} to {where_to['wants']} and the hill "
+        f"says {now}"
+    )

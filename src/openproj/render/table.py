@@ -1612,8 +1612,9 @@ popServes({
 // `popAt` (`pop.py`) is where that is answered.
 tbody.addEventListener('contextmenu', event => {
   // The shift-through the design promises on all three views: the browser's own
-  // menu, and with it Inspect, Save as and Copy link address on a row.
-  if (event.shiftKey) return;
+  // menu, and with it Inspect, Save as and Copy link address on a row. And a
+  // finger held on a title, on a phone — see `theBrowsersMenu`.
+  if (theBrowsersMenu(event)) return;
   // Keyed off the ROW and not off `td[data-record]`, which only an editable cell
   // carries (`cellHtml`): a derived column — Progress, Blocked by — has no
   // `data-record` on it, so keying off the cell would give the menu to nine
@@ -5152,6 +5153,17 @@ tr.draft > td.draft-none {
   #rows > tbody > tr > td[data-col="status"] { display: block; order: 1; }
   #rows > tbody > tr > td[data-col="priority"] { display: block; order: 2; }
   #rows > tbody > tr > td[data-col="owner"] { display: block; order: 3; color: var(--muted); }
+  /* The landing mark, and only the mark. "Saved here — not on GitHub yet" and
+     the parked commit's dot are drawn into the id cell (`landingMark`), which a
+     card folds away — so a save made from a phone said nothing about whether it
+     had reached GitHub, and a parked one said nothing at all. The cell comes
+     back last on the line while it holds one, with the id and the grip still
+     folded. (1,2,3) over the mechanism's (0,1,4) and the column's floor at
+     (1,1,1). */
+  #rows > tbody > tr > td[data-col="id"]:has(.unlanded, .stranded) {
+    display: block; order: 4; min-width: 0;
+  }
+  #rows > tbody > tr > td[data-col="id"] > :not(.unlanded, .stranded) { display: none; }
   /* The tree's indent moves from the title cell to the card, so the line under
      the title starts where the title does. (1,1,2) over the mechanism's own
      padding at (0,2,3). */

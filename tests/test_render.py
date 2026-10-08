@@ -7588,6 +7588,65 @@ return {viewport: document.documentElement.clientWidth, small: [...new Set(small
 _TAPPABLE_LATER: dict[str, str] = {}
 
 
+def test_a_card_still_says_a_save_has_not_reached_github(views: dict[str, str], tmp_path: Path):
+    """The landing mark is drawn into the id cell, and a card folds the id cell
+    away. So a save made from the table on a phone said nothing about whether
+    it had reached GitHub, and a commit parked on a branch said nothing at all,
+    on the one view where a phone reader made it.
+
+    The mark is put into the cell the way `landingMark` writes it, and the
+    question is whether a phone paints it — the save that puts it there is
+    `test_table.py`'s, and is the same at every width.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    script = """
+    const row = document.querySelector('#rows tbody tr[data-id]');
+    const cell = row.querySelector('td[data-col="id"]');
+    const quiet = cell.querySelector('.eid').getClientRects().length;
+    cell.insertAdjacentHTML('beforeend',
+      ' <span class="stranded" role="img" aria-label="parked"></span>');
+    const mark = cell.querySelector('.stranded').getBoundingClientRect();
+    return {quiet, mark: [Math.round(mark.width), Math.round(mark.height)],
+            id: cell.querySelector('.eid').getClientRects().length,
+            cards: getComputedStyle(row).display};
+    """
+    got = measured_on_a_phone(chrome(), {"table": views["table"]}, tmp_path / "t", script)
+    got = got["table"]
+
+    assert got["cards"] == "flex", f"the table is not drawn as cards here: {got}"
+    assert got["quiet"] == 0, "a card with no mark draws its id cell"
+    assert got["mark"][0] > 0 and got["mark"][1] > 0, (
+        f"a card does not paint the landing mark it holds: {got['mark']}"
+    )
+    assert got["id"] == 0, "a card holding a landing mark draws the id beside it"
+
+
+def test_starting_a_cycle_on_a_phone_is_one_box_to_a_line(seed_index: Index, tmp_path: Path):
+    """The "Start a cycle" row put three labelled boxes and a button on one
+    wrapping line, so on a phone each box started wherever its label happened
+    to end: three boxes at three different x's, each 24px tall. One to a line,
+    the label above, all the boxes on one left edge, and a thumb's height."""
+    from browser import chrome, measured_on_a_phone
+
+    from openproj.render import render_cycles
+
+    page = render_cycles(seed_index, ROUTES, base_commit="deadbee")
+    script = """
+    const boxes = ['number', 'starts', 'reviews', 'start'].map(id => document.getElementById(id));
+    return boxes.map(el => {
+      const box = el.getBoundingClientRect();
+      return [Math.round(box.left), Math.round(box.top), Math.round(box.height)];
+    });
+    """
+    got = measured_on_a_phone(chrome(), {"cycles": page}, tmp_path / "c", script)["cycles"]
+
+    lefts, tops, heights = zip(*got, strict=True)
+    assert len(set(lefts)) == 1, f"the form's boxes start at {lefts} on a phone"
+    assert list(tops) == sorted(tops) and len(set(tops)) == 4, f"not one to a line: {tops}"
+    assert min(heights) >= 40, f"the boxes are {heights}px tall on a phone"
+
+
 def test_a_thumb_can_hit_everything_on_a_phone(phone_pages: dict[str, str], tmp_path: Path):
     """Nothing a reader is meant to tap on a phone is too small to tap.
 
@@ -7939,12 +7998,20 @@ def test_folded_fields_say_what_the_form_will_save(
     as it will be saved, not as it was loaded, and it says when a field this
     status demands has been left empty: the server would refuse that save, and a
     refusal is the worst moment to find out what the folded box was hiding.
+
+    Write on a phone opens over the whole window (jcanton, 2026-10-08), which
+    has no fields in it at all; "Smaller" is the way back to the page they are
+    folded in, and it is that page this asks about.
     """
     from browser import chrome, measured_on_a_phone
 
     script = """
 document.getElementById('view-edit').click();
 await new Promise(done => setTimeout(done, 300));
+if (document.querySelector('article.record').classList.contains('whole-page')) {
+  document.getElementById('editor-size').click();
+  await new Promise(done => setTimeout(done, 100));
+}
 const priority = document.querySelector('[data-type][name=priority]');
 priority.value = 'low';
 priority.dispatchEvent(new Event('change', {bubbles: true}));
@@ -7991,10 +8058,11 @@ return {
     got = measured_on_a_phone(
         chrome(), {"pitch": record_pages["pitch"]}, tmp_path / "thumb", script
     )["pitch"]
-    # Slide is asked if it is drawn, and not demanded: whether a phone gets the
-    # slide editor at all is the editing branch's question.
+    # Slide is asked if it is drawn, and not demanded. The editing branch
+    # answered it for a phone: no slide editor and no side by side (jcanton,
+    # 2026-10-08), so the row a thumb meets is the three below.
     names = [one["name"] for one in got["row"]]
-    assert names[-4:] == ["Write", "Write and preview", "Preview", "Delete"], names
+    assert names == ["Write", "Preview", "Delete"], names
     for one in got["row"]:
         assert one["h"] >= 40 and one["w"] >= 40, (
             f"{one['name']} is {one['w']}x{one['h']} on a phone, under a thumb's 40px"

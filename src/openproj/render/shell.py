@@ -1372,6 +1372,12 @@ li.task-list-item input { margin-right: .35em; }
    is FOR is not the same question as whether anything on it can be pressed. */
 .hill-control { display: none; }
 .record.editing .hill-control { display: block; }
+/* A finger's drag along the hill is the control's, and a finger's swipe down the
+   page is still the page's. Without this a touch that began on the hill was the
+   browser's to pan with, which it took — `pointercancel` — and the ball never
+   moved. `pan-y` and not `none`: the hill is a hundred pixels tall on a phone,
+   and a page that will not scroll under a thumb that lands on it is worse. */
+.hill-control { touch-action: pan-y; }
 /* A drawing has no text in it and so no baseline of its own, and the record
    pages' facts list aligns its rows on one (`#facts { align-items: baseline }`).
    The label for a hill was therefore hung off the BOTTOM of the picture, a

@@ -717,6 +717,19 @@ button.stat.pick:hover { color: var(--accent); }
    and the word is in the element too, because a colour on its own is a channel a
    dichromat does not have. */
 .stat.over { color: var(--danger); font-weight: 600; }
+/* What a phone's editor can spare. A keymap is a set of keys a phone has no
+   keyboard for, and its picker was the item that wrapped the strip onto a second
+   line under the box. The marks' separators are a gap between groups, and the
+   gaps were what pushed sixteen 30px buttons onto a third row at 350px — a row
+   holding one `—`, 27px of the height Ace has least of with the keyboard up. */
+@media """ + PHONE + """ {
+  .statusbar .keymap { display: none; }
+  .marks .sep { display: none; }
+  /* The bar's two hints (an upload's progress, the gutter's note) are empty
+     nearly always, and an empty flex item still takes a gap either side: 20px
+     of a 350px row, which is what left the marks one button short of a row. */
+  .markbar > .hint:empty { display: none; }
+}
 .bodywrap { position: relative; }
 /* Three states of one thing, drawn as one control: adjacent segments inside a
    single bordered box, the pressed one filled. Visible outside a session as
@@ -1043,6 +1056,12 @@ article.record.editing.whole-page .panes > .main > :is(.hints, .progress) { disp
    when stacked, and the box would be 30% of the window. */
 article.record.editing.whole-page .panes { width: auto; grid-template-rows: minmax(0, 1fr); }
 article.record.editing.whole-page .panes > .main { grid-row: 1; grid-column: 1; }
+/* No floor here. `.bodysplit`'s 16rem is for a row whose height is its content;
+   this row is the window's, so the floor can only ever push the box past it —
+   which it did on a phone with the keyboard up, 390x420, where the window has
+   about 220px for the box and the floor took 256 and pushed the status strip
+   off the bottom. (0,4,1) over (0,3,1). */
+article.record.editing.whole-page .bodysplit { min-height: 0; }
 /* The toggle, at the right-hand end of the formatting row: the bar is packed
    left, so `margin-left: auto` on its last child is the edge of the box it sizes.
    Centred and sized the way `.marks .hist` is, so it comes out the height of the
@@ -1101,8 +1120,14 @@ _RECORD_ON_A_PHONE = (
   /* And its own height, not 30% of the box: the share is a cap meant for a list
      of fields, and on a short box it cut the one-line handle in half — 36px of
      a 44px row on a phone on its side, 22px with the keyboard up. A handle cut
-     in half is a sentence about the fields nobody can read. */
-  article.record.editing .panes:has(> .facts > .factsfold:not([open])) {
+     in half is a sentence about the fields nobody can read.
+
+     `:not(.whole-page)`, because full page is the one layout with no fields in
+     it, and this rule was outranking its grid: (0,7,1) here against
+     `.whole-page .panes`'s (0,4,1), so the box over the whole window was laid
+     out `auto 1fr` and the editor stopped at its own 256px floor with half the
+     phone empty under it — on the layout a phone now writes in by default. */
+  article.record.editing:not(.whole-page) .panes:has(> .facts > .factsfold:not([open])) {
     grid-template-rows: auto 1fr;
   }
   /* **The row of controls above the record, at a thumb's size.** The three
@@ -1125,6 +1150,10 @@ _RECORD_ON_A_PHONE = (
      text is a 15px target. Padded rather than enlarged: the box grows and the
      words stay the size of the breadcrumb they are. */
   .back a.origin { display: inline-block; padding: .4rem 0; }
+  /* What a phone does not offer, by jcanton's call on 2026-10-08: the slide
+     editor is three panes that want a desk, and side by side is two slivers
+     (`WRITE_PHONE` turns it into Write if it is asked for anyway). */
+  article.record .editbar .slide-view, article.record #view-both { display: none; }
 }
 """
 )
@@ -1878,6 +1907,11 @@ input.field, select.field, textarea.field, .datewrap {
   background: var(--surface); color: inherit;
 }
 .datewrap { display: contents; }
+/* A checkbox is the size of a checkbox. `width: 100%` above is for boxes that
+   hold text, and on "review waived" it drew a 13px box in a 350px slot whose
+   padding and border ran it past the column: the fields box on a phone scrolled
+   sideways by 7px with nothing in the gap to scroll to. */
+input.field[type=checkbox] { width: auto; }
 input.title-field { font-size: 1.4rem; font-weight: 600; margin-bottom: .6rem; }
 /* In the heading's slot the box takes the READ title's metrics, so pressing
    Write changes what the name is drawn in and never where a line of it sits —
