@@ -11713,3 +11713,68 @@ def test_the_slide_editor_commits_in_the_bar_every_other_editor_commits_in(
     assert got["typed"]["said"] == "1 unsaved change", got["typed"]["said"]
     assert not got["typed"]["resetOff"], "Reset stayed dead over a change it could undo"
     assert got["typed"]["amber"], "the bar did not say that closing the tab would lose something"
+
+
+_THE_EDITOR_ON_A_PHONE = """
+const rest = ms => new Promise(done => setTimeout(done, ms));
+for (let i = 0; i < 40 && !document.querySelector('#marks button'); i++) await rest(50);
+const rowsOf = box => new Set([...box.children]
+  .filter(el => el.getClientRects().length)
+  .map(el => Math.round(el.getBoundingClientRect().top))).size;
+const marks = document.getElementById('marks');
+const bar = document.querySelector('.statusbar');
+const wobbles = [...document.querySelectorAll('body *')].filter(el =>
+  /(auto|scroll)/.test(getComputedStyle(el).overflowX) && !el.closest('pre, .ace_editor')
+  && el.scrollWidth > el.clientWidth + 1).map(el => el.tagName + '.' + el.className);
+const drawing = document.getElementById('drawing');
+let menu = null;
+if (drawing) {
+  // Parked at the right edge of the screen first, which is where it sat when the
+  // menu ran off it: the toolbar's own layout moves the button with every
+  // change to the marks, and the claim is about any place it can be pressed.
+  drawing.style.position = 'fixed';
+  drawing.style.right = '0';
+  drawing.click();
+  await rest(50);
+  const box = document.querySelector('.drawmenu:not([hidden])');
+  menu = box ? {left: Math.round(box.getBoundingClientRect().left),
+                right: Math.round(box.getBoundingClientRect().right)} : 'did not open';
+}
+return {
+  viewport: document.documentElement.clientWidth,
+  scrollWidth: document.documentElement.scrollWidth,
+  toolbarRows: rowsOf(marks),
+  statusRows: rowsOf(bar),
+  wobbles, menu,
+};
+"""
+
+
+def test_the_editor_gives_a_phone_its_height_and_stays_on_the_screen(page: str, tmp_path: Path):
+    """Writing on a phone, measured at 390px in Write mode on 2026-10-08.
+
+    - The toolbar ran to three rows, the third holding a single `—`: sixteen
+      30px buttons and three group separators at 350px. On a phone the
+      separators go, and the marks fit on two rows.
+    - The status strip wrapped onto a second line to fit "Keymap: default", a
+      setting for keys a phone has no keyboard for. On a phone that picker goes.
+    - The "review waived" checkbox was drawn `width: 100%`, and the fields box
+      scrolled sideways by 7px with nothing to scroll to.
+    - The Drawings menu was hung from its button's left edge and ran to 392 on a
+      390px screen, so the page grew a sideways scroll to reach it.
+    """
+    from browser import chrome, measured_on_a_phone
+
+    got = measured_on_a_phone(
+        chrome(), {"editor": page}, tmp_path / "editor", _THE_EDITOR_ON_A_PHONE, query="?edit"
+    )["editor"]
+
+    assert got["viewport"] == 390, got
+    assert got["toolbarRows"] <= 2, f"the toolbar runs to {got['toolbarRows']} rows on a phone"
+    assert got["statusRows"] == 1, f"the status strip wraps to {got['statusRows']} lines"
+    assert not got["wobbles"], f"a box scrolls sideways in Write on a phone: {got['wobbles']}"
+    assert isinstance(got["menu"], dict), f"the Drawings menu: {got['menu']}"
+    assert got["menu"]["right"] <= got["viewport"], (
+        f"the Drawings menu runs to {got['menu']['right']} on a {got['viewport']}px phone"
+    )
+    assert got["scrollWidth"] <= got["viewport"], "the page scrolls sideways in Write"

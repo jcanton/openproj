@@ -6,6 +6,7 @@ from pygments.formatters import HtmlFormatter
 from pygments.token import STANDARD_TYPES, Token
 
 from ..themes import FAMILIES, contrast
+from .env import PHONE
 
 # Which hue each status wears. The one place taste enters the derivation: the
 # format's eight hues are red, orange, yellow, green, cyan, blue, magenta, brown,
@@ -646,6 +647,19 @@ button.stat.pick:hover { color: var(--accent); }
    and the word is in the element too, because a colour on its own is a channel a
    dichromat does not have. */
 .stat.over { color: var(--danger); font-weight: 600; }
+/* What a phone's editor can spare. A keymap is a set of keys a phone has no
+   keyboard for, and its picker was the item that wrapped the strip onto a second
+   line under the box. The marks' separators are a gap between groups, and the
+   gaps were what pushed sixteen 30px buttons onto a third row at 350px — a row
+   holding one `—`, 27px of the height Ace has least of with the keyboard up. */
+@media """ + PHONE + """ {
+  .statusbar .keymap { display: none; }
+  .marks .sep { display: none; }
+  /* The bar's two hints (an upload's progress, the gutter's note) are empty
+     nearly always, and an empty flex item still takes a gap either side: 20px
+     of a 350px row, which is what left the marks one button short of a row. */
+  .markbar > .hint:empty { display: none; }
+}
 .bodywrap { position: relative; }
 /* Three states of one thing, drawn as one control: adjacent segments inside a
    single bordered box, the pressed one filled. Visible outside a session as
@@ -1738,6 +1752,11 @@ input.field, select.field, textarea.field, .datewrap {
   background: var(--surface); color: inherit;
 }
 .datewrap { display: contents; }
+/* A checkbox is the size of a checkbox. `width: 100%` above is for boxes that
+   hold text, and on "review waived" it drew a 13px box in a 350px slot whose
+   padding and border ran it past the column: the fields box on a phone scrolled
+   sideways by 7px with nothing in the gap to scroll to. */
+input.field[type=checkbox] { width: auto; }
 input.title-field { font-size: 1.4rem; font-weight: 600; margin-bottom: .6rem; }
 /* In the heading's slot the box takes the READ title's metrics, so pressing
    Write changes what the name is drawn in and never where a line of it sits —

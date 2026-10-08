@@ -1215,6 +1215,62 @@ return seen;
 """
 
 
+_A_FINGER_ON_A_ROW = """
+const row = document.querySelector('.labels .row[data-id]');
+if (!row) return {error: 'the chart drew no rows'};
+const link = row.querySelector('a[href]');
+if (!link) return {error: 'the first labelled row has no link in it'};
+const press = (target, pointerType) => {
+  const box = target.getBoundingClientRect();
+  const event = new PointerEvent('contextmenu', {bubbles: true, cancelable: true,
+    button: 2, buttons: 2, pointerType,
+    clientX: box.left + 2, clientY: box.top + box.height / 2});
+  target.dispatchEvent(event);
+  const seen = {open: popIsOpen(), prevented: event.defaultPrevented};
+  popClose();
+  return seen;
+};
+return {
+  fingerOnLink: press(link, 'touch'),
+  fingerOnRow: press(row, 'touch'),
+  mouseOnLink: press(link, 'mouse'),
+};
+"""
+
+
+def test_a_finger_held_on_a_link_gets_the_browsers_menu(index: Index, tmp_path: Path):
+    """On a touch screen, a long-press on a link is the browser's.
+
+    On Android a long-press is a `contextmenu`, so a thumb held on a row's title
+    got this app's menu instead of the browser's, which is the menu a phone
+    reader actually wants for a link ("open in new tab", "copy link address").
+    A touch screen has no Shift key to get it back. jcanton, 2026-10-08, chose
+    "browser on links, app elsewhere" out of three options. So the rest of the
+    row, outside the link, still opens ours, and a mouse on the same link still
+    opens ours as well.
+
+    Untrusted presses, like the timeline's test below and for the reason it
+    gives: `defaultPrevented` on a script-built event records whether the page
+    called `preventDefault()`, which is the whole of what the page decides.
+    Headless touch emulation synthesises no `contextmenu` from a held touch, so
+    a trusted long-press is not something this harness can produce.
+    """
+    got = measured_in(
+        chrome(), render_timeline(index, ROUTES), tmp_path / "t.html", 1280, _A_FINGER_ON_A_ROW
+    )
+
+    assert not got.get("error"), got
+    assert got["fingerOnLink"] == {"open": False, "prevented": False}, (
+        f"a finger held on a link opened our menu over the browser's: {got['fingerOnLink']}"
+    )
+    assert got["fingerOnRow"] == {"open": True, "prevented": True}, (
+        f"a finger held on the row outside its link opened nothing: {got['fingerOnRow']}"
+    )
+    assert got["mouseOnLink"] == {"open": True, "prevented": True}, (
+        f"a mouse on the same link no longer opens our menu: {got['mouseOnLink']}"
+    )
+
+
 def test_the_timelines_menu_opens_off_a_label_as_well_as_a_bar(index: Index, tmp_path: Path):
     """The timeline is the reader's view — `render_timeline` takes neither
     `may_write` nor `base_commit` — and until now it appeared in this file only

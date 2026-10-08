@@ -624,8 +624,28 @@ function popItems(row) {
 
 // --- opening ----------------------------------------------------------------
 
+// Whether a press belongs to the browser rather than to this menu. Shift, on
+// every view and every device, as it always was. **And a long-press on a link
+// from a finger** — jcanton, 2026-10-08, choosing between the options a phone
+// review laid out: on Android a long-press is a `contextmenu`, so a thumb held
+// on a title got this menu where the browser's had been, and the browser's is
+// the one with "open in new tab" and "copy link address" that a phone reader
+// actually reaches for — with no Shift on a touch screen to get it back. The
+// rest of a row still opens ours. iOS sends no `contextmenu` for a long-press
+// at all, so there this changes nothing and the record page is the way in.
+//
+// `pointerType` where the event carries it, which Chrome's and Firefox's do; a
+// coarse primary pointer where it does not, which is Safari's `MouseEvent`.
+function theBrowsersMenu(event) {
+  if (event.shiftKey) return true;
+  const finger = 'pointerType' in event
+    ? event.pointerType === 'touch'
+    : matchMedia('(pointer: coarse)').matches;
+  return finger && !!event.target.closest('a[href]');
+}
+
 // Returns whether this module answered the press, and the call site is
-// `if (!event.shiftKey && popMenu(event.clientX, event.clientY, id)) event.preventDefault();`
+// `if (!theBrowsersMenu(event) && popMenu(event.clientX, event.clientY, id)) event.preventDefault();`
 // — a press on something this view has no row for gets the browser's own menu
 // rather than an empty box of ours.
 function popMenu(x, y, id) {

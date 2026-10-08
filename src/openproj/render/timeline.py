@@ -811,8 +811,9 @@ popServes({
 // `popMenu` falls back on when they are 0,0 or absent — they are passed through
 // unchanged for exactly that reason.
 plot.addEventListener('contextmenu', event => {
-  // Shift falls through to the browser's own menu, on every view.
-  if (event.shiftKey) return;
+  // Shift, or a finger held on a link, falls through to the browser's own menu
+  // — see `theBrowsersMenu`.
+  if (theBrowsersMenu(event)) return;
   const held = event.target.closest('rect[data-id], .row[data-id]');
   if (held && popMenu(event.clientX, event.clientY, held.dataset.id)) event.preventDefault();
 });
