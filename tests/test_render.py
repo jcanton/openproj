@@ -7335,7 +7335,27 @@ def phone_pages(seed_index: Index) -> dict[str, str]:
         "record": render_detail(
             seed_index, ROUTES, only=next(iter(seed_index.plan)), base_commit="deadbee"
         ),
+        "record with code": render_detail(
+            seed_index, ROUTES, only=_longest_inline_code(seed_index), base_commit="deadbee"
+        ),
     }
+
+
+def _longest_inline_code(index: Index) -> str:
+    """The record whose prose carries the longest unbreakable code span — read
+    off the corpus rather than named, so the page asked about is the worst one
+    there is and not whichever was the worst on the day this was written.
+
+    An identifier in backticks has no space in it to wrap at, and it is the one
+    thing a pitch here is reliably full of. A body that only fences its code is
+    not asked about by this: `pre` scrolls inside its own box by design.
+    """
+
+    def longest(record) -> int:
+        spans = re.findall(r"`([^`\n]+)`", record.body or "")
+        return max((len(word) for span in spans for word in span.split()), default=0)
+
+    return max(index.plan.values(), key=longest).id
 
 
 # What a 390px viewport gets, per page. One script, because one Chrome answering
@@ -7376,9 +7396,24 @@ const off = keys ? [...keys.querySelectorAll('li')].filter(li => {
   const box = li.getBoundingClientRect();
   return box.width > 0 && (box.left < -1 || box.right > vw + 1);
 }).map(li => li.textContent.trim() + ' ' + Math.round(li.getBoundingClientRect().left)) : [];
+// A box that scrolls sideways when it was not built to. The document is not
+// the only thing that can: the record page reads inside `.panes`, which is
+// `overflow: auto` so that it can scroll DOWN, and one unbreakable identifier
+// made it scroll 62px across as well while the document stayed exactly 390 wide.
+// The boxes that are meant to — the table's and the timeline's, the cycle's two
+// tables, a fence — are named by what they are and left out.
+const wobbles = [];
+for (const el of document.querySelectorAll('body *')) {
+  if (el.matches('[data-sideways], .sideways, .table-scroll, .scroll, pre')) continue;
+  if (/(auto|scroll)/.test(getComputedStyle(el).overflowX)
+      && el.scrollWidth > el.clientWidth + 1) {
+    wobbles.push(name(el) + ' ' + el.clientWidth + ' wide holding ' + el.scrollWidth);
+  }
+}
 return {
   viewport: vw,
   scrollWidth: root.scrollWidth,
+  wobbles,
   over: [...new Set(over)].slice(0, 8),
   small: [...new Set(small)],
   labels: timeline ? wide(timeline.querySelector('.labels')) : null,
@@ -7434,11 +7469,24 @@ def test_no_read_surface_scrolls_sideways_on_a_phone(on_a_phone: dict[str, dict]
     that legitimately scroll — the table's columns and the timeline's chart —
     scroll INSIDE a box, which is why this asks the document and not the
     elements: `over` exists to name a culprit, `scrollWidth` is the claim.
+
+    **And then the boxes, because the document was not the whole of it.** The
+    record page is read inside `.panes`, a box that scrolls so the page does not,
+    and on 2026-10-08 a 48-character test name in backticks made that box scroll
+    62px sideways while the document stayed exactly 390px wide and this test
+    passed. A box built to scroll down that also scrolls across is the same
+    defect one level in, so `wobbles` names every one that does and was not built
+    to. `record with code` is the corpus's worst case for it, found by reading
+    the bodies — see `_longest_inline_code`.
     """
     for page, got in on_a_phone.items():
         assert got["scrollWidth"] <= got["viewport"], (
             f"{page} is {got['scrollWidth']}px wide on a {got['viewport']}px phone, so the "
             f"whole page scrolls sideways. Past the edge: {got['over'] or 'nothing named'}"
+        )
+        assert not got["wobbles"], (
+            f"{page} keeps a box that scrolls sideways on a phone when it was built to "
+            f"scroll down: {got['wobbles']}"
         )
 
 
