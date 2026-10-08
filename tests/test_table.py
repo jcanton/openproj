@@ -110,6 +110,7 @@ from openproj.render import (
     render_static,
     render_table,
 )
+from openproj.render.env import PHONE
 from openproj.render.rows import _row
 from openproj.render.tokens import _SIZE_FIELD_NAME
 from openproj.web import SESSION_COOKIE, create_app
@@ -1161,7 +1162,13 @@ def test_the_table_sizes_itself_to_its_contents_and_the_window(page: str):
         "a width belongs to a column — not to a position in the row, and not to "
         "the word printed above it"
     )
-    assert re.search(r"function refit\(\) \{\s*if \(automatic\) fitWidths\(\);", page), (
+    # After the card list's early return, which stands the fit down and leaves
+    # WIDTHS — what was dragged — exactly as it found it.
+    assert re.search(
+        r"function refit\(\) \{.*?\n    return;\n  \}\n  if \(automatic\) fitWidths\(\);",
+        page,
+        re.S,
+    ), (
         "a width somebody dragged must survive the automatic fit"
     )
     assert re.search(r"remembered\.set\(WIDTH_KEY[^\n]*\n\s*automatic = false;", page), (
@@ -2883,6 +2890,14 @@ def test_the_narrow_layout_drops_the_columns_that_are_lookups(page: str):
         # rather than its reason.
         if not prelude.startswith("@media") or "width" not in prelude:
             continue
+        # The card list's query, and the one width query that MAY name the
+        # table: on a phone the rows are cards and the fit stands down, and it
+        # stands down on `CARDS = matchMedia(env.PHONE)` — the same string this
+        # block is written under, asserted below. A breakpoint and a fit that read
+        # one query cannot drift from each other, which is the whole of what this
+        # test exists to prevent.
+        if prelude == f"@media {PHONE}":
+            continue
         for rule in body.split("}"):
             # `.unfitted` is the one table selector a width query may carry, and
             # it is allowed because of what the class MEANS: these are the four
@@ -2902,6 +2917,9 @@ def test_the_narrow_layout_drops_the_columns_that_are_lookups(page: str):
         assert f'.shed-{column} [data-col="{column}"]' in rule, column
 
     body = script(page)
+    assert f"const CARDS = matchMedia({json.dumps(PHONE)});" in body, (
+        "the fit stands down on the query the card list is written under"
+    )
     assert "SHED.forEach(key => table.classList.toggle(shedClass(key), !kept.has(key)));" in body
     assert "const drawn = drawnColumns(natural, keys, room);" in body, (
         "the fit decides it, from the same floors it fits by"
@@ -4004,7 +4022,9 @@ return {scrolls: scroller.scrollWidth > scroller.clientWidth,
 """
 
 
-def test_an_editor_opens_clear_of_the_frozen_column_on_a_phone(page: str, tmp_path: Path):
+def test_an_editor_opens_clear_of_the_frozen_column_on_a_narrow_screen(
+    page: str, tmp_path: Path
+):
     """**A picker is not a place to park a column over.**
 
     Focusing a control inside a horizontal scroller makes Chrome scroll it into
@@ -4032,21 +4052,22 @@ def test_an_editor_opens_clear_of_the_frozen_column_on_a_phone(page: str, tmp_pa
     reason — it paints over the column to its right and still passes under the
     frozen pair, which is what leaves anything here to clear.
 
-    Asked at a phone's width, through the override rather than a window, because
-    Chrome will not open a window narrower than 500px — see `measured_on_a_phone`
-    — and 500 is above the one breakpoint these pages have. Asked of every
-    editable column and not of the two date ones: the frozen pair covers whatever
-    is scrolled under it, and a fix that only cleared a picker would leave the
-    same gesture broken one column to the left.
+    Asked at 700px with a touch screen — a tablet held upright — and no longer at
+    a phone's 390: since 2026-10-08 a phone draws this table as cards, which have
+    no frozen column and do not scroll sideways, so there is nothing there for an
+    editor to open under. 700 is where the table is still a table and still
+    scrolls. Asked of every editable column and not of the two date ones: the
+    frozen pair covers whatever is scrolled under it, and a fix that only cleared
+    a picker would leave the same gesture broken one column to the left.
     """
     got = measured_on_a_phone(
-        chrome(), {"table": page}, tmp_path / "frozen", _UNDER_THE_FROZEN_COLUMN
+        chrome(), {"table": page}, tmp_path / "frozen", _UNDER_THE_FROZEN_COLUMN, width=700
     )
     table = got["table"]
 
     # Not vacuous: nothing can be scrolled under a frozen column on a table that
     # does not scroll, and at a desktop width this one does not.
-    assert table["scrolls"], "the table fits at 390px, so nothing here was asked"
+    assert table["scrolls"], "the table fits at 700px, so nothing here was asked"
     assert table["boxes"], "no editable column outside the frozen pair, so nothing was opened"
     for box in table["boxes"]:
         assert box["left"] >= box["edge"], (

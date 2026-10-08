@@ -7914,6 +7914,12 @@ def test_what_the_table_freezes_leaves_something_to_scroll_into(
     Asked at 900 as well, and that is not decoration: the rule has to be one a
     laptop never meets. At 900 the pair is 372 of 860 and the id stays, which is
     exactly what the same table did before any of this.
+
+    **A phone has no frozen pair any more.** Since 2026-10-08 it draws this table
+    as cards (`_CARD_STYLE`): no header row, nothing sticky, the fit standing down,
+    and the title on a line of its own across the whole card. So what the phone
+    half asks now is that — nothing drawn as a column and nothing wider than the
+    box — and the card list's own test asks the rest.
     """
     from browser import chrome, measured_on_a_phone
 
@@ -7922,18 +7928,16 @@ def test_what_the_table_freezes_leaves_something_to_scroll_into(
     phone = measured_on_a_phone(browser, one, tmp_path / "frozen-390", _FROZEN)["table"]
     laptop = measured_on_a_phone(browser, one, tmp_path / "frozen-900", _FROZEN, width=900)["table"]
 
-    for got in (phone, laptop):
-        assert got["frozen"] <= got["box"] * 2 / 3, (
-            f"at {got['viewport']}px the table freezes {got['frozen']}px of a {got['box']}px "
-            f"box, so under a third of it is left to scroll into"
-        )
-        assert "title" in got["drawn"], (
-            f"at {got['viewport']}px the table sheds the column that names the row"
-        )
-
-    assert "id" not in phone["drawn"], (
-        "a phone still draws the id column, which with the title is wider than the box "
-        "the two are frozen inside"
+    assert not phone["drawn"] and phone["table"] <= phone["box"], (
+        f"a phone draws {phone['drawn']} as columns in a {phone['table']}px table, "
+        f"inside a {phone['box']}px box that holds cards"
+    )
+    assert laptop["frozen"] <= laptop["box"] * 2 / 3, (
+        f"at {laptop['viewport']}px the table freezes {laptop['frozen']}px of a "
+        f"{laptop['box']}px box, so under a third of it is left to scroll into"
+    )
+    assert "title" in laptop["drawn"], (
+        f"at {laptop['viewport']}px the table sheds the column that names the row"
     )
     assert "id" in laptop["drawn"], (
         f"a {laptop['viewport']}px window sheds the id column, which is the drag grip and "
@@ -7947,7 +7951,10 @@ _THE_CHROME = """
 const corner = document.querySelector('.corner');
 const nav = document.querySelector('nav');
 const line = cell => parseFloat(getComputedStyle(cell).lineHeight) || 16;
-const tables = [...document.querySelectorAll('table.unfitted')].map(table => {
+// Not the card list's: on a phone the records list is cards, whose titles wrap by
+// design — `test_a_phone_reads_the_plan_as_cards_and_not_as_columns` asks those.
+const tables = [...document.querySelectorAll('table.unfitted')]
+  .filter(table => !table.closest('.carded')).map(table => {
   const box = table.closest('.table-scroll, .sideways');
   const cells = [...table.querySelectorAll('tbody td')]
     .filter(cell => cell.getClientRects().length);
@@ -8029,6 +8036,9 @@ def test_a_table_with_no_fit_of_its_own_scrolls_rather_than_wraps(
     `#rows` is deliberately not in this set: its widths are set inline by the fit,
     and `white-space: nowrap` on its cells would undo the clamped columns it
     draws instead of wrapping.
+
+    Three now and not four: the records list left the set on 2026-10-08, when a
+    phone started drawing it as cards whose titles wrap on purpose.
     """
     from browser import chrome, measured_on_a_phone
 
@@ -8046,7 +8056,7 @@ def test_a_table_with_no_fit_of_its_own_scrolls_rather_than_wraps(
                 f"{where} is {table['over']}px wider than its box, so it fitted by "
                 f"wrapping something rather than by having room"
             )
-    assert seen >= 4, f"only {seen} unfitted tables were measured, and there are four"
+    assert seen >= 3, f"only {seen} unfitted tables were measured, and there are three"
 
 
 # **Which pointer the reader has, said at launch.** The wash is inside
