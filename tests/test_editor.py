@@ -1846,6 +1846,11 @@ def test_the_toolbar_is_the_one_in_the_screenshot_and_that_overrules_a_count(
     the view switcher. It is here rather than in a list of its own for the same
     reason Image is: this table is the bar, and a button drawn into the bar from
     somewhere else is a button this test cannot see.
+
+    **Eighteen, and the eighteenth is a group of its own.** Template sits between
+    the history pair and Bold because jcanton put it there on 2026-10-09 —
+    "between undo/redo and the Bold button" — when it stopped being a `<select>`
+    above the create form's toolbar and became a menu on every editor's.
     """
     page = client.get(f"/detail/{TASK}").text
     marks = re.search(r"const FORMATS = \[(.*?)\n\];", page, re.S).group(1)
@@ -1859,6 +1864,7 @@ def test_the_toolbar_is_the_one_in_the_screenshot_and_that_overrules_a_count(
     assert named == [
         "Undo",
         "Redo",
+        "Template",
         "Bold",
         "Italic",
         "Strikethrough",
@@ -1877,7 +1883,7 @@ def test_the_toolbar_is_the_one_in_the_screenshot_and_that_overrules_a_count(
     ]
     # Where the rules fall, and not merely how many there are: a separator in the
     # wrong place groups the buttons into a claim about them that is false.
-    assert [i for i, entry in enumerate(entries) if "group: true" in entry] == [2, 6, 12]
+    assert [i for i, entry in enumerate(entries) if "group: true" in entry] == [2, 3, 7, 13]
     assert "comment" not in marks.lower(), "a collaboration feature with nothing behind it"
     # And the two that are not marks say so in the table rather than being told
     # apart by their titles: `applyMark` never sees one, and neither does the
@@ -2629,15 +2635,26 @@ def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
     )
     assert "![" not in got["wrote"], "and it wrote markdown into the box instead"
     # Seventeen since 2026-08-26, when the drawings button moved out of
-    # `.editbar` and into this bar beside Image. The three rules and where they
-    # fall are the part this assertion is actually about, and neither moved: the
-    # new button joined the last group rather than starting one.
+    # `.editbar` and into this bar beside Image, and eighteen since 2026-10-09,
+    # when Template arrived as a group of its own between the history pair and
+    # Bold. Where the rules fall is the part this assertion is actually about.
+    #
+    # One row at 1200 and two at 1000, and the two is not a concession. The bar
+    # is drawn in the document's column, which beside the fields is the measure
+    # less 22.5rem: 664px at 1200 and 600 at 1000. Eighteen marks and the
+    # full-page toggle need 651. The one row this asserted at 1000 was bought by
+    # letting the bar run off the end of a column that is a scrollport, with the
+    # toggle 53px past its edge where nothing could press it —
+    # `test_every_button_on_the_toolbar_can_be_reached_at_a_window_that_is_not_wide`
+    # now measures against the column. The 97-character message beside the bar
+    # is the other half of the claim, and it holds at both: it goes on a line of
+    # its own and the marks keep whatever rows they had.
     assert got["bar"] == {
-        "buttons": 17,
-        "rules": 3,
-        "before": ["Bold", "Code", "Link"],
-        "rows": 1,
-    }, "the drawn toolbar is not the shot's four groups, on one row"
+        "buttons": 18,
+        "rules": 4,
+        "before": ["Template", "Bold", "Code", "Link"],
+        "rows": 1 if width >= 1200 else 2,
+    }, "the drawn toolbar is not the shot's groups, on the rows its column has"
 
     assert got["nestedOff"] == "  one\n  two", (
         "a nested numbered list was numbered a second time instead of being taken "
@@ -6477,6 +6494,9 @@ _VIM_ON = r"""
     // image button, and a sweep that asserts every `.mark` writes markdown
     // would report it inert.
     if (button.classList.contains('draw')) continue;
+    // And the template menu, for the same reason: a press opens it, and only a
+    // choice from it writes. What a choice writes is asserted where the menu is.
+    if (button.classList.contains('tpl')) continue;
     // Undo and redo write no markdown at all — they move a stack. Excluded here
     // rather than asserted as "wrote something", which they would pass by taking
     // back the mark before them and would therefore say nothing.
@@ -6564,9 +6584,9 @@ def test_the_toolbar_and_the_keymap_do_not_cancel_each_other(client: TestClient,
 
     inert = [title for title, wrote in got["marks"] if not wrote]
     assert inert == [], f"these toolbar buttons do nothing with vim on: {inert}"
-    # Thirteen: the seventeen in the shot, less Image, less Drawings — neither
-    # of which writes markdown — less the two history buttons, which are not
-    # marks at all and are asserted where the stack they move is.
+    # Thirteen: the eighteen on the bar, less Image, Drawings and Template —
+    # none of which writes markdown when pressed — less the two history buttons,
+    # which are not marks at all and are asserted where the stack they move is.
     assert len(got["marks"]) == 13, got["marks"]
 
     # The record, asserted rather than described: this is the call that would have
@@ -7763,35 +7783,40 @@ def test_the_writing_views_are_usable_at_a_window_that_is_not_wide(
 
 
 _TEMPLATE_SWAP = """
-const picker = document.getElementById('template');
+const kind = document.getElementById('kind');
 const numbers = () => document.querySelectorAll('.lineno').length;
 const bar = document.getElementById('statusbar');
 const said = () => bar.textContent.replace(/\\s+/g, ' ').trim();
 const state = () => ({length: SURFACE.text().length, numbers: numbers(), said: said()});
 const choose = async name => {
-  picker.value = name;
-  picker.dispatchEvent(new Event('change', {bubbles: true}));
+  kind.value = name;
+  kind.dispatchEvent(new Event('change', {bubbles: true}));
   await new Promise(go => setTimeout(go, 250));
   return state();
 };
 const out = {start: state()};
-out.blank = await choose('blank');
+out.blank = await choose('note');
 out.project = await choose('project');
 return out;
 """
 
 
-def test_choosing_a_template_leaves_the_numbers_and_the_length_telling_the_truth(
+def test_switching_kind_leaves_the_numbers_and_the_length_telling_the_truth(
     client: TestClient, tmp_path: Path
 ):
-    """The picker replaces the whole document through `apply`, which fires no
-    `input` — and the gutter and the status bar are both drawn off one.
+    """Switching kind on an untouched create form replaces the whole document
+    through `apply`, which fires no `input` — and the gutter and the status bar
+    are both drawn off one.
 
-    Measured before this: choosing `blank` on the create form emptied the box and
-    left twenty-one line numbers painted down the side of an empty textarea, with
-    `21 Lines — Length: 661` underneath it. Both values had resolved correctly
-    once, for a document that no longer existed, which is why nothing in the
-    suite noticed: every assertion about either was made at load.
+    Measured before this: choosing `blank` from the template picker that used to
+    sit above the toolbar emptied the box and left twenty-one line numbers
+    painted down the side of an empty textarea, with `21 Lines — Length: 661`
+    underneath it. Both values had resolved correctly once, for a document that
+    no longer existed, which is why nothing in the suite noticed: every assertion
+    about either was made at load. The picker is the toolbar's Template menu now,
+    and that writes as a person does; the kind switch is the page's own write
+    that is left, and a note is a kind with no template, so switching to one
+    empties the box exactly as `blank` did.
 
     This is the same hazard `reflect()` names in `_COEDIT` — the page changing
     the text without typing it — and it is answered the same way, with one
@@ -7804,7 +7829,7 @@ def test_choosing_a_template_leaves_the_numbers_and_the_length_telling_the_truth
     assert got["start"]["numbers"] > 1 and got["start"]["length"] > 0, (
         "the create form did not open on a template, so there is nothing to swap away from"
     )
-    assert got["blank"]["length"] == 0, "the picker did not empty the box"
+    assert got["blank"]["length"] == 0, "switching to a kind with no template did not empty the box"
     assert got["blank"]["numbers"] == 1, (
         f"an empty box has {got['blank']['numbers']} line numbers beside it"
     )
@@ -7822,6 +7847,180 @@ def test_choosing_a_template_leaves_the_numbers_and_the_length_telling_the_truth
         "the gutter and the status bar do not agree on how long the document is"
     )
     assert f"Length: {got['project']['length']:,}" in got["project"]["said"]
+
+
+_TEMPLATE_MENU = r"""
+const wait = ms => new Promise(go => setTimeout(go, ms));
+if (!document.querySelector('article.record.editing')) { flipEditing(); await wait(200); }
+const button = document.getElementById('template');
+if (!button) return {missing: true};
+const menu = () => document.querySelector('.tplmenu');
+const pick = async label => {
+  button.click();
+  [...menu().querySelectorAll('button')].find(one => one.textContent === label).click();
+  await wait(150);
+  return SURFACE.text();
+};
+const before = SURFACE.text();
+
+button.click();
+const art = button.querySelector('svg').getBoundingClientRect();
+const opened = {
+  items: [...menu().querySelectorAll('[role=menuitem]')].map(one => one.textContent),
+  expanded: button.getAttribute('aria-expanded'),
+  focused: document.activeElement === menu().querySelector('button'),
+  wrote: SURFACE.text() !== before,
+  drawn: [Math.round(art.width), Math.round(art.height)],
+  named: button.getAttribute('aria-label'),
+  // Beside the history pair and before Bold, with a rule either side of it.
+  between: [button.previousElementSibling.className,
+            button.nextElementSibling.className,
+            button.nextElementSibling.nextElementSibling.title.split('  ')[0]],
+};
+menu().dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+const escaped = {hidden: menu().hidden, focusBack: document.activeElement === button};
+
+const out = {opened, escaped, before};
+if (CREATING) {
+  // Untouched: the box is the kind's own template, so a choice replaces it.
+  out.replaced = await pick('Pitch');
+  // Typed into: a choice goes on the end, and a kind switch leaves it alone.
+  SURFACE.splice(SURFACE.text().length, SURFACE.text().length, 'mine');
+  await wait(50);
+  out.appended = await pick('Task');
+  const kind = document.getElementById('kind');
+  kind.value = 'project';
+  kind.dispatchEvent(new Event('change', {bubbles: true}));
+  await wait(150);
+  out.kept = SURFACE.text();
+} else {
+  out.appended = await pick('Task');
+  out.said = document.getElementById('state').textContent;
+  [...document.querySelectorAll('#marks .hist')].find(one => one.title.startsWith('Undo'))
+    .dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true}));
+  await wait(150);
+  out.undone = SURFACE.text();
+}
+return out;
+"""
+
+
+@pytest.mark.parametrize("surface", ["", PLAIN])
+@pytest.mark.parametrize("where", ["detail", "new"])
+def test_a_template_goes_on_the_end_of_a_document_and_over_an_untouched_one(
+    client: TestClient, tmp_path: Path, where: str, surface: str
+):
+    """jcanton, 2026-10-09: "we can move the template selector as a button on top
+    of the editor, between undo/redo and the Bold button, and have it present also
+    in the /detail/editing page. in those where the body already contains text
+    the template can be added at the bottom".
+
+    So one control on both pages, and what it does depends on the box and not on
+    the page. A box that is empty or still one of the templates word for word is
+    nobody's writing, and a choice replaces it — which is what the create form's
+    picker always did. Anything else is somebody's, and the template goes on the
+    end after one blank line, so its first heading is a heading and not the tail
+    of the last paragraph.
+
+    A person's edit, and asserted as one: one press of Undo takes it back out.
+    Written under `apply` — the page's own write — it would have reached the box
+    with nothing on the stack Undo reaches, and in a room it would never have
+    reached anybody else. Both surfaces, because `splice` is two implementations.
+    """
+    from openproj.render import TEMPLATES
+
+    page = client.get(f"/detail/{TASK}{surface}" if where == "detail" else f"/new{surface}")
+    got = measured_in(
+        chrome(),
+        page.text,
+        tmp_path / f"tplmenu-{where}{surface and '-plain'}.html",
+        1400,
+        _TEMPLATE_MENU,
+        query=surface,
+        patience=3000,
+    )
+
+    assert not got.get("missing"), f"there is no Template button on the {where} page"
+    opened = got["opened"]
+    assert opened["named"] == "Template"
+    assert opened["between"] == ["sep", "sep", "Bold"], opened["between"]
+    assert opened["drawn"] == [13, 13], "the page the button wears was laid out at no size"
+    assert {"Pitch", "Task"} <= set(opened["items"]), opened["items"]
+    assert len(opened["items"]) == len(set(opened["items"])), opened["items"]
+    assert opened["expanded"] == "true" and opened["focused"], (
+        "the menu opened somewhere the keyboard was not taken to"
+    )
+    assert not opened["wrote"], "pressing the button wrote something before anything was chosen"
+    assert got["escaped"] == {"hidden": True, "focusBack": True}
+
+    if where == "new":
+        assert got["before"] == TEMPLATES["task"], "the create form did not open on its template"
+        assert got["replaced"] == TEMPLATES["pitch"], (
+            "a template chosen over an untouched one was added to it rather than put in its place"
+        )
+        assert got["appended"] == TEMPLATES["pitch"] + "mine\n\n" + TEMPLATES["task"], (
+            f"a template chosen over typed text did not go on the end: {got['appended']!r}"
+        )
+        assert got["kept"] == got["appended"], "switching kind threw away what was typed"
+    else:
+        assert got["before"].strip(), "the record has no body, so nothing here is about one"
+        assert got["appended"] == got["before"].rstrip() + "\n\n" + TEMPLATES["task"], (
+            f"the template did not go on the end of the document: {got['appended']!r}"
+        )
+        assert "added at the end" in got["said"], f"and nothing said so: {got['said']!r}"
+        assert got["undone"] == got["before"], (
+            "one press of Undo did not take the template back out"
+        )
+
+
+_THE_BOX_REACHES_THE_FOOT = r"""
+const wait = ms => new Promise(go => setTimeout(go, ms));
+if (!document.querySelector('article.record.editing')) { flipEditing(); await wait(200); }
+// Against the footer and not against the filling box: the defect WAS the box,
+// which came out as short as its content and ended exactly where the strip did —
+// so a gap measured to it reads 0 with the bug in place. The footer is pinned to
+// the window by the shell whatever the box does.
+const foot = document.querySelector('footer').getBoundingClientRect();
+const strip = document.getElementById('statusbar').getBoundingClientRect();
+const fields = document.querySelector('.panes > .facts dl').getBoundingClientRect();
+return {
+  gap: Math.round(foot.top - strip.bottom),
+  writing: Math.round(document.querySelector('.bodywrap').getBoundingClientRect().height),
+  short: Math.round(foot.top - fields.bottom),
+};
+"""
+
+
+@pytest.mark.parametrize("where", ["detail", "new"])
+def test_the_writing_box_reaches_the_foot_of_the_window_when_the_fields_do_not(
+    client: TestClient, tmp_path: Path, where: str
+):
+    """jcanton, 2026-10-09, with a screenshot of the create form for a task at a
+    1360px window: "the editor text box in /new doesn't go all the way to the
+    bottom of the page". It stopped 150px short, where the fields beside it did.
+
+    Not the create form's own defect. The shell's filling box carried a
+    `max-height` and no `height`, so the record page's column was as tall as its
+    content up to the window: a pitch's seventeen fields reached the ceiling and
+    took the box with them, and a task's eleven and a note's five did not. A
+    stored note's edit view stopped 750px short.
+
+    `short` is the guard that the fields really do end above the foot: a window
+    the fields fill says nothing about whether the box was ever sized by them.
+    """
+    page = client.get(f"/detail/{TASK}{PLAIN}" if where == "detail" else f"/new{PLAIN}&kind=note")
+    got = measured_in(
+        chrome(), page.text, tmp_path / f"foot-{where}.html", 1440, _THE_BOX_REACHES_THE_FOOT,
+        # Tall, so a stored task's fields — eleven, and their hints — end well
+        # above the foot rather than only just: see `short`.
+        height=1800,
+    )
+
+    assert got["short"] > 200, f"the fields reach the window's foot, so this asks nothing: {got}"
+    assert 0 <= got["gap"] <= 4, (
+        f"the writing box and its status strip stop {got['gap']}px above the footer: {got}"
+    )
+    assert got["writing"] > 1200, f"and the box is not the window's height: {got}"
 
 
 _HISTORY_WITH_NO_ROOM = r"""
@@ -8186,16 +8385,27 @@ const marks = document.getElementById('marks');
 // 2026-08-24 the article is the page's width and everything fits inside it by
 // construction, which would make `past` below the same negative number at every
 // window — a measurement that has stopped asking anything.
-const surface = document.querySelector('article.record .panes');
+//
+// And the column is `.main`, not `.panes`. `.panes` holds the fields as well, so
+// beside them it is 22.5rem wider than anything the bar is drawn in, and a bar
+// running off the end of `.main` — a scrollport, which clips it — measured as
+// comfortably inside. The full-page toggle sat 53px past `.main`'s edge at 1000px
+// for a fortnight under this test, unpressable, and `past` said -267. Measured to
+// the edge of what `.main` paints, `clientWidth`, so a scrollbar is outside it.
+const column = document.querySelector('article.record .panes > .main');
 const buttons = [...marks.querySelectorAll('button.mark')];
-const edge = surface.getBoundingClientRect().right;
+// The toggle is in the bar and not in `#marks`, so it is not one of the buttons
+// counted below; it is the LAST thing on the row, which makes it the first thing
+// a row that is too long pushes out of reach.
+const reach = [...buttons, document.getElementById('editor-size')].filter(Boolean);
+const edge = column.getBoundingClientRect().left + column.clientWidth;
 return {
   width: innerWidth,
   buttons: buttons.length,
   rows: new Set(buttons.map(b => Math.round(b.getBoundingClientRect().top))).size,
-  // How far the rightmost button reaches past the surface it is drawn on.
-  // Negative is inside.
-  past: Math.round(Math.max(...buttons.map(b => b.getBoundingClientRect().right)) - edge),
+  // How far the rightmost control reaches past the column it is drawn in.
+  // Zero is flush; negative is inside.
+  past: Math.round(Math.max(...reach.map(b => b.getBoundingClientRect().right)) - edge),
   // And whether the toolbar is what pushes the page sideways. Compared against
   // the same page's own width rather than against a fixed number: at 390px this
   // application already overflows from the nav shell alone, on every page,
@@ -8208,7 +8418,7 @@ return {
 
 
 @pytest.mark.parametrize("where", ["detail", "note"])
-@pytest.mark.parametrize("width", [500, 1000])
+@pytest.mark.parametrize("width", [500, 1000, 1200])
 def test_every_button_on_the_toolbar_can_be_reached_at_a_window_that_is_not_wide(
     client: TestClient, tmp_path: Path, where: str, width: int
 ):
@@ -8222,21 +8432,24 @@ def test_every_button_on_the_toolbar_can_be_reached_at_a_window_that_is_not_wide
     `article.record`, and the document scrolled sideways to 581px to hold them.
     Four of sixteen controls off the surface, on every page that has an editor.
 
+    **And then the same thing at 1000px, which a window-width query could not
+    see.** The fix for 500 was `@media (max-width: 40rem)`, but the column the bar
+    is drawn in is 600px at a 1000px window — the measure, less the fields beside
+    it — so the query never fired there, and the full-page toggle at the end of
+    the row sat 53px past the column's edge. This test measured against `.panes`,
+    which includes the fields, and passed. The marks take `flex: 1 1 0%` now and
+    wrap inside the room the toggle leaves them, so the row is whatever the
+    column holds and the toggle is always on it.
+
     Two things this asks that a stylesheet cannot answer, and one it must not.
     Where a button ENDS UP is layout, and `tests/cascade.py` skips at-rule
     bodies, so it resolves the wide page and cannot see this one at all. And the
-    comparison is button-right against article-right and never
+    comparison is control-right against column-right and never
     `scrollWidth <= innerWidth`: at 390px every page in this application already
     overflows from the nav shell, with no editor on it, so a test written that
     way would be measuring something else and failing for a reason it did not
-    name.
-
-    A media query and not a container query, proved in the days when the note
-    and issue pages shipped a stylesheet with no `container-type` in it — a
-    container query was patched in and measured byte-identical to no fix at all
-    there. Both parametrised URLs now draw the one merged surface, so the
-    parametrisation survives as reading against creating rather than page
-    against page.
+    name. Both parametrised URLs draw the one merged surface, so the
+    parametrisation is reading against creating rather than page against page.
     """
     page = (
         client.get(f"/detail/{TASK}").text
@@ -8252,26 +8465,25 @@ def test_every_button_on_the_toolbar_can_be_reached_at_a_window_that_is_not_wide
         patience=4800,
     )
 
-    # Seventeen on the record page and sixteen on the create form, which is the
-    # drawings button and its own gate: it joined `FORMATS` on 2026-08-26 and
-    # `attachEditing` withholds it while creating, because nothing is stored yet
-    # for a drawing to be embedded in. The two numbers here are the only place
-    # that gate is asserted against a page actually rendered at a width.
-    expected = 17 if where == "detail" else 16
-    assert got["width"] == width and got["buttons"] == expected, got
-    assert got["past"] < 0, (
-        f"at {width}px the toolbar reaches {got['past']}px past the edge of the surface "
-        f"it is drawn on, so the buttons on the end cannot be pressed: {got['flex']}"
+    # Eighteen on both since 2026-10-09. The create form had sixteen: no
+    # Template, which was a `<select>` above its bar, and no Drawings, which was
+    # withheld there on the grounds that nothing was stored yet for a drawing to
+    # belong to — never what a drawing needs, since it is minted with an id of its
+    # own. jcanton: the create page "is missing the drawings button".
+    assert got["width"] == width and got["buttons"] == 18, got
+    assert got["past"] <= 0, (
+        f"at {width}px the toolbar reaches {got['past']}px past the edge of the column "
+        f"it is drawn in, so the controls on the end cannot be pressed: {got['flex']}"
     )
     assert got["scrollW"] == width, (
         f"the toolbar is pushing the whole page sideways at {width}px: "
         f"{got['scrollW']} against a {width}px window"
     )
-    if width >= 1000:
-        # And the row it has been on since the marks shipped. `flex: none` is
-        # what keeps it there when there IS room: the bar shares a flex line with
-        # a status message up to 97 characters long, and without it the marks
-        # shrink and wrap with the break falling inside a group.
+    if width >= 1200:
+        # And one row where the column holds one: 664px at the default measure,
+        # against the 651 eighteen marks and the toggle need. 1000 is not that
+        # width — its column is 600 — and asserting a row there is what kept the
+        # toggle out of reach.
         assert got["rows"] == 1, (
             f"the toolbar wrapped at {width}px, where it fits: {got['rows']} rows"
         )
