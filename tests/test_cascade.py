@@ -1041,11 +1041,14 @@ def test_the_view_classes_do_not_beat_the_editing_class(detail: Sheet):
     editing = PAGE + [el("article", "record editing view-both"), el("div", "", id="promote")]
     assert detail.value(editing, "display") == "none", says(detail, editing, "display")
 
-    # And the toolbar refuses to shrink, which is what keeps it on one row. It
-    # is the last rule in the last stylesheet, so nothing here is deciding it by
-    # order alone.
+    # And the toolbar takes the row less the full-page toggle, and wraps inside
+    # it. It refused to shrink (`flex: none`) until 2026-10-09, which kept it on
+    # one row by letting it run off the end of a 600px column with the toggle
+    # out of reach; where the row now falls is measured in Chrome by
+    # `test_every_button_on_the_toolbar_can_be_reached_at_a_window_that_is_not_wide`.
+    # No query overrides this any more, so nothing here is deciding it by order.
     marks = PAGE + [el("span", "marks", id="marks")]
-    assert detail.value(marks, "flex") == "none", says(detail, marks, "flex")
+    assert detail.value(marks, "flex") == "1 1 0%", says(detail, marks, "flex")
 
 
 def test_the_handle_between_the_panes_is_a_control_in_one_view_and_nowhere_else(detail: Sheet):

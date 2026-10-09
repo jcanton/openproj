@@ -2090,7 +2090,11 @@ def test_creating_is_the_detail_page_with_nothing_in_it(new_page: str, client: T
     for shape in (
         '<dl id="facts">',
         'class="field title-field"',
-        'class="field bodybar"',
+        # The toolbar's row, which both pages draw. Plain `field bodybar` was
+        # the create form's template picker until 2026-10-09, when the picker
+        # became a button on that row; on the record page it is the seat bar,
+        # which the create form has no room for.
+        'class="field bodybar markbar"',
         'class="field body-field"',
         'id="preview"',
     ):

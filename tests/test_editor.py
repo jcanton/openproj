@@ -2109,7 +2109,9 @@ def test_the_drawing_button_opens_a_menu_and_a_press_says_what_was_pressed(
     # This asserted the opposite until then — `outsideMarks == 16`, "the menu is
     # page chrome, not a seventeenth FORMATS mark" — which was a real argument
     # about what the control IS and simply not an argument about where it goes.
-    assert got["marks"] == 17, "the drawings button is not in the toolbar at all"
+    # Eighteen since Template joined the bar on 2026-10-09; what this counts is
+    # that Drawings is one of the marks, not how many marks there are.
+    assert got["marks"] == 18, "the drawings button is not in the toolbar at all"
     assert got["beside"].startswith("Image"), (
         "the drawings button is in the bar but not beside the figure button: it "
         f"follows {got['beside']!r}"
