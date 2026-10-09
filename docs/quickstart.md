@@ -132,6 +132,10 @@ comments that never render: Problem, Appetite, Solution, Rabbit holes, No-gos, F
 the headings of a pitch note in a wiki, kept as the team it was tailored for already wrote them, so
 a pitch drafted in either place is the same document.
 
+The **Template** button on the editor's toolbar, beside undo and redo, offers every kind's template
+on any record. Over an empty body, or one that is still a template, it replaces it; over anything
+you have written it goes on the end, and one undo takes it back out.
+
 Write prose; nothing validates it. Three headings are read rather than judged:
 
 - `## Progress` on a **task** is its checklist, and so is `## Solution` — a pitch writes the work it

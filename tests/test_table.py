@@ -2090,7 +2090,11 @@ def test_creating_is_the_detail_page_with_nothing_in_it(new_page: str, client: T
     for shape in (
         '<dl id="facts">',
         'class="field title-field"',
-        'class="field bodybar"',
+        # The toolbar's row, which both pages draw. Plain `field bodybar` was
+        # the create form's template picker until 2026-10-09, when the picker
+        # became a button on that row; on the record page it is the seat bar,
+        # which the create form has no room for.
+        'class="field bodybar markbar"',
         'class="field body-field"',
         'id="preview"',
     ):
@@ -2156,23 +2160,13 @@ def test_a_new_pitch_starts_from_the_teams_own_shaping_template(new_page: str):
     # renderer drops them rather than printing them at the reader.
     assert "<!--" in pitch
 
-    assert '<select id="template">' in new_page
+    # The menu that offers it is drawn by script, and is driven in Chrome by
+    # `test_a_template_goes_on_the_end_of_a_document_and_over_an_untouched_one`.
     assert "const TEMPLATES = " in new_page
     # Through `|tojson`, so the `<` opening every comment reaches the script block
     # as `\\u003c` rather than as markup the page's own tokeniser can read.
     assert "\\u003c!-- The raw idea" in new_page
     assert "<!-- The raw idea" not in new_page
-
-
-def test_a_template_never_overwrites_something_somebody_typed(new_page: str):
-    """Switching kind switches template, because picking "pitch" and getting a
-    task's headings is the wrong default in the one place the tool can teach the
-    shape of a pitch. Once the box holds anything but a template, it is theirs."""
-    apply_fn = re.search(r"function applyTemplate\(name\) \{.*?\n\}", new_page, re.S).group(0)
-    assert "if (!untouched())" in apply_fn
-    assert "the body has been edited" in apply_fn
-    untouched = re.search(r"function untouched\(\) \{.*?\n\}", new_page, re.S).group(0)
-    assert "Object.values(TEMPLATES).some" in untouched
 
 
 def test_every_reference_on_the_create_form_is_offered_and_not_remembered(new_page: str):

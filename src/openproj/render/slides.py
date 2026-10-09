@@ -38,7 +38,7 @@ from markupsafe import Markup
 from ..index import Index
 from ..model import Record, lead_text
 from ..vendor import _ace
-from .controls import _combobox_html
+from .controls import _combobox_html, _offered_templates
 from .deck import _DECK_STYLE, _deck_view, _said, _seeded, choosable, slide_html
 from .detail import _body_html, _fact_rows, _progress_view, _slidebar
 from .editor import _ACE_SURFACE, _ace_wanted
@@ -973,9 +973,11 @@ for (const grip of PANES.querySelectorAll(':scope > .pgrip')) {
 // `tests/test_editor.py`.
 if (SURFACE) {
   attachUploads(SURFACE, document.getElementById('upload'));
-  // `false`: a slide is edited on a record that already exists, so there is
-  // always something for a drawing to be embedded in.
-  attachEditing(SURFACE, document.getElementById('marks'), false);
+  // The same templates the record page offers, because this is a view of that
+  // record's body and the bar over it is that page's bar — jcanton, 2026-09-21:
+  // "make the slide editing view conform to the edit/side-by-side views in all
+  // aspects".
+  attachEditing(SURFACE, document.getElementById('marks'), {{ templates|tojson }});
   // After `attachEditing`, which is what draws the button this wires, and into
   // `#state` rather than `#upload` — see the record page's own copy of this pair
   // for both.
@@ -1101,6 +1103,7 @@ def render_slide_editor(
             e=view,
             links=links,
             editable=editable,
+            templates=_offered_templates(index) if editable else [],
         ),
         _DETAIL_STYLE + _DECK_STYLE + _SLIDE_STYLE,
         links,

@@ -14,8 +14,11 @@ from .tokens import (
     DRAWING_ART,
     DRAWING_SIZE_MARKS,
     HISTORY_MARKS,
+    KINDS,
     PEOPLE_FIELDS,
     PRIORITIES,
+    TEMPLATE_ART,
+    TEMPLATES,
     _human,
     _read_date,
 )
@@ -1109,6 +1112,16 @@ const FORMATS = [
   {key: 'z', label: 'Undo', title: 'Undo  ⌘Z', history: 'undo'},
   {key: 'z', shift: true, label: 'Redo', title: 'Redo  ⌘⇧Z', history: 'redo'},
 
+  // The template menu, a group of one between the history and the marks —
+  // jcanton, 2026-10-09: "we can move the template selector as a button on top
+  // of the editor, between undo/redo and the Bold button, and have it present
+  // also in the /detail/editing page". It was a `<select>` above the toolbar on
+  // the create form only, so a record that already existed could never be given
+  // a template, and the create form's bar was a row taller than the record
+  // page's for a control that is a toolbar's job. `label` is the accessible
+  // name, as on the history pair: the button wears `TEMPLATE_ART`.
+  {group: true, label: 'Template', title: 'Template', template: true},
+
   {key: 'b', group: true, label: 'B', title: 'Bold  ⌘B', wrap: '**'},
   {key: 'i', label: 'I', title: 'Italic  ⌘I', wrap: '*', style: 'font-style: italic'},
   // ⌘⇧X and not ⌘⇧S: the shortcut is matched on `event.key`, and every shifted
@@ -1181,6 +1194,9 @@ const DRAW_ART = {{ draw_art|tojson }};
 
 // The size toggle's pair, arriving the same way — one shown at a time.
 const DRAW_SIZE_ART = {{ size_art|tojson }};
+
+// And the template button's, the same way again.
+const TEMPLATE_ART = {{ template_art|tojson }};
 
 // The room's undo history, once there is a room wired to this box. Declared here
 // and assigned in `_COEDIT`, which is a separate `<script>` inlined AFTER this
@@ -2102,7 +2118,7 @@ function attachStatus(surface, bar) {
   return {refresh};
 }
 
-function attachEditing(surface, bar, creating) {
+function attachEditing(surface, bar, templates) {
   const area = surface.el;
   // The two history buttons, so their disabled state can be kept honest. Empty
   // on a bar that was never drawn, which is what makes `syncHistory` a no-op on
@@ -2111,6 +2127,10 @@ function attachEditing(surface, bar, creating) {
   const historyButtons = [];
   if (bar) {
     for (const mark of FORMATS) {
+      // Before the rule and not after it: the template button is a group of one,
+      // and a page with nothing to offer that skipped it below the rule would
+      // draw two rules side by side with no button between them.
+      if (mark.template && !templates?.length) continue;
       if (mark.group) {
         // A rule and not a gap. Three groups of adjacent buttons say "these do
         // the same kind of thing" only if the boundary is visible; spacing
@@ -2149,6 +2169,21 @@ function attachEditing(surface, bar, creating) {
         // thirteen of fourteen buttons on this bar were once mouse-only.
         button.onmousedown = event => { event.preventDefault(); step(mark.history); };
         button.onclick = event => { if (event.detail === 0) step(mark.history); };
+      } else if (mark.template) {
+        // A menu of the plan's templates. Named by class for the reason the
+        // drawings button below gives: it writes nothing when PRESSED, only
+        // when something in its menu is chosen, and the sweep that asserts
+        // every `.mark` writes markdown has to be able to tell it apart.
+        //
+        // `templates` is a PARAMETER for the reason the old `creating` flag in
+        // this slot was one: the list is each page's own constant, declared in
+        // a different `<script>` from this one, and the table and cycle pages
+        // inline this block with no such name at all.
+        button.classList.add('tpl');
+        button.id = 'template';
+        button.innerHTML = TEMPLATE_ART;
+        button.setAttribute('aria-label', mark.label);
+        attachTemplates(surface, button, templates);
       } else if (mark.draw) {
         // The one button in this bar that neither writes markdown nor moves a
         // stack: it opens the drawings menu, and `attachDrawing` — which runs
@@ -2161,22 +2196,15 @@ function attachEditing(surface, bar, creating) {
         // markdown, so a button that writes none has to be tellable from the
         // ones that do by something other than the words on it.
         //
-        // Withheld from the create form, which has no record for a drawing to
-        // belong to yet — the same gate the button carried as a `not creating`
-        // guard in the template while it was rendered on the server, moved here
-        // with it. Slide is absent there on the same grounds. (Written as prose
-        // rather than by quoting the Jinja tag: this file IS a Jinja template,
-        // and the tag quoted inside a JS comment is a tag Jinja opens.)
-        //
-        // A PARAMETER and not the page's own `CREATING`: that `const` is
-        // declared in `detail.py`'s script, which is a different `<script>`
-        // from this one, and the slide editor — the other page that calls this
-        // — declares no such name at all. Reading it from here would be a
-        // `ReferenceError` on one of the two pages, and `typeof` is not the
-        // hatch it looks like: a `const` in its temporal dead zone THROWS on
-        // `typeof`, which is the trap `COEDIT_HISTORY`'s own comment above
-        // already records this file falling into once.
-        if (creating) continue;
+        // **On the create form too**, since 2026-10-09 — jcanton: the create
+        // page "is missing the drawings button". It was withheld there on the
+        // grounds that nothing was stored yet for a drawing to belong to, and
+        // that was never what a drawing needs: `POST /api/drawing` mints the
+        // drawing its own id and commits `drawings/<id>.png` without asking
+        // which record will cite it, exactly as the Image button beside it
+        // commits `assets/…` from the same form and always has. A form abandoned
+        // after drawing leaves a PNG nothing cites, which is what an abandoned
+        // upload has always left.
         button.classList.add('draw');
         button.id = 'drawing';
         button.innerHTML = DRAW_ART;
@@ -3144,23 +3172,28 @@ function refreshDrawing(path) {
 // seventeenth `FORMATS` entry, because a menu is page chrome and not a
 // formatting mark), and nothing outside this function builds the popover,
 // fills it or reads what was pressed in it.
-function attachDrawing(surface, status) {
-  const button = document.getElementById('drawing');
-  // Withheld from a reader the server would refuse a write from, on both pages
-  // that draw it — a page with no button is the ordinary case, not a null this
-  // wiring could walk into.
-  if (!button) return;
-
+// **A few words under the button that opens them.** The drawings menu and the
+// template menu are the same control, and this is the one copy of it: where it
+// hangs, how it stays on the screen, what closes it and where the keyboard goes
+// afterwards. The drawings menu had it to itself until the template menu came,
+// and each of those was a defect once in a menu that lacked it — the menu that
+// ran off the right of a phone, and the one that never really closed — so a
+// second menu written beside the first is a second place for both to come back.
+//
+// `rows` is asked every time the menu opens, never at setup, so nothing here can
+// drift from a body somebody has just typed into. Each row is `{text, choose}`;
+// a press closes the menu, hands the keyboard back to the button, and only then
+// runs `choose` — which is free to move the focus somewhere else again.
+function menuUnder(button, className, label, rows) {
   const menu = document.createElement('div');
-  menu.className = 'drawmenu';
+  menu.className = className;
   menu.hidden = true;
   menu.setAttribute('role', 'menu');
-  menu.setAttribute('aria-label', 'Drawings in this document');
+  menu.setAttribute('aria-label', label);
 
   // Under the button, in the page's coordinates — parked on the body for the
   // reason every list `park` carries one is: an ancestor with `overflow` would
-  // otherwise clip it, and nothing about this button's home in `.editbar`
-  // promises there is none.
+  // otherwise clip it, and nothing about a toolbar's home promises there is none.
   function place() {
     const at = button.getBoundingClientRect();
     // Kept on the screen. Hung from the button's left edge, the menu opened
@@ -3181,33 +3214,23 @@ function attachDrawing(surface, status) {
     button.setAttribute('aria-expanded', 'false');
   }
 
-  // Recomputed every time the menu opens: no stored state, and nothing this
-  // popover owns can drift from a body somebody just finished typing a
-  // drawing's markdown into by hand.
   function open() {
-    const rows = drawingsIn(surface.text());
-    menu.replaceChildren(...[null, ...rows].map(entry => {
+    menu.replaceChildren(...rows().map(row => {
       const item = document.createElement('button');
       item.type = 'button';
       item.setAttribute('role', 'menuitem');
-      item.textContent = entry ? entry.id : '+ drawing';
-      item.onclick = () => choose(entry);
+      item.textContent = row.text;
+      item.onclick = () => {
+        close();
+        button.focus();
+        row.choose();
+      };
       return item;
     }));
     menu.hidden = false;
     button.setAttribute('aria-expanded', 'true');
     place();
     menu.querySelector('button').focus();
-    announce(rows.length
-      ? `${rows.length} drawing${rows.length === 1 ? '' : 's'} in this document. `
-        + '+ drawing to start another.'
-      : 'No drawings in this document yet. + drawing to start one.');
-  }
-
-  function choose(entry) {
-    close();
-    button.focus();
-    surface.el.dispatchEvent(new CustomEvent('openproj:draw', {detail: entry}));
   }
 
   button.setAttribute('aria-haspopup', 'true');
@@ -3226,13 +3249,86 @@ function attachDrawing(surface, status) {
     close();
     button.focus();
   });
+}
+
+function attachDrawing(surface, status) {
+  const button = document.getElementById('drawing');
+  // Withheld from a reader the server would refuse a write from, on both pages
+  // that draw it — a page with no button is the ordinary case, not a null this
+  // wiring could walk into.
+  if (!button) return;
+
+  // Recomputed every time the menu opens: no stored state, and nothing this
+  // popover owns can drift from a body somebody just finished typing a
+  // drawing's markdown into by hand. `null` is "+ drawing", first.
+  menuUnder(button, 'drawmenu', 'Drawings in this document', () => {
+    const found = drawingsIn(surface.text());
+    announce(found.length
+      ? `${found.length} drawing${found.length === 1 ? '' : 's'} in this document. `
+        + '+ drawing to start another.'
+      : 'No drawings in this document yet. + drawing to start one.');
+    return [null, ...found].map(entry => ({
+      text: entry ? entry.id : '+ drawing',
+      choose: () => surface.el.dispatchEvent(new CustomEvent('openproj:draw', {detail: entry})),
+    }));
+  });
 
   // `openDrawing` owns everything from here: the fetch-on-press loader, the
   // popup, both save paths. `entry` is the row that was pressed, or `null`
-  // for "+ drawing" — the same detail `choose` dispatched above.
+  // for "+ drawing" — the same detail the menu dispatched above.
   surface.el.addEventListener('openproj:draw', event => {
     openDrawing(surface, status, event.detail);
   });
+}
+
+// Whether a body is still one nobody has written in: empty, or one of the plan's
+// templates word for word. The create form's kind switch asks it before it swaps
+// one template for another, and the Template menu asks it before it decides
+// between replacing the box and adding to the end of it — the same question, so
+// one answer, rather than the two copies of it that would disagree about
+// whitespace the first time somebody changed one.
+function untouchedBody(text, templates) {
+  const said = text.trim();
+  return !said || templates.some(template => template.text.trim() === said);
+}
+
+// **A template goes in at the end of what is there**, and in place of it only
+// when what is there is nobody's writing — jcanton, 2026-10-09: "in those where
+// the body already contains text the template can be added at the bottom".
+//
+// A person's edit and not the page's: a plain `splice`, never under `apply`, so
+// it is one step on whichever undo stack owns the box, it fires the `input` the
+// gutter and the status strip redraw on, and in a room it reaches everybody else
+// as typing — which is what it is. `apply` is the create form's kind switch,
+// where the page swaps a template it put there itself.
+//
+// Separated from the text above it by exactly one blank line, however the body
+// happened to end: a heading that runs on from the last line of a paragraph is
+// not a heading in markdown. The caret lands at the start of what arrived, so
+// the box scrolls to it rather than leaving it below the fold.
+function insertTemplate(surface, template, templates) {
+  const text = surface.text();
+  if (untouchedBody(text, templates)) {
+    surface.splice(0, text.length, template.text);
+    surface.setCaret(0);
+    return false;
+  }
+  const kept = text.replace(/\s+$/, '');
+  surface.splice(kept.length, text.length, '\n\n' + template.text);
+  surface.setCaret(kept.length + 2);
+  return true;
+}
+
+function attachTemplates(surface, button, templates) {
+  menuUnder(button, 'tplmenu', 'Templates', () => templates.map(template => ({
+    text: template.label,
+    choose: () => {
+      const name = template.label.toLowerCase();
+      announce(insertTemplate(surface, template, templates)
+        ? `The ${name} template is added at the end of the document.`
+        : `The document is the ${name} template now.`);
+    },
+  })));
 }
 
 // --- what is open right now, as against what the corpus cites --------------
@@ -4280,6 +4376,28 @@ def _facets_html(
     )
 
 
+def _offered_templates(index: Index) -> list[dict[str, str]]:
+    """What the editor's Template button offers: one body per kind that has one.
+
+    Only the kinds this plan has switched on, off `index.kinds` — the set the
+    create form's kind picker is drawn from. A template is named by its kind, so
+    offering a product's skeleton on a plan with products switched off is a menu
+    naming a thing that plan does not have. `blank` is not one: inserting nothing
+    is not a choice a menu should offer, and the empty body it stood for on the
+    create form is what switching to a kind with no template now gives.
+
+    One list for both pages that draw the bar — the record page (and with it the
+    create form) and the slide editor — handed to `attachEditing` by each. Not
+    shipped inside the shared block below: the table and the cycle page inline
+    that block too, and draw no bar for the list to be offered from.
+    """
+    return [
+        {"kind": kind, "label": _human(kind), "text": TEMPLATES[kind]}
+        for kind in KINDS
+        if kind in index.kinds and TEMPLATES.get(kind)
+    ]
+
+
 def _combobox_html(index: Index | None, linkable: bool = False, live: bool = False) -> Markup:
     """The suggestion data and the widget that filters it, for any page with inputs.
 
@@ -4308,4 +4426,5 @@ def _combobox_html(index: Index | None, linkable: bool = False, live: bool = Fal
         history_art=HISTORY_MARKS,
         draw_art=DRAWING_ART,
         size_art=DRAWING_SIZE_MARKS,
+        template_art=TEMPLATE_ART,
     )

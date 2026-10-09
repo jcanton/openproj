@@ -23,7 +23,7 @@ from ..model import (
 )
 from ..vendor import _ace, _yjs
 from .calendar import _CALENDAR_STYLE, _calendar_js
-from .controls import _REQUIRED_JS, _combobox_html, _control_html
+from .controls import _REQUIRED_JS, _combobox_html, _control_html, _offered_templates
 from .editor import (
     _ACE_SURFACE,
     _COEDIT,
@@ -47,7 +47,6 @@ from .tokens import (
     PRIORITY_GLYPH,
     STATUS_TEACH,
     STATUSES,
-    TEMPLATES,
     _editable_for,
     _human,
     _percent,
@@ -1691,24 +1690,6 @@ _DETAIL = """
         <span id="together" class="together" role="status" aria-live="polite"></span>
       </p>
       {%- endif %}
-      {% if creating %}
-      {#- The template is offered, never imposed: it fills an untouched box and
-          refuses to overwrite one somebody has typed in. `template` and not
-          `start from`: the label names the control, and the sentence it was
-          part of ended in the option list. -#}
-      <p class="field bodybar">
-        <label class="tplpick">template
-          <select id="template">
-            <option value="pitch">the shaping template</option>
-            <option value="task">a task</option>
-            <option value="project">a project</option>
-            <option value="product">a product</option>
-            <option value="blank">nothing</option>
-          </select>
-        </label>
-        <span class="hint" id="tplnote" role="status" aria-live="polite"></span>
-      </p>
-      {% endif %}
       {#- The hint that was here — "paste or drop an image to put it in the
           plan" — is gone, and it is the Image button that replaced it: a
           sentence describing a gesture is what a toolbar puts in a control. It
@@ -2104,7 +2085,11 @@ const TITLED = document.querySelector('.title-field');
 // shared block. Nothing below this line touches `.value` or a selection.
 const SURFACE = bodySurface(BODY);
 attachUploads(SURFACE, document.getElementById('upload'));
-attachEditing(SURFACE, document.getElementById('marks'), CREATING);
+// The bodies the toolbar's Template button offers — `_offered_templates`, one
+// per kind this plan has switched on. Top level and not inside the create
+// form's block below, because the record page offers them too.
+const TEMPLATES = {{ templates|tojson }};
+attachEditing(SURFACE, document.getElementById('marks'), TEMPLATES);
 // **`#state`, not `#upload`.** jcanton, 2026-08-26, with a screenshot of the
 // edit-only view: "it's the 'saved' message, which in side-by-side prints on one
 // line perfectly well but in the normal edit view doesn't. should we move this
@@ -2271,44 +2256,28 @@ if (CREATING) {
   }
   showKind();
 
-  // The body a new record starts from. Switching kind switches template, but
-  // only while the box is still one of ours: once somebody has typed, the box
-  // is theirs — the template never changes underneath a sentence, and the
-  // picker says so rather than appearing to do nothing.
-  const TEMPLATES = {{ templates|tojson }};
-  const TPL = document.getElementById('template');
-  // Named for the element it addresses — the template picker's own message
-  // line — and never anything ending in STATE: the page has a real `#state`
-  // region beside it, every write to which must go through `announce()`.
-  const TPLNOTE = document.getElementById('tplnote');
-  function untouched() {
-    return Object.values(TEMPLATES).some(text => text.trim() === SURFACE.text().trim());
-  }
-  function applyTemplate(name) {
-    if (!untouched()) {
-      TPLNOTE.textContent = 'the body has been edited — clear it to start from a template';
-      return false;
-    }
-    // A whole-document replacement, said in those words and made once. `apply`
-    // marks it as the page writing rather than a person typing, and the event
-    // tells the layers drawn beside the box, because `apply` deliberately
-    // fires no `input` — without it, choosing `blank` left twenty-one line
-    // numbers down the side of an empty box.
-    SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, TEMPLATES[name] ?? ''));
+  // The body a new record starts from: its kind's template, or nothing for a
+  // kind that has none. Switching kind switches it, but only while the box is
+  // still one of ours — `untouchedBody`, the question the Template button asks
+  // too. Once somebody has typed, the box is theirs and the template never
+  // changes underneath a sentence; the Template button is how to add one then.
+  //
+  // A whole-document replacement, made under `apply` because it is the page
+  // swapping something it put there itself, and the event tells the layers
+  // drawn beside the box, because `apply` deliberately fires no `input` —
+  // without it, a switch to a kind with no template left twenty-one line
+  // numbers down the side of an empty box.
+  function startFrom(kind) {
+    if (!untouchedBody(SURFACE.text(), TEMPLATES)) return;
+    const template = TEMPLATES.find(one => one.kind === kind);
+    SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, template ? template.text : ''));
     dispatchEvent(new Event('openproj:editing'));
-    TPLNOTE.textContent = '';
-    return true;
   }
-  TPL.onchange = () => { applyTemplate(TPL.value); };
   KIND.onchange = () => {
     showKind();
-    if (untouched() && TEMPLATES[KIND.value] !== undefined) {
-      TPL.value = KIND.value;
-      applyTemplate(KIND.value);
-    }
+    startFrom(KIND.value);
   };
-  TPL.value = TEMPLATES[KIND.value] !== undefined ? KIND.value : 'blank';
-  applyTemplate(TPL.value);
+  startFrom(KIND.value);
 }
 
 // `showEditing` and not `show`: the detail page's hash router declares a `show`
@@ -4380,7 +4349,9 @@ def render_detail(
         # this plan has, because each one leads to a write the server refuses for
         # a kind that is off. `index.kinds` is `Config.allows`'s set, carried.
         kinds=tuple(kind for kind in KINDS if kind in index.kinds),
-        templates=TEMPLATES if creating else {},
+        # Wherever the form is, which is wherever the Template button is: the
+        # record page offers the same bodies the create form starts from.
+        templates=_offered_templates(index) if base_commit is not None else [],
         links=links,
         editable=base_commit is not None,
         # The Delete control asks for both, and `editable` alone is not enough.

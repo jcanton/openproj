@@ -482,56 +482,28 @@ _SUGGEST_STYLE = """
 .suggest li { padding: .25rem .5rem; cursor: pointer; }
 .suggest li.on { background: var(--accent); color: var(--on-accent); }
 textarea.dropping { outline: 2px dashed var(--accent); outline-offset: -2px; }
-/* `flex: none`, and it is the whole of what keeps the toolbar on one row. The
-   bar is a flex line the toolbar shares with a status message, and a flex item's
-   default `min-width: auto` still lets it shrink to its content — so the marks
-   resolved to 430.9px where the fourteen buttons and their two rules need 482.8,
-   and wrapped, with the break falling inside the third group and no rule in
-   front of the two buttons that landed on the second row. Measured in Chrome at
-   1000, 1200, 1440 and 1920 CSS px: two rows at every one of them. The message
-   beside it takes the shrink instead, which is the right way round — it is a
-   sentence and it can wrap. `flex-wrap` stays as the answer to a window narrower
-   than the toolbar itself, where wrapping beats a scrollbar. */
+/* **The marks take the row, less what the full-page toggle needs, and wrap
+   inside it.** `flex: 1 1 0%`: a basis of nothing and all the growth, so the
+   line the bar is laid out on always has room for the toggle beside it, and the
+   marks get everything else — one row where that is enough, and wrapped inside
+   their own box where it is not.
+
+   It was `flex: none`, and before that the default. The default let the status
+   message beside the marks share the shrink, so a 97-character upload message
+   wrapped them at every width from 1000 to 1920 with the break inside a group;
+   `flex: none` stopped that by refusing to shrink at all, with a `max-width:
+   40rem` query to give the shrink back on a phone. But the column the bar is
+   drawn in is not the window: beside the fields it is the measure less 22.5rem,
+   600px in a 1000px window, and the query never fired there. The marks ran off
+   the end of the column, which is a scrollport, so the full-page toggle — the
+   last thing on the row — sat 53px past its edge and could not be pressed. The
+   Template button, 2026-10-09, made that the case at the default measure too.
+
+   The message no longer shares the row at all — see `.markbar > .hint` — so
+   nothing but the toggle competes with the marks for it, and the toggle is a
+   fixed 30px. */
 .marks { display: inline-flex; gap: .15rem; align-items: stretch; flex-wrap: wrap;
-         flex: none; }
-/* And the window the toolbar does not fit in, where `flex: none` is the wrong
-   answer and `flex-wrap` above cannot engage without this.
-
-   `0 0 auto` pins the bar at its max-content width whatever the window, so the
-   wrap never happens: measured in Chrome at 500px on /detail while editing, on
-   /new and on the since-deleted /note/new and /issue/new, the Link, Image,
-   Table and Horizontal-rule
-   buttons sat 101px past the right edge of `article.record` — off the surface,
-   reachable only by scrolling the whole document sideways, which is also what
-   took that page's `scrollWidth` to 581.
-
-   **`min-width: 0` is not needed here, and the fix this was written from said it
-   was the load-bearing half.** Measured both ways: `flex: 0 1 auto` alone gives
-   the same four widths the same answer. A flex item's automatic minimum size is
-   its MIN-CONTENT size, and the min-content size of a container that wraps is
-   its widest single item — one button, about 40px — not the whole bar. The
-   declaration would be inert, and an inert declaration under a comment calling
-   it load-bearing is the next reader's wasted hour.
-
-   `@media` and not `@container`, and that is measurement rather than taste: this
-   rule was proved at eight widths as a media query, in the days when the issue
-   and note pages loaded a stylesheet with no `container-type` in it and a
-   container query measured byte-identical to no fix at all on /note/new. Those
-   pages are gone and every editor now sits in `.panes`, which IS a container
-   (it was `article.record` until 2026-08-24, when the measure moved down to the
-   panes so the header could span the page) — but re-cutting this as a container
-   query is a re-measurement at eight widths on the merged page, not an edit.
-
-   40rem and not the 34rem this was first written for: that number was measured
-   against fourteen buttons needing 482.8px, and the history group made it
-   sixteen needing 561px. Swept in Chrome at eight widths on both surfaces:
-   unpatched, the overhang is 101px at 500, 41px at 560 and gone by 620; patched,
-   the bar is on two rows to 616 and back on one at 624. The query has to reach
-   past both numbers, and between 624 and 640 it applies and does nothing —
-   `flex-shrink` only shrinks an item there is not room for. */
-@media (max-width: 40rem) {
-  .marks { flex: 0 1 auto; }
-}
+         flex: 1 1 0%; }
 /* The line between one group of marks and the next. `align-self: stretch` so it
    is the height of the buttons rather than of the text inside them. */
 .marks .sep { width: 1px; background: var(--line); margin: 0 .3rem; align-self: stretch; }
@@ -543,8 +515,10 @@ textarea.dropping { outline: 2px dashed var(--accent); outline-offset: -2px; }
    above a document; `var(--line)` and `var(--muted)` in place of the default's
    `--line-strong` and `--fg` are the same argument in ink — sixteen controls at
    full contrast would shout over the writing they sit on. */
+/* 1.8rem and not 1.9: eighteen buttons, the toggle and four rules in the 664px
+   the default measure gives the column, on one row. At 1.9 they needed 680. */
 button.mark {
-  font-size: 12px; line-height: 1; min-width: 1.9rem; padding: .3rem .35rem;
+  font-size: 12px; line-height: 1; min-width: 1.8rem; padding: .3rem .35rem;
   border-color: var(--line); color: var(--muted);
 }
 button.mark:hover { border-color: var(--accent); color: var(--accent); }
@@ -641,7 +615,17 @@ _EDITING_STYLE = """
 .bodybar { display: none; gap: .6rem; align-items: baseline; margin: 1rem 0 .3rem; }
 /* The second row sits under the first rather than a paragraph's worth away: they
    are two halves of one bar, and the box they belong to is below both. */
-.bodybar.markbar { margin-top: .25rem; }
+.bodybar.markbar { margin-top: .25rem; flex-wrap: wrap; }
+/* **What the bar says goes under it, never beside it.** An upload's progress
+   and the gutter's note are sentences, the longest 97 characters, and beside
+   the marks they either squeezed them onto two rows or were squeezed to nothing
+   themselves. A line of their own, after the toggle in `order`, and none at all
+   while they are empty — which is nearly always, and an empty flex item still
+   costs a gap either side. `overflow-wrap: anywhere` because the longest of
+   them is one word: `assets/` and sixty-four hex digits, 550px on a 460px
+   column. */
+.markbar > .hint { order: 2; flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
+.markbar > .hint:empty { display: none; }
 .record.editing .bodybar { display: flex; }
 .record.editing .field[hidden] { display: none; }
 /* One declaration for the box and for the numbers beside it. Written twice, the
@@ -725,10 +709,6 @@ button.stat.pick:hover { color: var(--accent); }
 @media """ + PHONE + """ {
   .statusbar .keymap { display: none; }
   .marks .sep { display: none; }
-  /* The bar's two hints (an upload's progress, the gutter's note) are empty
-     nearly always, and an empty flex item still takes a gap either side: 20px
-     of a 350px row, which is what left the marks one button short of a row. */
-  .markbar > .hint:empty { display: none; }
 }
 .bodywrap { position: relative; }
 /* Three states of one thing, drawn as one control: adjacent segments inside a
@@ -1072,7 +1052,7 @@ article.record.editing.whole-page .bodysplit { min-height: 0; }
    alignment of its own; `stretch` matched `#marks` exactly on one row and, on a
    phone where `#marks` wraps to three, drew a bordered box three rows tall. */
 .markbar .grow {
-  margin-left: auto; align-self: flex-start; flex: none;
+  order: 1; margin-left: auto; align-self: flex-start; flex: none;
   display: inline-flex; align-items: center; justify-content: center; line-height: 0;
 }
 .markbar .grow svg { display: block; width: 13px; height: 13px; }
@@ -1314,8 +1294,28 @@ article.record {
    in Chrome both ways on the same page. `hidden` is what makes the article the
    height of the box, which is the whole point of the frame; what scrolls is
    named below, one level in, and the frame clips nothing that is not already
-   reachable there. */
+   reachable there.
+
+   **`height`, and not only the shell's `max-height`.** A ceiling is all every
+   other page's box needs, because there the box is a scrollport and a short page
+   is meant to end where its content ends. Here the box is a column whose last
+   child grows, and a column with a ceiling and no height is as tall as what is
+   in it: `main` is a block, so nothing above stretches this box to the room the
+   shell measured. With seventeen fields beside the document the facts were
+   taller than the window and hit the ceiling, so the writing box reached the
+   footer and nobody saw the difference. A task has eleven, a note five — and
+   jcanton, 2026-10-09, with a screenshot of the create form for a task at
+   1360px: "the editor text box in /new doesn't go all the way to the bottom of
+   the page". The box stopped where the facts did, 150px above the footer, and
+   a stored note's edit view stopped 750px above it.
+
+   While EDITING, and not while reading. Reading has no box to fill — what grows
+   there is a rendered document, which ends where it ends — and a short note's
+   Promote panel, which follows the form, went from under its last paragraph to
+   the foot of the window 700px below it. `.editing` is the class the view
+   machine sets for both session views and the create form wears from birth. */
 .pagefill:has(> article.record) { display: flex; flex-direction: column; overflow: hidden; }
+.pagefill:has(> article.record.editing) { height: var(--room); }
 .pagefill > .toc { flex: 1; min-height: 0; overflow: auto; }
 article.record { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 /* And no 3rem under it. That margin is `article.record`'s own — quiet between
@@ -1626,26 +1626,34 @@ article.record .toolrow .commitbar {
    `fill="currentColor"`, carried over from the bundle rather than reworked
    into a stroke — which is why it can take the same box as a stroked icon
    without looking heavier than one. */
-.marks .draw svg { display: block; width: 13px; height: 13px; }
-.marks .draw { display: inline-flex; align-items: center; justify-content: center;
-               line-height: 0; }
+/* The template button's page is the same box for the same reason, and so the
+   same rule rather than a second copy of it that could disagree by a pixel. */
+.marks .draw svg, .marks .tpl svg { display: block; width: 13px; height: 13px; }
+.marks .draw, .marks .tpl { display: inline-flex; align-items: center;
+                            justify-content: center; line-height: 0; }
 /* The menu `attachDrawing` opens under the button, parked on the body the way
    every list here is. Not `.suggest`: that class lives in `_SUGGEST_STYLE`,
    which `render_slide_editor` — the other page this button draws on — never
    loads, and the button is wired on both. Self-contained here, in the one
    sheet both pages DO load, rather than a second stylesheet added to one of
-   them for four rules. */
-.drawmenu {
+   them for four rules.
+
+   `.tplmenu` is the template button's, built by the same `menuUnder` and drawn
+   by the same rules. A class of its own rather than a second `.drawmenu`,
+   because "the drawings menu" is a thing a test or a reader finds by asking for
+   that class, and the first of two would be whichever was parked first. */
+.drawmenu, .tplmenu {
   position: absolute; z-index: 20; min-width: 10rem; max-height: 16rem;
   overflow-y: auto; display: flex; flex-direction: column; padding: .25rem 0;
   background: var(--surface); border: 1px solid var(--line-strong);
   border-radius: 3px; box-shadow: 0 4px 14px rgba(0,0,0,.12); font-size: 13px;
 }
-.drawmenu button {
+.drawmenu button, .tplmenu button {
   display: block; width: 100%; text-align: left; font: inherit; color: inherit;
   background: none; border: none; padding: .35rem .75rem; cursor: pointer;
 }
-.drawmenu button:hover, .drawmenu button:focus-visible {
+.drawmenu button:hover, .drawmenu button:focus-visible,
+.tplmenu button:hover, .tplmenu button:focus-visible {
   background: var(--accent); color: var(--on-accent); outline: none;
 }
 /* `[hidden]` written out explicitly, exactly as `.drawhead .drawask[hidden]`
@@ -1660,7 +1668,7 @@ article.record .toolrow .commitbar {
    collapses to its own padding and border and no more. Measured in Chrome at
    1200px — open 162x71, closed 162x10 — which is the thin bordered bar under
    the button in jcanton's screenshot, not a rendering artefact. */
-.drawmenu[hidden] { display: none; }
+.drawmenu[hidden], .tplmenu[hidden] { display: none; }
 /* The popup `openDrawing` mounts Excalidraw into. `position: fixed; inset: 0`
    over the whole page rather than parked beside the button the way
    `.drawmenu` is: a menu is a few words under where you pressed, and an

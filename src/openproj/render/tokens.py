@@ -323,6 +323,15 @@ HISTORY_MARKS = {
     ),
 }
 
+# The template button's: a page with a turned corner and three ruled sections,
+# because a template is the headings of a document and nothing in it yet. Drawn
+# for the history marks' reason — no glyph in the vendored subset says "page" —
+# and sized by `.marks .tpl svg` for theirs.
+TEMPLATE_ART = _ICON_SVG.format(
+    '<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/>'
+    '<path d="M9 11h6"/><path d="M9 14.5h6"/><path d="M9 18h3.5"/>'
+)
+
 # The mark the drawings button wears, beside the two the history buttons wear
 # and rendered into the bar the same way — a template variable `attachEditing`
 # sets with `innerHTML`, never a `.replace` into finished markup.
