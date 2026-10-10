@@ -710,7 +710,7 @@ def test_every_write_a_page_makes_is_announced_before_and_after_it(client: TestC
         if "/api/preview" not in url and "/api/slide/preview" not in url
         # Chooses who a shared tailnet device writes as: a cookie, no commit,
         # and so no news of its own to tell apart from anybody else's.
-        and "/api/as" not in url
+        and url != "'/api/as'"
     ]
     # The one path here where "how many fetch call sites does the source hold"
     # and "how many writes can happen per press" genuinely differ: `openDrawing`
