@@ -123,7 +123,13 @@ def test_a_device_on_the_list_writes_as_its_plan_login_at_its_tailnet_address(
     The address is the one the person signed in to Tailscale with, not a GitHub
     `noreply` for an account a tailnet plan need not have."""
     as_device(client, JACOPO)
-    assert client.get("/api/me").json() == {"auth": "tailscale", "login": "jacopo", "member": True}
+    assert client.get("/api/me").json() == {
+        "auth": "tailscale",
+        "login": "jacopo",
+        "member": True,
+        "device": "jacopo",
+        "choices": ["agnese", "jacopo"],
+    }
 
     answer = save(client, TASK, {"priority": "high"})
     assert answer.status_code == 200, answer.text
@@ -277,6 +283,56 @@ def test_a_stranger_is_refused_the_room_in_the_tailnets_words(client: TestClient
 
 
 # --------------------------------------------------------------------------- #
+# A shared device
+# --------------------------------------------------------------------------- #
+
+
+def test_a_shared_device_writes_as_whoever_on_the_list_it_was_told_to(
+    client: TestClient, plan: Path
+):
+    """jcanton, 2026-10-10: two people share one tablet, and the tailnet knows
+    it by one of them. Anybody on the list may pick anybody else on it, and the
+    commit then carries the chosen person's name AND address — the address is
+    what makes it theirs in `git log`, so a name alone would be half a switch."""
+    as_device(client, JACOPO)
+    chosen = client.post("/api/as", json={"login": "agnese"})
+    assert chosen.status_code == 200, chosen.text
+    assert chosen.json()["login"] == "agnese" and chosen.json()["device"] == "jacopo"
+    assert client.get("/api/me").json()["login"] == "agnese"
+
+    commit = save(client, TASK, {"priority": "high"}).json()["commit"]
+    written = commit_at(plan, commit)
+    assert (written.author.name, written.author.email) == (
+        "agnese",
+        "agneseflamingomandelli@gmail.com",
+    )
+
+    # Back to the device's own name clears the choice rather than storing it,
+    # so a device follows the list if its owner on it ever changes.
+    back = client.post("/api/as", json={"login": "jacopo"})
+    assert back.status_code == 200 and "openproj_as" not in client.cookies
+    assert client.get("/api/me").json()["login"] == "jacopo"
+
+
+def test_choosing_a_name_grants_nothing_the_list_did_not(client: TestClient, plan: Path):
+    """The choice is read only for a request the tailnet already named, and it
+    can only name somebody on the list — so a forged cookie buys a stranger
+    nothing, and a name off the list is ignored rather than written as."""
+    before = git_head(plan)
+    client.cookies.set("openproj_as", "agnese")
+    as_device(client, STRANGER)
+    assert save(client, TASK, {"priority": "high"}).status_code == 403
+    assert client.post("/api/as", json={"login": "agnese"}).status_code == 403
+    assert git_head(plan) == before
+
+    as_device(client, JACOPO)
+    assert client.post("/api/as", json={"login": "mallory"}).status_code == 422
+    assert client.post("/api/as", json={"login": "agnese", "as": "x"}).status_code == 422
+    client.cookies.set("openproj_as", "mallory")
+    assert client.get("/api/me").json()["login"] == "jacopo"
+
+
+# --------------------------------------------------------------------------- #
 # The corner of the nav
 # --------------------------------------------------------------------------- #
 
@@ -299,6 +355,23 @@ CORNER = """
         (
             {"auth": "tailscale", "login": "jacopo", "member": True},
             [{"tag": "SPAN", "text": "jacopo", "klass": "", "title": ""}],
+        ),
+        (
+            {
+                "auth": "tailscale",
+                "login": "agnese",
+                "member": True,
+                "device": "jacopo",
+                "choices": ["agnese", "jacopo"],
+            },
+            [
+                {
+                    "tag": "SELECT",
+                    "text": "agnesejacopo (this device)",
+                    "klass": "",
+                    "title": "Writing as — the name this device saves under",
+                }
+            ],
         ),
         (
             {"auth": "tailscale", "refusal": "192.168.50.20 is not a device on this tailnet"},

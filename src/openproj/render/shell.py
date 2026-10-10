@@ -858,8 +858,8 @@ h1 { font-size: 1.35rem; margin: .2rem 0 .6rem; }
 /* The scheme picker, sized to the corner it stands in rather than to the control
    bars: it is the only select on the page that is not a filter, and at the
    filters' size it read as one more thing to answer. */
-.schemepick select { font-size: 12px; padding: .1rem 1.4rem .1rem .4rem;
-                     background-position: right .3rem center; }
+.schemepick select, #who select { font-size: 12px; padding: .1rem 1.4rem .1rem .4rem;
+                                   background-position: right .3rem center; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
            overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 /* The right end of the nav, as one group rather than two things each pushing
@@ -3875,7 +3875,39 @@ if (SCHEME) {
     // person on the next request. Somebody it did not name reads, and the
     // reason is the tailnet's own sentence — visible as a word, whole on hover
     // and to a screen reader, because it is long and names an address.
-    if (me.login) {
+    if (me.login && me.choices) {
+      // A shared device: the tailnet names it by one person, and anybody on
+      // the list may pick who it writes as (`acting_as`, `web.py`). A native
+      // select, because it is the one control a tablet, a phone and a screen
+      // reader all already know how to drive.
+      const pick = document.createElement('select');
+      pick.setAttribute('aria-label', 'Writing as');
+      pick.title = 'Writing as — the name this device saves under';
+      for (const login of me.choices) {
+        const option = element('option', login === me.device ? `${login} (this device)` : login);
+        option.value = login;
+        option.selected = login === me.login;
+        pick.append(option);
+      }
+      pick.onchange = async () => {
+        pick.disabled = true;
+        try {
+          const response = await fetch('/api/as', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+            body: JSON.stringify({login: pick.value}),
+          });
+          // Reloaded rather than patched: who may edit what — the icon picker,
+          // the editor's socket, a stamped `reported_by` — is decided when the
+          // page is served, so the page has to be served again to be right.
+          if (response.ok) { location.reload(); return; }
+        } catch (error) { /* said below */ }
+        pick.value = me.login;
+        pick.disabled = false;
+        announce('Could not switch who this device writes as');
+      };
+      WHO.append(pick);
+    } else if (me.login) {
       WHO.append(element('span', me.login));
     } else {
       const reading = element('span', 'read-only', 'warn');
