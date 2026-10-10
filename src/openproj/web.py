@@ -53,7 +53,7 @@ from collections.abc import Callable, Sequence
 from datetime import date
 from pathlib import Path
 from typing import Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 import pygit2
@@ -471,6 +471,15 @@ async def _refuse_socket(
 SESSION_COOKIE = "__Host-openproj_session"
 SESSION_COOKIE_INSECURE = "openproj_session"
 STATE_COOKIE = "op_state"
+# Under `--auth tailscale`, which listed person a shared device is writing as.
+# Not a session: the tailnet still decides whether this request may write at
+# all, and this only picks between names the same list already gave write to.
+# See `acting_as`.
+AS_COOKIE = "openproj_as"
+# A month, because a shared tablet is shared for weeks at a time, and a choice
+# that lapsed overnight would put the next morning's edits under the wrong name
+# with nothing on screen having changed.
+AS_SECONDS = 30 * 24 * 3600
 
 # `ID_PATTERN` is imported from `model.py`, where its comment carries the whole
 # argument: one KINDS-derived pattern for every rung, `\A`/`\Z` anchored so a
@@ -1350,6 +1359,78 @@ def _reject_a_new_kind(record_id: str, fields: dict) -> None:
         )
 
 
+# Methods that change something. Everything else is a read, and a read from
+# another site is a link somebody followed.
+_WRITES = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _from_elsewhere(scope: dict) -> str:
+    """Why this write was sent by a page on another site, or "" when it was not.
+
+    Under `--auth tailscale` the identity is the device's address, which the
+    browser attaches to every request it makes — including the one a page on
+    any other site makes with a form, or a `fetch` in `no-cors` mode, or a
+    WebSocket, none of which needs to read the answer to have written. A
+    cookie marked SameSite is what stops that under GitHub sign-in; an address
+    has no such flag. `_sent` reads the body whatever its content type, so a
+    `text/plain` form carrying JSON was a save.
+
+    `Sec-Fetch-Site` first, because the browser writes it and no page can, and
+    because it does not depend on the Host header surviving a reverse proxy —
+    plan-d's Synology proxy is the one this was written for. `same-site` is
+    refused with `cross-site`: on a NAS every other app is a sibling subdomain.
+    A browser too old to send it still sends `Origin` on a cross-origin write,
+    and that is compared with the host the request was addressed to. A request
+    carrying neither is not from a browser, and a client that is not a browser
+    is not one a page elsewhere can drive.
+    """
+    headers = {
+        name.decode("latin-1").lower(): value.decode("latin-1")
+        for name, value in scope.get("headers", [])
+    }
+    site = headers.get("sec-fetch-site")
+    if site:
+        if site in ("same-origin", "none"):
+            return ""
+        return f"this change was sent from another site ({site}), and is refused"
+    origin = headers.get("origin")
+    if not origin:
+        return ""
+    hosts = {headers.get("host", ""), headers.get("x-forwarded-host", "")} - {""}
+    if urlsplit(origin).netloc in hosts:
+        return ""
+    return f"this change was sent from {origin}, which is not this server, and is refused"
+
+
+class SameSite:
+    """ASGI middleware: refuse a write, or a co-editing socket, another site sent.
+
+    Pure ASGI for `tailnet.Identify`'s reason: the room is a write path and
+    `@app.middleware("http")` never sees a WebSocket. Refused before anything
+    reads the body or the tailnet is asked, so the answer is the same for a
+    stranger and for somebody on the list — the page is the stranger here.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        writes = scope["type"] == "websocket" or (
+            scope["type"] == "http" and scope.get("method") in _WRITES
+        )
+        refusal = _from_elsewhere(scope) if writes else ""
+        if not refusal:
+            await self.app(scope, receive, send)
+        elif scope["type"] == "websocket":
+            # Closed before it is accepted, which the server answers as a 403
+            # to the handshake. A close reason is capped at 123 bytes, and an
+            # origin is as long as anybody likes, so this says less.
+            closing = {"type": "websocket.close", "code": 1008, "reason": "sent from another site"}
+            await send(closing)
+        else:
+            await JSONResponse({"detail": refusal}, status_code=403)(scope, receive, send)
+
+
 async def _sent(request: Request) -> dict:
     """The JSON object a request carried, or a refusal that says so.
 
@@ -1923,6 +2004,11 @@ def create_app(
     app = FastAPI(title="openproj", lifespan=lifespan)
     if tailscale is not None:
         app.add_middleware(tailnet.Identify, tailnet=tailscale)
+    # In every mode and not only under Tailscale: a session cookie is SameSite,
+    # but a sibling subdomain is the same site, and one rule is one rule to
+    # keep true. Added after `Identify`, so it is outside it and a refused
+    # write never costs a question to tailscaled.
+    app.add_middleware(SameSite)
 
     @app.middleware("http")
     async def say_what_this_page_may_do(request: Request, call_next):
@@ -2090,6 +2176,8 @@ def create_app(
             # files and two walks finishing in whatever order is not that order.
             unreadable=sorted([*unreadable_config, *unreadable_records], key=lambda one: one.path),
         )
+        if tailscale is not None:
+            index = index.model_copy(update={"writers": sorted(tailscale.users.values())})
         return commit, index, render.links_for(index.views, render.ROUTES)
 
     # The last history walk, and the head it walked TO. Keyed on the commit
@@ -2158,12 +2246,33 @@ def create_app(
         """
         if auth == "tailscale":
             seen = tailnet.seen_in(request.scope)
-            return User(login=seen.login, member=True) if seen.login else None
+            return User(login=acting_as(request, seen.login), member=True) if seen.login else None
         for name in (SESSION_COOKIE, SESSION_COOKIE_INSECURE):
             user = read_session(request.cookies.get(name), secret)
             if user is not None:
                 return user
         return None
+
+    def acting_as(request: Request, device: str) -> str:
+        """The plan login a tailnet-named request writes as.
+
+        The device's own login, unless `AS_COOKIE` names another login on
+        `OPENPROJ_TAILSCALE_USERS` — jcanton, 2026-10-10: two people share one
+        tablet, and the tailnet knows the tablet by one of them. Asked, and the
+        answer was that anybody on the list may pick anybody else on it.
+
+        A plain cookie and not a signed one, which is the argument `viewer`
+        makes against a session turned round: the cookie is read only for a
+        request the tailnet has ALREADY named as somebody on the list, and it can
+        only name somebody else on that list. Anybody able to forge it could pick
+        the same name from the corner. A value off the list is ignored rather
+        than refused, so a list that dropped somebody leaves a device writing as
+        its own owner instead of writing as nobody.
+        """
+        chosen = request.cookies.get(AS_COOKIE, "")
+        if tailscale is not None and chosen in tailscale.users.values():
+            return chosen
+        return device
 
     def writer(request: Request) -> User:
         """Who is allowed to write, decided per request rather than at login.
@@ -5209,13 +5318,68 @@ def create_app(
             # no Sign in, since there is nothing to sign in to, and no Sign out,
             # since only leaving the tailnet does that. A reader the tailnet did
             # not name is told why they may only read, in the tailnet's words.
+            seen = tailnet.seen_in(request.scope)
             if who is None:
-                refusal = tailnet.seen_in(request.scope).refusal
-                return JSONResponse({"auth": "tailscale", "refusal": refusal})
-            return JSONResponse({"auth": "tailscale", "login": who.login, "member": True})
+                return JSONResponse({"auth": "tailscale", "refusal": seen.refusal})
+            return JSONResponse(
+                {"auth": "tailscale", "login": who.login, "member": True, **choosing(seen.login)}
+            )
         if who is None:
             return JSONResponse({"org": org})
         return JSONResponse({"login": who.login, "member": who.member, "org": org})
+
+    def choosing(device: str) -> dict:
+        """What the corner needs to offer a choice of name: who the tailnet says
+        this device is, and everybody it may write as instead. Nothing when the
+        list has one name on it, because a menu of one is not a choice."""
+        logins = sorted(tailscale.users.values()) if tailscale is not None else []
+        return {"device": device, "choices": logins} if len(logins) > 1 else {}
+
+    @app.post("/api/as")
+    async def act_as(request: Request) -> JSONResponse:
+        """Write as somebody else on the list, from this browser, until changed.
+
+        Tailscale only: everywhere else the session already is the person, and
+        a second way of naming them is a second thing to keep true. Choosing the
+        device's own login clears the cookie rather than storing it, so a device
+        whose owner changes on the list follows the list.
+        """
+        if tailscale is None:
+            raise HTTPException(404, "choosing who to write as is a Tailscale server's control")
+        seen = tailnet.seen_in(request.scope)
+        if not seen.login:
+            raise HTTPException(403, seen.refusal)
+        payload = await _sent(request)
+        extra = sorted(set(payload) - {"login"})
+        if extra:
+            raise HTTPException(
+                422, f"this request carries a login and nothing else, not {', '.join(extra)}"
+            )
+        login = payload.get("login")
+        if not isinstance(login, str) or login not in tailscale.users.values():
+            raise HTTPException(
+                422,
+                f"{login!r} is not on this server's list of who may write "
+                "(OPENPROJ_TAILSCALE_USERS)",
+            )
+        response = JSONResponse(
+            {"auth": "tailscale", "login": login, "member": True, **choosing(seen.login)}
+        )
+        if login == seen.login:
+            response.delete_cookie(
+                AS_COOKIE, path="/", secure=secure_for(request), httponly=True, samesite="lax"
+            )
+        else:
+            response.set_cookie(
+                AS_COOKIE,
+                login,
+                max_age=AS_SECONDS,
+                path="/",
+                secure=secure_for(request),
+                httponly=True,
+                samesite="lax",
+            )
+        return response
 
     @app.get("/login")
     def login(request: Request) -> RedirectResponse:

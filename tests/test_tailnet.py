@@ -12,16 +12,19 @@ client can be several devices — the only way to put two people in one room.
 from __future__ import annotations
 
 import ipaddress
+import json
+import re
 from pathlib import Path
 
 import httpx
 import pygit2
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 from test_coedit import Session, log_of, stored_body, waited_for
 from test_injection import run_js
 from test_store import commit_directly
-from test_web import SECRET, SEED, TASK, commit_at, git_head, save
+from test_web import SECRET, SEED, TASK, commit_at, git_head, head, save
 
 from openproj.auth import User, sign_session
 from openproj.cli import main
@@ -123,7 +126,13 @@ def test_a_device_on_the_list_writes_as_its_plan_login_at_its_tailnet_address(
     The address is the one the person signed in to Tailscale with, not a GitHub
     `noreply` for an account a tailnet plan need not have."""
     as_device(client, JACOPO)
-    assert client.get("/api/me").json() == {"auth": "tailscale", "login": "jacopo", "member": True}
+    assert client.get("/api/me").json() == {
+        "auth": "tailscale",
+        "login": "jacopo",
+        "member": True,
+        "device": "jacopo",
+        "choices": ["agnese", "jacopo"],
+    }
 
     answer = save(client, TASK, {"priority": "high"})
     assert answer.status_code == 200, answer.text
@@ -277,6 +286,130 @@ def test_a_stranger_is_refused_the_room_in_the_tailnets_words(client: TestClient
 
 
 # --------------------------------------------------------------------------- #
+# A shared device
+# --------------------------------------------------------------------------- #
+
+
+def test_a_shared_device_writes_as_whoever_on_the_list_it_was_told_to(
+    client: TestClient, plan: Path
+):
+    """jcanton, 2026-10-10: two people share one tablet, and the tailnet knows
+    it by one of them. Anybody on the list may pick anybody else on it, and the
+    commit then carries the chosen person's name AND address — the address is
+    what makes it theirs in `git log`, so a name alone would be half a switch."""
+    as_device(client, JACOPO)
+    chosen = client.post("/api/as", json={"login": "agnese"})
+    assert chosen.status_code == 200, chosen.text
+    assert chosen.json()["login"] == "agnese" and chosen.json()["device"] == "jacopo"
+    assert client.get("/api/me").json()["login"] == "agnese"
+
+    commit = save(client, TASK, {"priority": "high"}).json()["commit"]
+    written = commit_at(plan, commit)
+    assert (written.author.name, written.author.email) == (
+        "agnese",
+        "agneseflamingomandelli@gmail.com",
+    )
+
+    # Back to the device's own name clears the choice rather than storing it,
+    # so a device follows the list if its owner on it ever changes.
+    back = client.post("/api/as", json={"login": "jacopo"})
+    assert back.status_code == 200 and "openproj_as" not in client.cookies
+    assert client.get("/api/me").json()["login"] == "jacopo"
+
+
+def test_choosing_a_name_grants_nothing_the_list_did_not(client: TestClient, plan: Path):
+    """The choice is read only for a request the tailnet already named, and it
+    can only name somebody on the list — so a forged cookie buys a stranger
+    nothing, and a name off the list is ignored rather than written as."""
+    before = git_head(plan)
+    client.cookies.set("openproj_as", "agnese")
+    as_device(client, STRANGER)
+    assert save(client, TASK, {"priority": "high"}).status_code == 403
+    assert client.post("/api/as", json={"login": "agnese"}).status_code == 403
+    assert git_head(plan) == before
+
+    as_device(client, JACOPO)
+    assert client.post("/api/as", json={"login": "mallory"}).status_code == 422
+    assert client.post("/api/as", json={"login": "agnese", "as": "x"}).status_code == 422
+    client.cookies.set("openproj_as", "mallory")
+    assert client.get("/api/me").json()["login"] == "jacopo"
+
+
+def test_owner_offers_everybody_this_server_lets_write(client: TestClient):
+    """plan-d, 2026-10-10: no roster, and records that had only ever named
+    agnese, so Owner offered agnese and not the person typing. The list this
+    server was started with is a list of people, and they are offered."""
+    page = as_device(client, JACOPO).get("/new?kind=task").text
+    block = re.search(r'<script[^>]*id="suggest"[^>]*>(.*?)</script>', page, re.S)
+    offered = {person["value"] for person in json.loads(block.group(1))["people"]}
+
+    assert {"jacopo", "agnese"} <= offered
+
+
+# --------------------------------------------------------------------------- #
+# A page on another site
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "sent_by",
+    [
+        {"sec-fetch-site": "cross-site", "origin": "https://evil.example"},
+        # A sibling app on the same NAS domain is the same SITE and still not
+        # this server.
+        {"sec-fetch-site": "same-site", "origin": "https://other.ciccia.synology.me"},
+        # A browser too old for fetch metadata still names the origin.
+        {"origin": "https://evil.example"},
+        {"origin": "null"},
+    ],
+)
+def test_a_page_on_another_site_cannot_write_with_this_devices_address(
+    client: TestClient, plan: Path, sent_by: dict
+):
+    """Under Tailscale the device's address is the identity, and the browser
+    attaches that address to a request any page makes — a form needs no answer
+    to have written. The body went in as `text/plain`, the one content type a
+    form can send that `_sent` would still read as JSON."""
+    as_device(client, JACOPO)
+    before = git_head(plan)
+    body = json.dumps({"base_commit": head(client), "fields": {"priority": "high"}})
+
+    answer = client.patch(
+        f"/api/record/{TASK}", content=body, headers={"content-type": "text/plain", **sent_by}
+    )
+
+    assert answer.status_code == 403, answer.text
+    assert "another site" in answer.json()["detail"] or "not this server" in answer.json()["detail"]
+    assert client.post("/api/as", json={"login": "agnese"}, headers=sent_by).status_code == 403
+    assert git_head(plan) == before
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(f"/api/coedit/{TASK}", headers=sent_by):
+            pass
+
+
+@pytest.mark.parametrize(
+    "sent_by",
+    [
+        {"sec-fetch-site": "same-origin", "origin": "http://testserver"},
+        # Behind a proxy that rewrote Host, fetch metadata is what decides.
+        {"sec-fetch-site": "same-origin", "origin": "https://plan.example", "host": "127.0.0.1"},
+        {"origin": "http://testserver"},
+        {"origin": "https://plan.example", "x-forwarded-host": "plan.example"},
+        # Not a browser at all: nothing a page elsewhere can drive.
+        {},
+    ],
+)
+def test_this_servers_own_pages_still_write(client: TestClient, sent_by: dict):
+    as_device(client, JACOPO)
+    answer = client.patch(
+        f"/api/record/{TASK}",
+        json={"base_commit": head(client), "fields": {"priority": "high"}},
+        headers=sent_by,
+    )
+    assert answer.status_code == 200, answer.text
+
+
+# --------------------------------------------------------------------------- #
 # The corner of the nav
 # --------------------------------------------------------------------------- #
 
@@ -286,7 +419,11 @@ CORNER = """
   const who = document.getElementById('who');
   return {
     hidden: who.hidden,
-    drawn: who.children.map(c => ({tag: c.tagName, text: c.textContent,
+    // A select's text is its options', which the shim does not gather.
+    drawn: who.children.map(c => ({tag: c.tagName,
+                                    text: c.tagName === 'SELECT'
+                                      ? c.children.map(o => `${o.value}:${o.textContent}`).join('|')
+                                      : c.textContent,
                                     klass: c.className, title: c.title || ''})),
   };
 })()
@@ -299,6 +436,23 @@ CORNER = """
         (
             {"auth": "tailscale", "login": "jacopo", "member": True},
             [{"tag": "SPAN", "text": "jacopo", "klass": "", "title": ""}],
+        ),
+        (
+            {
+                "auth": "tailscale",
+                "login": "agnese",
+                "member": True,
+                "device": "jacopo",
+                "choices": ["agnese", "jacopo"],
+            },
+            [
+                {
+                    "tag": "SELECT",
+                    "text": "agnese:agnese|jacopo:jacopo (this device)",
+                    "klass": "",
+                    "title": "Writing as — the name this device saves under",
+                }
+            ],
         ),
         (
             {"auth": "tailscale", "refusal": "192.168.50.20 is not a device on this tailnet"},

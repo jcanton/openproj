@@ -318,6 +318,12 @@ class Index(BaseModel):
     # The roster from config/people.yaml, so a cycle nobody has been bet into yet
     # still has names to set availability against.
     known_people: list[str] = []
+    # Who the SERVER lets write, when it keeps a list of its own — the plan
+    # logins of `OPENPROJ_TAILSCALE_USERS`. Not the plan's: no file holds it, so
+    # `build_index` never sets it and only `web.py` does. Carried so the people
+    # suggestions can offer them, because on a plan with no roster the person
+    # typing was otherwise missing from Owner until a record already named them.
+    writers: list[str] = []
     # The repositories this plan's work happens in, carried for the reason the
     # roster is: a renderer is handed an index and never a Config, and the pull
     # request completion has to know which repositories to ask about.

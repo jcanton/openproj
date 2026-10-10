@@ -1518,6 +1518,22 @@ def test_the_suggestion_list_offers_names_and_not_sentences(seed_index: Index):
     assert all("," not in person["value"] for person in suggestions["people"])
 
 
+def test_owner_offers_everybody_the_plan_knows_and_not_only_who_records_name(
+    seed_index: Index,
+):
+    """A new plan's records name almost nobody, so a list built from them alone
+    offered nothing in Owner exactly when a typo was likeliest. The roster and
+    the `people/` files are names the plan already knows."""
+    from openproj.render import _suggestions
+
+    index = seed_index.model_copy(
+        update={"known_people": ["rosterling"], "icons": {"iconbearer": "fox"}}
+    )
+    offered = {person["value"] for person in _suggestions(index)["people"]}
+
+    assert {"rosterling", "iconbearer"} <= offered
+
+
 def test_a_cycle_number_is_offered_the_way_every_other_reference_is(seed_index: Index):
     """It was the one reference on the form typed from memory, and it is a bare
     number: nothing about `34` says whether it is the cycle running now. Every

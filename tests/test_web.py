@@ -708,6 +708,9 @@ def test_every_write_a_page_makes_is_announced_before_and_after_it(client: TestC
         # as a write and demanded a pair of announcements for a GET in a POST's
         # clothing.
         if "/api/preview" not in url and "/api/slide/preview" not in url
+        # Chooses who a shared tailnet device writes as: a cookie, no commit,
+        # and so no news of its own to tell apart from anybody else's.
+        and url != "'/api/as'"
     ]
     # The one path here where "how many fetch call sites does the source hold"
     # and "how many writes can happen per press" genuinely differ: `openDrawing`
@@ -5645,6 +5648,9 @@ def test_every_write_route_refuses_in_words_while_the_plan_is_forked(forked: For
         ("POST", "/api/slide/preview"),
         # Clears a cookie.
         ("POST", "/logout"),
+        # Sets or clears one: which listed person a shared tailnet device
+        # writes as. Reaches no store.
+        ("POST", "/api/as"),
     }
     answers = wedged_writes(forked.client, forked.note)
     driven = {
