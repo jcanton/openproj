@@ -4159,6 +4159,13 @@ def _suggestions(index: Index, linkable: bool = False, live: bool = False) -> di
             value = getattr(record, name, None)
             people.update(value if isinstance(value, list) else [value] if value else [])
         tags.update(record.tags)
+    # And everybody the plan knows of without a record naming them yet: the
+    # roster and whoever has a `people/` file. Built from the records alone, a
+    # new plan offered nothing in Owner — jcanton, 2026-10-10, on a plan whose
+    # first records had only ever named the person writing them — which is the
+    # moment a typo is most likely and the list is most needed.
+    people.update(index.known_people)
+    people.update(index.icons)
     # A login has no comma and no space in it. An early version of the table wrote
     # a whole comma-separated string into a list field, and the picker then offered
     # "jcanton, halungge" as if it were one person — garbage in the corpus became
