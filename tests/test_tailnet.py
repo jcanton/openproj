@@ -342,7 +342,11 @@ CORNER = """
   const who = document.getElementById('who');
   return {
     hidden: who.hidden,
-    drawn: who.children.map(c => ({tag: c.tagName, text: c.textContent,
+    // A select's text is its options', which the shim does not gather.
+    drawn: who.children.map(c => ({tag: c.tagName,
+                                    text: c.tagName === 'SELECT'
+                                      ? c.children.map(o => `${o.value}:${o.textContent}`).join('|')
+                                      : c.textContent,
                                     klass: c.className, title: c.title || ''})),
   };
 })()
@@ -367,7 +371,7 @@ CORNER = """
             [
                 {
                     "tag": "SELECT",
-                    "text": "agnesejacopo (this device)",
+                    "text": "agnese:agnese|jacopo:jacopo (this device)",
                     "klass": "",
                     "title": "Writing as — the name this device saves under",
                 }
