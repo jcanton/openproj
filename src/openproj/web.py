@@ -53,7 +53,7 @@ from collections.abc import Callable, Sequence
 from datetime import date
 from pathlib import Path
 from typing import Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 import pygit2
@@ -1359,6 +1359,78 @@ def _reject_a_new_kind(record_id: str, fields: dict) -> None:
         )
 
 
+# Methods that change something. Everything else is a read, and a read from
+# another site is a link somebody followed.
+_WRITES = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _from_elsewhere(scope: dict) -> str:
+    """Why this write was sent by a page on another site, or "" when it was not.
+
+    Under `--auth tailscale` the identity is the device's address, which the
+    browser attaches to every request it makes — including the one a page on
+    any other site makes with a form, or a `fetch` in `no-cors` mode, or a
+    WebSocket, none of which needs to read the answer to have written. A
+    cookie marked SameSite is what stops that under GitHub sign-in; an address
+    has no such flag. `_sent` reads the body whatever its content type, so a
+    `text/plain` form carrying JSON was a save.
+
+    `Sec-Fetch-Site` first, because the browser writes it and no page can, and
+    because it does not depend on the Host header surviving a reverse proxy —
+    plan-d's Synology proxy is the one this was written for. `same-site` is
+    refused with `cross-site`: on a NAS every other app is a sibling subdomain.
+    A browser too old to send it still sends `Origin` on a cross-origin write,
+    and that is compared with the host the request was addressed to. A request
+    carrying neither is not from a browser, and a client that is not a browser
+    is not one a page elsewhere can drive.
+    """
+    headers = {
+        name.decode("latin-1").lower(): value.decode("latin-1")
+        for name, value in scope.get("headers", [])
+    }
+    site = headers.get("sec-fetch-site")
+    if site:
+        if site in ("same-origin", "none"):
+            return ""
+        return f"this change was sent from another site ({site}), and is refused"
+    origin = headers.get("origin")
+    if not origin:
+        return ""
+    hosts = {headers.get("host", ""), headers.get("x-forwarded-host", "")} - {""}
+    if urlsplit(origin).netloc in hosts:
+        return ""
+    return f"this change was sent from {origin}, which is not this server, and is refused"
+
+
+class SameSite:
+    """ASGI middleware: refuse a write, or a co-editing socket, another site sent.
+
+    Pure ASGI for `tailnet.Identify`'s reason: the room is a write path and
+    `@app.middleware("http")` never sees a WebSocket. Refused before anything
+    reads the body or the tailnet is asked, so the answer is the same for a
+    stranger and for somebody on the list — the page is the stranger here.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        writes = scope["type"] == "websocket" or (
+            scope["type"] == "http" and scope.get("method") in _WRITES
+        )
+        refusal = _from_elsewhere(scope) if writes else ""
+        if not refusal:
+            await self.app(scope, receive, send)
+        elif scope["type"] == "websocket":
+            # Closed before it is accepted, which the server answers as a 403
+            # to the handshake. A close reason is capped at 123 bytes, and an
+            # origin is as long as anybody likes, so this says less.
+            closing = {"type": "websocket.close", "code": 1008, "reason": "sent from another site"}
+            await send(closing)
+        else:
+            await JSONResponse({"detail": refusal}, status_code=403)(scope, receive, send)
+
+
 async def _sent(request: Request) -> dict:
     """The JSON object a request carried, or a refusal that says so.
 
@@ -1932,6 +2004,11 @@ def create_app(
     app = FastAPI(title="openproj", lifespan=lifespan)
     if tailscale is not None:
         app.add_middleware(tailnet.Identify, tailnet=tailscale)
+    # In every mode and not only under Tailscale: a session cookie is SameSite,
+    # but a sibling subdomain is the same site, and one rule is one rule to
+    # keep true. Added after `Identify`, so it is outside it and a refused
+    # write never costs a question to tailscaled.
+    app.add_middleware(SameSite)
 
     @app.middleware("http")
     async def say_what_this_page_may_do(request: Request, call_next):
@@ -2099,6 +2176,8 @@ def create_app(
             # files and two walks finishing in whatever order is not that order.
             unreadable=sorted([*unreadable_config, *unreadable_records], key=lambda one: one.path),
         )
+        if tailscale is not None:
+            index = index.model_copy(update={"writers": sorted(tailscale.users.values())})
         return commit, index, render.links_for(index.views, render.ROUTES)
 
     # The last history walk, and the head it walked TO. Keyed on the commit

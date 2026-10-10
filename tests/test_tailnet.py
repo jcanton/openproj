@@ -12,16 +12,19 @@ client can be several devices — the only way to put two people in one room.
 from __future__ import annotations
 
 import ipaddress
+import json
+import re
 from pathlib import Path
 
 import httpx
 import pygit2
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 from test_coedit import Session, log_of, stored_body, waited_for
 from test_injection import run_js
 from test_store import commit_directly
-from test_web import SECRET, SEED, TASK, commit_at, git_head, save
+from test_web import SECRET, SEED, TASK, commit_at, git_head, head, save
 
 from openproj.auth import User, sign_session
 from openproj.cli import main
@@ -330,6 +333,80 @@ def test_choosing_a_name_grants_nothing_the_list_did_not(client: TestClient, pla
     assert client.post("/api/as", json={"login": "agnese", "as": "x"}).status_code == 422
     client.cookies.set("openproj_as", "mallory")
     assert client.get("/api/me").json()["login"] == "jacopo"
+
+
+def test_owner_offers_everybody_this_server_lets_write(client: TestClient):
+    """plan-d, 2026-10-10: no roster, and records that had only ever named
+    agnese, so Owner offered agnese and not the person typing. The list this
+    server was started with is a list of people, and they are offered."""
+    page = as_device(client, JACOPO).get("/new?kind=task").text
+    block = re.search(r'<script[^>]*id="suggest"[^>]*>(.*?)</script>', page, re.S)
+    offered = {person["value"] for person in json.loads(block.group(1))["people"]}
+
+    assert {"jacopo", "agnese"} <= offered
+
+
+# --------------------------------------------------------------------------- #
+# A page on another site
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "sent_by",
+    [
+        {"sec-fetch-site": "cross-site", "origin": "https://evil.example"},
+        # A sibling app on the same NAS domain is the same SITE and still not
+        # this server.
+        {"sec-fetch-site": "same-site", "origin": "https://other.ciccia.synology.me"},
+        # A browser too old for fetch metadata still names the origin.
+        {"origin": "https://evil.example"},
+        {"origin": "null"},
+    ],
+)
+def test_a_page_on_another_site_cannot_write_with_this_devices_address(
+    client: TestClient, plan: Path, sent_by: dict
+):
+    """Under Tailscale the device's address is the identity, and the browser
+    attaches that address to a request any page makes — a form needs no answer
+    to have written. The body went in as `text/plain`, the one content type a
+    form can send that `_sent` would still read as JSON."""
+    as_device(client, JACOPO)
+    before = git_head(plan)
+    body = json.dumps({"base_commit": head(client), "fields": {"priority": "high"}})
+
+    answer = client.patch(
+        f"/api/record/{TASK}", content=body, headers={"content-type": "text/plain", **sent_by}
+    )
+
+    assert answer.status_code == 403, answer.text
+    assert "another site" in answer.json()["detail"] or "not this server" in answer.json()["detail"]
+    assert client.post("/api/as", json={"login": "agnese"}, headers=sent_by).status_code == 403
+    assert git_head(plan) == before
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(f"/api/coedit/{TASK}", headers=sent_by):
+            pass
+
+
+@pytest.mark.parametrize(
+    "sent_by",
+    [
+        {"sec-fetch-site": "same-origin", "origin": "http://testserver"},
+        # Behind a proxy that rewrote Host, fetch metadata is what decides.
+        {"sec-fetch-site": "same-origin", "origin": "https://plan.example", "host": "127.0.0.1"},
+        {"origin": "http://testserver"},
+        {"origin": "https://plan.example", "x-forwarded-host": "plan.example"},
+        # Not a browser at all: nothing a page elsewhere can drive.
+        {},
+    ],
+)
+def test_this_servers_own_pages_still_write(client: TestClient, sent_by: dict):
+    as_device(client, JACOPO)
+    answer = client.patch(
+        f"/api/record/{TASK}",
+        json={"base_commit": head(client), "fields": {"priority": "high"}},
+        headers=sent_by,
+    )
+    assert answer.status_code == 200, answer.text
 
 
 # --------------------------------------------------------------------------- #
