@@ -1818,7 +1818,6 @@ function labelBox(th) {
   return range.getBoundingClientRect();
 }
 const clamped = headers.filter(th => CLAMPED.has(keyOf(th)));
-const line = Math.round(labelBox(clamped[0]).height);
 const measure = () => clamped.map(th => {
   const box = th.getBoundingClientRect();
   const label = labelBox(th);
@@ -1827,7 +1826,7 @@ const measure = () => clamped.map(th => {
   return {
     column: keyOf(th),
     width: Math.round(box.width),
-    wrapped: Math.round(label.height) > line + 1,
+    height: Math.round(label.height),
     overLabel: Math.round(label.right - control.left),
     overGrip: Math.round(control.right - grip.left),
     // What the header sets aside for the control, against what the control and
@@ -1844,7 +1843,13 @@ const at = width => {
 };
 // The fit's own answer first, before anything here has touched a width.
 const asFitted = measure();
-return {floor: CLAMP_FLOOR, asFitted, atFloor: at(CLAMP_FLOOR), below: at(CLAMP_FLOOR - 8)};
+// Then each header's own one line, where nothing can wrap: a button label and a
+// bare text label are different heights, so no one header's line is another's.
+const line = Object.fromEntries(at(320).map(column => [column.column, column.height]));
+const judged = columns => columns.map(column =>
+  ({...column, wrapped: column.height > line[column.column] + 1}));
+return {floor: CLAMP_FLOOR, asFitted: judged(asFitted), atFloor: judged(at(CLAMP_FLOOR)),
+        below: judged(at(CLAMP_FLOOR - 8))};
 """
 
 
@@ -1854,10 +1859,17 @@ def test_the_header_fits_at_the_width_the_fit_may_squeeze_it_to(demo_page: str, 
     allowed to squeeze them to. Every one of the four now holds a label, a sort
     glyph, the column's `+` and a drag grip.
 
-    At 112 — the floor before the control existed — `DEVELOPERS` and `REVIEWERS`
-    wrap over two lines, which is a narrower column and a taller header: exactly
-    what the clamp was for, undone. The floor went up to 116 to pay for the
-    control rather than the control shrinking to fit under the old one.
+    At 112 — the floor before the control existed — `ASSIGNEES` and `REVIEWERS`
+    wrapped over two lines, which is a narrower column and a taller header:
+    exactly what the clamp was for, undone. The floor went up to 116 to pay for
+    the control rather than the control shrinking to fit under the old one, and
+    to 126 when the longest label became `DEVELOPERS`.
+
+    A header's one line is measured per column, at a width nothing wraps in.
+    It was the first clamped header's height as fitted, and the day that header
+    was the one wrapping — `DEVELOPERS` at 116 — every header was judged against
+    two lines, nothing could count as wrapped, and only the self-check below
+    noticed.
 
     The fitted width is the other half and fails differently. The control is
     positioned, so it is in no measurement of its own accord: what puts it into

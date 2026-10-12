@@ -3888,13 +3888,21 @@ const PROGRESS_FLOOR = 78;
 // 116 and not the 112 it was, because these four headers now carry the column's
 // `+` as well: `.5rem` of padding, then `REVIEWERS` and its sort glyph, then the
 // 2rem the control and the grip stand in. Measured in Chrome at each width in
-// turn — at 112 and at 115 `DEVELOPERS` and `REVIEWERS` wrap over two lines, and
+// turn — at 112 and at 115 `ASSIGNEES` and `REVIEWERS` wrap over two lines, and
 // at 116 all four fit on one. The floor went up to pay for the control rather
 // than the control shrinking to fit under the old one: it is a 17px target in a
 // header that already holds a sort button and a drag handle, and the mis-click
 // that sorts the table when somebody meant to expand it is what those four
 // pixels of column buy.
-const CLAMP_FLOOR = 116;
+//
+// 126 since `assignees` became `developers` (2026-10-12): the longest of the four
+// labels is the one this number is for, and `DEVELOPERS` is ten pixels longer
+// than the word it replaced. Measured the same way — 124 wraps it, 125 holds it —
+// and one over, because that was measured on a Mac and the suite's Chrome is on
+// Linux, and a floor that is exactly the label is one rounding away from a
+// two-line header. At 116 it wrapped in the table as fitted at 1460, not only
+// when squeezed.
+const CLAMP_FLOOR = 126;
 // Which floor a column has, in one place: `minimumWidth` decides what the table
 // can be squeezed to and `fitted` does the squeezing, and two copies of this
 // question is how those two come to disagree about a single column.
