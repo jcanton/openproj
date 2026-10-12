@@ -711,7 +711,7 @@ async function flush(quiet) {
           clashed = true;
           // The report names the file first, which is the store's word for the
           // record this sentence has already named by its title.
-          const report = answer.conflict.replace(/^\S+ — /, '');
+          const report = answer.conflict.replace(/^\\S+ — /, '');
           problems.push(`${named(id)} was not saved — ${report}. `
                         + 'The row now shows what is stored; change it again to keep yours.');
           continue;
