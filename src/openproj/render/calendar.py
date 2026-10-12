@@ -56,7 +56,11 @@ _CALENDAR_STYLE = """
   box-shadow: 0 6px 18px rgb(0 0 0 / .18); display: flex; flex-direction: column;
   color: var(--fg); font: inherit;
 }
-.datepicker-header .datepicker-controls { padding: 4px; }
+.datepicker-header .datepicker-controls, .datepicker-footer .datepicker-controls { padding: 4px; }
+/* Clear spans the card, the way the native popup's did: one button under a
+   seven-column grid reads as belonging to whichever column it happens to sit
+   under. */
+.datepicker-footer .datepicker-controls .button { flex: auto; }
 .datepicker-controls { display: flex; }
 .datepicker-controls .button {
   background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px;
@@ -498,6 +502,15 @@ function calendarFor(box) {
     format: 'yyyy-mm-dd',
     weekStart: 1,
     autohide: true,
+    // The native popup this replaced had a Clear button, and hiding its
+    // indicator took that away with it: the library draws its own and draws it
+    // at `display: none` unless asked. Without one, emptying a date that has been
+    // set meant Backspacing each of its three segments in turn, which nobody
+    // finds — jcanton, 2026-10-12, "remove dates for start end from a record
+    // even after they've been assigned". It clears through `changeDate`, so the
+    // page hears it the way it hears a picked day. Ctrl/Cmd+Backspace is the
+    // library's keyboard path to the same thing.
+    clearButton: true,
     // `null` is upstream's own default for this option and is what it checks
     // for — `typeof … == 'function' ? … : undefined` — so a window field gets
     // the library's plain grid rather than a hook that returns nothing.
