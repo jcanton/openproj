@@ -1151,7 +1151,11 @@ def test_the_graph_card_opens_on_a_click_and_not_on_a_hover(index: Index, tmp_pa
         time.sleep(0.3)
         again = _evaluated(call, _THE_CARD)
         _evaluated(
-            call, "document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'})), 0"
+            # `bubbles`, as a real key's event does: without it the event stops at
+            # the document and never reaches the window the shell listens on.
+            call,
+            "document.dispatchEvent("
+            "new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})), 0",
         )
         escaped = _evaluated(call, _THE_CARD)
 

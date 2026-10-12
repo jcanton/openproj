@@ -8159,7 +8159,7 @@ def test_a_phone_reads_the_graph_at_a_size_it_can_be_read_at(
     assert phone["whole"] or 20 <= phone["left"] <= 34, (
         f"a phone starts the graph with its left edge at {phone['left']}px, not at the canvas's"
     )
-    assert all(text.startswith("Double-tap") for text in phone["hint"]) and phone["hint"], (
+    assert all(text.startswith("Tap a node") for text in phone["hint"]) and phone["hint"], (
         f"a finger is told {phone['hint']}"
     )
     assert phone["buttons"] and min(phone["buttons"]) >= 40, (
@@ -8171,7 +8171,7 @@ def test_a_phone_reads_the_graph_at_a_size_it_can_be_read_at(
     )
     assert laptop["whole"], "a laptop no longer starts with the whole plan in view"
     assert laptop["shut"] is False, "a laptop's key is folded away"
-    assert laptop["hint"] and all(t.startswith("Double-click") for t in laptop["hint"]), (
+    assert laptop["hint"] and all(t.startswith("Click a node") for t in laptop["hint"]), (
         f"a mouse is told {laptop['hint']}"
     )
 

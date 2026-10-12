@@ -1457,9 +1457,11 @@ cy.on('mouseout', 'node', evt => {
 // off a card — opens nothing. The press that started this click has already
 // closed whatever card was up (`shell.py`, capture phase), so a click on a
 // second node swaps one card for the other.
-cy.on('tap', 'node', evt => {
-  if (connecting) return;
-  const node = evt.target;
+//
+// A function the one `tap` handler further down calls outside edit mode, rather
+// than a second tap listener on nodes beside it: one gesture, one listener, so
+// what a click does in each mode is read in one place.
+function cardOnTap(node, evt) {
   if (node.isParent() && !onLabel(node, evt.position)) return;
   if (CARDED[node.data('kind')] === false) return;
   // `data()` and not a lookup: a node's data IS the row — `_elements` builds it
@@ -1467,7 +1469,7 @@ cy.on('tap', 'node', evt => {
   // its own to look anything up in. The first version of this read `DATA.rows`
   // and drew nothing at all, on the one view the card was added for.
   pinCard(node.data(), evt.originalEvent.clientX, evt.originalEvent.clientY);
-});
+}
 // A node dragged out from under a card, and a canvas panned or zoomed under one:
 // the pointer never leaves the node, so `mouseout` does not fire and the card
 // stays describing a node that is no longer there.
@@ -1840,7 +1842,7 @@ cy.on('tap', 'edge', evt => {
 
 cy.on('tap', 'node', evt => {
   const node = evt.target;
-  if (!connecting) return;
+  if (!connecting) { cardOnTap(node, evt); return; }
   if (!blocker) { pickBlocker(node); return; }
   const from = blocker;
   blocker = null;
