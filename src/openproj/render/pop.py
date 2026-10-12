@@ -1735,14 +1735,24 @@ function popTakeOutItem(row) {
             why: ((POP_SCHEMA.parent_kinds || {})[row.kind] || []).length
                  ? `${popTitle(row)} is not inside anything.`
                  : `A ${row.kind} belongs to nothing, so there is nothing to take it out of.`};
-  return {kind: 'take-out', text: `Take out of "${popTitleOf(row.parent)}"`,
-    // `{parent: null}`, which is what `reparent(child, null)` (`table.py`) has
-    // sent for this same gesture since it was a drag. Two spellings of "no
-    // parent" would not even be the same write: `patch_text` round-trips, so
-    // `parent: ''` writes an empty string into the file where `null` writes the
-    // key with nothing after it.
-    run: () => popWrite(row.id, {parent: null},
-      `${popTitle(row)} is no longer inside anything`)};
+  // Out of the parent and into whatever holds THAT — `row.out_to`, the one
+  // answer this, the table's move bar and its `+` row all read (`out_to`,
+  // `model.py`). It was `{parent: null}` here, so a pitch taken out of the pitch
+  // it had been filed under left its project as well — jcanton, 2026-10-12,
+  // "move-out should always move to the upper parent". The label names where it
+  // lands, because that is part of what pressing it does.
+  const into = row.out_to || null;
+  return {kind: 'take-out',
+    text: `Take out of "${popTitleOf(row.parent)}"`
+          + (into ? ` into "${popTitleOf(into)}"` : ''),
+    // `null` where nothing above may hold it, which is what `reparent`
+    // (`table.py`) sends for the same case. Two spellings of "no parent" would
+    // not even be the same write: `patch_text` round-trips, so `parent: ''`
+    // writes an empty string into the file where `null` writes the key with
+    // nothing after it.
+    run: () => popWrite(row.id, {parent: into}, into
+      ? `${popTitle(row)} is now inside "${popTitleOf(into)}"`
+      : `${popTitle(row)} is no longer inside anything`)};
 }
 
 // --- the three items that open a form ---------------------------------------

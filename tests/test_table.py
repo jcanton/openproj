@@ -5353,6 +5353,11 @@ def test_a_row_can_be_taken_out_of_what_holds_it(page: str):
     sticky against the bottom of the scroll box. It offers itself only while
     something is being moved, and only when there is something to take it out of;
     a row that belongs to nothing is not offered a way to belong to less.
+
+    Out of the pitch is INTO the project the pitch is in — jcanton, 2026-10-12,
+    "move-out should always move to the upper parent". It sent `parent: null`,
+    which took the task out of the project as well, and the bar said nothing
+    about where it would land.
     """
     answer = drive_table(
         page,
@@ -5377,11 +5382,11 @@ def test_a_row_can_be_taken_out_of_what_holds_it(page: str):
     got = answer["value"]
 
     assert got["offered"]["hidden"] is False
-    assert got["offered"]["said"] == f"Take {TASK_TITLE} out of {PITCH_TITLE}"
+    assert got["offered"]["said"] == f"Take {TASK_TITLE} out of {PITCH_TITLE}, into {PROJECT_TITLE}"
     assert got["allowed"] is True
     sent = json.loads(answer["calls"][0]["body"])
-    assert sent["fields"] == {"parent": None}, "null, which is what no parent is stored as"
-    assert "no longer" in got["said"]
+    assert sent["fields"] == {"parent": PROJECT}, "out of the pitch and into its project"
+    assert got["said"] == f"{TASK_TITLE} is now in {PROJECT_TITLE}"
 
 
 def test_a_reparent_leaves_no_derived_column_stale(client: TestClient, page: str):

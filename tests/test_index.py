@@ -38,6 +38,7 @@ from openproj.model import (
     Task,
     cycle_of,
     load_repo,
+    out_to,
     parse_text,
     validate_all,
 )
@@ -1151,6 +1152,51 @@ def test_a_task_under_a_project_is_charged_to_the_cycle_it_was_bet_into():
     # Charged to that cycle and to no other — the half that a `cycle_of` of None
     # also got right, by accident.
     assert index.load(36) == {}
+
+
+def test_taking_a_record_out_files_it_under_the_nearest_record_above_that_may_hold_it():
+    """jcanton, 2026-10-12: "move-out should always move to the upper parent".
+
+    `pitch-bdb8d1` was taken out of the pitch it had been filed under, inside
+    `proj-370001`, with the graph's `Take out` — and landed at the top of the
+    tree with no project at all, because every way out wrote `parent: null`.
+
+    The nearest holder of the record's OWN kind, not the grandparent: a pitch
+    inside a project inside a product cannot be filed under the product, and a
+    rule that just went up one more step would write the blocker
+    `_containment_problems` reports. And the walk stays inside the map it is
+    given, so an id the plan cannot show never comes back out of it.
+    """
+    records = [
+        a_product("prod-000001"),
+        a_project("proj-a00001", parent="prod-000001"),
+        a_pitch("pitch-b00001", parent="proj-a00001"),
+        # The shape the graph was used on: a pitch hand-filed under a pitch.
+        a_pitch("pitch-b00002", parent="pitch-b00001"),
+        a_task("task-c00001", parent="pitch-b00001"),
+        a_pitch("pitch-b00003"),
+        a_task("task-c00002", parent="pitch-b00003"),
+        # A loop somebody committed by hand, and a parent nobody wrote.
+        a_pitch("pitch-b00004", parent="pitch-b00005"),
+        a_pitch("pitch-b00005", parent="pitch-b00004"),
+        a_task("task-c00003", parent="pitch-b00099"),
+        a_pitch("pitch-b00006", parent="issue-000001"),
+        a_task("task-c00004", parent="pitch-b00006"),
+    ]
+    by_id = {record.id: record for record in records}
+
+    def out(record_id: str) -> str | None:
+        return out_to(by_id[record_id], by_id)
+
+    assert out("task-c00001") == "proj-a00001", "a task out of its pitch stays in the project"
+    assert out("pitch-b00002") == "proj-a00001", "the graph's case, out of a pitch"
+    assert out("pitch-b00001") is None, "out of its project: a product cannot hold a pitch"
+    assert out("proj-a00001") is None, "a product holds nothing above it"
+    assert out("task-c00002") is None, "a pitch with no project leaves nothing to land in"
+    assert out("pitch-b00004") is None, "a loop is walked once, not for ever"
+    assert out("task-c00003") is None, "a parent nobody wrote has nothing above it"
+    assert out("task-c00004") is None, "an id outside the map never comes back out"
+    assert out("prod-000001") is None
 
 
 def test_a_bet_nobody_has_sized_is_counted_where_it_was_bet_and_carried_into_nothing():

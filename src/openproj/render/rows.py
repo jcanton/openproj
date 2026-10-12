@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..index import Index, holder_fields, predicates_of
-from ..model import RUNG, size_weeks, staffing_of, unread_fields
+from ..model import RUNG, out_to, size_weeks, staffing_of, unread_fields
 
 # The record page's own reading of what a pitch's tasks come to, imported rather
 # than repeated. It is the wrong way up as a dependency — this module is the view
@@ -326,6 +326,11 @@ def _row(index: Index, record_id: str) -> dict:
         # the table refuse the move gesture that would overwrite a line it
         # never drew (see `movable`/`moveTip` in the table script).
         "off_plan_parent": bool(record.parent) and record.parent not in index.plan,
+        # Where every way out of `parent` files this record — the right-click
+        # menu's `Take out of "X"`, the table's move bar and its `+` row — so
+        # that three gestures cannot disagree about it. Worked out here because
+        # the walk needs rows a page may not be drawing; see `out_to` (`model.py`).
+        "out_to": out_to(record, index.plan),
         "status": read("status", record.status),
         "owner": read("owner", record.owner),
         "assignees": read("assignees", record.assignees),
