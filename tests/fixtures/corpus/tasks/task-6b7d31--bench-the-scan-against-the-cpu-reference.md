@@ -5,7 +5,7 @@ title: Bench the scan against the CPU reference
 parent: pitch-6f2d18
 status: in_progress
 owner: redpollard
-assignees: [redpollard]
+developers: [redpollard]
 reviewers: [Whimbrelson]
 review_waived: false
 start_date: 2026-08-13

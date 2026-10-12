@@ -1493,7 +1493,7 @@ function popWriteItems(row) {
 
 // Whether a field has nothing in it — the four ways one can be unset, in one
 // place, because `holds` (`table.py`) records what it costs to have them written
-// out twice: an `assignees: []` that read as a value in one copy and as unset in
+// out twice: an `developers: []` that read as a value in one copy and as unset in
 // the other is a row the gate exempts and the form then asks about.
 function popEmpty(value) {
   return value === null || value === undefined || value === ''
@@ -2134,7 +2134,7 @@ function popWireFields(box) {
       // arrived as "the row was pressed", was swallowed by the `preventDefault`
       // below, and never reached the box. jcanton, 2026-09-18: "when editing the
       // new card I can't add space characters in the fields (tried title and
-      // assignees)".
+      // developers)".
       //
       // `event.target` and not a check for an open control: a `<select>` inside
       // this element answers its own space and arrows too, and this handler has
@@ -2189,7 +2189,7 @@ function popOpenField(name) {
   control.setAttribute('aria-label', popLabel(name));
   // Every box that is typed into, and not only the ones whose type is the word
   // `text`. A list field's type is `list` and its control is a text box all the
-  // same, and gating on the word left `assignees`, `reviewers`, `tags`,
+  // same, and gating on the word left `developers`, `reviewers`, `tags`,
   // `depends_on` and `prs` — five of the seven fields anybody completes —
   // completing nothing at all. jcanton, 2026-09-18: "autocomplete doesn't work
   // in the forms inside our new editable card. can you enable all as in the
@@ -2771,7 +2771,7 @@ async function popSave() {
   const status = 'status' in values ? popRawOf(values.status) : popRawOf(popStartOf('status'));
   // **And only when the status is MOVING.** The gate is a rule about arriving at
   // a status, not about standing in one: `validate_all` reports a record that is
-  // already `in_progress` without assignees as a problem beside it, and the plan
+  // already `in_progress` without developers as a problem beside it, and the plan
   // is full of records in exactly that state because that is what a problem list
   // is for. Gating on the standing value instead would refuse every edit to every
   // one of them.

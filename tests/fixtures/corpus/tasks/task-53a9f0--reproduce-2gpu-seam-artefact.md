@@ -7,7 +7,7 @@ status: in_progress
 owner: merganserly
 reviewers: [jackdawrie]
 person_weeks: 2
-assignees: []
+developers: []
 start_date: 2026-08-13
 cycle: 36
 priority: medium
@@ -28,6 +28,6 @@ From the Progress list of the distributed driver pitch, verbatim:
 Context: @Oxpeckerly reported an artefact along the drum seam when driving a roast on 2 GPUs.
 
 `status: in_progress` because the parent point is unticked while its first sub-point is ticked.
-`assignees: []` — the note credits the finished sub-point to Merganser but never assigns the task
+`developers: []` — the note credits the finished sub-point to Merganser but never assigns the task
 itself, so it was not promoted into the field. No per-task effort or priority is stated in the
 source.

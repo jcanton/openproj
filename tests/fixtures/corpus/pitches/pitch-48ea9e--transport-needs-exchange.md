@@ -7,7 +7,7 @@ status: in_progress
 owner: null            # REQUIRED from schema_version 1; not in source
 reviewers: []          # REQUIRED from schema_version 1; not in source
 person_weeks: 2.0
-assignees:
+developers:
   - nightjarelli
   - Oxpeckerly
 start_date: null

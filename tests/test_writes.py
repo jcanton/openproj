@@ -78,7 +78,11 @@ def pages(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
         head = client.get("/healthz").json()["head"]
         bet = client.patch(
             f"/api/record/{TASK}",
-            json={"base_commit": head, "fields": {"cycle": 41, "assignees": ["ann"]}, "body": None},
+            json={
+                "base_commit": head,
+                "fields": {"cycle": 41, "developers": ["ann"]},
+                "body": None,
+            },
         )
         client.put(
             "/api/cycle/41",
@@ -967,14 +971,14 @@ def test_a_save_that_does_not_move_the_status_is_not_asked_anything(pages):
     table has — `saveCell` asks when the cell being written is the status cell.
 
     The form is put into that state rather than a second page being rendered for
-    it: the assignee box is emptied AND its baseline moved with it, so `changed()`
+    it: the developer box is emptied AND its baseline moved with it, so `changed()`
     reports one edit — the title — over a record that fails its own gate.
     """
     answer = drive(
         pages["detail_plain"],
         f"""
         (async () => {{
-          const box = FORM.querySelector('[name=assignees]');
+          const box = FORM.querySelector('[name=developers]');
           box.value = '';
           ORIGINAL[box.name] = JSON.stringify(read(box));
           TITLED.value = 'Reproduce the seam artefact again';

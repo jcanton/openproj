@@ -68,7 +68,7 @@ EDITABLE: dict[str, str] = {
     "person_weeks": "number",
     "tags": "list",
     "owner": "text",
-    "assignees": "list",
+    "developers": "list",
     "reviewers": "list",
     "review_waived": "bool",
     "parent": "text",
@@ -447,7 +447,7 @@ LABELS = {
     "title": "Title",
     "status": "Status",
     "owner": "Owner",
-    "assignees": "Assignees",
+    "developers": "Developers",
     "reviewers": "Reviewers",
     "review_waived": "Review waived",
     "start_date": "Start date",
@@ -569,7 +569,7 @@ HUMAN = {
     # roles, which the people page filters by. Already English, but a dropdown
     # reading "owner, Pitch, Ready" is three labelling conventions in one bar.
     "owner": "Owner",
-    "assignee": "Assignee",
+    "developer": "Developer",
     "reviewer": "Reviewer",
 }
 
@@ -822,13 +822,13 @@ def _ago(epoch: int, now: int) -> str:
 
 # Fields that name a person. They get a datalist of everyone already in the corpus,
 # so a typo shows up as "not in the list" rather than as a reviewer who does not exist.
-PEOPLE_FIELDS = ("owner", "assignees", "reviewers", "reported_by", "written_by")
+PEOPLE_FIELDS = ("owner", "developers", "reviewers", "reported_by", "written_by")
 # Which suggestion list each field draws from. A datalist only completes a whole
 # value, so the comma-separated ones also get an "add" picker that appends a token
 # — otherwise the suggestions are useless the moment there is more than one name.
 SUGGESTS = {
     "owner": "people",
-    "assignees": "people",
+    "developers": "people",
     "reviewers": "people",
     "parent": "records",
     "depends_on": "records",
@@ -1019,9 +1019,9 @@ def card_facts() -> dict[str, list[dict[str, str]]]:
     That identity is the whole point of this function existing, and it is
     jcanton's, on 2026-09-18: the right-click box "should display the editable
     fields as the edit view, so owner, assignees, reviewer, etc etc". The card
-    used to draw its own shorter vocabulary — `With`, which is the assignees
+    used to draw its own shorter vocabulary — `With`, which is the developers
     minus the owner, a compression that reads well and is not a field anybody can
-    edit. A box that shows `With` and a box that edits `assignees` are two boxes
+    edit. A box that shows `With` and a box that edits `developers` are two boxes
     however alike they look.
 
     Progress is not here. It is not a field — it is counted — so it is appended

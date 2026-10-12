@@ -106,7 +106,7 @@ def _record(rid, kind, title, parent, status, seed, weeks):
     lines += [
         f"status: {status}",
         f"owner: {owner}",
-        f"assignees: [{owner}, {other}]",
+        f"developers: [{owner}, {other}]",
         f"reviewers: [{reviewer}]",
         "review_waived: false",
         "start_date: 2026-08-17",

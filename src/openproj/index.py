@@ -76,7 +76,7 @@ COMPUTED_PREDICATES = (
 )
 
 _SCALAR_FACETS = ("kind", "status", "owner", "priority", "cycle")
-_LIST_FACETS = ("assignees", "reviewers", "tags")
+_LIST_FACETS = ("developers", "reviewers", "tags")
 # The heading a deferred-scope list is written under, lowercased as `sections`
 # returns it.
 _FOR_LATER = "for later"
@@ -620,7 +620,7 @@ class Index(BaseModel):
     def load(self, cycle: int) -> dict[str, float]:
         """Person-weeks each person is holding in this cycle.
 
-        Charged where the assignees are, and split evenly among them (D-C4): a
+        Charged where the developers are, and split evenly among them (D-C4): a
         pitch whose children carry the names charges nothing itself, because its
         appetite is a rollup and charging both counts the same work twice.
 
@@ -663,7 +663,7 @@ class Index(BaseModel):
         Keyed by person rather than counted, because the two callers want
         different arithmetic over the same walk: a person's own figure names the
         records on their own hook, and a cycle's names the distinct records
-        behind every figure on the page — a record with two assignees is one
+        behind every figure on the page — a record with two developers is one
         unsized bet on the cycle card and one on each of their rows.
         """
         return self._charged(cycle)[1]
@@ -972,7 +972,7 @@ SEARCH_FIELDS = (
     "tags",
     "prs",
     "owner",
-    "assignees",
+    "developers",
     "reviewers",
     "reported_by",
     "written_by",

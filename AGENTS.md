@@ -341,7 +341,7 @@ contained, the work queue, and the probes.
 
 **Asked for at the tailoring pass, 2026-08-16, and declined.** `postponed` as a bet outcome —
 leaving a pitch `ready` says the same thing, and it produced a better idea instead, the notes box on
-the cycle page. Appetite in cycle units — appetite is person-week effort and the assignees divide
+the cycle page. Appetite in cycle units — appetite is person-week effort and the developers divide
 it; "full cycle" on the team's own sheet is staffing shorthand, not a second unit. A roster grouped
 by institution — if institutions turn out to matter, the answer is separate plans and separate
 deployments, not a grouping column. An availability field that admits uncertainty — better a lie

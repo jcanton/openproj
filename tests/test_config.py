@@ -11,7 +11,7 @@ def test_problem_carries_the_rule_version_that_introduced_the_rule():
     problem = Problem(
         severity="warning",
         record_id="pitch-1b3f9a",
-        field="assignees",
+        field="developers",
         sentence="a ready record needs somebody on it",
         rule_version=2,
     )

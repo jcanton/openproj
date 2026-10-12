@@ -987,7 +987,7 @@ def _as_positive(value: object, name: str, most: float = math.inf) -> float:
 
 
 _NUMERIC = ("cycle", "person_weeks")
-_LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on", "pitched_into", "became")
+_LISTS = ("developers", "reviewers", "tags", "prs", "depends_on", "pitched_into", "became")
 
 
 def _deletion_message(record_id: str, doomed: list[str], edited: list[str]) -> str:
@@ -3411,7 +3411,7 @@ def create_app(
         Both computed before anything is written, and both handed back to the
         page BEFORE it commits — the fields are a compare-and-swap on the shape
         of the change, exactly as `also` is for a cascading delete. A reader who
-        was shown "this drops its appetite and its assignees" and then had
+        was shown "this drops its appetite and its developers" and then had
         something else dropped was not asked.
 
         **This is not a second copy of the containment ladder, and the sentence

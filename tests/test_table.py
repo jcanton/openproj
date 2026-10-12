@@ -1016,7 +1016,7 @@ def test_a_page_that_never_advances_its_base_collides_with_itself(client: TestCl
     assert save(client, TASK, {"priority": "low"}, base=stale).status_code == 409
 
 
-# A create that breaks no rule. `assignees` is here for the reason `owner` and
+# A create that breaks no rule. `developers` is here for the reason `owner` and
 # `reviewers` are: a `ready` record is refused without it, and a create fixture
 # that trips a gate makes every test using it a test about that gate.
 NEW_TASK = {
@@ -1025,7 +1025,7 @@ NEW_TASK = {
     "parent": PITCH,
     "status": "ready",
     "owner": "ann",
-    "assignees": ["ann"],
+    "developers": ["ann"],
     "reviewers": ["bo"],
     "person_weeks": 1.0,
 }
@@ -1093,7 +1093,7 @@ def test_a_create_that_waives_review_is_accepted(client: TestClient):
             "parent": PITCH,
             "status": "ready",
             "owner": "cy",
-            "assignees": ["cy"],
+            "developers": ["cy"],
             "review_waived": True,
             "person_weeks": 0.5,
         },
@@ -1237,7 +1237,7 @@ def test_the_fit_is_measured_again_once_the_real_typeface_has_landed(page: str):
 # left out of the arithmetic.
 #
 # Re-read once the clamped columns stopped being able to overflow their badge:
-# `assignees` and `reviewers` are one login and a `+N` now, not a whole list, and
+# `developers` and `reviewers` are one login and a `+N` now, not a whole list, and
 # `prs` is `#2211` rather than `kilnlab/kiln4py#2211` — three columns that were
 # written down here at 198, 161 and 172 and had not needed that much for two
 # rounds.
@@ -1252,7 +1252,7 @@ MEASURED = {
     "priority": 79,
     "status": 107,
     "owner": 100,
-    "assignees": 124,
+    "developers": 124,
     "reviewers": 116,
     "cycle": 63,
     "size": 81,
@@ -1455,7 +1455,7 @@ def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
     # The two that are wider than the clamp floor here are the two that pay;
     # `prs` and `reviewers` are already under it and have nothing to give.
     assert width["tags"] < MEASURED["tags"], "a clamped column pays"
-    assert width["assignees"] < MEASURED["assignees"], "and so does a list of logins"
+    assert width["developers"] < MEASURED["developers"], "and so does a list of logins"
     # The sentence pays only what is left after they are spent — so if `title` gave
     # anything up, every clamped column must already be as narrow as it is allowed
     # to be. On a window this tight it does pay; on a real one it keeps its width.
@@ -1472,7 +1472,7 @@ def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
     # narrowest one does, rather than every column losing the same proportion.
     # Asked of two columns that are both still drawn — at this window the fit
     # sheds `reviewers` and `prs`, and a column that is gone has paid everything.
-    paying = [key for key in ("assignees", "reviewers", "prs", "tags") if key in width]
+    paying = [key for key in ("developers", "reviewers", "prs", "tags") if key in width]
     assert len(paying) >= 2, f"too few clamped columns left to compare: {paying}"
     widest = max(paying, key=lambda k: MEASURED[k])
     narrowest = min(paying, key=lambda k: MEASURED[k])
@@ -1792,7 +1792,7 @@ def test_an_expanded_column_is_a_way_of_reading_and_not_a_setting(demo_page: str
 
 # The header at the two widths it is ever drawn at: what the fit gave it with
 # room to spare, and the floor it is squeezed to when there is none. Four
-# columns, two shapes — `assignees` and `reviewers` sort and hold a button,
+# columns, two shapes — `developers` and `reviewers` sort and hold a button,
 # `prs` and `tags` are bare text — and all four carry the control and the grip.
 #
 # Both widths, because they fail for different reasons. The control is out of
@@ -1854,7 +1854,7 @@ def test_the_header_fits_at_the_width_the_fit_may_squeeze_it_to(demo_page: str, 
     allowed to squeeze them to. Every one of the four now holds a label, a sort
     glyph, the column's `+` and a drag grip.
 
-    At 112 — the floor before the control existed — `ASSIGNEES` and `REVIEWERS`
+    At 112 — the floor before the control existed — `DEVELOPERS` and `REVIEWERS`
     wrap over two lines, which is a narrower column and a taller header: exactly
     what the clamp was for, undone. The floor went up to 116 to pay for the
     control rather than the control shrinking to fit under the old one.
@@ -2170,7 +2170,7 @@ def test_a_new_pitch_starts_from_the_teams_own_shaping_template(new_page: str):
 
 
 def test_every_reference_on_the_create_form_is_offered_and_not_remembered(new_page: str):
-    """owner, assignees, reviewers, parent, cycle and blocked_by all point at
+    """owner, developers, reviewers, parent, cycle and blocked_by all point at
     something that already exists. Typed from memory a login is a typo, an id is a
     dangling reference the validator rejects after the save rather than before it,
     and a cycle number is off by one as often as it is right.
@@ -2180,7 +2180,7 @@ def test_every_reference_on_the_create_form_is_offered_and_not_remembered(new_pa
     above — was six free-text boxes."""
     for field, source in (
         ("owner", "people"),
-        ("assignees", "people"),
+        ("developers", "people"),
         ("reviewers", "people"),
         ("parent", "records"),
         ("cycle", "cycles"),
@@ -2374,7 +2374,7 @@ def test_a_column_header_is_the_label_map_s_word_for_the_field(page: str):
         assert LABELS[name] in re.sub(r"<[^>]*>", "", header), name
 
 
-def test_assignees_is_a_column_and_a_filter_and_a_value(page: str, client: TestClient):
+def test_developers_is_a_column_and_a_filter_and_a_value(page: str, client: TestClient):
     """Three sites, and missing any one of them fails quietly rather than loudly:
     a column with no payload key renders blank on every row until somebody edits
     it, and a dropdown missing from the client-side filter changes the URL and
@@ -2386,9 +2386,9 @@ def test_assignees_is_a_column_and_a_filter_and_a_value(page: str, client: TestC
     offered = re.findall(r'<div class="facet" data-field="([^"]+)"', page)
     filtered = re.search(r"const FILTERS = \[(.*?)\];", page, re.S).group(1)
 
-    assert "assignees" in columns(page)
-    assert "assignees" in row
-    assert "assignees" in offered
+    assert "developers" in columns(page)
+    assert "developers" in row
+    assert "developers" in offered
     assert set(offered) - {"predicate"} <= set(re.findall(r"'([^']+)'", filtered))
 
 
@@ -2704,7 +2704,7 @@ def test_a_title_somebody_typed_never_becomes_markup():
     for interpolation in (
         "${esc(row.title)}",  # the title cell, which is also a link
         "${esc(row.id)}",  # and the href it is a link to
-        "return esc(stored(row, key));",  # owner, assignees, reviewers, dates
+        "return esc(stored(row, key));",  # owner, developers, reviewers, dates
         "${esc(human(row.status))}",  # the kind is no longer drawn in any cell
         "${esc(ref)}",  # a PR reference, repo and number both
         "${esc(was)}",  # and the value the editor opens with
@@ -3027,7 +3027,7 @@ def test_the_tags_cell_is_one_line_with_the_rest_behind_a_count(page: str):
     # column left: a task with three merged PRs stood 128px tall beside a 50px row.
     assert "clamped((value || []).map(esc), 'tag', 'tags')" in body
     assert "clamped((value || []).map(prLink), 'pull request', 'pull requests')" in body
-    # Every list column, not three of four: assignees and reviewers were the last
+    # Every list column, not three of four: developers and reviewers were the last
     # that wrapped, and they were most of the height left in the table.
     assert "clamped((value || []).map(esc), 'person', 'people')" in body
     assert "CLAMPED.has(key) ? 'clamp' : ''" in body
@@ -3083,7 +3083,7 @@ def _tips(page: str, rows: list[dict], key: str, marks: dict | None = None) -> l
 def test_a_clamped_cell_says_what_it_is_hiding_before_it_says_how_to_edit_it(page: str):
     """Four columns draw one value and a `+N`, and the only way to read the rest
     was to click the badge — while hovering the cell answered a question nobody
-    had asked: "Double-click to edit assignees".
+    had asked: "Double-click to edit developers".
 
     So the hidden values go first and the instruction under them, and a cell that
     is hiding nothing gets no extra line at all — every tooltip in the table
@@ -3092,15 +3092,15 @@ def test_a_clamped_cell_says_what_it_is_hiding_before_it_says_how_to_edit_it(pag
     one, two, none = _tips(
         page,
         [
-            {"id": "task-000001", "assignees": ["merganserly", "nightjarelli"]},
-            {"id": "task-000002", "assignees": ["Oxpeckerly", "nightjarelli", "jackdawrie"]},
-            {"id": "task-000003", "assignees": ["sanderlingly"]},
+            {"id": "task-000001", "developers": ["merganserly", "nightjarelli"]},
+            {"id": "task-000002", "developers": ["Oxpeckerly", "nightjarelli", "jackdawrie"]},
+            {"id": "task-000003", "developers": ["sanderlingly"]},
         ],
-        "assignees",
+        "developers",
     )
-    assert one == "+1 more: nightjarelli\nDouble-click to edit assignees"
-    assert two == "+2 more: nightjarelli, jackdawrie\nDouble-click to edit assignees"
-    assert none == "Double-click to edit assignees", "nothing is hidden, so nothing is revealed"
+    assert one == "+1 more: nightjarelli\nDouble-click to edit developers"
+    assert two == "+2 more: nightjarelli, jackdawrie\nDouble-click to edit developers"
+    assert none == "Double-click to edit developers", "nothing is hidden, so nothing is revealed"
 
     # A `title` takes newlines and this is two lines, not a run-on sentence: the
     # answer and the instruction are different kinds of thing.
@@ -3140,10 +3140,10 @@ def test_a_problem_still_comes_first_and_a_long_list_is_capped(page: str):
     as a line and says how many it did not print.
     """
     marks = {
-        "task-000001": {"assignees": {"severity": "blocker", "messages": ["nobody is on this"]}}
+        "task-000001": {"developers": {"severity": "blocker", "messages": ["nobody is on this"]}}
     }
-    tip = _tips(page, [{"id": "task-000001", "assignees": ["a", "b"]}], "assignees", marks)[0]
-    assert tip == "nobody is on this\n+1 more: b\nDouble-click to edit assignees"
+    tip = _tips(page, [{"id": "task-000001", "developers": ["a", "b"]}], "developers", marks)[0]
+    assert tip == "nobody is on this\n+1 more: b\nDouble-click to edit developers"
 
     many = [f"tag-{n:02d}" for n in range(60)]
     capped = _tips(page, [{"id": "task-000001", "tags": many}], "tags")[0]
@@ -3345,7 +3345,7 @@ def test_the_editor_discards_on_escape_and_commits_on_tab(page: str):
 _ESCAPE_WITH_A_LIST_OPEN = """
 window.__wrote = 0;
 window.fetch = () => { window.__wrote++; return new Promise(() => {}); };
-const cell = document.querySelector('td.edit[data-field="assignees"]');
+const cell = document.querySelector('td.edit[data-field="developers"]');
 openEditor(cell);
 const box = cell.querySelector('input');
 box.value = 'b';
@@ -4030,7 +4030,7 @@ def test_an_editor_opens_clear_of_the_frozen_column_on_a_narrow_screen(
     running to x=177 — 34.5px of its left end painted over by a column that is
     opaque by design, and `elementFromPoint` at the box's own left edge answering
     the title's link rather than the box. `owner` went under by 16.5px and
-    `assignees` by 39.5, so it was never only the one column. With the call back
+    `developers` by 39.5, so it was never only the one column. With the call back
     in every one of them clears it: the text boxes at x=177.5 and the date box at
     x=185.5, which is the cell's `.5rem` of padding a date control sits inside.
 
@@ -4091,7 +4091,7 @@ def dated_page() -> str:
             title="Verify the aroma transport port",
             status="ready",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             reviewers=["bo"],
             person_weeks=3.0,
         ),
@@ -4112,7 +4112,7 @@ def dated_page() -> str:
             parent=PITCH,
             status="ready",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             reviewers=["bo"],
             person_weeks=1.0,
         ),
@@ -4194,7 +4194,7 @@ def rollup_plan(bet: float | None, kids: tuple[tuple[float | None, str], ...]) -
             id="pitch-000001",
             kind="pitch",
             title="Q",
-            assignees=["ann"],
+            developers=["ann"],
             **({"person_weeks": bet} if bet is not None else {}),
         )
     ]
@@ -4206,7 +4206,7 @@ def rollup_plan(bet: float | None, kids: tuple[tuple[float | None, str], ...]) -
                 title="T",
                 parent="pitch-000001",
                 status=status,
-                assignees=["ann"],
+                developers=["ann"],
                 **({"person_weeks": size} if size is not None else {}),
             )
         )
@@ -4677,7 +4677,7 @@ def test_every_control_on_the_create_form_has_a_name(new_page: str):
         # A label points at a control that is on the page, or it is a name the
         # reader is told about and cannot reach.
         assert re.search(rf'<(?:input|select|textarea)[^>]*\bid="{control_id}"', new_page), word
-    for field in ("owner", "assignees", "reviewers", "cycle", "priority"):
+    for field in ("owner", "developers", "reviewers", "cycle", "priority"):
         assert f"new-{field}" in named, field
         assert named[f"new-{field}"] == LABELS[field]
 
@@ -5064,7 +5064,7 @@ def test_what_the_server_refuses_a_row_with_is_shown_beside_it(page: str):
                         {
                             "severity": "blocker",
                             "record_id": "pitch-000000",
-                            "field": "assignees",
+                            "field": "developers",
                             "message": "a ready record needs somebody on it",
                             "drawn": "a ready record needs somebody on it",
                         },
@@ -6284,7 +6284,7 @@ def test_a_row_that_names_no_reviewer_shows_the_ones_under_it(tmp_path: Path):
 
 _CONTAINER_PEOPLE = """
 const found = {};
-for (const key of ['assignees', 'reviewers']) {
+for (const key of ['developers', 'reviewers']) {
   const cell = tbody.querySelector(`tr[data-id="PROJECT"] td[data-col="${key}"]`);
   found[key] = {
     text: cell.textContent.trim(),
@@ -6298,9 +6298,9 @@ for (const key of ['assignees', 'reviewers']) {
 }
 // The pitch between the project and the tasks, which reads BOTH fields itself.
 const pitch = tbody.querySelector('tr[data-id="pitch-000001"]');
-found.pitchAssignees = {
-  text: pitch.querySelector('td[data-col="assignees"]').textContent.trim(),
-  from: (DATA.rows['pitch-000001'].assignees_from || []).length,
+found.pitchDevelopers = {
+  text: pitch.querySelector('td[data-col="developers"]').textContent.trim(),
+  from: (DATA.rows['pitch-000001'].developers_from || []).length,
 };
 found.pitchReviewers = {
   text: pitch.querySelector('td[data-col="reviewers"]').textContent.trim(),
@@ -6316,7 +6316,7 @@ def test_a_project_shows_the_people_on_the_work_under_it(tmp_path: Path):
     stopped at.
 
     Two claims a substring could not make and a DOM test could not make either.
-    The first is that the cells are not empty: a project's own `assignees` is
+    The first is that the cells are not empty: a project's own `developers` is
     nulled by `rows.read`, and until the rollup was gated on `schedules` instead
     of on `unread` the very act of marking the field unread blanked the cell this
     key exists to fill. The second is the tooltip, which is a different sentence
@@ -6358,7 +6358,7 @@ def test_a_project_shows_the_people_on_the_work_under_it(tmp_path: Path):
             parent="pitch-000001",
             status="ready",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             reviewers=["bo"],
             person_weeks=2,
             start_date=date(2026, 8, 10),
@@ -6370,7 +6370,7 @@ def test_a_project_shows_the_people_on_the_work_under_it(tmp_path: Path):
             parent="pitch-000001",
             status="ready",
             owner="bo",
-            assignees=["bo"],
+            developers=["bo"],
             reviewers=["cy"],
             person_weeks=2,
             start_date=date(2026, 8, 10),
@@ -6387,7 +6387,7 @@ def test_a_project_shows_the_people_on_the_work_under_it(tmp_path: Path):
         _CONTAINER_PEOPLE.replace("PROJECT", "proj-000001"),
     )
 
-    for key in ("assignees", "reviewers"):
+    for key in ("developers", "reviewers"):
         cell = got[key]
         assert cell["own"] == 0, f"the project is carrying {key} of its own"
         assert cell["from"], f"nothing reached {key} from the work under the project"
@@ -6407,7 +6407,7 @@ def test_a_project_shows_the_people_on_the_work_under_it(tmp_path: Path):
     # The names themselves, and both tasks reached: `ann, bo` and `bo, cy` rather
     # than whichever one the walk happened to stop on. Read off the payload and
     # not the cell, whose text is clamped to the column's width.
-    assert got["assignees"]["from"] == 2
+    assert got["developers"]["from"] == 2
     assert got["reviewers"]["from"] == 2
 
     # **And the pitch in between is not drawn the same way, which is the half of
@@ -6415,22 +6415,22 @@ def test_a_project_shows_the_people_on_the_work_under_it(tmp_path: Path):
     # to different rules. A pitch that names no reviewer and has reviewed tasks
     # under it IS reviewed — `_status_problems` takes `reviewers_under` and stops
     # asking — so its reviewers cell shows them. Nothing says that about
-    # assignees, and nothing should: the scheduler prices a record by the people
+    # developers, and nothing should: the scheduler prices a record by the people
     # on it, so a pitch has to name its own. Drawn on the same terms, this row
     # showed two inherited names in a pale cell beside the warning triangle for
     # "a ready record needs somebody on it" — the page contradicting itself
     # inside one row, which is exactly what a reader cannot act on.
     assert got["pitchReviewers"]["from"] == 2, "the reviewers rule stopped reaching the pitch"
     assert got["pitchReviewers"]["text"]
-    assert got["pitchAssignees"]["from"] == 0, (
-        "the pitch is shown assignees from its tasks while the gate still demands its own"
+    assert got["pitchDevelopers"]["from"] == 0, (
+        "the pitch is shown developers from its tasks while the gate still demands its own"
     )
     # Asserted on the NAMES and not on an empty cell: what the pitch does draw
     # there is the warning mark for the gate it is failing, which is the whole
     # point — the cell says "nobody is on this", and it would be saying it beside
     # two names if the rollup reached here.
-    assert not {"ann", "bo"} & set(got["pitchAssignees"]["text"].split()), (
-        got["pitchAssignees"]["text"]
+    assert not {"ann", "bo"} & set(got["pitchDevelopers"]["text"].split()), (
+        got["pitchDevelopers"]["text"]
     )
 
 
@@ -6674,7 +6674,7 @@ def test_a_complaint_about_a_date_lands_on_the_date_cell(client: TestClient, rep
     drawn = answer["value"]
 
     # The whole set, so that a mark left behind on the id cell fails here too.
-    assert set(drawn[DRIFTED]) == {"assignees", "start"}, drawn[DRIFTED]
+    assert set(drawn[DRIFTED]) == {"developers", "start"}, drawn[DRIFTED]
     assert set(drawn[DONE]) == {"prs", "end"}, drawn[DONE]
     # And it is the validator's own sentence on the cell, not some other row's.
     assert drawn[DRIFTED]["start"] == said[(DRIFTED, "start_date")]
@@ -7860,7 +7860,7 @@ def test_a_plain_click_puts_the_selection_down(page: str, tmp_path: Path):
 #
 # The gate demands `end_date` at `done`, and that field is empty on every row
 # anybody is about to mark done — which is a different shape from every gate
-# before it. `owner`, `assignees` and `person_weeks` are answered once and then
+# before it. `owner`, `developers` and `person_weeks` are answered once and then
 # stay answered, so a bulk status change met the refusal rarely; this one would
 # have met it every single time, about every single row.
 # --------------------------------------------------------------------------- #
@@ -7883,7 +7883,7 @@ def finishing_page(demo_root: Path) -> str:
         parent=PITCH,
         status="in_progress",
         owner="ann",
-        assignees=["ann"],
+        developers=["ann"],
         reviewers=["bo"],
         person_weeks=1.0,
         start_date=date(2026, 8, 3),
@@ -7896,7 +7896,7 @@ def finishing_page(demo_root: Path) -> str:
             title="Verify the aroma transport port",
             status="ready",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             reviewers=["bo"],
             person_weeks=3.0,
         ),
@@ -8029,7 +8029,7 @@ def reviving_page() -> str:
         kind="task",
         parent=PITCH,
         owner="ann",
-        assignees=["ann"],
+        developers=["ann"],
         reviewers=["bo"],
         person_weeks=1.0,
         prs=["kilnlab/kiln4py#1"],
@@ -8041,7 +8041,7 @@ def reviving_page() -> str:
             title="Verify the aroma transport port",
             status="ready",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             reviewers=["bo"],
             person_weeks=3.0,
         ),

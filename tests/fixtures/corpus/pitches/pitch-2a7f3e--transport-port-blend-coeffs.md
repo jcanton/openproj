@@ -7,7 +7,7 @@ status: done
 owner: null            # REQUIRED from schema_version 1; not in source
 reviewers: []          # REQUIRED from schema_version 1; not in source
 person_weeks: null
-assignees:
+developers:
   - nightjarelli
   - Dunnocksen
 start_date: null

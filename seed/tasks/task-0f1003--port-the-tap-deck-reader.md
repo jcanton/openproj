@@ -5,7 +5,7 @@ title: Port the tap-deck reader
 parent: pitch-0f0003
 status: shelved
 owner: Ptarmigant
-assignees: [Ptarmigant]
+developers: [Ptarmigant]
 reviewers: [firecresta]
 review_waived: false
 start_date: null

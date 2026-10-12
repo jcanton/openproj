@@ -243,7 +243,7 @@ def _record_row(index: Index, record_id: str) -> dict:
         "tags": record.tags,
         "status": read("status"),
         "owner": read("owner"),
-        "assignees": read("assignees"),
+        "developers": read("developers"),
         "reviewers": read("reviewers"),
         "priority": read("priority"),
         "cycle": read("cycle"),

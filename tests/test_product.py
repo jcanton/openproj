@@ -368,21 +368,21 @@ def test_a_project_is_scheduled_and_still_has_nobody_on_it():
     from openproj.model import unread_fields
 
     unread = set(unread_fields("project"))
-    assert unread == {"assignees", "reviewers", "review_waived", "person_weeks"}, sorted(unread)
+    assert unread == {"developers", "reviewers", "review_waived", "person_weeks"}, sorted(unread)
     # Scheduled, and so still reading every field that comes with being work.
     assert not unread & {"owner", "start_date", "end_date", "cycle", "priority", "prs", "status"}
     # And nothing moved on the rungs either side. A product reads none of them and
     # a pitch reads all of them, both of which were true before this rung was
     # split off and have to stay true after.
     assert set(unread_fields("pitch")) == set()
-    assert {"assignees", "reviewers", "owner", "prs"} <= set(unread_fields("product"))
+    assert {"developers", "reviewers", "owner", "prs"} <= set(unread_fields("product"))
 
 
 def test_the_editors_do_not_offer_a_project_a_box_for_hands():
     """`unread_fields` again, through the two surfaces that build boxes from it.
 
     The record page and the create form ask it directly, and the table's draft row
-    asks `_new_row_fields`. All three had an assignees box on a project until the
+    asks `_new_row_fields`. All three had an developers box on a project until the
     rung stopped reading the field, and a box the validator then warns about is
     the disagreement `unread_fields` exists to prevent.
     """
@@ -393,13 +393,13 @@ def test_the_editors_do_not_offer_a_project_a_box_for_hands():
         "projects/proj-000001.md",
     )
     offered = {field["name"] for field in _editable_for(one)}
-    assert not offered & {"assignees", "reviewers", "review_waived"}, sorted(offered)
+    assert not offered & {"developers", "reviewers", "review_waived"}, sorted(offered)
     # And the boxes a project does keep, so this cannot pass by offering nothing.
     assert {"owner", "start_date", "priority", "status"} <= offered
 
     columns = _new_row_fields()
-    assert "assignees" not in columns["project"]
-    assert "assignees" in columns["pitch"]
+    assert "developers" not in columns["project"]
+    assert "developers" in columns["pitch"]
 
 
 def test_a_product_can_be_made_through_the_api(tmp_path: Path):

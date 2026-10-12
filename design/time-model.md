@@ -169,7 +169,7 @@ reason — the table is a tree by default, so the tasks that make up the sum are
 rows directly underneath.
 
 **The comparison is calendar against calendar.** jcanton, 2026-08-27, with a
-worked example: a pitch bet at 8 person-weeks with two assignees has bought
+worked example: a pitch bet at 8 person-weeks with two developers has bought
 itself four calendar weeks, and that is the box. If its tasks as actually staffed
 need four and a half, it is over — even though 4 + 1 person-weeks of tasks sits
 comfortably inside an 8 person-week bet. The person-weeks comparison answers "is
@@ -179,7 +179,7 @@ in front of a plan; the calendar one answers "will this fit", which is.
 Both numbers already exist and neither is new arithmetic:
 
 - **The box** is `_duration_weeks(pitch)` — the pitch's own `person_weeks` over
-  the summed availability of its own assignees. Two people at full rate turn 8
+  the summed availability of its own developers. Two people at full rate turn 8
   into 4.0; two people at 60% turn it into 6.7, which is the right answer and
   the one the scheduler already gives every leaf.
 - **The contents** is the UNION of the intervals its children occupy, measured
@@ -188,7 +188,7 @@ Both numbers already exist and neither is new arithmetic:
   for them.
 
 **Reading the placement rather than summing the children is what makes shared
-assignees come out right**, and it is why the sum was rejected. Two tasks of four
+developers come out right**, and it is why the sum was rejected. Two tasks of four
 weeks and half a week are 4.5 weeks of calendar if one person holds both and 4.0
 if they run side by side on different people — and the scheduler already knows
 which, because `_place` books workers and a contended person serialises their own
@@ -423,7 +423,7 @@ ignore a red banner.
   and it is its own design.
 - **Widening `counts_in`.** See §5.
 - **Any change to `_duration_weeks`.** Staffing still shortens a bar. jcanton
-  asked that assignee count stop counting towards a rolled-up appetite, and
+  asked that developer count stop counting towards a rolled-up appetite, and
   reading settled it: `_weighed` takes `person_weeks` undivided, and a pitch with
   children never reaches `_duration_weeks` at all — it rolls up its children's
   dates and returns first. The clause was already true. `GOLDEN_SPANS` is

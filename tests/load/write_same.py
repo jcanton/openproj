@@ -27,7 +27,7 @@ APPEND-ONLY edit: a save that legitimately overwrites an earlier one would look
 like a loss. So the writers here are split in two, and each half is judged by the
 check that fits it:
 
-* **accumulate** lanes append to a LIST field (`tags`, `prs`, `assignees`,
+* **accumulate** lanes append to a LIST field (`tags`, `prs`, `developers`,
   `reviewers`, `depends_on`) or insert a line into the body. Every accepted
   marker must survive to the tip, and `verify.form_changes` judges them.
 * **latest** lanes are last-writer-wins scalars (`title`, `owner`,
@@ -88,11 +88,11 @@ VARIANTS = ("fields", "field", "body")
 # `latest` overwrites a scalar and only its LAST accepted value must survive.
 # Nothing here can add a validation blocker: `shaping` and `shelved` are the two
 # statuses `_status_problems` returns early on, so the junk logins the owner and
-# assignee lanes write are warnings about `config/people.yaml` and never gates.
+# developer lanes write are warnings about `config/people.yaml` and never gates.
 LANES: tuple[tuple[str, str], ...] = (
     ("tags", "accumulate"),
     ("prs", "accumulate"),
-    ("assignees", "accumulate"),
+    ("developers", "accumulate"),
     ("reviewers", "accumulate"),
     ("depends_on", "accumulate"),
     ("title", "latest"),
@@ -205,7 +205,7 @@ class SameRecordWriter(users.FormWriter):
             # save that wrote it. `_reject_bad_types` refuses NaN and Infinity at
             # the door, which is why this is an ordinary two-decimal number.
             return round(10 + self.index + n / 100.0, 2)
-        if field in ("tags", "prs", "assignees", "reviewers", "depends_on"):
+        if field in ("tags", "prs", "developers", "reviewers", "depends_on"):
             was = list(getattr(record, field) or [])
             if field == "depends_on":
                 # Real ids, because an edge to a record that does not exist is

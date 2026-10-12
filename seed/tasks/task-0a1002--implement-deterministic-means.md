@@ -5,7 +5,7 @@ title: Implement deterministic means
 parent: pitch-0a0001
 status: ready
 owner: sanderlingly
-assignees: [sanderlingly]
+developers: [sanderlingly]
 reviewers: [merganserly, eveningtern]
 review_waived: false
 start_date: 2026-08-17

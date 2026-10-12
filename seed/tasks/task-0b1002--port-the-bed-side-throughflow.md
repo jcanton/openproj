@@ -5,7 +5,7 @@ title: Port the bed-side throughflow
 parent: pitch-0b0001
 status: in_progress
 owner: yellowhammer7
-assignees: [yellowhammer7, jackdawrie]
+developers: [yellowhammer7, jackdawrie]
 reviewers: [jackdawrie, hoopoegrove]
 review_waived: false
 start_date: 2026-07-13

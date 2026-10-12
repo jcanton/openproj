@@ -5,7 +5,7 @@ title: Scan operator on the GPU backend
 parent: proj-9a4c25
 status: in_progress
 owner: redpollard
-assignees: [redpollard, chiffchaffy]
+developers: [redpollard, chiffchaffy]
 reviewers: [Whimbrelson]
 review_waived: false
 start_date: 2026-08-13

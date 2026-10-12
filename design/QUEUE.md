@@ -199,7 +199,7 @@ and each says why it is still here.
   Half-diagnosed already, so start here rather than from the screenshot. `.chip`
   is `white-space: nowrap` (render.py, near the status tints), which is right:
   "IN PROGRESS" broken across two lines is not a chip. What is missing is that
-  the cell has nowhere to put the overflow. `CLAMPED` is `tags, prs, assignees, reviewers` and `SQUEEZABLE` is `title, owner`; `status` is in neither, so the
+  the cell has nowhere to put the overflow. `CLAMPED` is `tags, prs, developers, reviewers` and `SQUEEZABLE` is `title, owner`; `status` is in neither, so the
   fit hands it a width and nothing clips what does not fit. Priority is in
   neither either and gets away with it only because it is plain text, which wraps
   — which is why the same screenshot shows `Medi um` on two lines. Both are the
@@ -313,7 +313,7 @@ result set is worse than one that visibly empties it.
 
 Exposes what `apply_filters` already does — AND across fields, OR within one. Two
 cycles selected means either, because a record has one cycle and "both" is empty
-by construction. For list fields (`tags`, `assignees`, `reviewers`) "both" is
+by construction. For list fields (`tags`, `developers`, `reviewers`) "both" is
 meaningful and is what the query language above is for; the menus stay OR.
 
 ## 3. One hover card, three views

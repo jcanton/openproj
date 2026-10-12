@@ -5,7 +5,7 @@ title: Burner radiation port
 parent: proj-000001
 status: ready
 owner: hoopoegrove
-assignees: [hoopoegrove, kittiwaker]
+developers: [hoopoegrove, kittiwaker]
 reviewers: [jackdawrie, turnstonegru]
 review_waived: false
 start_date: 2026-08-17

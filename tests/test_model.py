@@ -30,7 +30,7 @@ def test_a_record_needs_only_id_kind_and_title():
     record = Record(id="task-abc123", kind="task", title="Something")
     assert record.status == "thinking"
     assert record.owner is None
-    assert record.assignees == []
+    assert record.developers == []
     assert record.reviewers == []
     assert record.review_waived is False
     assert record.depends_on == []

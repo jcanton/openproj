@@ -5,7 +5,7 @@ title: Porting throughflow
 parent: proj-000001
 status: in_progress
 owner: jackdawrie
-assignees: [jackdawrie, yellowhammer7]
+developers: [jackdawrie, yellowhammer7]
 reviewers: [hoopoegrove, mudlarkish]
 review_waived: false
 start_date: 2026-06-22

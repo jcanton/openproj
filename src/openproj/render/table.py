@@ -208,7 +208,7 @@ _TABLE_COLUMNS = (
     ("priority", True),
     ("status", True),
     ("owner", True),
-    ("assignees", True),
+    ("developers", True),
     ("reviewers", True),
     ("cycle", True),
     ("size", True),
@@ -550,13 +550,13 @@ const DATES = {{ dates|tojson }};
 // rollup rides on the row as `<key>_from` (`rows.py`), so the three places that
 // read one index by the key instead of naming the column. `reviewers` was the
 // only inheriting column for a while and all three spelled it out, which is why
-// adding `assignees` meant finding them; a third column that starts inheriting
+// adding `developers` meant finding them; a third column that starts inheriting
 // is now one entry here and one key on the row.
 //
 // WHICH rows carry a rollup is `rows.py`'s question and not this file's, and the
 // two fields do not answer it the same way — see the comment there. Everything
 // here draws whatever arrived.
-const INHERITS = ['assignees', 'reviewers'];
+const INHERITS = ['developers', 'reviewers'];
 
 // Whether the value in this cell was worked out rather than typed. It decides
 // one thing — the muted italic `.derived` — and it used to be `!editable && why`
@@ -770,7 +770,7 @@ function shown(row, key) {
   // the whole row grew to match, which is the defect the tags clamp was written
   // for. The owner is the name that matters and it has its own column; the rest
   // are one click away, where they always were.
-  if (key === 'assignees' || key === 'reviewers')
+  if (key === 'developers' || key === 'reviewers')
     return clamped((value || []).map(esc), 'person', 'people');
   // A date, short. `2026-07-14` is ten characters and two of them are the century;
   // on a laptop the two date columns were 22 characters of a fourteen-column
@@ -828,7 +828,7 @@ function shortDate(iso) {
 //
 // Four columns draw one value and a `+N`, and the only way to read the rest was
 // to click the badge — while hovering the cell answered a question nobody had
-// asked, "Double-click to edit assignees". So the answer to the question they did
+// asked, "Double-click to edit developers". So the answer to the question they did
 // ask goes first. The badge is untouched: this adds a way to *read* the hidden
 // values, it does not replace the way to reveal them.
 //
@@ -935,7 +935,7 @@ function cell(row, key, place) {
   // cell, which is what puts it in the fit's measurement of the column.
   const rungs = key === 'title' && place ? place.rungs.join(' ') : '';
   // Nothing to clamp is nothing to wrap. The four clamped columns wrapped
-  // unconditionally, so every row with no assignees, no reviewers, no PRs and no
+  // unconditionally, so every row with no developers, no reviewers, no PRs and no
   // tags carried four empty `<span class="clamped">`s — inert, and a lie to
   // anything that asks what a cell holds: a product row that reads as empty was
   // drawing four of them, which is how `test_a_products_row_is_empty_...` found
@@ -1762,8 +1762,8 @@ function missingFor(row, status) {
 // above because `saveCells` now asks the same question of a whole selection
 // before it writes one answer across it, and the four ways a field can be unset
 // — absent, null, the empty string, the empty list — are not a list anybody
-// would write out twice and get right twice. An `assignees: []` that read as a
-// value would be a row silently exempted from a gate; an `assignees: []` that
+// would write out twice and get right twice. An `developers: []` that read as a
+// value would be a row silently exempted from a gate; an `developers: []` that
 // read as unset in one copy and as a value in the other would be a row the panel
 // asks about and then refuses to write.
 function holds(row, field) {
@@ -1815,7 +1815,7 @@ function askFor(cell, status, fields, commit, about) {
     // `data-type` and `data-suggest` are what `openEditor` writes on the box it
     // builds, for the same widget: `data-type` is not decoration — the widget
     // reads `dataset.type === 'list'` to complete the last comma-separated
-    // token, and without it picking a second assignee replaced the first.
+    // token, and without it picking a second developer replaced the first.
     const suggest = SUGGESTS[field];
     return `<label>${esc(label)}` +
       `<input type="${type}" data-field="${esc(field)}"` +
@@ -2325,7 +2325,7 @@ function rove(cell, focus) {
 // open box drawn from x=142.5, so 34.5px of its left end sat under a column
 // that is opaque by design, and
 // `elementFromPoint` at the box's own left edge answers the title's link rather
-// than the box. `owner` went under by 37.5px and `assignees` by 40.5, so it was
+// than the box. `owner` went under by 37.5px and `developers` by 40.5, so it was
 // never only the one column.
 //
 // Still true, and still this function's job, now that the open date box is wider
@@ -2428,7 +2428,7 @@ function openEditor(cell) {
     // `type` is what the browser draws, `data-type` is what `coerce` and the
     // suggestion widget read — the widget completes the last comma-separated
     // token on `dataset.type === 'list'`, and dropping it as a duplicate of
-    // `type` is how picking a second assignee came to replace the first.
+    // `type` is how picking a second developer came to replace the first.
     : `<input value="${esc(was)}" type="${type}"` +
       ` data-type="${esc(EDITABLE[field])}" aria-label="${named}"` +
       `${suggest ? ` data-suggest="${esc(suggest)}"` : ''} autocomplete="off">`);
@@ -3807,7 +3807,7 @@ const SPARE_COLUMN = 'tags';
 // The four columns that hold a list, drawn as one item and a `+N`, and the four
 // the fit narrows first. One set, because it is one fact: a column may be made
 // narrower exactly when its overflow already has somewhere to go.
-const CLAMPED = new Set(['tags', 'prs', 'assignees', 'reviewers']);
+const CLAMPED = new Set(['tags', 'prs', 'developers', 'reviewers']);
 const SQUEEZABLE = new Set(['title', 'owner', 'progress']);
 // What the table gives up when it runs out of room, in the order it gives them
 // up. All four are lookups rather than answers — each is on the detail page and
@@ -3888,7 +3888,7 @@ const PROGRESS_FLOOR = 78;
 // 116 and not the 112 it was, because these four headers now carry the column's
 // `+` as well: `.5rem` of padding, then `REVIEWERS` and its sort glyph, then the
 // 2rem the control and the grip stand in. Measured in Chrome at each width in
-// turn — at 112 and at 115 `ASSIGNEES` and `REVIEWERS` wrap over two lines, and
+// turn — at 112 and at 115 `DEVELOPERS` and `REVIEWERS` wrap over two lines, and
 // at 116 all four fit on one. The floor went up to pay for the control rather
 // than the control shrinking to fit under the old one: it is a 17px target in a
 // header that already holds a sort button and a drag handle, and the mis-click
@@ -4244,7 +4244,7 @@ function stickyOffset() {
 //     was a smaller target in a 112px column beside two other things to hit,
 //     which is the mis-click written down as a decision.
 //
-// The two header shapes end up as one control: `assignees` and `reviewers` sort
+// The two header shapes end up as one control: `developers` and `reviewers` sort
 // and hold a button, `prs` and `tags` are bare text, and in both the label is at
 // the left of the cell and the `+` is at the right of it.
 const expanders = new Map();

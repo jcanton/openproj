@@ -7,7 +7,7 @@ status: ready
 owner: merganserly
 reviewers: [jackdawrie]
 person_weeks: 1
-assignees: []
+developers: []
 start_date: null
 cycle: null
 priority: low

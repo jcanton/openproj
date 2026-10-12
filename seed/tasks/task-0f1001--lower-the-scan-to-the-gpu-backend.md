@@ -5,7 +5,7 @@ title: Lower the scan to the GPU backend
 parent: pitch-0f0001
 status: in_progress
 owner: firecresta
-assignees: [firecresta]
+developers: [firecresta]
 reviewers: [siskinbury, jackdawrie]
 review_waived: false
 start_date: 2026-08-17

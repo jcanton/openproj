@@ -5,7 +5,7 @@ title: CI for the standalone driver v1.5
 parent: pitch-0a0001
 status: in_progress
 owner: jackdawrie
-assignees: [jackdawrie, merganserly]
+developers: [jackdawrie, merganserly]
 reviewers: [nightjarelli, ibisbillie]
 review_waived: false
 start_date: 2026-08-17

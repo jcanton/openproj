@@ -252,7 +252,7 @@ def test_a_hand_written_edge_to_an_issue_does_not_500_the_table(
             ),
             "tasks/task-9b9b9b.md": (
                 "---\nid: task-9b9b9b\nkind: task\ntitle: waits on an inbox record\n"
-                "status: ready\nowner: ann\nassignees: [ann]\nreviewers: [bo]\n"
+                "status: ready\nowner: ann\ndevelopers: [ann]\nreviewers: [bo]\n"
                 "person_weeks: 1\ndepends_on: [issue-9a9a9a]\n---\n\nx\n"
             ),
         },

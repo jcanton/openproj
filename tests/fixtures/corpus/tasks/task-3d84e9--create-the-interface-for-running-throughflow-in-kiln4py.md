@@ -7,7 +7,7 @@ status: shelved
 owner: null            # REQUIRED from schema_version 1; not in source
 reviewers: []          # REQUIRED from schema_version 1; not in source
 person_weeks: null
-assignees:
+developers:
   - yellowhammer7
 start_date: null
 cycle: 28

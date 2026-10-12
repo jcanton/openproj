@@ -139,7 +139,7 @@ def test_the_card_says_the_things_a_row_does_not(index: Index):
     the record has filled them in: a field with nothing in it is the field
     somebody opens the box to fill, and a row that is not there is a field that
     cannot be clicked. The card used to list five compressed facts and leave the
-    empty ones out — `With`, the assignees minus the owner, was one of them, and
+    empty ones out — `With`, the developers minus the owner, was one of them, and
     it is not a field anybody can edit.
     """
     record_id = one_pitch(index)
@@ -160,7 +160,7 @@ def test_the_card_says_the_things_a_row_does_not(index: Index):
         assert word in rows, f"{word} is an editable field and no row of the card"
     assert "With" not in rows, (
         "the card still lists `With`, which reads well and is not a field: the box beside "
-        "it edits `assignees`, and one of them is lying"
+        "it edits `developers`, and one of them is lying"
     )
 
 

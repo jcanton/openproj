@@ -1571,7 +1571,7 @@ def test_the_people_page_lists_everyone_the_plan_names(rendered: Path, seed_inde
     named = {
         login
         for record in seed_index.plan.values()
-        for field in ("owner", "assignees", "reviewers")
+        for field in ("owner", "developers", "reviewers")
         for login in (lambda v: v if isinstance(v, list) else [v] if v else [])(
             getattr(record, field, None)
         )
@@ -1587,7 +1587,7 @@ def test_a_person_row_says_which_hat_they_are_wearing(rendered: Path):
     of the page is telling somebody which of theirs is which."""
     body = read(rendered, "people.html")
 
-    for role in ("owner", "assignee", "reviewer"):
+    for role in ("owner", "developer", "reviewer"):
         assert f'class="role">{role}<' in body, role
 
 
@@ -1693,7 +1693,7 @@ def test_one_persons_rows_do_not_run_into_the_next(rendered: Path):
 
 
 def test_a_person_is_weighed_in_weeks_and_not_in_things(demo_rendered: tuple[Path, Index]):
-    """F23. "1 as owner, 2 as assignee, 12 as reviewer" adds a half-hour review to
+    """F23. "1 as owner, 2 as developer, 12 as reviewer" adds a half-hour review to
     a six-week build and calls the sum a workload.
 
     The weeks come from `index.load`, which is the function the cycle page bets
@@ -1794,7 +1794,7 @@ def test_the_pages_that_add_weeks_up_say_how_many_they_could_not_count():
             title="Bet and sized",
             status="ready",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             cycle=37,
             person_weeks=3.0,
         ),
@@ -1804,7 +1804,7 @@ def test_the_pages_that_add_weeks_up_say_how_many_they_could_not_count():
                 kind="pitch",
                 title="Shaping",
                 owner="ann",
-                assignees=["ann"],
+                developers=["ann"],
                 cycle=37,
             )
             for n in (2, 3)
@@ -4049,7 +4049,7 @@ def test_a_cycle_bet_into_by_somebody_off_the_roster_is_not_counted_short(
     assert totals["bet"] == pytest.approx(sum(index.load(37).values()))
 
 
-def test_load_is_charged_where_the_assignees_are(demo_rendered: tuple[Path, Index]):
+def test_load_is_charged_where_the_developers_are(demo_rendered: tuple[Path, Index]):
     """D-C2: a pitch whose children carry the names charges nothing itself. Its
     appetite is a rollup, and charging both counts the same work twice."""
     _, index = demo_rendered
@@ -4074,11 +4074,11 @@ def test_a_size_is_split_evenly_between_the_people_on_it(demo_rendered: tuple[Pa
     shared = next(
         e
         for e in index.plan.values()
-        if index.counts_in(e, 37) and len(e.assignees) > 1 and not index.children.get(e.id)
+        if index.counts_in(e, 37) and len(e.developers) > 1 and not index.children.get(e.id)
     )
     size = size_weeks(shared)
     held = index.load(37)
-    people = list(dict.fromkeys(([shared.owner] if shared.owner else []) + shared.assignees))
+    people = list(dict.fromkeys(([shared.owner] if shared.owner else []) + shared.developers))
 
     assert len(people) > 1
     for who in people:
@@ -4913,7 +4913,7 @@ def test_people_links_land_on_records_when_there_is_no_table(seed_index: Index):
     from openproj.model import VIEWS
     from openproj.render import render_people
 
-    roles = ("owner=", "assignees=", "reviewers=")
+    roles = ("owner=", "developers=", "reviewers=")
     no_table = tuple(one for one in VIEWS if one != "table")
     for links, lands, where in (
         (ROUTES, "/table?", ", in the table"),
@@ -6771,7 +6771,7 @@ def test_the_number_the_page_prints_in_tasks_is_the_number_check_warns_on():
                 kind="pitch",
                 title="Q",
                 person_weeks=8.0,
-                assignees=["jackdawrie", "merganserly"],
+                developers=["jackdawrie", "merganserly"],
             ),
             *(
                 Task(id=f"task-00000{at}", kind="task", title="T", parent="pitch-000001", **task)
@@ -6779,7 +6779,7 @@ def test_the_number_the_page_prints_in_tasks_is_the_number_check_warns_on():
             ),
         ]
 
-    held = {"person_weeks": 4.0, "assignees": ["jackdawrie"]}
+    held = {"person_weeks": 4.0, "developers": ["jackdawrie"]}
     # The first two plans are the same three records twice, and the only
     # difference is whose name is on the half-week task: one person holding both
     # has to do them in turn, two people do them at once. That is the whole
@@ -6787,11 +6787,11 @@ def test_the_number_the_page_prints_in_tasks_is_the_number_check_warns_on():
     # the agreement is pinned over.
     plans = {
         "two people, side by side": (
-            family(held, {"person_weeks": 0.5, "assignees": ["merganserly"]}),
+            family(held, {"person_weeks": 0.5, "developers": ["merganserly"]}),
             True,
         ),
         "one person, in turn": (
-            family(held, {"person_weeks": 0.5, "assignees": ["jackdawrie"]}),
+            family(held, {"person_weeks": 0.5, "developers": ["jackdawrie"]}),
             False,
         ),
         # The unsized-but-dated done child. It has no `person_weeks` at all, so
@@ -6805,7 +6805,7 @@ def test_the_number_the_page_prints_in_tasks_is_the_number_check_warns_on():
             family(
                 {
                     "status": "done",
-                    "assignees": ["jackdawrie"],
+                    "developers": ["jackdawrie"],
                     "start_date": date(2026, 8, 17),
                     "end_date": date(2026, 9, 25),
                 }
@@ -6888,7 +6888,7 @@ def test_the_box_the_bet_buys_names_the_number_it_was_divided_by():
                 title="Q",
                 cycle=37,
                 person_weeks=3.0,
-                assignees=["jackdawrie", "merganserly"],
+                developers=["jackdawrie", "merganserly"],
             ),
             *(
                 Task(
@@ -6897,7 +6897,7 @@ def test_the_box_the_bet_buys_names_the_number_it_was_divided_by():
                     title="T",
                     parent="pitch-000001",
                     person_weeks=3.0,
-                    assignees=[who],
+                    developers=[who],
                 )
                 for n, who in enumerate(("jackdawrie", "merganserly"), start=1)
             ),
@@ -8031,9 +8031,9 @@ if (document.querySelector('article.record').classList.contains('whole-page')) {
 const priority = document.querySelector('[data-type][name=priority]');
 priority.value = 'low';
 priority.dispatchEvent(new Event('change', {bubbles: true}));
-const assignees = document.querySelector('[data-type][name=assignees]');
-assignees.value = '';
-assignees.dispatchEvent(new Event('input', {bubbles: true}));
+const developers = document.querySelector('[data-type][name=developers]');
+developers.value = '';
+developers.dispatchEvent(new Event('input', {bubbles: true}));
 await new Promise(done => setTimeout(done, 100));
 """ + _THE_RECORD
     got = measured_on_a_phone(
@@ -9388,7 +9388,7 @@ def test_a_refresh_keeps_what_the_room_is_doing_and_wires_what_it_brings_in(
       const pick = betRow(RENAMED).querySelector('select[data-field="priority"]');
       pick.value = [...pick.options].find(o => o.value !== pick.value).value;
       pick.dispatchEvent(new Event('change'));
-      const named = betRow(RENAMED).querySelector('input.live[data-field="assignees"]');
+      const named = betRow(RENAMED).querySelector('input.live[data-field="developers"]');
       return {{...kept, ticked: PENDING.get(TICK), picked: PENDING.get(RENAMED),
                pickedTo: pick.value, suggests: named.getAttribute('role'),
                typedStaged: PENDING.get(TYPING)}};
@@ -9707,7 +9707,7 @@ def test_a_task_filed_under_a_project_gets_a_tick_of_its_own():
             title="A chore nobody shaped",
             parent="proj-a00001",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             person_weeks=4.0,
             cycle=37,
             status="ready",
@@ -9718,7 +9718,7 @@ def test_a_task_filed_under_a_project_gets_a_tick_of_its_own():
             title="A shaped bet",
             parent="proj-a00001",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             person_weeks=4.0,
             cycle=37,
             status="ready",
@@ -9729,7 +9729,7 @@ def test_a_task_filed_under_a_project_gets_a_tick_of_its_own():
             title="Part of the shaped bet",
             parent="pitch-b00001",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             person_weeks=2.0,
             status="ready",
         ),
@@ -9865,7 +9865,7 @@ const ask = needle => { BETFIND.value = needle; betSearch(); return shown(); };
 const out = {all: betRows().length};
 
 // The row this is about: one input holding a list of two, which is what
-// `assignees` and `reviewers` are — `", ".join(...)` on the way out.
+// `developers` and `reviewers` are — `", ".join(...)` on the way out.
 const holder = betRows().find(row => [...row.querySelectorAll('input')]
   .some(box => box.dataset.type === 'list' && box.value.split(',').length > 1));
 out.holder = holder ? holder.dataset.id : null;
@@ -9934,7 +9934,7 @@ def test_the_two_boxes_cycles_py_rolls_by_hand_match_the_way_the_rest_does(
 
     **A needle may not cross from one value into the next.** `searchable` puts a
     space between values so `found`'s walk can stop there, and the betting table
-    reproduced the boundary per cell — but `assignees` and `reviewers` are ONE
+    reproduced the boundary per cell — but `developers` and `reviewers` are ONE
     input each holding a comma-joined list, so plaining the box whole welded two
     logins into one chunk and the leak came back inside a single cell. Measured
     on this corpus before the split: `redpollardchiffchaffy` found the two rows

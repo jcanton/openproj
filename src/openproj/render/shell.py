@@ -2770,9 +2770,9 @@ function cardTitleOf(id) {
 //
 // **The names are fields and not the card's own vocabulary**, which is the whole
 // of what changed here on 2026-09-18. The card used to list `With` — the
-// assignees minus the owner, deduped, because "ann, ann" is a box nobody trusts
+// developers minus the owner, deduped, because "ann, ann" is a box nobody trusts
 // the rest of — and `Scheduled`, one row holding two dates. Both read well and
-// neither is a field: the right-click box edits `assignees` and `start_date`,
+// neither is a field: the right-click box edits `developers` and `start_date`,
 // and a card that shows one thing while the box beside it edits another is two
 // boxes however alike they look. jcanton, asking for exactly this: "it should
 // display the editable fields as the edit view, so owner, assignees, reviewer,

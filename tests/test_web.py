@@ -1235,7 +1235,7 @@ def test_a_rule_newer_than_the_record_reaches_the_client_as_a_warning(client: Te
     repository at once. The pitch predates the somebody-assigned rule, so it
     warns."""
     problems = index_of(client)["problems"]
-    assigned = [p for p in problems if p["record_id"] == PITCH and p["field"] == "assignees"]
+    assigned = [p for p in problems if p["record_id"] == PITCH and p["field"] == "developers"]
 
     assert [p["severity"] for p in assigned] == ["warning"]
 
@@ -1777,7 +1777,7 @@ def test_a_field_the_client_did_not_send_is_not_rewritten(client: TestClient, re
     assert "person_weeks: 1.5          # measured on firebrick, not guessed" in stored
     assert "owner: ann                 # ann has the upstream contacts" in stored
     assert "reviewers: [bo, cy]" in stored  # still one line, still flow style
-    assert "assignees" not in stored  # an untouched default is not materialised
+    assert "developers" not in stored  # an untouched default is not materialised
 
 
 # --------------------------------------------------------------------------- #
@@ -1789,7 +1789,7 @@ def test_a_field_the_client_did_not_send_is_not_rewritten(client: TestClient, re
 # --------------------------------------------------------------------------- #
 
 
-# A create that breaks no rule. `assignees` is here for the reason `owner` and
+# A create that breaks no rule. `developers` is here for the reason `owner` and
 # `reviewers` are: a `ready` record is refused without it, and a create fixture
 # that trips a gate makes every test using it a test about that gate.
 VALID_TASK = {
@@ -1798,7 +1798,7 @@ VALID_TASK = {
     "parent": PITCH,
     "status": "ready",
     "owner": "ann",
-    "assignees": ["ann"],
+    "developers": ["ann"],
     "reviewers": ["bo"],
     "person_weeks": 1.0,
 }
@@ -1884,7 +1884,7 @@ def test_a_new_record_is_held_to_the_current_rules(client: TestClient, repo_path
     """Grandfathering protects the corpus that already exists, not the record being
     created right now. The seeded pitch only warns about having nobody on it; a
     pitch created today is created at the repository's `schema_version` and is
-    blocked without assignees. This is the mechanism working end to end rather
+    blocked without developers. This is the mechanism working end to end rather
     than in a unit test, and it is the reason a required field can ever be added
     at all — the version 2 rule refuses this create while it breaks no file
     already in the corpus."""
@@ -1902,7 +1902,7 @@ def test_a_new_record_is_held_to_the_current_rules(client: TestClient, repo_path
     )
 
     assert response.status_code == 422
-    assert [p["field"] for p in response.json()["problems"]] == ["assignees"]
+    assert [p["field"] for p in response.json()["problems"]] == ["developers"]
     assert git_head(repo_path) == base
 
 
@@ -3165,7 +3165,7 @@ def test_a_cycle_record_reaches_the_pages_it_is_for(client: TestClient, repo_pat
 def test_the_cycle_page_shows_load_against_capacity(client: TestClient, repo_path: Path):
     """The number the team's own sheet does not have. Their HackMD records
     availability and staffing and never adds them up."""
-    save(client, TASK, {"cycle": 37, "assignees": ["ann"], "person_weeks": 3.0})
+    save(client, TASK, {"cycle": 37, "developers": ["ann"], "person_weeks": 3.0})
     client.put(
         "/api/cycle/37",
         json={
@@ -3229,7 +3229,7 @@ def test_the_bet_table_wears_no_class_the_page_cannot_draw(client: TestClient):
     they must not disturb.
 
     Wiring it would have been worse than leaving it inert: every appetite,
-    assignees and reviewers box in this table opens a suggestion popup that
+    developers and reviewers box in this table opens a suggestion popup that
     `attachSuggest` inserts as the input's own next sibling, so an `overflow` on
     an ancestor cuts the list off against the bottom of the table on the last
     rows. A page that scrolls sideways is a nuisance; an autocomplete cut in half
@@ -3240,7 +3240,7 @@ def test_the_bet_table_wears_no_class_the_page_cannot_draw(client: TestClient):
     assert 'class="table-scroll"' not in page
     # The class still exists, on the one table with a sticky header to hold up.
     assert 'class="table-scroll carded"' in client.get("/table").text
-    assert re.search(r'<input class="live wide" data-field="assignees"[^>]*data-suggest', page), (
+    assert re.search(r'<input class="live wide" data-field="developers"[^>]*data-suggest', page), (
         "and this is the reason: the popups live inside the cells"
     )
 
@@ -3260,7 +3260,7 @@ def test_only_the_named_are_in_a_cycle(client: TestClient, repo_path: Path):
     deliberately rather than appearing because somebody was assigned something —
     which would make the roster a report instead of a decision."""
     save(client, PITCH, {"cycle": 44})
-    save(client, TASK, {"owner": "cy", "assignees": ["cy"], "person_weeks": 1.0})
+    save(client, TASK, {"owner": "cy", "developers": ["cy"], "person_weeks": 1.0})
     client.put(
         "/api/cycle/44",
         json={
@@ -3393,7 +3393,7 @@ def test_every_cycle_the_plan_names_is_on_the_index(client: TestClient, repo_pat
         },
     )
     save(client, PITCH, {"cycle": 48})
-    save(client, TASK, {"owner": "bo", "assignees": ["bo"], "person_weeks": 2.0})
+    save(client, TASK, {"owner": "bo", "developers": ["bo"], "person_weeks": 2.0})
     page = client.get("/cycles").text
     cards = re.findall(r'<h2><a href="/cycle/(\d+)">Cycle \d+</a></h2>', page)
 
@@ -3419,7 +3419,7 @@ def test_a_cycle_card_says_the_bet_against_the_capacity(client: TestClient, repo
         },
     )
     save(client, PITCH, {"cycle": 49})
-    save(client, TASK, {"owner": "cy", "assignees": ["cy"], "person_weeks": 3.0})
+    save(client, TASK, {"owner": "cy", "developers": ["cy"], "person_weeks": 3.0})
     card = re.search(
         r'<li class="card([^"]*)">\s*<h2><a href="/cycle/49".*?</li>',
         client.get("/cycles").text,
@@ -3429,7 +3429,7 @@ def test_a_cycle_card_says_the_bet_against_the_capacity(client: TestClient, repo
     # cy's three weeks, although cy is not on the roster: betting the pitch bets
     # everything under it, which is what "the pitch is the unit of the bet" means
     # for a capacity sum. The half-week sibling is bo's to answer for and nobody's
-    # to do — owner, no assignees — so it charges nobody (2026-09-23).
+    # to do — owner, no developers — so it charges nobody (2026-09-23).
     assert '<b class="num">3.0</b> of' in card, "cy is not on the roster and still counts"
     assert '<b class="num">2.0</b> weeks bet' in card, "ann at half of four weeks"
     assert re.search(r'<span class="bar"><span style="width: 100%">', card)
@@ -3998,7 +3998,7 @@ def test_every_control_on_the_cycle_page_has_a_name(client: TestClient):
         if '<input type="checkbox"' in row:
             assert f'aria-label="Bet {title} into cycle 37"' in row, title
         assert f'aria-label="{title} appetite in weeks"' in row, title
-        assert f'aria-label="{title} assignees"' in row, title
+        assert f'aria-label="{title} developers"' in row, title
         assert f'aria-label="{title} reviewers"' in row, title
 
     # Every control on the page is named one way or the other. A checkbox with no

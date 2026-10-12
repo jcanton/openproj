@@ -5,7 +5,7 @@ title: Rerun the backend suite after the shutdown
 parent: pitch-7b3e94
 status: ready
 owner: stonechatty
-assignees: [stonechatty]
+developers: [stonechatty]
 reviewers: [Whimbrelson]
 review_waived: false
 start_date: 2026-12-21

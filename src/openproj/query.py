@@ -3,7 +3,7 @@
 `tag:gpu and tag:distributed` is the query the dropdowns cannot express, because
 a menu means OR within a field — two cycles selected means either, since a
 record has one cycle and "both" is empty by construction. For `tags`,
-`assignees` and `reviewers` "both" is a real question, and this is where it is
+`developers` and `reviewers` "both" is a real question, and this is where it is
 asked.
 
 **Two implementations, on purpose, and only one of them can be avoided.** The
@@ -51,10 +51,14 @@ from dataclasses import dataclass
 # uses. Written the way it is read: `tag:gpu`, not `tags:gpu`.
 ALIASES = {
     "tag": "tags",
-    "assignee": "assignees",
+    "developer": "developers",
     "reviewer": "reviewers",
     "pr": "prs",
     "person": "owner",
+    # The field's name until 2026-10-12, still in bookmarked searches and in the
+    # fingers of everybody who typed it for two months. See `_RENAMED` in `model.py`.
+    "assignee": "developers",
+    "assignees": "developers",
 }
 
 # Fields whose values are free text, matched by `found` below. Everything else is

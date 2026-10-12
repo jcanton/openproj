@@ -41,7 +41,7 @@ PLAN = {
     "config/defaults.yaml": "schema_version: 1\nnominal_availability: 1.0\n",
     # The corpus holds at least one value for EVERY field the landing row can
     # be asked about — product and project through the holder walk, cycle,
-    # assignees, reviewers, owner, priority (the model's default), status,
+    # developers, reviewers, owner, priority (the model's default), status,
     # tags, prs — because the parity test below compares the box against the
     # server field by field, and a field no record holds is a field whose
     # parity check passes vacuously. That shape is what broke last time: a
@@ -63,7 +63,7 @@ PLAN = {
     ),
     TASK_PATH: (
         "---\nid: task-c00001\nkind: task\ntitle: Downgrade numpy\nstatus: ready\n"
-        "owner: bo\nassignees: [cara]\nreviewers: [dan]\n"
+        "owner: bo\ndevelopers: [cara]\nreviewers: [dan]\n"
         "prs: ['kilnlab/kiln4py#2211']\nparent: pitch-b20000\n"
         "person_weeks: 1\n---\n\nA task.\n"
     ),
@@ -693,7 +693,7 @@ def test_the_landing_box_and_the_server_find_the_same_records(tmp_path: Path):
     `plan`.
 
     The row now carries every field `QUERY_FIELDS` names — status, owner,
-    priority, cycle, assignees, reviewers, prs, project, product and real
+    priority, cycle, developers, reviewers, prs, project, product and real
     predicates beside the id/kind/title/tags it always had — so the needles
     ask about all of them, each with at least one holder in the corpus (a
     field nobody holds is a parity check that passes vacuously). Before this,
@@ -736,13 +736,13 @@ def test_the_landing_box_and_the_server_find_the_same_records(tmp_path: Path):
         # One needle per field the row could not answer before the
         # widening, each finding something. `status:ready` lands on the
         # pitch, the task AND the issue — the field crosses the
-        # plan/inbox line. `assignee:` and `reviewer:` are the aliases,
+        # plan/inbox line. `developer:` and `reviewer:` are the aliases,
         # so the alias map is in the claim too.
         "status:ready",
         "owner:ann",
         "priority:medium",
         "cycle:1",
-        "assignee:cara",
+        "developer:cara",
         "reviewer:dan",
         "prs:2211",
         "project:proj-a10000",
@@ -778,7 +778,7 @@ def test_the_landing_box_and_the_server_find_the_same_records(tmp_path: Path):
         "owner:ann",
         "priority:medium",
         "cycle:1",
-        "assignee:cara",
+        "developer:cara",
         "reviewer:dan",
         "prs:2211",
         "project:proj-a10000",

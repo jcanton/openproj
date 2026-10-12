@@ -7,7 +7,7 @@ status: ready
 owner: sanderlingly
 reviewers: [mudlarkish]
 person_weeks: 4
-assignees: []
+developers: []
 start_date: null
 cycle: 36
 priority: medium

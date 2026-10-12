@@ -135,7 +135,7 @@ _PLAN_FACETS = (
     "priority",
     "status",
     "owner",
-    "assignees",
+    "developers",
     "reviewers",
     "cycle",
     "product",
@@ -154,7 +154,7 @@ const params = new URLSearchParams(location.search);
 
 // Every field the control bar offers. A field in one list and not the other is a
 // dropdown that changes the URL and filters nothing.
-const FILTERS = ['kind','status','owner','assignees','reviewers','priority',
+const FILTERS = ['kind','status','owner','developers','reviewers','priority',
                  'cycle','product','project','tags'];
 
 // The menu option that means "this field is empty". Spelled here as a literal
@@ -184,7 +184,7 @@ function wanted(field) { return params.getAll(field).filter(Boolean); }
 // `derived` and eleven other things nobody would type — and because the same
 // list exists in `index.py`, where `test_the_two_field_lists_are_the_same` holds
 // the two together.
-const QUERY_FIELDS = ['kind','status','owner','priority','cycle','assignees',
+const QUERY_FIELDS = ['kind','status','owner','priority','cycle','developers',
                       'reviewers','tags','product','project','pitch','id','title','prs',
                       'predicate'];
 // The fields whose value is a record id rather than a word: an ancestor, found
@@ -192,8 +192,9 @@ const QUERY_FIELDS = ['kind','status','owner','priority','cycle','assignees',
 // title as well, which rides on the row in its own key. `_HOLDER_FACETS` is the
 // other copy of this list and `test_the_holder_fields_are_the_same` pins them.
 const HOLDER_FIELDS = ['product','project','pitch'];
-const ALIASES = {tag: 'tags', assignee: 'assignees', reviewer: 'reviewers',
-                 pr: 'prs', person: 'owner'};
+const ALIASES = {tag: 'tags', developer: 'developers', reviewer: 'reviewers',
+                 pr: 'prs', person: 'owner',
+                 assignee: 'developers', assignees: 'developers'};
 // Free text, matched by substring; everything else is a vocabulary and is
 // matched whole, so `cycle:3` does not answer for cycle 30. The holder fields
 // are free text because a pitch is titled with a sentence and nobody types a

@@ -5,7 +5,7 @@ title: Hearth backend for the bed solver
 parent: prod-7c2b81
 status: in_progress
 owner: redpollard
-assignees: [redpollard]
+developers: [redpollard]
 reviewers: [Whimbrelson]
 review_waived: false
 start_date: 2026-08-13

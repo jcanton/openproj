@@ -5,7 +5,7 @@ title: Porting the bed
 parent: proj-000001
 status: ready
 owner: mudlarkish
-assignees: [mudlarkish, jackdawrie]
+developers: [mudlarkish, jackdawrie]
 reviewers: [jackdawrie, hoopoegrove]
 review_waived: false
 start_date: 2026-08-17

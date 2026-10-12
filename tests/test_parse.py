@@ -13,6 +13,7 @@ from openproj.model import (
     load_repo,
     parse_file,
     parse_text,
+    patch_text,
     serialise,
     size_weeks,
 )
@@ -36,7 +37,7 @@ def test_parse_file_reads_a_seed_pitch(seed_root: Path):
     assert pitch.title == "Transport port blend coeffs"
     assert pitch.status == "done"
     assert pitch.person_weeks is None
-    assert pitch.assignees == ["nightjarelli", "Dunnocksen"]
+    assert pitch.developers == ["nightjarelli", "Dunnocksen"]
     assert pitch.cycle == 34
     assert "transport" in pitch.tags
 
@@ -132,6 +133,67 @@ def test_a_retired_shaped_by_still_loads_and_survives_a_save_untouched():
     saved = serialise(pitch, text)
     assert "shaped_by: jackdawrie\n" in saved, "an unrelated save keeps the retired key"
     assert saved.count("shaped_by") == 1
+
+
+# `assignees` until 2026-10-12, when jcanton renamed it "developers everywhere".
+_SAID_ASSIGNEES = (
+    "---\nid: task-abc123\nkind: task\ntitle: T\n"
+    "# who builds it\nassignees: [ann, bo]   # a pair\nreviewers: [cy]\n---\n\nbody\n"
+)
+
+
+def test_a_file_that_still_says_assignees_is_read_as_developers():
+    """The old name is read, not retired. A retired `assignees` would land in
+    `_unread` and leave every record with nobody on it, which the scheduler reads
+    as one notional person — so every span in a plan not yet migrated would
+    move, silently, the moment the deploy that renamed the field went out."""
+    record = parse_text(_SAID_ASSIGNEES, "t.md")
+
+    assert record.developers == ["ann", "bo"]
+    assert record._old_names == ("assignees",)
+    assert "assignees" not in record._unread
+
+
+def test_the_old_name_survives_a_save_that_does_not_touch_it():
+    """Only keys whose value changed are rewritten — the invariant that keeps
+    "edit it in git if you prefer" true. Renaming a key nobody edited is a save
+    reformatting somebody's file."""
+    record = parse_text(_SAID_ASSIGNEES, "t.md")
+    assert serialise(record, _SAID_ASSIGNEES) == _SAID_ASSIGNEES
+
+    record.title = "T, renamed"
+    saved = serialise(record, _SAID_ASSIGNEES)
+    assert "assignees: [ann, bo]   # a pair\n" in saved
+    assert "developers" not in saved
+
+
+def test_a_save_that_changes_the_developers_renames_the_key_where_it_stands():
+    """Renamed in place: same line, same comment above it and beside it. Added
+    at the bottom instead, the file would carry both names and the old one would
+    sit there unread for ever; added at the bottom after a pop, the list would
+    jump to the end of somebody's frontmatter the day it was renamed."""
+    record = parse_text(_SAID_ASSIGNEES, "t.md")
+    record.developers = ["ann"]
+    saved = serialise(record, _SAID_ASSIGNEES)
+
+    assert saved == _SAID_ASSIGNEES.replace(
+        "assignees: [ann, bo]   # a pair", "developers: [ann]      # a pair"
+    )
+    patched = patch_text(_SAID_ASSIGNEES, {"developers": ["ann"]})
+    assert "assignees" not in patched
+    assert patched.index("# who builds it\ndevelopers:") < patched.index("reviewers:")
+    assert parse_text(patched, "t.md").developers == ["ann"]
+    assert "assignees" not in patch_text(_SAID_ASSIGNEES, {}, drop=["developers"])
+
+
+def test_the_new_name_wins_over_the_old_one():
+    """A file that says both was half-migrated by hand. The new name is the one
+    every write since the rename has used, so it is the one that is current."""
+    both = _SAID_ASSIGNEES.replace("reviewers:", "developers: [zed]\nreviewers:")
+    record = parse_text(both, "t.md")
+
+    assert record.developers == ["zed"]
+    assert "assignees" in record._unread
 
 
 def test_serialise_appends_a_field_the_file_never_had():

@@ -5,7 +5,7 @@ title: Second-order FLUME blend coefficients
 parent: pitch-0d0001
 status: done
 owner: nightjarelli
-assignees: [nightjarelli]
+developers: [nightjarelli]
 reviewers: [Oxpeckerly, hoopoegrove]
 review_waived: false
 start_date: 2026-06-22

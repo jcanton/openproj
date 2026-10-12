@@ -5,7 +5,7 @@ title: Port the far-IR burner
 parent: pitch-0e0001
 status: ready
 owner: hoopoegrove
-assignees: [hoopoegrove, kittiwaker]
+developers: [hoopoegrove, kittiwaker]
 reviewers: [turnstonegru, jackdawrie]
 review_waived: false
 start_date: 2026-08-17

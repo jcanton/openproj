@@ -5,7 +5,7 @@ title: Port the near-IR burner
 parent: pitch-0e0001
 status: ready
 owner: kittiwaker
-assignees: [kittiwaker, hoopoegrove]
+developers: [kittiwaker, hoopoegrove]
 reviewers: [turnstonegru, jackdawrie]
 review_waived: false
 start_date: 2026-08-17

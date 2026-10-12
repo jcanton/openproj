@@ -11,7 +11,16 @@ import io
 import math
 import re
 import secrets
-from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence, Sized
+from collections.abc import (
+    Callable,
+    Collection,
+    Iterable,
+    Iterator,
+    Mapping,
+    MutableMapping,
+    Sequence,
+    Sized,
+)
 from datetime import date, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple
@@ -1237,6 +1246,11 @@ class Record(BaseModel):
     # written back into the record.
     _unread: tuple[str, ...] = PrivateAttr(default=())
 
+    # The keys this file wrote under a name `_RENAMED` has since replaced, and
+    # read under the new one. Kept so the validator can say so — the value is on
+    # the page either way, and only the file is out of date.
+    _old_names: tuple[str, ...] = PrivateAttr(default=())
+
     id: str
     # Not a `Literal` written out: the rungs are `KINDS` below, and a kind
     # spelled in two places is a kind that gets added to one of them.
@@ -1263,7 +1277,7 @@ class Record(BaseModel):
     status: str = STATUS_ORDER[0]
 
     owner: str | None = None
-    assignees: list[str] = []
+    developers: list[str] = []
     reviewers: list[str] = []
     review_waived: bool = False
 
@@ -2009,7 +2023,7 @@ def kind_off_warning(kind: str, config: Config) -> str | None:
 # the switch that turns the reviewers gate off, and a switch for a gate that no
 # longer fires is a box that does nothing.
 _PEOPLE_FIELDS = (
-    "assignees",
+    "developers",
     "reviewers",
     "review_waived",
 )
@@ -2165,6 +2179,8 @@ def parse_text(text: str, source: str) -> Record:
         raise ValueError(f"{source}: no usable 'kind', and the id names no known kind either")
 
     model = _MODELS[kind]
+    old_names = tuple(name for name in _RENAMED if name in data)
+    data = {_current_name(name, data): value for name, value in data.items()}
     fields = {
         name: value
         for name, value in data.items()
@@ -2178,6 +2194,7 @@ def parse_text(text: str, source: str) -> Record:
     # and was only ever used to name the file in an error message.
     record._source = source
     record._unread = tuple(name for name in data if name not in model.model_fields)
+    record._old_names = old_names
     return record
 
 
@@ -2188,7 +2205,7 @@ def parse_file(path: Path) -> Record:
 def parse_cycle_text(text: str, source: str) -> Cycle:
     """Parse one cycle file. Same frontmatter-and-body shape as a record, and a
     different type: nearly every field a Record carries is nonsense on a cycle,
-    and the one it would reach for — `assignees: list[str]` — cannot hold the
+    and the one it would reach for — `developers: list[str]` — cannot hold the
     fraction that is the whole point of the record."""
     frontmatter, body = _split(text, source)
     data = _round_trip_yaml().load(frontmatter) or {}
@@ -2434,8 +2451,10 @@ def serialise(record: Record, original_text: str | None = None) -> str:
     else:
         data = yaml.load(_split(original_text, record.id)[0]) or {}
         for key, value in dumped.items():
-            if key in data:
-                if data[key] != value:
+            written = _written_as(data, key)
+            if written in data:
+                if data[written] != value:
+                    _rename_in_place(data, key)
                     data[key] = _in_the_style_of(data[key], value)
             elif value != type(record).model_fields[key].default:
                 data[key] = value
@@ -2592,15 +2611,15 @@ def size_weeks(record: Record) -> float | None:
 
 
 def workers_on(record: Record) -> list[str]:
-    """The people doing the work on this record: its assignees, each counted once.
+    """The people doing the work on this record: its developers, each counted once.
 
     **The owner is not one of them unless they are also assigned.** An owner's job
     is to see the work done, and that is not a claim on their weeks — jcanton,
-    2026-09-23. It used to be `[owner] + assignees`, which booked the owner of
+    2026-09-23. It used to be `[owner] + developers`, which booked the owner of
     every record as a worker: an owner reviewing somebody else's task was told the
     task could not start until they were free, their capacity on the betting table
     carried a share of it, and the size was divided by one more person than was
-    actually on it. The ready gate already asks for `assignees` separately from
+    actually on it. The ready gate already asks for `developers` separately from
     `owner` for exactly this reason, so the two now mean the same thing on both
     sides of the check.
 
@@ -2611,7 +2630,7 @@ def workers_on(record: Record) -> list[str]:
     Both readings have to come off the same list or the sentence explains a number
     computed from a different set of names than the one it counts.
     """
-    return list(dict.fromkeys(record.assignees))
+    return list(dict.fromkeys(record.developers))
 
 
 def staffing_of(record: Record, staffed_at: float | None) -> str:
@@ -3798,7 +3817,7 @@ def _status_problems(
     # Whether to ask this rung for hands at all. A project is scheduled and so
     # reaches the gates below, and it is not staffed: the pitches and tasks under
     # it carry the names, and `unread_fields` has just told the reader that its
-    # own `assignees` is not read. Demanding a field in one breath and saying it
+    # own `developers` is not read. Demanding a field in one breath and saying it
     # is not read in the next is the form-and-validator disagreement this file
     # bans, one layer down. Same shape as `_appetite_problem`, which yields
     # nothing for a container for the same reason and has since it was written.
@@ -3813,8 +3832,8 @@ def _status_problems(
         # a record by the people on it (`workers_on`), so a bet with an owner and
         # nobody assigned is a bet that has been accepted and staffed with nobody.
         # jcanton, 2026-08-22.
-        if staffed and not record.assignees:
-            yield "blocker", "assignees", "a ready record needs somebody on it", 2
+        if staffed and not record.developers:
+            yield "blocker", "developers", "a ready record needs somebody on it", 2
         if staffed and not (record.review_waived or reviews):
             yield "blocker", "reviewers", "a ready record needs a reviewer, or review waived", 1
         yield from _appetite_problem(record, f"a ready {record.kind} needs an appetite")
@@ -3833,8 +3852,8 @@ def _status_problems(
         # no claim on anybody's capacity: it is work that is happening and that
         # the plan cannot account for at all.
         yield from _appetite_problem(record, "work in progress needs an appetite")
-        if staffed and not record.assignees:
-            yield "blocker", "assignees", "work in progress needs somebody on it", 2
+        if staffed and not record.developers:
+            yield "blocker", "developers", "work in progress needs somebody on it", 2
         if staffed and not record.review_waived and not (set(reviews) - {record.owner}):
             yield (
                 "blocker",
@@ -3953,7 +3972,7 @@ def _people_problems(record: Record, config: Config) -> Iterator[tuple[str, str 
     # on a product. The typo this rule exists to catch is one on a record that
     # will actually be staffed by it.
     unread = unread_fields(record.kind) if record.kind in RUNG else ()
-    for field in ("owner", "assignees", "reviewers", "reported_by", "written_by"):
+    for field in ("owner", "developers", "reviewers", "reported_by", "written_by"):
         if field in unread:
             continue
         value = getattr(record, field, None)
@@ -4311,7 +4330,7 @@ def _rollup_problems(
     this record's own appetite over the availability of its own people — and the
     contents is `Span.elapsed_weeks`, the working days the tasks actually occupy.
 
-    **The placement is what makes shared assignees come out right**, and it is
+    **The placement is what makes shared developers come out right**, and it is
     why the sum went. Two tasks of four weeks and half a week are four and a half
     weeks of calendar if one person holds both and four if they run side by side
     on different people; a sum reports four and a half in both cases and is wrong
@@ -4460,6 +4479,58 @@ _RETIRED = {
 }
 
 
+# Fields this tool still reads under a name it no longer writes, old name to
+# new. Unlike `_RETIRED` the value is not stranded: the file is read as though
+# it said the new name, so nothing on any page changes, and the key is renamed
+# where it stands the first time a save writes that field.
+#
+# `assignees` became `developers` on 2026-10-12 — jcanton: "let's change
+# 'assignees' to 'developers' everywhere". Read rather than retired because a
+# retired `assignees` would empty every list the scheduler divides a size by,
+# and the plans it was written in were migrated after the deploy that reads the
+# new name, not in the same instant.
+_RENAMED = {"assignees": "developers"}
+
+
+def _current_name(name: str, data: Mapping) -> str:
+    """The name a frontmatter key is read under. The new name wins outright: a
+    file carrying both is read by what it says under the new one, and the old
+    one is unread and reported."""
+    new = _RENAMED.get(name)
+    return new if new is not None and new not in data else name
+
+
+def _written_as(mapping: Mapping, key: str) -> str:
+    """The name this file writes `key` under: its own, or the old one it still
+    says, so a save that leaves the value alone leaves the old name alone too."""
+    if key in mapping:
+        return key
+    return next((old for old, new in _RENAMED.items() if new == key and old in mapping), key)
+
+
+def _rename_in_place(mapping: MutableMapping, key: str) -> None:
+    """Respell an old name of `key` where it stands, before `key` is written.
+
+    In place rather than popped and re-added, because a save keeps a person's
+    key order and comments — "Edit it in git if you prefer" — and a list that
+    jumped to the bottom of the frontmatter the day it was renamed is a file
+    somebody reformatted for them. Assigning `key` beside the old name instead
+    would leave both, and the old one unread for ever.
+    """
+    for old, new in _RENAMED.items():
+        if new != key or old not in mapping or key in mapping:
+            continue
+        keys = list(mapping)
+        value = mapping.pop(old)
+        if hasattr(mapping, "insert"):
+            mapping.insert(keys.index(old), key, value)
+            comments = getattr(mapping, "ca", None)
+            if comments is not None and old in comments.items:
+                comments.items[key] = comments.items.pop(old)
+        else:
+            mapping[key] = value
+
+
 def _problems_for(
     record: Record,
     config: Config,
@@ -4562,13 +4633,13 @@ def _problems_for(
                 # **Three sentences because there are three reasons, and one of
                 # them is new.** A project is scheduled — it has dates, a cycle,
                 # a priority, a bar on the timeline — so telling its author that
-                # it "is never scheduled, so its assignees is not read" would be
-                # a warning arguing with the page one click away. Its assignees
+                # it "is never scheduled, so its developers is not read" would be
+                # a warning arguing with the page one click away. Its developers
                 # are not read because the work is one rung down, and the
                 # sentence has to say that instead. It is worded to carry all
                 # three of `_PEOPLE_FIELDS`: "nobody works on one directly"
                 # reads as well before `review_waived` — a switch for a gate
-                # that no longer fires — as it does before `assignees`.
+                # that no longer fires — as it does before `developers`.
                 if field in _PEOPLE_FIELDS and RUNG[name].schedules:
                     what = f"{_an(name)} is a grouping and nobody works on one directly"
                 elif RUNG[name].planned:
@@ -4588,6 +4659,10 @@ def _problems_for(
     for field, where in _RETIRED.items():
         if field in record._unread:
             yield "warning", field, f"{field} is no longer read: {where}", 5
+    # Stamped 5 for the reason the loop above gives: a warning cannot be demoted.
+    for old in record._old_names:
+        new = _RENAMED[old]
+        yield "warning", new, f"{old} is the old name of {new} — rename the key to {new}", 5
 
     if record.id in parent_cycles:
         yield "blocker", "parent", "part of a parent cycle", 1
@@ -5031,6 +5106,8 @@ def patch_text(
     yaml = YAML()
     yaml.preserve_quotes = True
     mapping = yaml.load(front) or {}
+    for key in (*drop, *fields):
+        _rename_in_place(mapping, key)
     for key in drop:
         mapping.pop(key, None)
     for key, value in fields.items():

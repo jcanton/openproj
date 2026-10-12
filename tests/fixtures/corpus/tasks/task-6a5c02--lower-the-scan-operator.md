@@ -5,7 +5,7 @@ title: Lower the scan operator to the GPU backend
 parent: pitch-6f2d18
 status: in_progress
 owner: redpollard
-assignees: [redpollard, chiffchaffy]
+developers: [redpollard, chiffchaffy]
 reviewers: [Whimbrelson]
 review_waived: false
 start_date: 2026-08-17

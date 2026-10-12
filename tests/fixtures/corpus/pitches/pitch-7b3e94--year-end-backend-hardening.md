@@ -5,7 +5,7 @@ title: Year-end backend hardening
 parent: proj-9a4c25
 status: ready
 owner: Whimbrelson
-assignees: [Whimbrelson, stonechatty]
+developers: [Whimbrelson, stonechatty]
 reviewers: [redpollard]
 review_waived: false
 start_date: null

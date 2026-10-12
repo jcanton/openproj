@@ -46,7 +46,7 @@ def index() -> Index:
             title="No date on it",
             status="ready",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             reviewers=["bo"],
             person_weeks=2,
         ),
@@ -56,7 +56,7 @@ def index() -> Index:
             title="Dated already",
             status="ready",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             reviewers=["bo"],
             person_weeks=2,
             start_date=date(2026, 8, 10),
@@ -217,7 +217,7 @@ const row = [...document.querySelectorAll('tbody tr[data-id]')]
   .find(one => one.dataset.id === %s);
 saveCell(row.querySelector('td[data-col="status"]'), 'in_progress');
 const panel = document.getElementById('askfor');
-const box = panel.querySelector('input[data-field="assignees"]');
+const box = panel.querySelector('input[data-field="developers"]');
 const key = name => box.dispatchEvent(
   new KeyboardEvent('keydown', {key: name, bubbles: true, cancelable: true}));
 // One name already held, so picking a second can tell "complete the last token"
@@ -275,7 +275,7 @@ def test_the_question_offers_the_suggestions_a_cell_editor_offers(
         height=900,
     )
 
-    assert got["opened"]["fields"] == ["assignees", "reviewers", "start_date"]
+    assert got["opened"]["fields"] == ["developers", "reviewers", "start_date"]
     assert got["opened"]["role"] == "combobox"
     assert got["opened"]["type"] == "list"
     assert got["opened"]["expanded"] == "true"
@@ -295,7 +295,7 @@ def test_the_question_offers_the_suggestions_a_cell_editor_offers(
     assert [call["url"] for call in got["wrote"]] == [f"/api/record/{BARE}"]
     sent = got["wrote"][0]["body"]["fields"]
     assert sent["status"] == "in_progress"
-    assert sent["assignees"] == ["ann", "bo"]
+    assert sent["developers"] == ["ann", "bo"]
     assert sent["reviewers"] == ["ann"]
 
 
@@ -309,7 +309,7 @@ const row = [...document.querySelectorAll('tbody tr[data-id]')]
   .find(one => one.dataset.id === %s);
 saveCell(row.querySelector('td[data-col="status"]'), 'in_progress');
 const panel = document.getElementById('askfor');
-const box = panel.querySelector('input[data-field="assignees"]');
+const box = panel.querySelector('input[data-field="developers"]');
 const key = name => box.dispatchEvent(
   new KeyboardEvent('keydown', {key: name, bubbles: true, cancelable: true}));
 box.focus();

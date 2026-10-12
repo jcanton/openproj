@@ -5,7 +5,7 @@ title: Bench the scan against the CPU reference
 parent: pitch-0f0001
 status: ready
 owner: siskinbury
-assignees: [siskinbury]
+developers: [siskinbury]
 reviewers: [firecresta, avocetline]
 review_waived: false
 start_date: 2026-08-17
