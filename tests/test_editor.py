@@ -657,7 +657,7 @@ def test_the_graph_explains_its_mode_once_and_beside_the_button(client: TestClie
     page = client.get("/graph").text
 
     assert re.search(r'<p class="hint" id="panhint">', page)
-    assert "Double-click a node to open it" in page
+    assert "Click a node for its card, double-click to open it" in page
     assert "howto" not in page, "the second explanation is gone, not merely hidden"
     assert "PANHINT" not in page, "and the standing one is no longer swapped out"
     # What edit mode adds, said once, in the live region beside the button that

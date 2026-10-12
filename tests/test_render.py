@@ -3370,7 +3370,7 @@ def test_the_graph_carries_one_hint_and_no_mode_paragraph(rendered: Path):
     no such button."""
     graph = read(rendered, "graph.html")
 
-    assert "Double-click a node to open it" in graph
+    assert "Click a node for its card, double-click to open it" in graph
     assert "howto" not in graph, "there is no second hint to hide"
     assert 'id="connect"' not in graph, "and no edit mode to explain"
 

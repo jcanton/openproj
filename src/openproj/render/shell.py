@@ -2907,6 +2907,7 @@ function showCard(row, x, y, extra) {
   if (!CARD || !row) return Promise.resolve();
   clearTimeout(cardTimer);
   clearTimeout(cardLeaving);
+  cardPinned = false;
   cardShowing = row.id;
   CARD.innerHTML = cardHtml(row, extra || []);
   CARD.hidden = false;
@@ -2943,6 +2944,8 @@ const CARD_DELAY = 600;
 const CARD_GRACE = 220;
 let cardTimer = 0;
 let cardLeaving = 0;
+// Whether the card was opened by a click rather than by a hover. See `pinCard`.
+let cardPinned = false;
 // Whether a right-click menu is up. `design/context-menus.md`: **opening the menu
 // kills the card, and the card does not come back while the menu is up** — and the
 // third of that rule's three parts is this flag, because the pointer is sitting over
@@ -3169,10 +3172,22 @@ if (CARD_GRIP) CARD_GRIP.ondblclick = () => {
   fitCardGrip();
 };
 
+// A card opened by a click, which a pointer leaving does not close. The graph
+// opens its card this way — jcanton, 2026-10-12: "let's not make the pop-up card
+// show up on hover, only when clicking a record/node". A clicked card that went
+// the moment the pointer wandered off it would be a hover card with an extra
+// step, so it stays until something says it should go: a press anywhere outside
+// it, Escape, or `hideCardNow` from the page (a pan, a zoom, a drag).
+function pinCard(row, x, y, extra) {
+  const shown = showCard(row, x, y, extra);
+  cardPinned = Boolean(CARD && row && !cardStandsDown);
+  return shown;
+}
+
 // Asked for by a pointer leaving, and answered a moment later: the gap between
 // the row and the card is a place the pointer has to be allowed to cross.
 function hideCard() {
-  if (!CARD || cardResizing) return;
+  if (!CARD || cardResizing || cardPinned) return;
   clearTimeout(cardTimer);
   clearTimeout(cardLeaving);
   cardLeaving = setTimeout(hideCardNow, CARD_GRACE);
@@ -3184,9 +3199,23 @@ function hideCardNow() {
   if (!CARD || cardResizing) return;
   clearTimeout(cardTimer);
   clearTimeout(cardLeaving);
+  cardPinned = false;
   cardShowing = null;
   CARD.hidden = true;
 }
+
+// The two ways out of a pinned card that are not the page's own. Capture phase,
+// so a press on something that stops its own event still closes the card — and
+// so it runs BEFORE the click it belongs to, which is what lets a click on a
+// second node close the first card and then open the second, in that order.
+// A press inside the card is somebody reading it: scrolling, selecting, dragging
+// its grip.
+addEventListener('pointerdown', event => {
+  if (cardPinned && !CARD.contains(event.target)) hideCardNow();
+}, true);
+addEventListener('keydown', event => {
+  if (cardPinned && event.key === 'Escape') hideCardNow();
+});
 
 // The card, out of the way while the right-click menu owns the pointer, and back
 // afterwards. One function for `pop.py` to call rather than three globals for it to
@@ -3208,6 +3237,7 @@ function cardYields(yielding) {
   if (!yielding) return;
   clearTimeout(cardTimer);
   clearTimeout(cardLeaving);
+  cardPinned = false;
   cardShowing = null;
   if (CARD) CARD.hidden = true;
 }

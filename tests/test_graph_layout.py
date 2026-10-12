@@ -1067,3 +1067,97 @@ def test_pointing_at_a_card_lights_its_own_edges_and_fades_the_rest(
     assert after["lit"] == [] and after["unlit"] == 0, (
         f"the pointer left and the drawing stayed lit: {after}"
     )
+
+
+_THE_CARD = """(() => {
+  const card = document.getElementById('card');
+  const title = card.querySelector('.card-title');
+  return {shown: !card.hidden, title: title ? title.textContent : null};
+})()"""
+
+# A point on the canvas that is neither a node nor the card: a press there is a
+# press "somewhere else". Each corner of the canvas, inside its padding, and the
+# first one the card is not covering.
+_OFF_EVERYTHING = """(() => {
+  const area = CYBOX.getBoundingClientRect();
+  const card = document.getElementById('card').getBoundingClientRect();
+  const corners = [[area.left + 3, area.top + 3], [area.right - 3, area.top + 3],
+                   [area.left + 3, area.bottom - 3], [area.right - 3, area.bottom - 3]];
+  const inside = ([x, y]) => x >= card.left && x <= card.right && y >= card.top && y <= card.bottom;
+  const free = corners.find(corner => !inside(corner));
+  return free.map(Math.round);
+})()"""
+
+
+def test_the_graph_card_opens_on_a_click_and_not_on_a_hover(index: Index, tmp_path: Path):
+    """jcanton, 2026-10-12: "let's not make the pop-up card show up on hover, only
+    when clicking a record/node".
+
+    A real pointer, for the reason `_A_MOUSE` gives, and a real press: the card
+    is closed by a capture-phase `pointerdown` in the shell before cytoscape's
+    `tap` opens the next one, and an emitted `tap` has no `pointerdown` in front
+    of it — so only a real click can show that order works.
+
+    Four questions, each the way the old card would have answered wrongly:
+    pointing and waiting past the hover delay opens nothing; a click opens this
+    node's card; the pointer leaving the node does not close it, because a card
+    you clicked for that vanished when the pointer moved off it would be a hover
+    card with an extra step; and a press anywhere else, or Escape, does.
+    """
+    import time
+
+    from browser import _devtools, _evaluated
+
+    def click(call, x, y):
+        for kind in ("mousePressed", "mouseReleased"):
+            call(
+                "Input.dispatchMouseEvent",
+                {"type": kind, "x": x, "y": y, "button": "left", "clickCount": 1},
+            )
+
+    where = tmp_path / "clickcard.html"
+    where.write_text(render_graph(index, ROUTES, base_commit=HEAD, may_write=True))
+    with _devtools(chrome(), where.as_uri(), tmp_path / "click-profile", _A_MOUSE) as (call, _):
+        call(
+            "Emulation.setDeviceMetricsOverride",
+            {"width": 1600, "height": 900, "deviceScaleFactor": 1, "mobile": False},
+        )
+        time.sleep(3.5)
+        node = _evaluated(call, _A_CARD_WITH_EDGES)
+        assert node, "the drawing has no uncovered card to point at"
+        title = _evaluated(call, f"cy.getElementById({json.dumps(node['id'])}).data('title')")
+
+        call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": node["x"], "y": node["y"]})
+        # Past the 600ms the hover card used to wait for.
+        time.sleep(0.9)
+        hovered = _evaluated(call, _THE_CARD)
+
+        click(call, node["x"], node["y"])
+        time.sleep(0.3)
+        clicked = _evaluated(call, _THE_CARD)
+
+        away = _evaluated(call, _OFF_EVERYTHING)
+        call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": away[0], "y": away[1]})
+        time.sleep(0.5)
+        left = _evaluated(call, _THE_CARD)
+
+        click(call, away[0], away[1])
+        time.sleep(0.3)
+        pressed_elsewhere = _evaluated(call, _THE_CARD)
+
+        # Far enough from the last press that the two are not one double-click.
+        time.sleep(0.6)
+        click(call, node["x"], node["y"])
+        time.sleep(0.3)
+        again = _evaluated(call, _THE_CARD)
+        _evaluated(
+            call, "document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'})), 0"
+        )
+        escaped = _evaluated(call, _THE_CARD)
+
+    assert not hovered["shown"], "pointing at a node and waiting opened its card"
+    assert clicked == {"shown": True, "title": title}, clicked
+    assert left["shown"], "the clicked card closed when the pointer left the node"
+    assert not pressed_elsewhere["shown"], "a press off the card and off every node left it up"
+    assert again["shown"], "a second click on the node did not open its card again"
+    assert not escaped["shown"], "Escape left the card up"
