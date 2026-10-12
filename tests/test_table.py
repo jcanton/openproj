@@ -5688,7 +5688,7 @@ def test_a_redraw_in_the_middle_of_a_move_leaves_the_last_row_saying_what_it_say
     )
     got = answer["value"]
 
-    assert got["held"]["said"] == f"Take {TASK_TITLE} out of {PITCH_TITLE}"
+    assert got["held"]["said"] == f"Take {TASK_TITLE} out of {PITCH_TITLE}, into {PROJECT_TITLE}"
     assert got["redrawn"] == got["held"], "a redraw mid-move does not change what it offers"
     assert got["loose"]["rootless"] == f"{TASK_TITLE} is not inside anything"
     assert got["looseRedrawn"] == got["loose"]
@@ -5780,7 +5780,9 @@ def test_the_row_a_drop_would_land_in_is_named_beside_the_cursor(page: str):
     assert got["refused"] == {"said": "", "hidden": True}, (
         "a task holds nothing, so it is not named as anywhere this could land"
     )
-    assert got["out"]["said"] == "→ out of Verify the aroma transport port"
+    assert got["out"]["said"] == f"→ out of {PITCH_TITLE}, into {PROJECT_TITLE}", (
+        "out of the pitch is into the project the pitch is in, and the label says so"
+    )
     assert got["after"] is True, "and the label goes when the move does"
     assert "#into {" in page and "position: fixed" in page
     assert "table.moving tr.over > td {\n  background: var(--drop);" in page, (
