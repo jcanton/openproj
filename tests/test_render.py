@@ -9068,6 +9068,168 @@ def test_the_wash_does_not_take_away_the_ground_it_is_drawn_over(
     assert "rgba(0, 0, 0, 0)" not in before[:2], f"the frozen pair is not opaque: {before[:2]}"
 
 
+def test_the_betting_table_holds_every_bet_and_shortlists_ready_and_in_progress(
+    demo_rendered: tuple[Path, Index],
+):
+    """jcanton, 2026-10-12: "cycle betting table: option to filter all records,
+    not only ready or in progress" — a pitch still marked `shaping` the morning it
+    was argued for was not on the table at all.
+
+    Every bet the plan holds is a row now, and the ones a room does not see until
+    it ticks Every status are marked `offlist`. Asked against `is_bettable` over
+    the whole plan rather than a list of ids, so a bet added to the demo is in the
+    census on the commit that adds it.
+    """
+    from openproj.model import is_bettable
+    from openproj.render import _cycle_view
+
+    _, index = demo_rendered
+    rows = _cycle_view(index, 37)["candidates"]
+    bets = {row["id"]: row for row in rows if not row["rung"]}
+
+    assert set(bets) == {r.id for r in index.plan.values() if is_bettable(r, index.plan)}, (
+        "a bet the plan holds is not on the betting table"
+    )
+    off = {i for i, row in bets.items() if row["offlist"]}
+    assert off, "the demo has no bet outside ready and in progress, so this proves nothing"
+    for record_id, row in bets.items():
+        record = index.plan[record_id]
+        assert row["offlist"] == (record.status not in ("ready", "in_progress")), (
+            f"{record_id} is {record.status} and offlist={row['offlist']}"
+        )
+    # And a task is off the list when it is finished, dropped, or under a bet that
+    # is: a row drawn under a hidden bet is a connector hanging off nothing.
+    for row in rows:
+        if not row["rung"]:
+            held = row
+            continue
+        status = index.plan[row["id"]].status
+        assert row["offlist"] == (held["offlist"] or status in ("done", "shelved")), row["id"]
+
+
+def test_a_bet_already_in_this_cycle_stays_on_the_shortlist_whatever_its_status(
+    demo_rendered: tuple[Path, Index],
+):
+    """A `shaping` pitch ticked while Every status was on is a bet in this cycle,
+    and unticking the box must not take it off the page that made it — that reads
+    as the tick having been lost. Finished and dropped bets are history and stay
+    off; a bet in another cycle is not this cycle's business."""
+    from openproj.render.cycles import _shortlisted
+
+    _, index = demo_rendered
+    pitch = next(r for r in index.plan.values() if r.kind == "pitch")
+
+    def bet(status: str, cycle: int | None):
+        return pitch.model_copy(update={"status": status, "cycle": cycle})
+
+    assert _shortlisted(bet("shaping", 37), 37)
+    assert _shortlisted(bet("thinking", 37), 37)
+    assert not _shortlisted(bet("shaping", 36), 37)
+    assert not _shortlisted(bet("shaping", None), 37)
+    assert not _shortlisted(bet("done", 37), 37)
+    assert not _shortlisted(bet("shelved", 37), 37)
+    assert _shortlisted(bet("ready", None), 37)
+
+
+# What the betting table shows, as the ids of the rows a reader can see.
+_BETS_SHOWN = """
+  const shown = () => [...document.querySelectorAll('#bets tbody tr')]
+    .filter(row => row.getClientRects().length).map(row => row.dataset.id);
+"""
+
+
+def test_every_status_is_one_box_that_widens_the_table_and_is_remembered(
+    demo_rendered: tuple[Path, Index], tmp_path: Path
+):
+    """Off by default and the table is the shortlist; on and every bet is drawn,
+    with the sentence describing the table saying which of the two it is. Asked
+    of what is PAINTED — `getClientRects` — because `hidden` on a row is only a
+    promise until the cascade agrees, and a `tr` given `display` by some other
+    rule keeps it.
+
+    Then the page is loaded a second time in the same browser, because the box
+    is remembered and a remembered setting that is not read back on load is a
+    setting that resets itself every time the room refreshes."""
+    import time
+
+    from browser import _devtools, _evaluated, chrome
+
+    from openproj.render import render_cycle
+
+    _, index = demo_rendered
+    where = tmp_path / "cycle.html"
+    where.write_text(render_cycle(index, 37, ROUTES, base_commit="deadbee"))
+    ask = _BETS_SHOWN + """
+      return {shown: shown(), every: BETEVERY.checked,
+              scope: [...document.querySelectorAll('.betscope')]
+                .filter(s => s.getClientRects().length).map(s => s.dataset.every)};
+    """
+    ask = f"(() => {{ {ask} }})()"
+    with _devtools(chrome(), where.as_uri(), tmp_path / "every-profile") as (call, _said):
+        time.sleep(2)
+        before = _evaluated(call, ask)
+        _evaluated(call, "BETEVERY.click(); 1")
+        during = _evaluated(call, ask)
+        call("Page.reload", {})
+        time.sleep(2)
+        reloaded = _evaluated(call, ask)
+        _evaluated(call, "BETEVERY.click(); 1")
+        call("Page.reload", {})
+        time.sleep(2)
+        forgotten = _evaluated(call, ask)
+
+    rows = _cycle_view_rows(index)
+    listed = [row["id"] for row in rows if not row["offlist"]]
+    assert before == {"shown": listed, "every": False, "scope": ["no"]}
+    assert during == {"shown": [row["id"] for row in rows], "every": True, "scope": ["yes"]}
+    assert reloaded == during, "the box was not read back when the page loaded again"
+    assert forgotten == before, "unticking the box was not remembered"
+
+
+def _cycle_view_rows(index: Index) -> list[dict]:
+    from openproj.render import _cycle_view
+
+    return _cycle_view(index, 37)["candidates"]
+
+
+def test_an_empty_shortlist_says_so_and_offers_every_status(demo_root: Path, tmp_path: Path):
+    """Nothing ready or in progress, while the plan holds bets in other states: a
+    header over no rows reads as the page failing to load. Finding F1 — empty
+    must not look like broken — with the control that gets you out of it."""
+    from browser import chrome, measured_in
+
+    from openproj.render import render_cycle
+
+    records, config, _ = load_repo(demo_root)
+    quiet = [
+        r.model_copy(update={"status": "shaping", "cycle": None})
+        if r.status in ("ready", "in_progress")
+        else r
+        for r in records
+    ]
+    index = build_index(quiet, config, date(2026, 8, 17))
+    page = render_cycle(index, 37, ROUTES, base_commit="deadbee")
+    got = measured_in(
+        chrome(),
+        page,
+        tmp_path / "quiet.html",
+        1280,
+        _BETS_SHOWN
+        + """
+      const said = !!document.getElementById('betshort').getClientRects().length;
+      const before = shown();
+      document.getElementById('betwiden').click();
+      return {said, before, after: shown(), every: BETEVERY.checked,
+              still: !!document.getElementById('betshort').getClientRects().length};
+    """,
+    )
+
+    assert got["before"] == [], "the shortlist was not empty, so this asked nothing"
+    assert got["said"], "an empty shortlist said nothing"
+    assert got["after"] and got["every"], "Show every status did not show them"
+    assert not got["still"], "the sentence stayed after the table filled"
+
+
 def test_the_betting_table_says_what_a_bet_is_being_made_against(
     server_pages: dict[str, str], seed_index: Index
 ):

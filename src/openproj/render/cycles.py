@@ -266,16 +266,27 @@ _CYCLE = """
     belongs to this table and not to the page, so it sits with the table's own
     caption rather than in a control bar above the heading.
 
-    A box and not the facet bar the three plan views share. The facets it would
-    offer are status and kind, and this table is ALREADY only ready and
-    in-progress bettable records — a filter whose whole vocabulary has been
-    applied is a control with one setting. What a betting table actually needs
-    is "where is the thing somebody just said out loud", which is a search, and
-    "put the big ones together", which is a sort. -#}
+    A box and not the facet bar the three plan views share. What a betting table
+    actually needs is "where is the thing somebody just said out loud", which is
+    a search, and "put the big ones together", which is a sort.
+
+    And one box for status, rather than the six-way facet: jcanton, 2026-10-12,
+    "option to filter all records, not only ready or in progress", and one
+    checkbox was his pick over a chip per status. The table is a shortlist and
+    the question is whether to look past it, which has two answers. Remembered
+    per browser, the way a column width is.
+
+    The two openings of the sentence are both in the markup and the box swaps
+    them, so the words the page says are the template's and not a string in a
+    script that has to be kept the same as this one. -#}
 <p class="hint betsearch">
   <label for="betfind" class="sr-only">Search the betting table</label>
   <input type="search" id="betfind" placeholder="Search" autocomplete="off">
-  <span>Everything ready or in progress, with the tasks each one is made of
+  <label class="betevery"><input type="checkbox" id="betevery" autocomplete="off">
+    Every status</label>
+  <span><span class="betscope" data-every="no">Everything ready or in
+  progress</span><span class="betscope" data-every="yes" hidden>Everything a cycle
+  can be bet on, whatever its status</span>, with the tasks each one is made of
   underneath it. Ticking one stamps it with cycle
   {{ c.number }}; an item already in progress from an earlier cycle keeps the cycle it
   was bet in, so its overrun keeps counting. A task has no tick of its own — it is
@@ -289,6 +300,12 @@ _CYCLE = """
 <p class="hint" id="betnone" hidden>Nothing here matches
   <strong id="betterm"></strong>. <button type="button" id="betclear">Clear the
   search</button></p>
+{#- And the other way to arrive at an empty table: nothing is ready or in
+    progress, while the plan does hold something a cycle could be bet on. A
+    header over no rows there reads as the page failing to load, and the way
+    out is the box above, so it is offered here too. -#}
+<p class="hint" id="betshort" hidden>Nothing is ready or in progress.
+  <button type="button" id="betwiden">Show every status</button></p>
 {#- No `table-scroll` wrapper. It wore one from the day it was written, against a
     stylesheet that has never carried the rule, so the class did nothing — and
     the rule is the table page's own, sized against a stack of controls this page
@@ -320,7 +337,10 @@ _CYCLE = """
       pitch has to become the `└─` whatever it was rendered as. The attribute is
       the drawing's own state, in the same place `td[data-rungs]` on the table
       page keeps it. -#}
-  <tr data-id="{{ row.id }}" data-rung="{{ row.rung }}" class="{{ row.classes }}">
+  {#- Off the list and `hidden` from the start, so a page that has not run
+      its script yet still shows the shortlist and not everything. -#}
+  <tr data-id="{{ row.id }}" data-rung="{{ row.rung }}" class="{{ row.classes }}"
+      {%- if row.offlist %} data-offlist hidden{% endif %}>
     {#- Empty and not absent on a task's row. Every column below is addressed by
         position — `betCell` sorts on `row.cells[at]` — so a row one cell short
         would sort its title against everybody else's kind. It is also what keeps
@@ -950,6 +970,9 @@ document.getElementById('add').onclick = () => {
 const BETS = document.getElementById('bets');
 const BETFIND = document.getElementById('betfind');
 const BETNONE = document.getElementById('betnone');
+const BETEVERY = document.getElementById('betevery');
+const BETSHORT = document.getElementById('betshort');
+const BET_EVERY_KEY = 'openproj:bet-every';
 
 function betRows() { return [...BETS.tBodies[0].rows]; }
 
@@ -971,8 +994,18 @@ function betSearch() {
   // comment in `_SHELL` is where the rule is written down.
   const said = BETFIND.value.trim();
   const term = sought(said);
+  // Every status widens what the search looks through, rather than being a
+  // second filter applied after it: "N of M shown" counts against the rows in
+  // scope, so with the box off a search reports out of the shortlist and not out
+  // of a hundred finished bets nobody can see.
+  const every = BETEVERY.checked;
+  for (const scope of document.querySelectorAll('.betscope'))
+    scope.hidden = (scope.dataset.every === 'yes') !== every;
   let shown = 0;
+  let inScope = 0;
   for (const row of betRows()) {
+    if (!every && 'offlist' in row.dataset) { row.hidden = true; continue; }
+    inScope++;
     // The whole row's text, which is what somebody means by "search": a title,
     // an owner, a kind and an id are all things said out loud at a betting
     // table. `textContent` misses what is inside the editable cells, whose
@@ -1013,7 +1046,10 @@ function betSearch() {
   // cycle has nothing to bet on" — with the control that gets you out of it.
   BETNONE.hidden = shown > 0 || !said;
   if (!BETNONE.hidden) document.getElementById('betterm').textContent = said;
-  say(said ? `${shown} of ${betRows().length} shown` : '');
+  // The shortlist empty while the plan holds bets off it: a different sentence
+  // from a search that matched nothing, with the box's own way out.
+  BETSHORT.hidden = every || inScope > 0 || !betRows().length;
+  say(said ? `${shown} of ${inScope} shown` : '');
   betTree();
 }
 
@@ -1055,6 +1091,21 @@ function betTree() {
 }
 
 BETFIND.addEventListener('input', betSearch);
+// Read back before the first draw, through `remembered` because a storage that
+// throws must cost the remembered box and not the table.
+BETEVERY.checked = remembered.get(BET_EVERY_KEY) === 'yes';
+BETEVERY.addEventListener('change', () => {
+  if (BETEVERY.checked) remembered.set(BET_EVERY_KEY, 'yes');
+  else remembered.forget(BET_EVERY_KEY);
+  betSearch();
+  say(BETEVERY.checked ? 'Showing every status' : 'Showing ready and in progress');
+});
+document.getElementById('betwiden').onclick = () => {
+  BETEVERY.checked = true;
+  BETEVERY.dispatchEvent(new Event('change'));
+  BETEVERY.focus();
+};
+betSearch();
 document.getElementById('betclear').onclick = () => {
   BETFIND.value = '';
   betSearch();
@@ -1231,7 +1282,8 @@ _CYCLE_STYLE = (
    table rather than in a bar above the heading: it belongs to this table. The
    box first, because it is the control and the sentence is the caption. */
 .betsearch { display: flex; align-items: baseline; gap: .6rem; }
-.betsearch input { flex: none; width: 12rem; }
+.betsearch input[type="search"] { flex: none; width: 12rem; }
+.betsearch .betevery { flex: none; white-space: nowrap; }
 .betsearch > span { flex: 1 1 auto; min-width: 0; }
 /* A column head that sorts. It is a real button so a keyboard can reach it, and
    it wears the head's own type so the row still reads as a header row. */
@@ -1402,7 +1454,10 @@ button.drop:hover { color: var(--danger); }
      one flex row with the sentence left the sentence a 148px column eighteen
      lines tall. */
   .betsearch { flex-wrap: wrap; }
-  .betsearch input { width: 100%; }
+  /* The search box and not every input in the line: the Every status checkbox
+     sits in it too, and a checkbox 100% wide is a box drawn in the middle of an
+     empty row. (0,2,1) here and in the rule above, so this wins on order. */
+  .betsearch input[type="search"] { width: 100%; }
   /* "Start a cycle": three labelled boxes and a button on one wrapping line,
      which on a phone put each box wherever its label happened to end — three
      boxes at three different x's, 24px tall. One to a line, the label over its
@@ -2298,7 +2353,9 @@ def _proposed(index: Index, number: int, window: tuple[date, date] | None) -> Cy
     )
 
 
-def _bet_row(record: Record, number: int, by_id: dict[str, Record], rung: str = "") -> dict:
+def _bet_row(
+    record: Record, number: int, by_id: dict[str, Record], rung: str = "", offlist: bool = False
+) -> dict:
     """One row of the betting table: a bet, or one of the tasks that make it up.
 
     One shape for both, because they are the same row. A task's appetite is typed
@@ -2317,6 +2374,10 @@ def _bet_row(record: Record, number: int, by_id: dict[str, Record], rung: str = 
     `by_id` is here for `is_bettable`, which asks what kind of record holds this
     one — a chore under a project is bet in its own right and a task inside a
     pitch is not, and neither is visible from the record alone.
+
+    `offlist` is a row drawn only once somebody ticks Every status — see
+    `_shortlisted`. Decided by the caller, because a task is off the list when
+    the bet above it is, and a row cannot see the row above it.
     """
     size = size_weeks(record)
     # Whether a cycle can be bet on this row at all, which is the one control a
@@ -2376,7 +2437,27 @@ def _bet_row(record: Record, number: int, by_id: dict[str, Record], rung: str = 
         "cycle": (record.cycle if record.cycle is not None else "—") if rung == "" else "",
         "in_cycle": record.cycle == number,
         "carried": carried,
+        "offlist": offlist,
     }
+
+
+# What a betting table is about before anybody asks it for more.
+SHORTLIST = ("ready", "in_progress")
+
+
+def _shortlisted(record: Record, number: int) -> bool:
+    """Whether a bet is on the betting table before anybody ticks Every status.
+
+    Ready and in progress, which is what the table always listed — and also
+    anything already bet into THIS cycle that is not finished or dropped. The
+    second half is new with the box: a `shaping` pitch ticked while Every status
+    was on is a bet in this cycle, and unticking the box would otherwise take it
+    off the page that made it, which reads as the tick having been lost. Done
+    and shelved are history, listed under Delivered or nowhere, and stay off.
+    """
+    if record.status in SHORTLIST:
+        return True
+    return record.cycle == number and record.status not in ("done", "shelved")
 
 
 def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
@@ -2545,7 +2626,16 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
     candidates = []
     # Ready first, then in progress, and by id inside each: the question at a
     # betting table is what to pick up, and what is already running is context.
-    order = ("ready", "in_progress")
+    # Then every other rung in the ladder's own order, which is drawn only when
+    # somebody ticks Every status — jcanton, 2026-10-12: "option to filter all
+    # records, not only ready or in progress". A pitch still marked `shaping`
+    # the morning it is argued for was not on the table at all, and the status
+    # lagging the meeting is the ordinary case rather than a mistake.
+    #
+    # Every row is rendered and the box only hides some, the way the search
+    # does, so ticking it costs no reload — this page is a form, and a reload
+    # throws away every tick nobody has saved.
+    order = SHORTLIST + tuple(status for status in STATUSES if status not in SHORTLIST)
     for record_id, record in sorted(
         index.plan.items(),
         key=lambda kv: (order.index(kv[1].status) if kv[1].status in order else len(order), kv[0]),
@@ -2556,9 +2646,10 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         # milestone and eleven of its own tasks on the table beside the five
         # pitches they belong to, and ticking any of them stamped a second cycle
         # onto one decision.
-        if record.status not in order or not is_bettable(record, index.plan):
+        if not is_bettable(record, index.plan):
             continue
-        candidates.append(_bet_row(record, number, index.plan))
+        offlist = not _shortlisted(record, number)
+        candidates.append(_bet_row(record, number, index.plan, offlist=offlist))
         # And what is inside the bet, under it. The appetite the room argues
         # about is the pitch's, but the thing that has to change for it to be met
         # is a task's — and until now that meant leaving the meeting's own page
@@ -2570,22 +2661,20 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         # table through the branch above instead, with a tick of its own: nothing
         # holds its bet, so there is no second decision to stamp.
         #
-        # Neither parked nor finished. A shelved task is not in the bet at all,
-        # and a done one is in it and cannot be changed by anybody in the room —
-        # its appetite is history, and no amount of re-sizing it makes the rest
-        # fit. What is left is exactly the work the meeting can move, which
-        # includes the `shaping` and `thinking` tasks nobody has sized: those are
-        # the rows the appetite column is here for.
+        # Neither parked nor finished, until somebody asks for every status. A
+        # shelved task is not in the bet at all, and a done one is in it and
+        # cannot be changed by anybody in the room — its appetite is history, and
+        # no amount of re-sizing it makes the rest fit. What is left is exactly
+        # the work the meeting can move, which includes the `shaping` and
+        # `thinking` tasks nobody has sized: those are the rows the appetite
+        # column is here for. The other two are rendered off the list, and so is
+        # every task under a bet that is itself off it.
         #
         # This is deliberately NOT the list the table's rollup counts. That
         # number is what the bet has to hold, finished work included; this is
         # what the room can do something about. Two questions, and the table
         # answering both with one list would be the table answering neither.
-        kids = sorted(
-            child
-            for child in index.children.get(record_id, ())
-            if child in index.plan and index.plan[child].status not in ("shelved", "done")
-        )
+        kids = sorted(child for child in index.children.get(record_id, ()) if child in index.plan)
         for at, child in enumerate(kids):
             candidates.append(
                 _bet_row(
@@ -2600,6 +2689,7 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
                     # function exists: a `├─` over a row the filter removed
                     # promises a sibling that is not there.
                     rung="end" if at == len(kids) - 1 else "tee",
+                    offlist=offlist or index.plan[child].status in ("shelved", "done"),
                 )
             )
 
