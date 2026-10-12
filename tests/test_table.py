@@ -1246,13 +1246,19 @@ def test_the_fit_is_measured_again_once_the_real_typeface_has_landed(page: str):
 # control is out of flow and the room for it is `padding-right` on the header, so
 # `reviewers` went from 111 to 116 — the first of the four whose header, not its
 # widest cell, is what the column needs.
+#
+# And `developers` re-read alone on 2026-10-12, when it got a floor of its own
+# (126) above the 124 written here: that number had gone stale — the demo's
+# widest login measures 140 on main and on this branch alike — and a column
+# written down under its own floor is one the arithmetic says has nothing to
+# give, which is not what the page does.
 MEASURED = {
     "id": 110,
     "title": 304,
     "priority": 79,
     "status": 107,
     "owner": 100,
-    "developers": 124,
+    "developers": 140,
     "reviewers": 116,
     "cycle": 63,
     "size": 81,
@@ -1288,11 +1294,13 @@ def _arithmetic(page: str, expression: str, args: list) -> object:
         re.search(r"^const SHED = \[\.\.\.LOOKUPS, 'id'\];$", page, re.M),
         re.search(r"^const FLOOR = \d+;", page, re.M),
         re.search(r"^const TITLE_FLOOR = \d+;$", page, re.M),
-        # The title's floor is a share of the room below about 556px of it, so it
+        # The title's floor is a share of the room below about 533px of it, so it
         # is a function and comes with the constant it is capped by.
         re.search(r"^const titleFloor = room =>.*?;$", page, re.M),
         re.search(r"^const PROGRESS_FLOOR = \d+;$", page, re.M),
         re.search(r"^const CLAMP_FLOOR = \d+;", page, re.M),
+        # And the clamped columns whose label needs more than that.
+        re.search(r"^const CLAMP_FLOORS = \{[^}]*\};$", page, re.M),
         re.search(r"^const CLAMPED = new Set\(\[[^\]]*\]\);$", page, re.M),
         # The floors are per column now — a sentence and a login cannot share one
         # — so the lookup that decides which comes with them.
@@ -1321,7 +1329,7 @@ def _fit(page: str, natural: list[int], keys: list[str], room: int) -> list[int]
 def _minimum(page: str, keys: list[str], room: int = 10_000) -> int:
     """The narrowest these columns can be drawn, by the page's own reckoning.
 
-    `room` because the title's floor is the smaller of 250 and 45% of it, so "the
+    `room` because the title's floor is the smaller of 240 and 45% of it, so "the
     narrowest" is a question about the window as well as about the columns. The
     default is a window wider than any floor is a share of, which is the number
     this used to answer with when there was only one.
@@ -1347,7 +1355,7 @@ def _floor(page: str, key: str, room: int = 10_000) -> int:
     """The narrowest this column may be drawn, by the page's own reckoning.
 
     `room` for the same reason `_minimum` takes one: the title's floor is a share
-    of it below about 556px, and 250 above.
+    of it below about 533px, and 240 above.
     """
     return _arithmetic(page, "floorFor(ARGS[0], ARGS[1])", [key, room])
 
@@ -1399,7 +1407,6 @@ def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
         .replace(" ", "")
         .split(",")
     )
-    clamp_floor = int(re.search(r"const CLAMP_FLOOR = (\d+);", page).group(1))
     clamped = set(
         re.search(r"const CLAMPED = new Set\(\[([^\]]*)\]\)", page)
         .group(1)
@@ -1434,7 +1441,7 @@ def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
         if key in clamped:
             # Clamped: already one item and a `+N`, so a narrower one hides an
             # item behind a badge that is right there and says how many.
-            assert width[key] == MEASURED[key] or width[key] >= clamp_floor, key
+            assert width[key] == MEASURED[key] or width[key] >= _floor(page, key, WINDOW), key
         elif key in squeezable:
             # Squeezed, but never past the width at which a column stops being
             # readable — below the floor it scrolls instead, which is honest.
@@ -1463,7 +1470,7 @@ def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
         # Only the ones still drawn: a column the fit shed has no width to be on
         # its floor. `reviewers` is the first thing `SHED` gives up now.
         for key in clamped & set(drawn):
-            assert width[key] == min(MEASURED[key], clamp_floor), key
+            assert width[key] == min(MEASURED[key], _floor(page, key, WINDOW)), key
     assert width["title"] >= _floor(page, "title", WINDOW), (
         "and never past the width at which it stops being readable"
     )
@@ -1543,7 +1550,7 @@ const at = () => ({
   }).length,
 });
 const asDrawn = at();
-for (const key of CLAMPED) WIDTHS[key] = CLAMP_FLOOR;
+for (const key of CLAMPED) WIDTHS[key] = floorFor(key, 10000);
 applyWidths();
 const onFloor = at();
 for (const td of cells) td.querySelector('.first').textContent = 'a'.repeat(60);
@@ -1835,21 +1842,23 @@ const measure = () => clamped.map(th => {
     needs: Math.round(control.width + (box.right - control.right)),
   };
 });
+// Every clamped column at `width(key)` — its own floor, or that less something.
 const at = width => {
-  for (const key of CLAMPED) WIDTHS[key] = width;
+  for (const key of CLAMPED) WIDTHS[key] = width(key);
   automatic = false;
   applyWidths();
   return measure();
 };
+const floor = key => floorFor(key, 10000);
 // The fit's own answer first, before anything here has touched a width.
 const asFitted = measure();
 // Then each header's own one line, where nothing can wrap: a button label and a
 // bare text label are different heights, so no one header's line is another's.
-const line = Object.fromEntries(at(320).map(column => [column.column, column.height]));
+const line = Object.fromEntries(at(() => 320).map(column => [column.column, column.height]));
 const judged = columns => columns.map(column =>
   ({...column, wrapped: column.height > line[column.column] + 1}));
-return {floor: CLAMP_FLOOR, asFitted: judged(asFitted), atFloor: judged(at(CLAMP_FLOOR)),
-        below: judged(at(CLAMP_FLOOR - 8))};
+return {asFitted: judged(asFitted), atFloor: judged(at(floor)),
+        below: judged(at(key => floor(key) - 8))};
 """
 
 
@@ -1863,7 +1872,7 @@ def test_the_header_fits_at_the_width_the_fit_may_squeeze_it_to(demo_page: str, 
     wrapped over two lines, which is a narrower column and a taller header:
     exactly what the clamp was for, undone. The floor went up to 116 to pay for
     the control rather than the control shrinking to fit under the old one, and
-    to 126 when the longest label became `DEVELOPERS`.
+    `developers` has a floor of its own since its label became the longest.
 
     A header's one line is measured per column, at a width nothing wraps in.
     It was the first clamped header's height as fitted, and the day that header
@@ -1890,7 +1899,7 @@ def test_the_header_fits_at_the_width_the_fit_may_squeeze_it_to(demo_page: str, 
     assert len(got["atFloor"]) == 4, "the four clamped columns are the four with a control"
     for where, columns in (
         ("as the fit drew it", got["asFitted"]),
-        (f"at the {got['floor']}px floor", got["atFloor"]),
+        ("at each column's floor", got["atFloor"]),
     ):
         for column in columns:
             assert not column["wrapped"], (
@@ -1911,9 +1920,9 @@ def test_the_header_fits_at_the_width_the_fit_may_squeeze_it_to(demo_page: str, 
             )
 
     assert any(column["wrapped"] or column["overLabel"] > 0 for column in got["below"]), (
-        f"{got['floor'] - 8}px fits four headers, a label, a glyph, a control and a "
-        f"grip — so this measurement cannot tell a header that fits from one that "
-        f"does not, and the floor above is unproven"
+        "eight pixels under every floor fits four headers, a label, a glyph, a control "
+        "and a grip — so this measurement cannot tell a header that fits from one that "
+        "does not, and the floors above are unproven"
     )
 
 

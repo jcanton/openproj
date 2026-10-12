@@ -3852,7 +3852,13 @@ const FLOOR = 110;      // narrower than this and a squeezed column is unreadabl
 //
 // So: the same fit, with the one column that holds prose allowed to keep enough
 // room to hold it. Nothing else about the layout moves.
-const TITLE_FLOOR = 250;
+//
+// 240 since 2026-10-12, ten under the 250 it was measured at: the ten pixels the
+// `developers` header needs on one line (`CLAMP_FLOORS`), on a table that had
+// less than ten to spare at 1460. jcanton's pick — a long title wraps a word
+// sooner when the table is tight, rather than a column going or a header
+// standing two lines tall.
+const TITLE_FLOOR = 240;
 // **A floor is a promise about the column, and 250 was also a promise about the
 // window.** It says "a title should not have to wrap", which is true of a laptop
 // and is not a thing a 390px phone can offer anything: at that viewport the table
@@ -3870,8 +3876,8 @@ const TITLE_FLOOR = 250;
 // saying something — and below it a title stops being a name and becomes an
 // ellipsis.
 //
-// It changes nothing a laptop sees: at 45% the share only falls under 250 below
-// about 556px of table room, which is a window under 600. Measured at 1400, where
+// It changes nothing a laptop sees: at 45% the share only falls under 240 below
+// about 533px of table room, which is a window under 600. Measured at 1400, where
 // this and every other resolved width are byte-identical to before.
 const titleFloor = room => Math.max(140, Math.min(TITLE_FLOOR, Math.round(room * 0.45)));
 // And the progress column is a BAR now, not a bar and a count, so it narrows
@@ -3895,20 +3901,25 @@ const PROGRESS_FLOOR = 78;
 // that sorts the table when somebody meant to expand it is what those four
 // pixels of column buy.
 //
-// 126 since `assignees` became `developers` (2026-10-12): the longest of the four
-// labels is the one this number is for, and `DEVELOPERS` is ten pixels longer
-// than the word it replaced. Measured the same way — 124 wraps it, 125 holds it —
-// and one over, because that was measured on a Mac and the suite's Chrome is on
-// Linux, and a floor that is exactly the label is one rounding away from a
-// two-line header. At 116 it wrapped in the table as fitted at 1460, not only
-// when squeezed.
-const CLAMP_FLOOR = 126;
+const CLAMP_FLOOR = 116;
+// Except where a label is longer than the four used to be. `assignees` became
+// `developers` on 2026-10-12 and `DEVELOPERS` is ten pixels longer: measured the
+// same way, 124 wraps it and 125 holds it, and this is one over because that was
+// measured on a Mac and the suite's Chrome is on Linux. At 116 it wrapped in the
+// table as fitted at 1460, not only when squeezed.
+//
+// Its own floor, and not all four raised to it: the other three labels fit at
+// 116, and forty pixels of floor across four columns shed a whole column at
+// 1280 on the demo and at 1460 on jcanton's plan. The ten this one still costs
+// came out of `TITLE_FLOOR`, which was his choice over shedding progress, a
+// two-line header, or calling the column "Devs".
+const CLAMP_FLOORS = {developers: 126};
 // Which floor a column has, in one place: `minimumWidth` decides what the table
 // can be squeezed to and `fitted` does the squeezing, and two copies of this
 // question is how those two come to disagree about a single column.
 const floorFor = (key, room) => key === 'title' ? titleFloor(room)
   : key === 'progress' ? PROGRESS_FLOOR
-  : CLAMPED.has(key) ? CLAMP_FLOOR
+  : CLAMPED.has(key) ? CLAMP_FLOORS[key] ?? CLAMP_FLOOR
   : SQUEEZABLE.has(key) ? FLOOR : Infinity;
 
 // What each column would need with every cell on one line, so a column ends up

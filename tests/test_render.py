@@ -8399,7 +8399,7 @@ def test_what_the_table_freezes_leaves_something_to_scroll_into(
     the two that never move.
 
     Two things fixed it and both are arithmetic rather than a breakpoint. The
-    title's floor is the smaller of 250 and 45% of the room, so the column that
+    title's floor is the smaller of 240 and 45% of the room, so the column that
     holds a sentence stops demanding three quarters of a phone. And the id sheds
     when the frozen pair would leave under a third of the box to scroll into —
     which is a different question from the one the other four shed on, and is why
