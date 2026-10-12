@@ -972,3 +972,98 @@ def test_a_served_graph_for_a_reader_offers_no_edit_mode_and_still_draws(
         f"the bar says {got['said']} shown over a canvas drawing {got['filtered']}"
     )
     assert got["back"] == got["all"], "clearing the box did not bring the plan back"
+
+
+# A real pointer, because cytoscape answers the canvas's own `mousemove` with
+# its own hit test and nothing else: a `mouseover` dispatched on the node from
+# a script would skip exactly the part that decides which element is under the
+# pointer.
+_A_MOUSE = (
+    "--blink-settings=primaryHoverType=2,availableHoverTypes=2,"
+    "primaryPointerType=4,availablePointerTypes=4",
+)
+
+# A card with edges, and where on the screen its middle is. Childless only: a
+# box answers the pointer from its label band and nowhere else, which is the
+# card's rule and has its own handling. Cards whose middle another card covers
+# are skipped, since the pointer would be asking about that one instead.
+_A_CARD_WITH_EDGES = """(() => {
+  const area = CYBOX.getBoundingClientRect();
+  const leaves = cy.nodes().filter(n => n.isChildless() && n.visible());
+  for (const node of leaves.toArray()) {
+    if (!node.connectedEdges().length) continue;
+    const at = node.renderedPosition();
+    const x = Math.round(area.left + at.x), y = Math.round(area.top + at.y);
+    if (x < area.left + 5 || x > area.right - 5 || y < area.top + 5 || y > area.bottom - 5)
+      continue;
+    const covered = leaves.some(other => other !== node && (() => {
+      const b = other.renderedBoundingBox({includeLabels: false});
+      return at.x >= b.x1 && at.x <= b.x2 && at.y >= b.y1 && at.y <= b.y2;
+    })());
+    if (covered) continue;
+    return {id: node.id(), x, y, edges: cy.edges().length};
+  }
+  return null;
+})()"""
+
+_WHAT_IS_LIT = """(() => {
+  const ids = c => c.map(e => e.id()).sort();
+  const node = cy.getElementById(%s);
+  const lit = cy.edges('.lit');
+  return {
+    own: ids(node.connectedEdges()),
+    lit: ids(lit),
+    unlit: cy.edges('.unlit').length,
+    width: lit.length ? lit[0].style('width') : null,
+    depth: lit.length ? lit[0].style('z-compound-depth') : null,
+    faded: cy.edges('.unlit').length ? cy.edges('.unlit')[0].style('opacity') : null,
+  };
+})()"""
+
+
+def test_pointing_at_a_card_lights_its_own_edges_and_fades_the_rest(
+    index: Index, tmp_path: Path
+):
+    """jcanton, 2026-10-12: "highlight edges connected to a node when hovering over
+    a node" — and every other edge faded, which was his pick over leaving them.
+
+    Asked twice, on the way in and on the way out, because the way out is the half
+    that goes wrong silently: a drawing left with one card's edges lit and the
+    rest at a quarter opacity after the pointer has gone looks like a drawing that
+    is broken, not like a highlight that stuck.
+    """
+    import time
+
+    from browser import _devtools, _evaluated
+
+    where = tmp_path / "lit.html"
+    where.write_text(render_graph(index, ROUTES, base_commit=HEAD, may_write=True))
+    with _devtools(chrome(), where.as_uri(), tmp_path / "lit-profile", _A_MOUSE) as (call, _):
+        call(
+            "Emulation.setDeviceMetricsOverride",
+            {"width": 1600, "height": 900, "deviceScaleFactor": 1, "mobile": False},
+        )
+        time.sleep(3.5)
+        card = _evaluated(call, _A_CARD_WITH_EDGES)
+        assert card, "the drawing has no uncovered card with an edge to point at"
+        call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": card["x"], "y": card["y"]})
+        time.sleep(0.3)
+        during = _evaluated(call, _WHAT_IS_LIT % json.dumps(card["id"]))
+        # Off every node: the canvas's top-left corner, inside its padding.
+        area = _evaluated(call, "(() => { const b = CYBOX.getBoundingClientRect(); "
+                                "return [Math.round(b.left + 2), Math.round(b.top + 2)]; })()")
+        call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": area[0], "y": area[1]})
+        time.sleep(0.3)
+        after = _evaluated(call, _WHAT_IS_LIT % json.dumps(card["id"]))
+
+    assert during["lit"] == during["own"], (
+        f"pointing at {card['id']} lit {during['lit']}, and its own edges are {during['own']}"
+    )
+    assert during["unlit"] == card["edges"] - len(during["own"]), (
+        "the edges that are not the card's were not all faded"
+    )
+    assert during["width"] == "3.5px" and during["depth"] == "top", during
+    assert float(during["faded"] or 1) < 0.5, during
+    assert after["lit"] == [] and after["unlit"] == 0, (
+        f"the pointer left and the drawing stayed lit: {after}"
+    )
