@@ -651,6 +651,13 @@ let FLUSHING = false;
 // Bumped by every record this page writes, so a refresh can tell that one landed
 // while its page was in flight — see `betRefresh`.
 let WROTE = 0;
+// The refresh's own state, declared here and not beside it: `flush` calls
+// `betRefresh` after a clash, and a script stopped anywhere between the two would
+// otherwise turn that call into a ReferenceError on a `let` not yet reached.
+let betHead = null;
+let betSwapping = false;
+const BET_POLL_MS = 30000;
+const BET_CURRENT = 'The betting table is up to date with the plan';
 
 async function flush(quiet) {
   if (!PENDING.size && !ROSTER_DIRTY && !NOTES_DIRTY && !GOAL_DIRTY) return true;
@@ -704,7 +711,7 @@ async function flush(quiet) {
           clashed = true;
           // The report names the file first, which is the store's word for the
           // record this sentence has already named by its title.
-          const report = answer.conflict.replace(/^\S+ — /, '').replace(/\s+/g, ' ');
+          const report = answer.conflict.replace(/^\S+ — /, '');
           problems.push(`${named(id)} was not saved — ${report}. `
                         + 'The row now shows what is stored; change it again to keep yours.');
           continue;
@@ -865,6 +872,13 @@ function wireBets(root) {
   for (const input of root.querySelectorAll('input.live')) wireLive(input);
   for (const pick of root.querySelectorAll('select.pick')) wirePick(pick);
 }
+
+// The rows as served: wired, and read at the commit this page was drawn at.
+// Here, where the three loops this replaced ran, and asked of the document
+// rather than of `BETS.tBodies`, which is declared further down and which the
+// node shim the write tests drive this page under does not have.
+for (const row of document.querySelectorAll('#bets tbody tr')) row.dataset.base = BASE.value;
+wireBets(document.getElementById('bets'));
 
 // **The browser's copy of `_percent` (`tokens.py`), and it has to stay one.**
 // Whoever changes either of these is changing an invariant written in two
@@ -1166,10 +1180,6 @@ function betTree() {
   });
 }
 
-// The rows as served: wired, and read at the commit this page was drawn at.
-for (const row of betRows()) row.dataset.base = BASE.value;
-wireBets(BETS.tBodies[0]);
-
 BETFIND.addEventListener('input', () => betSearch());
 // Read back before the first draw, through `remembered` because a storage that
 // throws must cost the remembered box and not the table.
@@ -1321,11 +1331,6 @@ function betPlace(order) {
 // A sort holds across a swap, and so do the search and Every status: the room
 // arranged the table, and a table that rearranges itself every time somebody
 // edits a record is a table nobody can point at.
-let betHead = null;
-let betSwapping = false;
-const BET_POLL_MS = 30000;
-const BET_CURRENT = 'The betting table is up to date with the plan';
-
 // Whether a refresh must leave this row alone.
 function betHeld(row) {
   return PENDING.has(row.dataset.id) || row.contains(document.activeElement);
@@ -1384,6 +1389,11 @@ async function betRefresh() {
     if (!now.trim() || now.trim() === BET_CURRENT) say(BET_CURRENT);
     betHead = base;
     return true;
+  } catch {
+    // Offline for a moment, or an answer that would not parse: the rows stay as
+    // they are and the next poll asks again. `flush` calls this without waiting
+    // for it, so a rejection here would have nobody to land on.
+    return false;
   } finally {
     betSwapping = false;
   }

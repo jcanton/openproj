@@ -245,7 +245,14 @@ BET_ON_SOMETHING = f"""
 
 def test_a_conflict_on_a_bet_says_what_moved(pages):
     """The bets table writes one record per commit through its own fetch, and it
-    read `answer.detail` too."""
+    read `answer.detail` too.
+
+    And a clash takes the row back to what is stored, so nothing is left to save.
+    It used to keep the edit and leave Save live, over a row whose base never
+    moved — so the second press clashed exactly as the first had, and the only
+    way out was a reload that threw away every other unsaved row. People edit
+    records while the table is going on (jcanton, 2026-10-12), so a clash is an
+    ordinary event at a betting table and it has to have a way through."""
     answer = drive(pages["cycle"], BET_ON_SOMETHING, [{"status": 409, "json": CONFLICT}])
 
     assert REPORT in state(answer)
@@ -253,7 +260,9 @@ def test_a_conflict_on_a_bet_says_what_moved(pages):
     assert named != answer["value"]["id"], "the fixture's row has a title to be named by"
     assert named in state(answer), "which row was refused, by the name the table draws"
     assert answer["value"]["id"] not in state(answer), "and not by an id nobody is reading"
-    assert answer["value"]["disabled"] is False, "the edit is still unsaved, so Save is still live"
+    assert answer["value"]["disabled"] is True, (
+        "the clashing edit is still staged, and pressing Save again would clash again"
+    )
 
 
 def test_a_conflict_creating_a_record_is_not_printed_as_refused(pages):

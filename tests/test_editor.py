@@ -761,12 +761,9 @@ def test_a_betting_cell_saves_only_what_somebody_typed(client: TestClient):
     and the people picker rewrites a field to add its separator. All three used to
     reach git — one of them emptied an assignees list nobody had touched."""
     page = client.get("/cycle/37").text
-    live = re.search(
-        r"for \(const input of document\.querySelectorAll\('#bets input\.live'\)\)"
-        r".*?\n\}",
-        page,
-        re.S,
-    ).group(0)
+    # A function now and not a loop over the page, because a refresh brings in
+    # rows the loop never saw and they have to be wired the same way.
+    live = re.search(r"function wireLive\(input\) \{.*?\n\}", page, re.S).group(0)
 
     assert "let edited = false;" in live
     assert "input.addEventListener('input', () => { edited = true; });" in live
