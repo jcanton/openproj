@@ -9295,6 +9295,216 @@ def test_bet_on_its_own_stages_the_move_and_the_tick_and_undo_takes_back_only_th
     assert got["found"] == 0, "the search reads the button's label as the row's words"
 
 
+def _betting_while_others_edit(demo_root: Path) -> tuple[str, str, list[dict], str]:
+    """The cycle page twice — as the room opened it, and as the server draws it
+    after somebody else renamed one bet — and the shortlist, in order, to pick
+    rows from. Rows are chosen off the plan rather than written down, so the demo
+    is free to change under these tests."""
+    from openproj.render import _cycle_view, render_cycle
+
+    records, config, _ = load_repo(demo_root)
+    today = date(2026, 8, 17)
+    index = build_index(records, config, today)
+    listed = [row for row in _cycle_view(index, 37)["candidates"] if not row["offlist"]]
+    renamed = next(row for row in listed[2:] if not row["rung"])["id"]
+    elsewhere = [
+        r.model_copy(update={"title": "Renamed by somebody else"}) if r.id == renamed else r
+        for r in records
+    ]
+    fresh = render_cycle(build_index(elsewhere, config, today), 37, ROUTES, base_commit="beefcafe")
+    page = render_cycle(index, 37, ROUTES, base_commit="deadbee")
+    return page, fresh, listed, renamed
+
+
+# The page as the server would answer it, in a script — escaped so that neither
+# `</script>` nor the `</body>` `measured_in` hooks onto can end anything early.
+def _served_as(fresh: str) -> str:
+    return "const FRESH = " + json.dumps(fresh).replace("<", "\\u003c") + ";\n"
+
+
+def test_a_refresh_keeps_what_the_room_is_doing_and_wires_what_it_brings_in(
+    demo_root: Path, tmp_path: Path
+):
+    """jcanton, 2026-10-12: "there will be several occasions when people are
+    editing records during the betting table, so it should be possible for the
+    two to happen simultaneously".
+
+    The refresh used to wait for a table with nothing unsaved and no focus in it,
+    which a betting table in use never is — and when it did swap, nothing on the
+    rows it brought in did anything: a tick that staged nothing, a box with no
+    suggestions. So, with a row edited and unsaved, a box half-typed under the
+    cursor and the table sorted, somebody else renames a bet and the page
+    refreshes:
+
+    the rename arrives; the edited row is still the room's, value and base commit
+    both; the half-typed box keeps its focus and its text; the sort holds; and a
+    row the refresh brought in ticks, picks and suggests like one that was served.
+    """
+    from browser import chrome, measured_in
+
+    page, fresh, listed, renamed = _betting_while_others_edit(demo_root)
+    edited, typing = listed[0]["id"], listed[1]["id"]
+    tick = next(
+        row
+        for row in listed
+        if row["bettable"] and not row["carried"] and row["id"] not in (edited, typing, renamed)
+    )
+    got = measured_in(
+        chrome(),
+        page,
+        tmp_path / "simultaneous.html",
+        1280,
+        _served_as(fresh)
+        + f"""
+      const EDITED = {json.dumps(edited)}, TYPING = {json.dumps(typing)};
+      const RENAMED = {json.dumps(renamed)}, TICK = {json.dumps(tick["id"])};
+      window.fetch = async () => new Response(FRESH, {{status: 200}});
+      BETS.querySelector('th[data-sort="5"] .sorter').click();
+      const size = betRow(EDITED).querySelector('input.live[data-field="person_weeks"]');
+      size.focus(); size.value = '8'; size.dispatchEvent(new Event('input')); size.blur();
+      const held = betRow(TYPING).querySelector('input.live[data-field="reviewers"]');
+      held.focus(); held.value = 'half'; held.dispatchEvent(new Event('input'));
+      const swapped = await betRefresh();
+      const order = () => betRows().map(row => row.dataset.id);
+      const kept = {{
+        swapped,
+        renamed: betRow(RENAMED).querySelector('.betname a').textContent.trim(),
+        renamedBase: betRow(RENAMED).dataset.base,
+        edited: PENDING.get(EDITED), editedBox: betRow(EDITED)
+          .querySelector('input.live[data-field="person_weeks"]').value,
+        editedBase: betRow(EDITED).dataset.base, editedPending:
+          betRow(EDITED).classList.contains('pending'),
+        focus: document.activeElement === held, typed: held.value,
+        sorted: BETS.classList.contains('sorted'),
+        aria: BETS.querySelector('th[data-sort="5"]').getAttribute('aria-sort'),
+        showing: window.SHOWING.includes(RENAMED),
+      }};
+      const before = order();
+      betSort(5, false);
+      kept.stillSorted = JSON.stringify(order()) === JSON.stringify(before);
+      held.blur();
+      const box = betRow(TICK).querySelector('input.bet');
+      box.click();
+      const pick = betRow(RENAMED).querySelector('select[data-field="priority"]');
+      pick.value = [...pick.options].find(o => o.value !== pick.value).value;
+      pick.dispatchEvent(new Event('change'));
+      const named = betRow(RENAMED).querySelector('input.live[data-field="assignees"]');
+      return {{...kept, ticked: PENDING.get(TICK), picked: PENDING.get(RENAMED),
+               pickedTo: pick.value, suggests: named.getAttribute('role'),
+               typedStaged: PENDING.get(TYPING)}};
+    """,
+    )
+
+    assert got["swapped"] is True
+    assert got["renamed"] == "Renamed by somebody else", "somebody else's edit never arrived"
+    assert got["renamedBase"] == "beefcafe", "a row brought in is read at the commit it came from"
+    assert got["edited"] == {"person_weeks": 8} and got["editedBox"] == "8", (
+        "the refresh threw away an edit nobody had saved"
+    )
+    assert got["editedBase"] == "deadbee", (
+        "the unsaved row was given a commit its values were never read at, so a clash "
+        "with somebody else's edit to the same field would merge as no clash at all"
+    )
+    assert got["editedPending"], "the unsaved row lost its unsaved mark"
+    assert got["focus"] and got["typed"] == "half", "the box under the cursor moved or emptied"
+    assert got["sorted"] and got["aria"] == "ascending" and got["stillSorted"], (
+        "the refresh undid the room's sort"
+    )
+    assert got["showing"], "the shell's banner does not know the refreshed rows are here"
+    assert got["typedStaged"] == {"reviewers": ["half"]}, "the held box stopped staging"
+    assert got["ticked"] == {"cycle": None if tick["in_cycle"] else 37}, (
+        f"a tick on a row the refresh brought in staged {got['ticked']!r}"
+    )
+    assert got["picked"] == {"priority": got["pickedTo"]}, "a picker it brought in staged nothing"
+    assert got["suggests"] == "combobox", "a names box it brought in has no suggestions"
+
+
+def test_a_save_sends_each_row_against_its_own_commit_and_a_clash_costs_only_its_row(
+    demo_root: Path, tmp_path: Path
+):
+    """The server merges a save field by field against the commit it names, so
+    which commit each row names is the whole of whether two people editing at
+    once is safe.
+
+    Every row used to name the commit the LAST write returned, so from the second
+    row on the base and the stored file were the same and somebody else's edit to
+    the same field was overwritten without a word. Each row names the commit its
+    values were read at now. A clash is that row's news: it is told, taken back to
+    what is stored, and the rows after it still save — each is its own commit.
+    """
+    from browser import chrome, measured_in
+
+    page, fresh, listed, renamed = _betting_while_others_edit(demo_root)
+    # Saved first, so the old code would have handed the next row its commit.
+    first = listed[0]["id"]
+    clash = renamed if renamed != first else listed[3]["id"]
+    after = next(row["id"] for row in listed[1:] if row["id"] not in (first, clash))
+    got = measured_in(
+        chrome(),
+        page,
+        tmp_path / "clash.html",
+        1280,
+        _served_as(fresh)
+        + f"""
+      const FIRST = {json.dumps(first)}, CLASH = {json.dumps(clash)};
+      const AFTER = {json.dumps(after)};
+      const SENT = [];
+      // Read while the Save is still going, because the refresh after a clash
+      // re-reads every row nobody is editing — this one included.
+      let firstBase = null;
+      window.fetch = async (url, options = {{}}) => {{
+        if (!options.method) return new Response(FRESH, {{status: 200}});
+        const body = JSON.parse(options.body);
+        const id = decodeURIComponent(url.split('/').pop());
+        SENT.push({{id, base: body.base_commit}});
+        if (id === CLASH) {{
+          firstBase = betRow(FIRST).dataset.base;
+          return new Response(JSON.stringify({{outcome: 'conflict', commit: null,
+            conflict: 'pitches/clash.md — somebody changed this before you, in the same '
+                      + 'places:\\n  person_weeks: stored 3 · yours 8'}}), {{status: 409}});
+        }}
+        return new Response(JSON.stringify({{outcome: 'committed',
+          commit: 'c0ffee' + SENT.length}}), {{status: 200}});
+      }};
+      // A row edited before somebody else's change arrives, and one after.
+      const appetite = id => betRow(id).querySelector('input.live[data-field="person_weeks"]');
+      const type = (id, value) => {{
+        const box = appetite(id);
+        box.focus(); box.value = value; box.dispatchEvent(new Event('input')); box.blur();
+      }};
+      type(FIRST, '4');
+      type(CLASH, '8');
+      await betRefresh();
+      type(AFTER, '2');
+      const saved = await flush(false);
+      await new Promise(done => setTimeout(done, 300));
+      return {{saved, sent: SENT, pending: [...PENDING.keys()],
+               said: document.getElementById('state').textContent,
+               clashBox: appetite(CLASH).value, firstBase}};
+    """,
+        patience=4000,
+    )
+
+    assert got["sent"] == [
+        {"id": first, "base": "deadbee"},
+        {"id": clash, "base": "deadbee"},
+        {"id": after, "base": "beefcafe"},
+    ], "each row is saved against the commit it was read at, and a clash stops nothing"
+    assert got["saved"] is False, "a Save with a row that did not land reloaded the page"
+    assert got["pending"] == [], "the clashing row is still waiting to overwrite somebody"
+    # Named as the room saw it: the row was edited before the rename arrived, so
+    # it was held, title and all.
+    title = next(row["title"] for row in listed if row["id"] == clash)
+    assert got["said"].startswith(
+        f"{title} was not saved — somebody changed this before you"
+    ), got["said"]
+    assert "person_weeks: stored 3 · yours 8" in got["said"]
+    assert "clash.md" not in got["said"], "the sentence names a file where it has a title"
+    assert got["said"].endswith("2 other changes saved."), got["said"]
+    assert got["clashBox"] != "8", "the clashing row still shows the edit that did not save"
+    assert got["firstBase"] == "c0ffee1", "a row that saved is read at the commit it made"
+
+
 def test_the_betting_table_says_what_a_bet_is_being_made_against(
     server_pages: dict[str, str], seed_index: Index
 ):

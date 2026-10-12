@@ -577,7 +577,7 @@ if (GOAL) GOAL.oninput = () => {
 // Ticking is a write to the RECORD, not to the cycle: `cycle` lives on the thing
 // being bet, and one row is one commit so a half-finished betting table is still
 // a readable history rather than one commit nobody can unpick.
-for (const box of document.querySelectorAll('input.bet')) {
+function wireTick(box) {
   box.onchange = () => {
     const row = box.closest('tr');
     pend(row.dataset.id, 'cycle', box.checked ? NUMBER : null);
@@ -632,14 +632,25 @@ addEventListener('beforeunload', event => {
 // record whose title is blank is one `validate_all` complains about but still
 // draws.
 function named(id) {
-  // Walked rather than selected: an id goes into an attribute selector as text,
-  // and the shim the JS tests drive this page under has no `CSS.escape` to make
-  // that safe. `dataset.id` is the same string the row was drawn with.
-  const row = [...document.querySelectorAll('#bets tbody tr')]
-    .find(tr => tr.dataset.id === id);
+  const row = betRow(id);
   const title = row && row.querySelector('.betname a');
   return (title && title.textContent.trim()) || id;
 }
+
+// Walked rather than selected: an id goes into an attribute selector as text,
+// and the shim the JS tests drive this page under has no `CSS.escape` to make
+// that safe. `dataset.id` is the same string the row was drawn with.
+function betRow(id) {
+  return [...document.querySelectorAll('#bets tbody tr')].find(tr => tr.dataset.id === id);
+}
+
+// True while a Save is going out, which is the one time the rows may not be
+// swapped: a page fetched before a commit lands would put back the values the
+// commit has just replaced.
+let FLUSHING = false;
+// Bumped by every record this page writes, so a refresh can tell that one landed
+// while its page was in flight — see `betRefresh`.
+let WROTE = 0;
 
 async function flush(quiet) {
   if (!PENDING.size && !ROSTER_DIRTY && !NOTES_DIRTY && !GOAL_DIRTY) return true;
@@ -657,53 +668,93 @@ async function flush(quiet) {
     if (!(await saveSetup())) { mark(); return false; }
     saved += edits;
   }
-  // One record per commit, each against the commit the last one returned: a
-  // batch that fails half way is still a readable history rather than one commit
-  // nobody can unpick.
-  for (const [id, fields] of [...PENDING]) {
-    dispatchEvent(new Event('openproj:writing'));
-    let committed = null;
-    try {
-      const response = await fetch(`/api/record/${encodeURIComponent(id)}`, {
-        method: 'PATCH', headers: {'content-type': 'application/json'},
-        body: JSON.stringify({base_commit: BASE.value, fields, body: null}),
-      });
-      const answer = await answerOf(response);
-      if (!response.ok) {
-        say(`${named(id)}: ${refusal(answer, response.status)}`
-            + (saved ? ` — ${saved} already saved` : ''));
+  // One record per commit: a batch that fails half way is still a readable
+  // history rather than one commit nobody can unpick.
+  //
+  // **Each against the commit its own row was read at**, and not the one the
+  // last write returned. People edit records while the betting table is going on
+  // — jcanton, 2026-10-12, "there will be several occasions" — and the server
+  // merges field by field against that base. Handing every row the newest commit
+  // made that merge blind from the second row on: somebody's appetite of 3,
+  // typed on the record page while this table held 5, was the base AND the
+  // stored value, so the table's 5 went over it without a word.
+  //
+  // A row nobody else touched merges as before. A clash on one row is that
+  // row's news and not the batch's: the others are separate commits, so they go
+  // on, and the row is taken back to what is stored and says what it lost.
+  const problems = [];
+  let clashed = false;
+  FLUSHING = true;
+  try {
+    for (const [id, fields] of [...PENDING]) {
+      const row = betRow(id);
+      const base = (row && row.dataset.base) || BASE.value;
+      dispatchEvent(new Event('openproj:writing'));
+      let committed = null;
+      try {
+        const response = await fetch(`/api/record/${encodeURIComponent(id)}`, {
+          method: 'PATCH', headers: {'content-type': 'application/json'},
+          body: JSON.stringify({base_commit: base, fields, body: null}),
+        });
+        const answer = await answerOf(response);
+        // A merge conflict carries its report in `conflict`; a 409 without one
+        // is a rule refusing the value, which the row keeps so it can be fixed.
+        if (response.status === 409 && answer.conflict) {
+          PENDING.delete(id);
+          clashed = true;
+          // The report names the file first, which is the store's word for the
+          // record this sentence has already named by its title.
+          const report = answer.conflict.replace(/^\S+ — /, '').replace(/\s+/g, ' ');
+          problems.push(`${named(id)} was not saved — ${report}. `
+                        + 'The row now shows what is stored; change it again to keep yours.');
+          continue;
+        }
+        if (!response.ok) {
+          problems.push(`${named(id)}: ${refusal(answer, response.status)}`);
+          continue;
+        }
+        committed = answer.commit;
+        BASE.value = answer.commit || BASE.value;
+        if (row && answer.commit) row.dataset.base = answer.commit;
+        WROTE++;
+        PENDING.delete(id);
+        saved += Object.keys(fields).length;
+      } catch (error) {
+        // The connection went mid-batch. With no `catch` the rejection escaped
+        // `flush`, so Save stayed disabled over a bar still counting the edits
+        // and nothing said which row the batch stopped on — and the rows before
+        // it had really been committed, one per commit, so "nothing happened"
+        // would have been the wrong thing to say as well as an unsaid one.
+        //
+        // `PENDING` keeps this row and every row after it, which is what makes
+        // the repeat safe: `mark()` gives Save back and the retry re-sends only
+        // what is still pending, with the same values it sent this time. That is
+        // why a row that really did land is not written twice —
+        // `_merge_frontmatter` skips every key whose stored value already equals
+        // the one being sent, so the re-send merges with itself and answers 200.
+        // It is NOT refused, and this sentence used to promise that it would be.
+        say(`${named(id)}: not saved — ${error.message}`
+            + (saved ? ` — ${saved} already saved` : '')
+            + '. Press Save again: the retry sends the same values, so a row that '
+            + 'did land is not written twice.');
         mark();
         return false;
+      } finally {
+        dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
       }
-      committed = answer.commit;
-      BASE.value = answer.commit || BASE.value;
-      PENDING.delete(id);
-      saved += Object.keys(fields).length;
-    } catch (error) {
-      // The connection went mid-batch. With no `catch` the rejection escaped
-      // `flush`, so Save stayed disabled over a bar still counting the edits and
-      // nothing said which row the batch stopped on — and the rows before it had
-      // really been committed, one per commit, so "nothing happened" would have
-      // been the wrong thing to say as well as an unsaid one.
-      //
-      // `PENDING` keeps this row and every row after it, which is what makes the
-      // repeat safe: `mark()` gives Save back and the retry re-sends only what is
-      // still pending, with the same values it sent this time. That is why a row
-      // that really did land is not written twice — `_merge_frontmatter` skips
-      // every key whose stored value already equals the one being sent, so the
-      // re-send merges with itself and answers 200. It is NOT refused, and this
-      // sentence used to promise that it would be.
-      say(`${named(id)}: not saved — ${error.message}`
-          + (saved ? ` — ${saved} already saved` : '')
-          + '. Press Save again: the retry sends the same values, so a row that '
-          + 'did land is not written twice.');
-      mark();
-      return false;
-    } finally {
-      dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
     }
+  } finally {
+    FLUSHING = false;
   }
   mark();
+  if (problems.length) {
+    const others = saved ? ` ${saved} other change${saved === 1 ? '' : 's'} saved.` : '';
+    say(problems.join(' ') + others);
+    // The clashing row back to what is stored, now and not in thirty seconds:
+    // the sentence above says it shows that.
+    if (clashed) betRefresh();
+    return false;
+  }
   receipt = `${quiet ? 'Autosaved' : 'Saved'} ${saved} change${saved === 1 ? '' : 's'}`;
   say(receipt);
   return true;
@@ -732,8 +783,9 @@ setInterval(() => {
 // script's own sweep — which runs above this block — has already attached the
 // widget. Attaching again put a second widget on the same box: two lists opened
 // together, and one Enter picked a name from each — choosing `bo` wrote
-// `bo, ann, `.
-for (const input of document.querySelectorAll('#bets input.live')) {
+// `bo, ann, `. A row a refresh brings in is the exception, and `betRefresh`
+// attaches it there, once, before this runs.
+function wireLive(input) {
   let was = input.value;
   // Saving on blur alone is not safe when the field is already an input: the
   // browser restores form values across a reload, autofills, and the picker
@@ -784,7 +836,7 @@ for (const input of document.querySelectorAll('#bets input.live')) {
 // drew, and `change` fires only when somebody picked. What it shares with the
 // boxes above is the thing that matters — nothing is written here, it is staged,
 // and the one Save button on this page commits it with everything else.
-for (const pick of document.querySelectorAll('#bets select.pick')) {
+function wirePick(pick) {
   let was = pick.value;
   pick.onchange = () => {
     if (pick.value === was) return;
@@ -801,6 +853,17 @@ for (const pick of document.querySelectorAll('#bets select.pick')) {
     }
     pend(pick.closest('tr').dataset.id, pick.dataset.field, pick.value);
   };
+}
+
+// Every control in these rows, wired. A function and not three loops over the
+// page, because a refresh brings in rows these loops never saw: the swap used
+// to put fresh rows in and nothing on them did anything — a tick that staged
+// nothing and a box whose typing went nowhere, until somebody reloaded and lost
+// whatever else they had not saved.
+function wireBets(root) {
+  for (const box of root.querySelectorAll('input.bet')) wireTick(box);
+  for (const input of root.querySelectorAll('input.live')) wireLive(input);
+  for (const pick of root.querySelectorAll('select.pick')) wirePick(pick);
 }
 
 // **The browser's copy of `_percent` (`tokens.py`), and it has to stay one.**
@@ -986,7 +1049,10 @@ const BET_EVERY_KEY = 'openproj:bet-every';
 
 function betRows() { return [...BETS.tBodies[0].rows]; }
 
-function betSearch() {
+// `quiet` leaves the live region alone: a refresh re-filters rows it has just
+// brought in, and its "N of M shown" — or its blank, with nothing searched —
+// went over a row that did not save, which is the line somebody needs to read.
+function betSearch(quiet = false) {
   // `said` is what is in the box and `term` is what can be searched for. They
   // part company wherever normalising leaves less than a needle: `#` is
   // something somebody typed, so this is not an empty box and the rows must
@@ -1059,7 +1125,7 @@ function betSearch() {
   // The shortlist empty while the plan holds bets off it: a different sentence
   // from a search that matched nothing, with the box's own way out.
   BETSHORT.hidden = every || inScope > 0 || !betRows().length;
-  say(said ? `${shown} of ${inScope} shown` : '');
+  if (!quiet) say(said ? `${shown} of ${inScope} shown` : '');
   betTree();
 }
 
@@ -1100,7 +1166,11 @@ function betTree() {
   });
 }
 
-BETFIND.addEventListener('input', betSearch);
+// The rows as served: wired, and read at the commit this page was drawn at.
+for (const row of betRows()) row.dataset.base = BASE.value;
+wireBets(BETS.tBodies[0]);
+
+BETFIND.addEventListener('input', () => betSearch());
 // Read back before the first draw, through `remembered` because a storage that
 // throws must cost the remembered box and not the table.
 BETEVERY.checked = remembered.get(BET_EVERY_KEY) === 'yes';
@@ -1197,7 +1267,7 @@ function betSort(at, descending) {
   // Re-appending a row MOVES it, so the checkboxes and their state travel with
   // it. This is the whole reason the sort is done on the live rows rather than
   // by re-rendering the table from data: the data is in the form.
-  for (const row of rows) BETS.tBodies[0].append(row);
+  betPlace(rows);
   // And the tree goes, because it has stopped being true. Sorted by appetite a
   // task sits wherever its number falls and the bet it belongs to is somewhere
   // else entirely, so the indent points at a stranger — the same rule the table
@@ -1205,6 +1275,20 @@ function betSort(at, descending) {
   // is no way back to it but a reload, which is also the table page's answer:
   // the order a tree can be drawn over is the server's own.
   BETS.classList.add('sorted');
+}
+
+// The rows in this order, moving every one but the row somebody is in. A row
+// taken out of the document takes the focus with it — the box being typed in
+// blurs, which stages it half-typed — and a refresh now runs while people work,
+// so the row under the cursor is the one row that never moves.
+function betPlace(order) {
+  const body = BETS.tBodies[0];
+  const anchor = order.find(tr => tr.contains(document.activeElement));
+  for (const tr of [...body.rows]) if (tr !== anchor) tr.remove();
+  if (!anchor) { body.append(...order); return; }
+  const at = order.indexOf(anchor);
+  anchor.before(...order.slice(0, at));
+  anchor.after(...order.slice(at + 1));
 }
 
 // --- The table follows the plan while the table is going on ------------------
@@ -1219,53 +1303,87 @@ function betSort(at, descending) {
 // on a reading page and wrong here for the same reason it was wrong on the deck:
 // this page is a FORM, and a reload throws away every tick nobody has saved yet.
 //
-// **So it swaps the rows, and only when swapping them cannot cost anything.**
-// Three refusals, and each is a way somebody loses work:
+// **So it swaps the rows, one at a time, and never one somebody is working in.**
+// It used to swap the whole body and refuse while anything was unsaved or the
+// focus was in the table — and a betting table always has one or the other, so
+// it stopped following the plan for the length of the meeting. jcanton,
+// 2026-10-12: people edit records while the table is going on, "so it should be
+// possible for the two to happen simultaneously". So the rule is per row:
 //
-//   - not while anything on this page is unsaved, because a swap would drop
-//     ticks that are the whole point of the meeting;
-//   - not while the focus is inside the table, because the row under somebody's
-//     cursor moving mid-sentence is worse than a stale row;
-//   - not while a save is in flight, because the answer is about to move again.
+//   - a row with an unsaved edit stays exactly as the room left it, values and
+//     base commit, until Save takes it — then the next poll replaces it with
+//     what was merged, somebody else's changes to its other fields included;
+//   - the row the focus is in stays, and does not move (`betPlace`);
+//   - every other row is the server's, wired, and read at the server's commit;
+//   - nothing is swapped while a Save is going out, nor from a page fetched
+//     before one landed, because that page predates the commit.
 //
-// What it costs is that a busy table stops updating until somebody saves, which
-// is the right way round: the unsaved ticks are the thing that cannot be got
-// back, and the sentence below says so rather than leaving it silent.
+// A sort holds across a swap, and so do the search and Every status: the room
+// arranged the table, and a table that rearranges itself every time somebody
+// edits a record is a table nobody can point at.
 let betHead = null;
 let betSwapping = false;
 const BET_POLL_MS = 30000;
+const BET_CURRENT = 'The betting table is up to date with the plan';
 
-// The same four things `beforeunload` above refuses to leave over, asked as one
-// question. Written as a call to that state rather than as a fifth copy of the
-// list: a swap and a tab close are the two ways unsaved work here is lost, and
-// they must not be able to disagree about what "unsaved" means.
-function betBusy() {
-  if (PENDING.size || ROSTER_DIRTY || NOTES_DIRTY || GOAL_DIRTY) return 'unsaved changes';
-  if (BETS.contains(document.activeElement)) return 'the table has focus';
-  return '';
+// Whether a refresh must leave this row alone.
+function betHeld(row) {
+  return PENDING.has(row.dataset.id) || row.contains(document.activeElement);
 }
 
+// True when the rows were brought up to date, false when they could not be, so
+// the poll asks again rather than believing it is current.
 async function betRefresh() {
-  if (betSwapping) return;
+  if (betSwapping || FLUSHING) return false;
   betSwapping = true;
+  const wrote = WROTE;
   try {
     const answer = await fetch(location.pathname + location.search,
                               {headers: {'accept': 'text/html'}});
-    if (!answer.ok) return;
+    if (!answer.ok) return false;
     const fresh = new DOMParser().parseFromString(await answer.text(), 'text/html');
     const rows = fresh.querySelector('#bets tbody');
-    if (!rows) return;
-    // Which rows were ticked, by id, so the swap cannot lose a decision that
-    // has been made and saved — and so a row that arrives already bet in comes
-    // back ticked rather than blank.
-    BETS.tBodies[0].replaceWith(rows);
-    // The fresh rows arrive in the server's order, which is the order the tree
-    // is drawn over — so whatever sort was applied to the rows that have just
-    // been thrown away no longer describes anything, and the class that hides
-    // the tree while a sort holds goes with them.
-    BETS.classList.remove('sorted');
-    betSearch();
-    say('The betting table was refreshed — somebody changed the plan');
+    if (!rows || FLUSHING || WROTE !== wrote) return false;
+    const base = (fresh.getElementById('base') || {}).value || BASE.value;
+    // Everything below runs without yielding, so what is held is decided in the
+    // same instant the rows are replaced.
+    const held = new Map(betRows().filter(betHeld).map(row => [row.dataset.id, row]));
+    const added = [];
+    const order = [...rows.rows].map(row => {
+      const kept = held.get(row.dataset.id);
+      if (kept) { held.delete(row.dataset.id); return kept; }
+      row.dataset.base = base;
+      added.push(row);
+      return row;
+    });
+    // A row the room is still working on that the plan no longer draws here —
+    // moved, or no longer bettable — stays at the end until it is saved or
+    // left, rather than vanishing with the edit in it.
+    order.push(...held.values());
+    betPlace(order);
+    for (const row of added) {
+      // Attached here and not by the combobox's own sweep, which ran once at
+      // load, and BEFORE the row's own keys are wired: the suggestion list has
+      // to answer Escape and Enter first (see `wireLive`).
+      for (const input of row.querySelectorAll('[data-suggest]')) attachSuggest(input);
+      wireBets(row);
+    }
+    window.SHOWING = ['cycle-' + NUMBER].concat(betRows().map(row => row.dataset.id));
+    const sorted = BETS.querySelector('th[aria-sort="ascending"], th[aria-sort="descending"]');
+    if (sorted) {
+      betSort(Number(sorted.dataset.sort), sorted.getAttribute('aria-sort') === 'descending');
+    } else {
+      BETS.classList.remove('sorted');
+    }
+    mark();
+    betSearch(true);
+    // Said only over silence or over the last time it was said. A refresh now
+    // happens while people work, and the line it would overwrite is a receipt or
+    // a row that did not save, which is the line somebody needs to read.
+    const now = (document.getElementById('state') || {}).textContent || '';
+    if (!now.trim() || now.trim() === BET_CURRENT) say(BET_CURRENT);
+    betHead = base;
+    return true;
   } finally {
     betSwapping = false;
   }
@@ -1274,17 +1392,8 @@ async function betRefresh() {
 async function betPoll() {
   try {
     const health = await (await fetch('/api/health')).json();
-    if (betHead !== null && health.head !== betHead) {
-      const why = betBusy();
-      if (why) {
-        // Said, not swallowed. A table that has quietly stopped following the
-        // plan looks exactly like a plan that has not changed.
-        say(`The plan changed — this table will refresh once ${why} is cleared`);
-      } else {
-        await betRefresh();
-      }
-    }
-    betHead = health.head;
+    if (betHead === null) { betHead = health.head; return; }
+    if (health.head !== betHead) await betRefresh();
   } catch { /* a moment offline is not news at a betting table */ }
 }
 
