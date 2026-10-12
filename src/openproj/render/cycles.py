@@ -1100,9 +1100,9 @@ BETEVERY.addEventListener('change', () => {
   betSearch();
   say(BETEVERY.checked ? 'Showing every status' : 'Showing ready and in progress');
 });
+// Shown only while the box is off, so a click is always the box going on.
 document.getElementById('betwiden').onclick = () => {
-  BETEVERY.checked = true;
-  BETEVERY.dispatchEvent(new Event('change'));
+  BETEVERY.click();
   BETEVERY.focus();
 };
 betSearch();
@@ -2441,8 +2441,11 @@ def _bet_row(
     }
 
 
-# What a betting table is about before anybody asks it for more.
+# What a betting table is about before anybody asks it for more, and the two
+# rungs that are history rather than a decision: off it whatever cycle they
+# carry, and off it under a bet that is on it.
 SHORTLIST = ("ready", "in_progress")
+HISTORY = ("done", "shelved")
 
 
 def _shortlisted(record: Record, number: int) -> bool:
@@ -2457,7 +2460,7 @@ def _shortlisted(record: Record, number: int) -> bool:
     """
     if record.status in SHORTLIST:
         return True
-    return record.cycle == number and record.status not in ("done", "shelved")
+    return record.cycle == number and record.status not in HISTORY
 
 
 def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
@@ -2689,7 +2692,7 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
                     # function exists: a `├─` over a row the filter removed
                     # promises a sibling that is not there.
                     rung="end" if at == len(kids) - 1 else "tee",
-                    offlist=offlist or index.plan[child].status in ("shelved", "done"),
+                    offlist=offlist or index.plan[child].status in HISTORY,
                 )
             )
 
