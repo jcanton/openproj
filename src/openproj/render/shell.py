@@ -3947,8 +3947,10 @@ if (SCHEME) {
   } else if (!me.login) {
     // A link and not a form: `/login` starts an OAuth redirect, which is a
     // navigation, and the state cookie it sets is what makes the callback safe.
+    // Carrying where it was pressed, so the sign-in comes back to this page
+    // rather than to the front one; the server keeps only a path of its own.
     const link = element('a', 'Sign in');
-    link.href = '/login';
+    link.href = '/login?' + new URLSearchParams({next: location.pathname + location.search});
     WHO.append(link);
   } else {
     WHO.append(element('span', me.login));
