@@ -282,8 +282,8 @@ _CYCLE = """
 <p class="hint betsearch">
   <label for="betfind" class="sr-only">Search the betting table</label>
   <input type="search" id="betfind" placeholder="Search" autocomplete="off">
-  <label class="betevery"><input type="checkbox" id="betevery" autocomplete="off">
-    Every status</label>
+  <label for="betevery" class="betevery"><input type="checkbox" id="betevery"
+    autocomplete="off"> Every status</label>
   <span><span class="betscope" data-every="no">Everything ready or in
   progress</span><span class="betscope" data-every="yes" hidden>Everything a cycle
   can be bet on, whatever its status</span>, with the tasks each one is made of
@@ -2678,7 +2678,13 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         # what the room can do something about. Two questions, and the table
         # answering both with one list would be the table answering neither.
         kids = sorted(child for child in index.children.get(record_id, ()) if child in index.plan)
-        for at, child in enumerate(kids):
+        hidden = {kid for kid in kids if offlist or index.plan[kid].status in HISTORY}
+        # The rows drawn before anybody ticks the box, which is what the markup's
+        # connectors describe: a done task last under a pitch is hidden, and the
+        # task above it is the one that ends the tree.
+        listed = [kid for kid in kids if kid not in hidden]
+        for child in kids:
+            peers = kids if child in hidden else listed
             candidates.append(
                 _bet_row(
                     index.plan[child],
@@ -2688,11 +2694,11 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
                     # is the whole of `connectors()` at one level deep — the only
                     # depth this table has, because a bet's contents are its
                     # tasks and a task holds nothing. The browser re-decides it
-                    # whenever the search hides a row, for the reason that
-                    # function exists: a `├─` over a row the filter removed
+                    # whenever the search or the box hides a row, for the reason
+                    # that function exists: a `├─` over a row the filter removed
                     # promises a sibling that is not there.
-                    rung="end" if at == len(kids) - 1 else "tee",
-                    offlist=offlist or index.plan[child].status in HISTORY,
+                    rung="end" if child == peers[-1] else "tee",
+                    offlist=child in hidden,
                 )
             )
 

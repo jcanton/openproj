@@ -9349,7 +9349,16 @@ def test_the_betting_table_puts_a_bets_tasks_under_it(
     body = re.search(r'<table id="bets".*?<tbody>(.*?)</tbody>', page, re.S)
     assert body, "the betting table has no body"
     body = body.group(1)
-    drawn = re.findall(r'<tr data-id="([^"]+)" data-rung="([^"]*)"', body)
+    # The rows a room sees before it ticks Every status. The others are in the
+    # markup too, hidden, and `test_the_betting_table_holds_every_bet_and_
+    # shortlists_ready_and_in_progress` is about them.
+    drawn = [
+        (record_id, rung)
+        for record_id, rung, off in re.findall(
+            r'<tr data-id="([^"]+)" data-rung="([^"]*)" class="[^"]*"( data-offlist)?', body
+        )
+        if not off
+    ]
     assert drawn, "the betting table drew no rows at all"
 
     holder, under = "", {}
@@ -9573,6 +9582,9 @@ def test_the_betting_tables_connectors_follow_what_is_on_screen(
 
 
 _BETTING_BOX = """
+// Every status on, so the search is asked over every row the table holds and
+// "an empty box hides nothing" means all of them.
+BETEVERY.checked = true;
 const shown = () => betRows().filter(row => !row.hidden).map(row => row.dataset.id);
 const ask = needle => { BETFIND.value = needle; betSearch(); return shown(); };
 const out = {all: betRows().length};
