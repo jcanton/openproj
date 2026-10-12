@@ -9230,6 +9230,71 @@ def test_an_empty_shortlist_says_so_and_offers_every_status(demo_root: Path, tmp
     assert not got["still"], "the sentence stayed after the table filled"
 
 
+def test_bet_on_its_own_stages_the_move_and_the_tick_and_undo_takes_back_only_those(
+    demo_rendered: tuple[Path, Index], tmp_path: Path
+):
+    """jcanton, 2026-10-12: a task out of the pitch it was bet in, so it can be
+    bet into this cycle on its own.
+
+    Pressed, the row holds two staged fields and nothing is written — this page
+    has one save model, and a button that wrote at once beside a table that
+    waits for Save is the mixed model it was rebuilt to get rid of. Where the
+    task goes is the pitch's project, worked out here from the plan and not read
+    off the button. Undo takes back those two and leaves an appetite typed on
+    the same row alone. And the button's words are not the row's: searched for,
+    its label found every task on the table."""
+    from browser import chrome, measured_in
+
+    from openproj.render import render_cycle
+
+    _, index = demo_rendered
+    page = render_cycle(index, 37, ROUTES, base_commit="deadbee")
+    got = measured_in(
+        chrome(),
+        page,
+        tmp_path / "own.html",
+        1280,
+        """
+      const button = [...document.querySelectorAll('#bets button.ownbet')]
+        .find(one => one.getClientRects().length);
+      const row = button.closest('tr');
+      const id = row.dataset.id;
+      const staged = () => JSON.stringify(PENDING.get(id) || null);
+      const size = row.querySelector('input.live');
+      size.value = '7';
+      size.dispatchEvent(new Event('input'));
+      size.dispatchEvent(new Event('blur'));
+      button.click();
+      const pressed = {staged: staged(), word: button.textContent,
+                       pending: row.classList.contains('pending'), save: SAVE.textContent};
+      button.click();
+      const undone = {staged: staged(), word: button.textContent, save: SAVE.textContent};
+      BETFIND.value = 'bet on its own';
+      BETFIND.dispatchEvent(new Event('input'));
+      const found = [...document.querySelectorAll('#bets tbody tr')]
+        .filter(one => one.getClientRects().length).length;
+      return {id, pressed, undone, found};
+    """,
+    )
+
+    task = index.plan[got["id"]]
+    project = index.plan[index.plan[task.parent].parent]
+    assert project.kind == "project", "the demo's pitch is not in a project, so this asks nothing"
+    assert json.loads(got["pressed"]["staged"]) == {
+        "person_weeks": 7,
+        "parent": project.id,
+        "cycle": 37,
+    }, "out of the pitch and into its project, ticked into this cycle"
+    assert got["pressed"]["word"] == "Undo" and got["pressed"]["pending"]
+    assert got["pressed"]["save"] == "Save 3 changes"
+    assert json.loads(got["undone"]["staged"]) == {"person_weeks": 7}, (
+        "Undo took back more than the two fields the button staged"
+    )
+    assert got["undone"]["word"] == "Bet on its own"
+    assert got["undone"]["save"] == "Save 1 change"
+    assert got["found"] == 0, "the search reads the button's label as the row's words"
+
+
 def test_the_betting_table_says_what_a_bet_is_being_made_against(
     server_pages: dict[str, str], seed_index: Index
 ):

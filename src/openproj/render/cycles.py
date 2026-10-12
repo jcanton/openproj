@@ -13,6 +13,7 @@ from ..model import (
     Record,
     days_after,
     is_bettable,
+    out_to,
     size_weeks,
     without_comments,
     workers_on,
@@ -386,7 +387,16 @@ _CYCLE = """
     <td><input class="live wide" data-field="reviewers" data-type="list"
                aria-label="{{ row.title }} reviewers"
                data-suggest="people" autocomplete="off" value="{{ row.reviewers }}"></td>
-    <td class="derived">{{ row.cycle }}</td>
+    {#- A task's cell is empty, and on a page that writes it holds the one way a
+        task gets a cycle of its own: out of its pitch and into this cycle,
+        staged like every other edit here and written on Save. -#}
+    <td class="derived">{% if editable and row.own_bet -%}
+      <button type="button" class="ownbet" data-out="{{ row.out_to }}"
+        data-holder="{{ row.holder }}"
+        aria-label="Bet {{ row.title }} on its own into cycle {{
+          c.number }}, out of {{ row.holder }}"
+        >Bet on its own</button>
+      {%- else %}{{ row.cycle }}{% endif %}</td>
   </tr>
   {% endfor %}
 </tbody></table>
@@ -1035,7 +1045,7 @@ function betSearch() {
       .filter(box => box.type !== 'checkbox')
       .flatMap(box => box.dataset.type === 'list' ? box.value.split(',') : [box.value])
       .map(value => plain(value));
-    const haystack = [...row.cells].map(cell => plain(cell.textContent))
+    const haystack = [...row.cells].map(cell => plain(betText(cell)))
       .concat(typed).join(' ');
     const hit = !said || !!found(term, haystack);
     row.hidden = !hit;
@@ -1112,6 +1122,36 @@ document.getElementById('betclear').onclick = () => {
   BETFIND.focus();
 };
 
+// Bet on its own: a task out of its pitch and into this cycle, as two staged
+// fields on one row, so Save writes them as one commit and Undo takes back only
+// these two and not an appetite typed on the same row a minute ago. Where it is
+// filed is the server's answer (`data-out`), the one `Take out` reads too.
+//
+// Delegated from the table and not bound per button, because `betRefresh`
+// replaces the whole tbody and a listener on the old rows goes with them.
+BETS.addEventListener('click', event => {
+  const button = event.target.closest('button.ownbet');
+  if (!button) return;
+  const id = button.closest('tr').dataset.id;
+  const holder = button.dataset.holder;
+  const staged = PENDING.get(id) || {};
+  if ('parent' in staged) {
+    const {parent, cycle, ...rest} = staged;
+    if (Object.keys(rest).length) PENDING.set(id, rest); else PENDING.delete(id);
+    button.textContent = 'Bet on its own';
+    button.setAttribute('aria-label',
+      `Bet ${named(id)} on its own into cycle ${NUMBER}, out of ${holder}`);
+    mark();
+    say(`${named(id)} stays in ${holder}`);
+    return;
+  }
+  pend(id, 'parent', button.dataset.out || null);
+  pend(id, 'cycle', NUMBER);
+  button.textContent = 'Undo';
+  button.setAttribute('aria-label', `Undo betting ${named(id)} on its own`);
+  say(`${named(id)} will leave ${holder} and be bet into cycle ${NUMBER} on Save`);
+});
+
 // Sorting, by the text a reader can see. `appetite` is the one column where
 // that is a number and sorting it as a string would put 10 before 2 — so a cell
 // that parses as one is compared as one, and everything else falls back to a
@@ -1135,7 +1175,14 @@ function betCell(row, at) {
   const pick = cell.querySelector('select');
   if (pick) return String(pick.selectedIndex).padStart(3, '0');
   const box = cell.querySelector('input:not([type=checkbox])');
-  return (box ? box.value : cell.textContent).trim();
+  return (box ? box.value : betText(cell)).trim();
+}
+
+// What a cell says about the record, which a button in it does not: "Bet on its
+// own" on every task row made `own` find all of them and sorted the bet-in column
+// by a control's label.
+function betText(cell) {
+  return cell.querySelector('button.ownbet') ? '' : cell.textContent;
 }
 
 function betSort(at, descending) {
@@ -1443,12 +1490,16 @@ input.rate { width: 4rem; }
 button.drop { border: none; background: none; cursor: pointer; padding: 0 .2rem;
               color: var(--muted); font-size: 13px; line-height: 1; }
 button.drop:hover { color: var(--danger); }
+/* Upright inside a `.derived` cell, which italicises a value worked out from
+   somewhere else — and this is a control, not a value. */
+#bets button.ownbet { font-size: 12px; font-style: normal; padding: 1px 6px;
+                      white-space: nowrap; }
 /* A thumb's worth of box on a phone. Both pass WCAG's spacing test at their
    drawn size — 22x13 and 13x13 with nothing else within reach — and a review on
    a phone still landed a tap on them only by aiming at the exact centre, which
    is the test being right about the rule and wrong about the thumb. */
 @media """ + PHONE + """ {
-  button.drop { min-width: 24px; min-height: 24px; }
+  button.drop, #bets button.ownbet { min-width: 24px; min-height: 24px; }
   input.bet { width: 20px; height: 20px; }
   /* The search box over the explanation rather than beside it: a 12rem box on
      one flex row with the sentence left the sentence a 148px column eighteen
@@ -2438,6 +2489,16 @@ def _bet_row(
         "in_cycle": record.cycle == number,
         "carried": carried,
         "offlist": offlist,
+        # A task can leave its pitch and be bet on its own — jcanton, 2026-10-12,
+        # betting `task-46ea60` into cycle 39 out of `pitch-370004`, which was
+        # bet in an earlier one. Nothing in the model is new: a task no pitch
+        # holds is already bettable, so this is a move and a tick staged as one
+        # gesture. Out to wherever the right-click menu's `Take out` files it
+        # (`out_to`, `model.py`), because "out of the pitch" is the same move
+        # on every page. Not on finished or dropped work, which nobody bets.
+        "own_bet": bool(rung) and record.status not in HISTORY,
+        "out_to": (out_to(record, by_id) or "") if rung else "",
+        "holder": by_id[record.parent].title if rung else "",
     }
 
 
