@@ -5,7 +5,7 @@ title: Halo exchanges in the transport module
 parent: pitch-0d0001
 status: in_progress
 owner: Oxpeckerly
-assignees: [Oxpeckerly]
+developers: [Oxpeckerly]
 reviewers: [nightjarelli, hoopoegrove]
 review_waived: false
 start_date: 2026-06-22

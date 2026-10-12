@@ -5,7 +5,7 @@ title: Testing rank reproducibility
 parent: proj-000001
 status: in_progress
 owner: merganserly
-assignees: [merganserly, jackdawrie, sanderlingly]
+developers: [merganserly, jackdawrie, sanderlingly]
 reviewers: [jackdawrie, hoopoegrove]
 review_waived: false
 start_date: 2026-08-17

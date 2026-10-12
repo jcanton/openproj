@@ -5,7 +5,7 @@ title: Wire the tap-deck writer to the new reader
 parent: pitch-0f0001
 status: ready
 owner: siskinbury
-assignees: [siskinbury]
+developers: [siskinbury]
 reviewers: [firecresta]
 review_waived: false
 start_date: 2026-08-17

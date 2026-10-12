@@ -5,7 +5,7 @@ title: Coordinate with Kettleworth
 parent: pitch-0c0001
 status: ready
 owner: mudlarkish
-assignees: [mudlarkish]
+developers: [mudlarkish]
 reviewers: []
 review_waived: true
 start_date: 2026-08-17

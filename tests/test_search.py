@@ -75,7 +75,7 @@ def fields_of(index: Index) -> list[str]:
     said = []
     for record in index.plan.values():
         said += [record.id, record.title, *record.tags, *record.prs]
-        said += [record.owner or "", *record.assignees, *record.reviewers]
+        said += [record.owner or "", *record.developers, *record.reviewers]
     return [word for word in said if word]
 
 
@@ -87,7 +87,7 @@ def needles(index: Index) -> list[str]:
         found.update(record.tags)
         found.update(record.prs)
         found.update(pr.lstrip("#") for pr in record.prs)
-        found.update(filter(None, [record.owner, *record.assignees, *record.reviewers]))
+        found.update(filter(None, [record.owner, *record.developers, *record.reviewers]))
         found.add(record.id)
         found.update(WORD.findall(record.title.lower()))
     return sorted(found)
@@ -430,7 +430,7 @@ def test_the_language_is_evaluated_the_same_in_the_browser(index: Index, page: s
         "kind:task and (status:ready or status:done)",
         "(kind:task and status:ready) or status:done",
         "owner:jackdawrie",
-        "assignee:jackdawrie",
+        "developer:jackdawrie",
         "reviewer:jackdawrie",
         f"tag:{tags[0]}",
         f"tag:{tags[0]} and tag:{tags[1]}",

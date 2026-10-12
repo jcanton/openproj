@@ -11,10 +11,10 @@ that looks plausible and is wrong:
   availability. Three names on a six-week bet is two elapsed weeks, and one
   person at 60% takes a three-week bet five weeks. (D-C4, 2026-08-16. This
   reverses D1, which said a size was already elapsed weeks and must never be
-  divided; D1 was wrong about how the team estimates, and with a single assignee
+  divided; D1 was wrong about how the team estimates, and with a single developer
   at full availability the two readings agree, which is why it went unnoticed.)
 * Only leaves consume a worker's capacity. A parent's span is a rollup of work its
-  children already booked; booking the parent too double-books its assignees.
+  children already booked; booking the parent too double-books its developers.
 
 A size is the one input with no substitute. There is no default appetite, so a
 record nobody has sized is not scheduled at all — no span, exactly as a childless
@@ -328,7 +328,7 @@ def _occupied_weeks(intervals: list[tuple[date, date]], config: Config) -> float
     unsized record, and a finished one written before the end date existed — so
     it drops out of the arithmetic rather than being subtracted from it.
 
-    **Merged and not summed, which is what keeps shared assignees right.** Two
+    **Merged and not summed, which is what keeps shared developers right.** Two
     tasks on one person serialise — `_place` books workers, so a contended person
     queues behind themselves — and their intervals abut, so the union is their
     sum and a bet that does not fit still says so. The same two tasks on two
@@ -903,7 +903,7 @@ def schedule(
         # every live child got one; with no default appetite they are not, and a
         # pitch whose children are ALL unsized had an empty `kids` and fell
         # straight through to the leaf path below. It was then placed like a leaf:
-        # it booked its own assignees against a duration derived from its own
+        # it booked its own developers against a duration derived from its own
         # appetite, which double-books whoever owns it the moment one of those
         # children is sized — the second invariant in this module's docstring —
         # while `Index._charged` skips it as a rollup and charges nobody, and

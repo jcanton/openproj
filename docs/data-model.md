@@ -9,7 +9,7 @@ has the pages these structures are drawn on; this file is the structures.
 ## One type, six kinds
 
 There is one record type. `Record` (`model.py`) carries what every kind shares — `id`, `kind`,
-`title`, `parent`, `status`, `owner`, `assignees`, `reviewers`, `review_waived`, `start_date`,
+`title`, `parent`, `status`, `owner`, `developers`, `reviewers`, `review_waived`, `start_date`,
 `end_date`, `priority`, `depends_on`, `cycle`, `tags`, `prs`, `body` — and `kind` says which rung it is on. The
 six rungs are subclasses that add fields. They are not six different things: one model, one parser,
 one write path, one page.
@@ -32,7 +32,7 @@ Each kind is one thing and says so:
 
 - A **pitch** is the unit of the bet: what the betting table offers, and the only kind whose body the
   shaping hints read. Its `owner` is who shaped it and holds it — there is no `shaped_by` field;
-  `assignees` build it, `reviewers` read the PR.
+  `developers` build it, `reviewers` read the PR.
 
 - A **task** is a piece of a pitch, with its own size and its own people, taking its cycle from the
   pitch. A task with **no** parent is a chore nobody pitched: bettable in its own right.
@@ -111,7 +111,7 @@ flowchart LR
 
 ## Sizes, dependencies, requiredness
 
-A size is `person_weeks` on a pitch and on a task, and the people on it — its `assignees` — divide
+A size is `person_weeks` on a pitch and on a task, and the people on it — its `developers` — divide
 it, each at their own availability. **There is no default.** A record nobody has sized is not scheduled, weighs nothing in
 its parent's progress and charges nobody's capacity, and every page that adds weeks up says how many
 records it could not count — a number the tool invented is a number that arrives everywhere looking
@@ -138,7 +138,7 @@ bet that should not be made. `review_waived` is a deliberate act, for work with 
 and it is a facet and a count, so a team that waives everything sees itself doing it. **A reviewer is
 not a worker**: review is never charged against capacity. **Neither is an owner**: the owner's job
 is to see the work done, and they are booked, scheduled around and charged capacity only if they
-are also among the `assignees`. A record with an owner and nobody assigned is work nobody is on.
+are also among the `developers`. A record with an owner and no developers is work nobody is on.
 
 **Parse permissively, validate strictly, and grandfather.** Every field is optional at the type level
 and `status` and `priority` are plain `str`, so a hand-edited file with a missing field or a retired

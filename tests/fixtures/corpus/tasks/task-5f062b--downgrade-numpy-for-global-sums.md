@@ -7,7 +7,7 @@ status: ready
 owner: eveningtern
 reviewers: [accentor9]
 person_weeks: 1
-assignees: []
+developers: []
 start_date: null
 cycle: 36
 priority: medium

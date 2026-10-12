@@ -5,7 +5,7 @@ title: Port the air-side throughflow
 parent: pitch-0b0001
 status: done
 owner: jackdawrie
-assignees: [jackdawrie]
+developers: [jackdawrie]
 reviewers: [hoopoegrove, turnstonegru]
 review_waived: false
 start_date: 2026-06-22

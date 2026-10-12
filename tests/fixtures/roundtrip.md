@@ -13,7 +13,7 @@ id: task-f0e1d2
 parent: pitch-5e7b1c
 owner: "grünfink"      # quoted on purpose — the quotes must survive
 reviewers: [nightjarelli, Dunnocksen]
-assignees: []
+developers: []
 assigned_on: 2026-08-13
 cycle: 36
 priority: high

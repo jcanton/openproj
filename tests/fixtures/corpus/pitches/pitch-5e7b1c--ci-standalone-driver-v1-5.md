@@ -7,7 +7,7 @@ status: in_progress
 owner: null            # REQUIRED from schema_version 1; not in source
 reviewers: []          # REQUIRED from schema_version 1; not in source
 person_weeks: 4.0
-assignees: [jackdawrie, merganserly]
+developers: [jackdawrie, merganserly]
 start_date: 2026-05-26
 cycle: 36
 priority: high
@@ -39,7 +39,7 @@ reason this row exists.
 **Two developers, not three.** A third name was floated in the room and left off. The argument for
 including them was that they know the exchange code better than either of the two named; the
 argument against, which won, was that the cycle-36 bet named two people, and a plan that quietly
-grows a third assignee has stopped describing what was bet. If the work turns out to need that
+grows a third developer has stopped describing what was bet. If the work turns out to need that
 person, re-bet it rather than editing the roster.
 
 **The appetite is a ceiling, not an estimate.** The phrase used in the room was "possibly whole

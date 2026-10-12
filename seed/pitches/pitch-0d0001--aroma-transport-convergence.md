@@ -5,7 +5,7 @@ title: Aroma transport convergence
 parent: proj-000001
 status: in_progress
 owner: Oxpeckerly
-assignees: [Oxpeckerly, nightjarelli]
+developers: [Oxpeckerly, nightjarelli]
 reviewers: [jackdawrie, hoopoegrove]
 review_waived: false
 start_date: 2026-06-22

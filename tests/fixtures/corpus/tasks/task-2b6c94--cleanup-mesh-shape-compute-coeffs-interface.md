@@ -7,7 +7,7 @@ status: ready
 owner: Oxpeckerly
 reviewers: [eiderdowny]
 person_weeks: 0.5
-assignees: []
+developers: []
 start_date: null
 cycle: 34
 priority: medium

@@ -5,7 +5,7 @@ title: Convergence study on the drum mesh
 parent: pitch-0d0001
 status: ready
 owner: nightjarelli
-assignees: [nightjarelli, Oxpeckerly]
+developers: [nightjarelli, Oxpeckerly]
 reviewers: [avocetline, jackdawrie]
 review_waived: false
 start_date: 2026-08-17

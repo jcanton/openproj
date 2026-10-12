@@ -84,6 +84,8 @@ CLIENT_SECRET = "s3cr3t-client-secret"
 SESSION_COOKIE = "__Host-openproj_session"
 SESSION_COOKIE_INSECURE = "openproj_session"
 STATE_COOKIE = "op_state"
+NEXT_COOKIE = "op_next"
+RENEWING_COOKIE = "op_renewing"
 
 ANN = User(login="ann", member=True)
 MALLORY = User(login="mallory", member=False)
@@ -1235,7 +1237,7 @@ def test_a_rule_newer_than_the_record_reaches_the_client_as_a_warning(client: Te
     repository at once. The pitch predates the somebody-assigned rule, so it
     warns."""
     problems = index_of(client)["problems"]
-    assigned = [p for p in problems if p["record_id"] == PITCH and p["field"] == "assignees"]
+    assigned = [p for p in problems if p["record_id"] == PITCH and p["field"] == "developers"]
 
     assert [p["severity"] for p in assigned] == ["warning"]
 
@@ -1777,7 +1779,7 @@ def test_a_field_the_client_did_not_send_is_not_rewritten(client: TestClient, re
     assert "person_weeks: 1.5          # measured on firebrick, not guessed" in stored
     assert "owner: ann                 # ann has the upstream contacts" in stored
     assert "reviewers: [bo, cy]" in stored  # still one line, still flow style
-    assert "assignees" not in stored  # an untouched default is not materialised
+    assert "developers" not in stored  # an untouched default is not materialised
 
 
 # --------------------------------------------------------------------------- #
@@ -1789,7 +1791,7 @@ def test_a_field_the_client_did_not_send_is_not_rewritten(client: TestClient, re
 # --------------------------------------------------------------------------- #
 
 
-# A create that breaks no rule. `assignees` is here for the reason `owner` and
+# A create that breaks no rule. `developers` is here for the reason `owner` and
 # `reviewers` are: a `ready` record is refused without it, and a create fixture
 # that trips a gate makes every test using it a test about that gate.
 VALID_TASK = {
@@ -1798,7 +1800,7 @@ VALID_TASK = {
     "parent": PITCH,
     "status": "ready",
     "owner": "ann",
-    "assignees": ["ann"],
+    "developers": ["ann"],
     "reviewers": ["bo"],
     "person_weeks": 1.0,
 }
@@ -1884,7 +1886,7 @@ def test_a_new_record_is_held_to_the_current_rules(client: TestClient, repo_path
     """Grandfathering protects the corpus that already exists, not the record being
     created right now. The seeded pitch only warns about having nobody on it; a
     pitch created today is created at the repository's `schema_version` and is
-    blocked without assignees. This is the mechanism working end to end rather
+    blocked without developers. This is the mechanism working end to end rather
     than in a unit test, and it is the reason a required field can ever be added
     at all — the version 2 rule refuses this create while it breaks no file
     already in the corpus."""
@@ -1902,7 +1904,7 @@ def test_a_new_record_is_held_to_the_current_rules(client: TestClient, repo_path
     )
 
     assert response.status_code == 422
-    assert [p["field"] for p in response.json()["problems"]] == ["assignees"]
+    assert [p["field"] for p in response.json()["problems"]] == ["developers"]
     assert git_head(repo_path) == base
 
 
@@ -2467,6 +2469,191 @@ def test_a_sign_in_somebody_cancelled_says_so(secure_client: TestClient):
     assert response.status_code == 400
     assert "access_denied" in response.json()["detail"]
     assert SESSION_COOKIE not in response.headers.get("set-cookie", "")
+
+
+# What a browser sends when somebody opens a page, as against a script fetching
+# one. The renewal answers only the first: a fetch cannot follow GitHub's sign-in.
+OPENING_A_PAGE = {"Sec-Fetch-Dest": "document", "Sec-Fetch-Mode": "navigate"}
+
+
+def _signed_hours_ago(monkeypatch: pytest.MonkeyPatch, hours: float) -> str:
+    """A session as the callback would have signed it `hours` ago. The clock is
+    moved rather than the test slept, as `test_auth.py` does: `time.time()` is
+    what a timestamped signer stamps."""
+    now = time.time()
+    with monkeypatch.context() as clock:
+        clock.setattr(time, "time", lambda: now - hours * 3600)
+        return sign_session(ANN, SECRET)
+
+
+@pytest.fixture
+def served(repo_path: Path):
+    """The deployment's shape — GitHub sign-in, over TLS — with nobody signed in."""
+    app = create_app(
+        repo_path,
+        auth="github",
+        org=ORG,
+        secret=SECRET,
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+    )
+    with TestClient(app, base_url="https://openproj.example") as client:
+        yield client
+
+
+@pytest.mark.parametrize("hours", [13, 25, 24 * 29])
+def test_opening_a_page_on_an_old_session_goes_round_github_and_back(
+    served: TestClient, monkeypatch: pytest.MonkeyPatch, hours: int
+):
+    """The sign-outs jcanton reported as random, 2026-10-12. The Cloud Run log
+    had the pattern: a session lasted exactly 24 hours from sign-in, the browser
+    dropped the cookie at the same moment, and the next page drew signed out at
+    whatever time of day the last sign-in had been. Four of those were found by a
+    save refused with a 401.
+
+    So a page opened on a session past half its day is sent through the sign-in,
+    which GitHub completes without showing anything to somebody who has
+    authorised the app before. The 25-hour case is the one that used to be lost
+    outright, and the 29-day one is the far edge of the cookie the browser now
+    keeps: no session (writes are still refused), still renewable.
+    """
+    served.cookies.set(SESSION_COOKIE, _signed_hours_ago(monkeypatch, hours))
+
+    response = served.get(
+        f"/detail/{TASK}?view=slide", headers=OPENING_A_PAGE, follow_redirects=False
+    )
+
+    assert response.status_code == 307
+    location = urlparse(response.headers["location"])
+    assert location.path == "/login"
+    assert parse_qs(location.query)["next"] == [f"/detail/{TASK}?view=slide"]
+    assert RENEWING_COOKIE in response.headers["set-cookie"]
+
+    # And `/login` keeps the destination for the callback.
+    onward = served.get(response.headers["location"], follow_redirects=False)
+    assert onward.headers["location"].startswith("https://github.com/login/oauth/authorize")
+    # Quoted in the jar: `/`, `?` and `=` are not cookie-safe, and Starlette unquotes.
+    assert served.cookies.get(NEXT_COOKIE, "").strip('"') == f"/detail/{TASK}?view=slide"
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["fresh", "not-a-page", "nobody-signed-in", "not-our-signature", "just-renewed"],
+)
+def test_nothing_else_is_sent_round_github(
+    served: TestClient, monkeypatch: pytest.MonkeyPatch, case: str
+):
+    """Each of these answered with the page it asked for, untouched.
+
+    A session under half a day has nothing to renew. A `fetch` — a save, the
+    card's body, `/api/me` — cannot follow a redirect to GitHub, and a save
+    turned into one would be a save that quietly did not happen. A reader who
+    never signed in has nothing to renew, and a cookie this server did not sign
+    is a reader who never signed in. And a browser sent round in the last ten
+    minutes is not sent again: a jar that will not take the new cookie would
+    otherwise go round until the browser says "too many redirects".
+    """
+    headers = dict(OPENING_A_PAGE)
+    if case == "fresh":
+        served.cookies.set(SESSION_COOKIE, _signed_hours_ago(monkeypatch, 11))
+    elif case == "not-a-page":
+        served.cookies.set(SESSION_COOKIE, _signed_hours_ago(monkeypatch, 25))
+        headers = {"Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors"}
+    elif case == "not-our-signature":
+        served.cookies.set(SESSION_COOKIE, sign_session(ANN, "somebody-elses-secret"))
+    elif case == "just-renewed":
+        served.cookies.set(SESSION_COOKIE, _signed_hours_ago(monkeypatch, 25))
+        served.cookies.set(RENEWING_COOKIE, "1")
+
+    response = served.get("/", headers=headers, follow_redirects=False)
+
+    assert response.status_code == 200, response.headers.get("location")
+
+
+def test_an_expired_session_still_cannot_write(
+    served: TestClient, repo_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The browser keeps the cookie for a month now, so it can be recognised and
+    renewed. That must not stretch what it grants: the signature's day is still
+    how long somebody who left the org keeps write access."""
+    served.cookies.set(SESSION_COOKIE, _signed_hours_ago(monkeypatch, 25))
+
+    assert "login" not in served.get("/api/me").json()
+    assert save(served, TASK, {"priority": "high"}).status_code == 401
+
+
+def test_a_sign_in_comes_back_to_the_page_it_started_on(
+    served: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    """Both sign-ins in the log on 2026-10-12 landed on `/`, and both readers then
+    clicked their way back to the pitch they had been reading. And the cookie it
+    sets is the month-long one, or the renewal has nothing to recognise tomorrow."""
+
+    async def exchanged(*_):
+        return "a-token"
+
+    async def identified(*_):
+        return ANN
+
+    monkeypatch.setattr("openproj.web.exchange_code", exchanged)
+    monkeypatch.setattr("openproj.web.identify", identified)
+
+    login = served.get(f"/login?next=/detail/{TASK}", follow_redirects=False)
+    state = parse_qs(urlparse(login.headers["location"]).query)["state"][0]
+    response = served.get(f"/auth/callback?code=c0de&state={state}", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/detail/{TASK}"
+    session = next(
+        line for line in response.headers.get_list("set-cookie") if SESSION_COOKIE in line
+    )
+    assert f"Max-Age={30 * 86400}" in session, session
+
+
+@pytest.mark.parametrize(
+    "elsewhere",
+    ["//evil.example/", "https://evil.example/", "/\\evil.example", "javascript:alert(1)"],
+)
+def test_a_sign_in_never_comes_back_to_somewhere_else(
+    served: TestClient, monkeypatch: pytest.MonkeyPatch, elsewhere: str
+):
+    """`next` is an allowlist of this server's own paths. A sign-in link that
+    could name any destination is the redirect a phishing page borrows to look
+    like it came from here, and GitHub's own sign-in in the middle of it would
+    lend it the rest of the credibility it needed."""
+
+    async def exchanged(*_):
+        return "a-token"
+
+    async def identified(*_):
+        return ANN
+
+    monkeypatch.setattr("openproj.web.exchange_code", exchanged)
+    monkeypatch.setattr("openproj.web.identify", identified)
+
+    login = served.get("/login", params={"next": elsewhere}, follow_redirects=False)
+    state = parse_qs(urlparse(login.headers["location"]).query)["state"][0]
+    response = served.get(f"/auth/callback?code=c0de&state={state}", follow_redirects=False)
+
+    assert response.headers["location"] == "/"
+
+
+def test_turning_a_renewal_down_signs_the_browser_out(
+    served: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    """Cancel on GitHub's page means no. The old cookie is what sends a page round
+    GitHub, so leaving it in place would ask the same question again ten minutes
+    later, every ten minutes, of somebody who has already answered it."""
+    served.cookies.set(SESSION_COOKIE, _signed_hours_ago(monkeypatch, 25))
+    login = served.get("/login", follow_redirects=False)
+    state = parse_qs(urlparse(login.headers["location"]).query)["state"][0]
+
+    response = served.get(
+        f"/auth/callback?error=access_denied&state={state}", follow_redirects=False
+    )
+
+    assert response.status_code == 400
+    assert response.headers["set-cookie"].startswith(f'{SESSION_COOKIE}=""')
 
 
 # --------------------------------------------------------------------------- #
@@ -3165,7 +3352,7 @@ def test_a_cycle_record_reaches_the_pages_it_is_for(client: TestClient, repo_pat
 def test_the_cycle_page_shows_load_against_capacity(client: TestClient, repo_path: Path):
     """The number the team's own sheet does not have. Their HackMD records
     availability and staffing and never adds them up."""
-    save(client, TASK, {"cycle": 37, "assignees": ["ann"], "person_weeks": 3.0})
+    save(client, TASK, {"cycle": 37, "developers": ["ann"], "person_weeks": 3.0})
     client.put(
         "/api/cycle/37",
         json={
@@ -3229,7 +3416,7 @@ def test_the_bet_table_wears_no_class_the_page_cannot_draw(client: TestClient):
     they must not disturb.
 
     Wiring it would have been worse than leaving it inert: every appetite,
-    assignees and reviewers box in this table opens a suggestion popup that
+    developers and reviewers box in this table opens a suggestion popup that
     `attachSuggest` inserts as the input's own next sibling, so an `overflow` on
     an ancestor cuts the list off against the bottom of the table on the last
     rows. A page that scrolls sideways is a nuisance; an autocomplete cut in half
@@ -3240,7 +3427,7 @@ def test_the_bet_table_wears_no_class_the_page_cannot_draw(client: TestClient):
     assert 'class="table-scroll"' not in page
     # The class still exists, on the one table with a sticky header to hold up.
     assert 'class="table-scroll carded"' in client.get("/table").text
-    assert re.search(r'<input class="live wide" data-field="assignees"[^>]*data-suggest', page), (
+    assert re.search(r'<input class="live wide" data-field="developers"[^>]*data-suggest', page), (
         "and this is the reason: the popups live inside the cells"
     )
 
@@ -3260,7 +3447,7 @@ def test_only_the_named_are_in_a_cycle(client: TestClient, repo_path: Path):
     deliberately rather than appearing because somebody was assigned something —
     which would make the roster a report instead of a decision."""
     save(client, PITCH, {"cycle": 44})
-    save(client, TASK, {"owner": "cy", "assignees": ["cy"], "person_weeks": 1.0})
+    save(client, TASK, {"owner": "cy", "developers": ["cy"], "person_weeks": 1.0})
     client.put(
         "/api/cycle/44",
         json={
@@ -3393,7 +3580,7 @@ def test_every_cycle_the_plan_names_is_on_the_index(client: TestClient, repo_pat
         },
     )
     save(client, PITCH, {"cycle": 48})
-    save(client, TASK, {"owner": "bo", "assignees": ["bo"], "person_weeks": 2.0})
+    save(client, TASK, {"owner": "bo", "developers": ["bo"], "person_weeks": 2.0})
     page = client.get("/cycles").text
     cards = re.findall(r'<h2><a href="/cycle/(\d+)">Cycle \d+</a></h2>', page)
 
@@ -3419,7 +3606,7 @@ def test_a_cycle_card_says_the_bet_against_the_capacity(client: TestClient, repo
         },
     )
     save(client, PITCH, {"cycle": 49})
-    save(client, TASK, {"owner": "cy", "assignees": ["cy"], "person_weeks": 3.0})
+    save(client, TASK, {"owner": "cy", "developers": ["cy"], "person_weeks": 3.0})
     card = re.search(
         r'<li class="card([^"]*)">\s*<h2><a href="/cycle/49".*?</li>',
         client.get("/cycles").text,
@@ -3429,7 +3616,7 @@ def test_a_cycle_card_says_the_bet_against_the_capacity(client: TestClient, repo
     # cy's three weeks, although cy is not on the roster: betting the pitch bets
     # everything under it, which is what "the pitch is the unit of the bet" means
     # for a capacity sum. The half-week sibling is bo's to answer for and nobody's
-    # to do — owner, no assignees — so it charges nobody (2026-09-23).
+    # to do — owner, no developers — so it charges nobody (2026-09-23).
     assert '<b class="num">3.0</b> of' in card, "cy is not on the roster and still counts"
     assert '<b class="num">2.0</b> weeks bet' in card, "ann at half of four weeks"
     assert re.search(r'<span class="bar"><span style="width: 100%">', card)
@@ -3998,7 +4185,7 @@ def test_every_control_on_the_cycle_page_has_a_name(client: TestClient):
         if '<input type="checkbox"' in row:
             assert f'aria-label="Bet {title} into cycle 37"' in row, title
         assert f'aria-label="{title} appetite in weeks"' in row, title
-        assert f'aria-label="{title} assignees"' in row, title
+        assert f'aria-label="{title} developers"' in row, title
         assert f'aria-label="{title} reviewers"' in row, title
 
     # Every control on the page is named one way or the other. A checkbox with no

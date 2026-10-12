@@ -265,12 +265,12 @@ def sweep_client(tmp_path: Path):
     blocker_id, _, _ = _seed_for(unplanned[0])
     seeded["tasks/task-0b10c0.md"] = (
         "---\nid: task-0b10c0\nkind: task\ntitle: waits on an unplanned record\n"
-        "status: ready\nowner: ann\nassignees: [ann]\nreviewers: [bo]\n"
+        "status: ready\nowner: ann\ndevelopers: [ann]\nreviewers: [bo]\n"
         f"person_weeks: 1\ndepends_on: [{blocker_id}]\n---\n\nHand-written edge.\n"
     )
     seeded["tasks/task-0b10c1.md"] = (
         "---\nid: task-0b10c1\nkind: task\ntitle: filed under an unplanned record\n"
-        "status: ready\nowner: ann\nassignees: [ann]\nreviewers: [bo]\n"
+        "status: ready\nowner: ann\ndevelopers: [ann]\nreviewers: [bo]\n"
         f"person_weeks: 1\nparent: {blocker_id}\n---\n\nHand-written parent.\n"
     )
     commit_directly(path, seeded, "seed the exclusion sweep corpus")

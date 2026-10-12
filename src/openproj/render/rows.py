@@ -28,8 +28,8 @@ def _people_under(index: Index, record_id: str, field: str) -> list[str]:
     draws.
 
     **Parameterised rather than copied.** It answered `reviewers` alone until a
-    project stopped reading its own `assignees`, and the obvious next move — a
-    second function with `child.assignees` on one line — would have been a fourth
+    project stopped reading its own `developers`, and the obvious next move — a
+    second function with `child.developers` on one line — would have been a fourth
     copy of this walk in the repository, three of which would then be carrying a
     `seen` set that one of them could quietly lose. An invariant written twice is
     guarded once.
@@ -245,7 +245,7 @@ def _row(index: Index, record_id: str) -> dict:
     # Whether this rung is work at all, as against a grouping something is filed
     # under. `unread_fields` answers per FIELD and neither of the two things this
     # decides is a field — progress is counted, and the inherited people are a
-    # walk — so the ladder is asked directly. See `progress`, `assignees_from`
+    # walk — so the ladder is asked directly. See `progress`, `developers_from`
     # and `reviewers_from` below.
     works = RUNG[record.kind].schedules
 
@@ -333,7 +333,7 @@ def _row(index: Index, record_id: str) -> dict:
         "out_to": out_to(record, index.plan),
         "status": read("status", record.status),
         "owner": read("owner", record.owner),
-        "assignees": read("assignees", record.assignees),
+        "developers": read("developers", record.developers),
         "reviewers": read("reviewers", record.reviewers),
         "review_waived": read("review_waived", record.review_waived),
         "priority": read("priority", record.priority),
@@ -421,7 +421,7 @@ def _row(index: Index, record_id: str) -> dict:
         # fact drawn rather than enforced. A project is the same case one rung up
         # and for both fields at once, since it reads neither of its own.
         #
-        # Kept separate from `assignees` and `reviewers` on purpose: those keys
+        # Kept separate from `developers` and `reviewers` on purpose: those keys
         # are what the file holds and what the cell editor starts from, and
         # merging the two would make opening the editor an accidental way to
         # write somebody else's name into this record.
@@ -440,21 +440,21 @@ def _row(index: Index, record_id: str) -> dict:
         # validator.** A pitch that names no reviewer and has reviewed tasks
         # under it IS reviewed — `_status_problems` takes `reviewers_under` and
         # stops asking — so drawing those names on the pitch shows what the rule
-        # already believes. There is no such rule for assignees, and there should
+        # already believes. There is no such rule for developers, and there should
         # not be: the scheduler prices a record by the people on it, so a pitch
         # still has to name its own. Drawn on the same terms, a `ready` pitch
         # would show two inherited names in a pale cell beside a warning triangle
         # saying "a ready record needs somebody on it" — the page contradicting
         # itself within one row. It did, for one screenshot.
         #
-        # So assignees roll up only where the rung does not read the field at
+        # So developers roll up only where the rung does not read the field at
         # all, which is the one rung whose own answer cannot exist: a project.
         # `unread` rather than `staffed` because it is the same list the cell's
         # editability and the validator's warning both come off, and a fourth
         # reading of the ladder is a fourth thing to keep in step.
-        "assignees_from": (
-            _people_under(index, record_id, "assignees")
-            if works and "assignees" in unread
+        "developers_from": (
+            _people_under(index, record_id, "developers")
+            if works and "developers" in unread
             else []
         ),
         # Reviewers, on the rule above: nobody named here, and the record still

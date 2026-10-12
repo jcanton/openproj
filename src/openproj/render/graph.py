@@ -75,10 +75,10 @@ def _elements(index: Index) -> list[dict]:
 # spans are in the page so neither depends on a script, and `display: none` takes
 # the other one away from a screen reader as well as from the eye.
 _GRAPH_HINT = Markup(
-    '<p class="hint" id="panhint"><span class="by-mouse">Double-click a node to open'
-    " it. Drag to pan, scroll to zoom, drag a node to move it.</span>"
-    '<span class="by-touch">Double-tap a node to open it. Drag to pan, pinch to'
-    " zoom, drag a node to move it.</span></p>"
+    '<p class="hint" id="panhint"><span class="by-mouse">Click a node for its card,'
+    " double-click to open it. Drag to pan, scroll to zoom, drag a node to move it.</span>"
+    '<span class="by-touch">Tap a node for its card, double-tap to open it. Drag to'
+    " pan, pinch to zoom, drag a node to move it.</span></p>"
 )
 
 _GRAPH = """
@@ -1325,6 +1325,7 @@ function pickBlocker(node) {
 
 // Opening is on double-click: a single tap is also the first half of drawing an
 // edge, and on a graph you drag around, one stray click should not navigate away.
+// Outside edit mode a single click opens the card instead, further down.
 cy.on('dbltap', 'node', evt => {
   if (!connecting) location.href = '{{ links.record }}' + evt.target.id();
 });
@@ -1362,13 +1363,12 @@ function onLabel(node, at) {
   return at.x >= band.x1 && at.x <= band.x2 && at.y >= band.y1 && at.y <= band.y2;
 }
 
-// Which box the pointer is currently over the label of. `queueCard` restarts its
-// own delay on every call, so asking it on every `mousemove` would mean a card
-// that never appears while the pointer is still moving: it is asked on the
-// crossing, once, and `hideCard` on the way back out.
+// Which box the pointer is currently over the label of. Lighting restyles every
+// edge on the drawing, so it is done on the crossing, once, and undone on the way
+// back out — not on every `mousemove` in between.
 let onLabelOf = null;
 
-// Which kinds a hover has anything to say about. Off the ladder in `model.py`,
+// Which kinds a card has anything to say about. Off the ladder in `model.py`,
 // where a product declares `carded: false` — jcanton asked for no card on one,
 // and the reason it is a property rather than a check written here is that the
 // same question is asked on the table and the timeline.
@@ -1399,23 +1399,18 @@ function unlightEdges() {
   cy.batch(() => cy.edges().removeClass('lit unlit'));
 }
 
-// The two things pointing at a node does, for the two handlers that decide the
-// pointer has arrived — `mouseover` on a card or a box's label, and `mousemove`
-// onto a box's label from inside the box. One function, because the second of
-// those used to carry its own copy of the card call and not the product check
-// above it, so a product's label reached from inside the product opened a card
-// of dashes.
-function pointedAt(node, evt) {
+// What pointing at a node does, for the two handlers that decide the pointer has
+// arrived — `mouseover` on a card or a box's label, and `mousemove` onto a box's
+// label from inside the box. One function, because the second of those used to
+// carry its own copy of what the first did and not the product check, so a
+// product's label reached from inside the product opened a card of dashes.
+//
+// Lights its edges, and asks for its document without drawing anything: the card
+// opens on a click now (below), and a hover that has already fetched the body is
+// what lets the click draw the fields and the document in one paint.
+function pointedAt(node) {
   lightEdges(node);
-  // A product carries a title and a sentence and nothing else — no owner, no
-  // dates, no appetite, no document. A card of it would be a box of dashes,
-  // which teaches a reader that cards are not worth hovering for.
-  if (CARDED[node.data('kind')] === false) return;
-  // `data()` and not a lookup: a node's data IS the row — `_elements` builds it
-  // from the same `_row` the table is drawn from — and this page has no `DATA` of
-  // its own to look anything up in. The first version of this read `DATA.rows`
-  // and drew nothing at all, on the one view the card was added for.
-  queueCard(node.data(), evt.originalEvent.clientX, evt.originalEvent.clientY);
+  if (CARD_BODY_URL && CARDED[node.data('kind')] !== false) warmCardBody(node.id());
 }
 
 cy.on('mouseover', 'node', evt => {
@@ -1425,7 +1420,7 @@ cy.on('mouseover', 'node', evt => {
     if (!onLabel(node, evt.position)) return;
     onLabelOf = node.id();
   }
-  pointedAt(node, evt);
+  pointedAt(node);
 });
 
 // Entering a box below its title is not entering its label, and the pointer can
@@ -1437,19 +1432,44 @@ cy.on('mousemove', 'node', evt => {
   if (onLabel(node, evt.position)) {
     if (onLabelOf === node.id()) return;
     onLabelOf = node.id();
-    pointedAt(node, evt);
+    pointedAt(node);
   } else if (onLabelOf === node.id()) {
     onLabelOf = null;
     unlightEdges();
-    hideCard();
   }
 });
 
+// The edges go out with the pointer and the card does not: a card somebody
+// clicked for stays until they press somewhere else — see `pinCard`.
 cy.on('mouseout', 'node', evt => {
   if (evt.target.isParent() && onLabelOf === evt.target.id()) onLabelOf = null;
   unlightEdges();
-  hideCard();
 });
+
+// The card, on a click — jcanton, 2026-10-12: "let's not make the pop-up card
+// show up on hover, only when clicking a record/node". On a drawing the pointer
+// crosses cards all the time on its way to the one it wants, and a box that
+// opened over every one of them was in the way of the reading it was there for.
+//
+// No delay, unlike the hover it replaces: `CARD_DELAY` is hover-intent, and a
+// click is intent already. A box answers for its label band here as it did for
+// the hover, so a click in a project's open ground — the way you would click
+// off a card — opens nothing. The press that started this click has already
+// closed whatever card was up (`shell.py`, capture phase), so a click on a
+// second node swaps one card for the other.
+//
+// A function the one `tap` handler further down calls outside edit mode, rather
+// than a second tap listener on nodes beside it: one gesture, one listener, so
+// what a click does in each mode is read in one place.
+function cardOnTap(node, evt) {
+  if (node.isParent() && !onLabel(node, evt.position)) return;
+  if (CARDED[node.data('kind')] === false) return;
+  // `data()` and not a lookup: a node's data IS the row — `_elements` builds it
+  // from the same `_row` the table is drawn from — and this page has no `DATA` of
+  // its own to look anything up in. The first version of this read `DATA.rows`
+  // and drew nothing at all, on the one view the card was added for.
+  pinCard(node.data(), evt.originalEvent.clientX, evt.originalEvent.clientY);
+}
 // A node dragged out from under a card, and a canvas panned or zoomed under one:
 // the pointer never leaves the node, so `mouseout` does not fire and the card
 // stays describing a node that is no longer there.
@@ -1480,7 +1500,7 @@ cy.on('drag pan zoom', () => { onLabelOf = null; unlightEdges(); hideCardNow(); 
 // coordinates, which pan and zoom out from under the reader, and
 // `evt.renderedPosition` is relative to the canvas, which sits below a nav, a
 // filter row and — when there is a server — a commit bar. `#pop` is `position:
-// fixed`, so it wants the viewport. That is the same question `queueCard` above
+// fixed`, so it wants the viewport. That is the same question `pinCard` above
 // answers and the same way it answers it, three handlers up: one answer to it on
 // this page rather than two that agree today.
 //
@@ -1508,7 +1528,7 @@ cy.on('cxttap', 'node', evt => {
   // `Open` navigates, and a canvas holding drawn-but-unsaved edges loses them
   // without a word; the pointer is also mid-gesture, picking a blocker and then
   // what waits for it, and a box opening under it covers the node being aimed
-  // at. The hover card declines here for the second half of that already.
+  // at. The card declines here for the second half of that already.
   if (connecting) return;
   // No label-band restriction, although a compound is hit over its whole area
   // here exactly as it is for the card. What the card is giving back there is
@@ -1822,7 +1842,7 @@ cy.on('tap', 'edge', evt => {
 
 cy.on('tap', 'node', evt => {
   const node = evt.target;
-  if (!connecting) return;
+  if (!connecting) { cardOnTap(node, evt); return; }
   if (!blocker) { pickBlocker(node); return; }
   const from = blocker;
   blocker = null;
@@ -2106,7 +2126,7 @@ def render_graph(
         # `design/QUEUE.md`'s table entry predicted the flag would have to SPLIT
         # rather than narrow, and on the table it narrowed. Here it narrows
         # further: this flag has only ever drawn `#commitbar`, so the reader's
-        # canvas keeps panning, zooming, filtering, the hover card, the dbltap
+        # canvas keeps panning, zooming, filtering, the card, the dbltap
         # into a record and the whole legend without a line moving.
         #
         # The script below is deliberately NOT behind this. The rendered-file

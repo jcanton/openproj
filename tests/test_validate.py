@@ -127,7 +127,7 @@ def task(**overrides: object) -> Task:
     a parent that is absent from the repository is not itself a rule violation.
 
     "No rule" includes the schema_version 2 somebody-assigned rule. Without
-    `assignees` here every test in this file would be asserting about one
+    `developers` here every test in this file would be asserting about one
     problem while a second sat beside it.
     """
     fields: dict[str, object] = {
@@ -137,7 +137,7 @@ def task(**overrides: object) -> Task:
         "parent": PITCH_ID,
         "status": "ready",
         "owner": "jackdawrie",
-        "assignees": ["jackdawrie"],
+        "developers": ["jackdawrie"],
         "reviewers": ["merganserly"],
         "person_weeks": 1.0,
     }
@@ -153,7 +153,7 @@ def pitch(**overrides: object) -> Pitch:
         "parent": None,
         "status": "ready",
         "owner": "jackdawrie",
-        "assignees": ["jackdawrie"],
+        "developers": ["jackdawrie"],
         "reviewers": ["merganserly"],
         "person_weeks": 2.0,
     }
@@ -163,7 +163,7 @@ def pitch(**overrides: object) -> Pitch:
 def project(**overrides: object) -> Project:
     """A wip project that breaks no rule.
 
-    No `assignees` and no `reviewers`, and their absence is the point: a project
+    No `developers` and no `reviewers`, and their absence is the point: a project
     is a grouping nobody works on directly, so a project carrying either is a
     project that warns. They were here while the rule asked every scheduled rung
     for hands, and leaving them would have made the clean fixture a dirty one.
@@ -416,6 +416,24 @@ def test_a_file_that_still_says_shaped_by_warns_and_points_at_owner():
     assert summary(problem) == ("warning", "shaped_by", RETIRED_SHAPED_BY, 5)
 
 
+def test_a_file_that_still_says_assignees_is_told_the_new_name():
+    """Read under the new name, so nothing on any page changes — and told so,
+    because a hand-edited file that goes on saying `assignees:` is a file whose
+    next reader looks for a field the docs no longer name. A warning: the file
+    is not wrong, it is older than the word."""
+    text = (
+        "---\nid: pitch-bbb222\nkind: pitch\ntitle: P\n"
+        "created_schema_version: 9\nassignees: [hornbillow]\n---\n\nb\n"
+    )
+    problem = only(check(parse_text(text, f"pitches/{PITCH_ID}.md")), PITCH_ID)
+    assert summary(problem) == (
+        "warning",
+        "developers",
+        "assignees is the old name of developers — rename the key to developers",
+        5,
+    )
+
+
 def test_a_retired_key_on_a_shelved_record_stays_unreported():
     """Shelved work is parked, not broken — the exemption every other rule gets,
     and the retired-field rule must not be the one that nags anyway."""
@@ -576,10 +594,10 @@ def test_grandfathering_turns_a_newer_rule_into_a_warning_on_an_older_record():
     rule must not retroactively block a corpus written at version 1. Same
     record, same missing field, severity decided by created_schema_version
     alone."""
-    old = only(check(pitch(assignees=[], created_schema_version=1)), PITCH_ID)
-    new = only(check(pitch(assignees=[], created_schema_version=2)), PITCH_ID)
-    assert summary(old) == ("warning", "assignees", NEEDS_SOMEBODY_READY, 2)
-    assert summary(new) == ("blocker", "assignees", NEEDS_SOMEBODY_READY, 2)
+    old = only(check(pitch(developers=[], created_schema_version=1)), PITCH_ID)
+    new = only(check(pitch(developers=[], created_schema_version=2)), PITCH_ID)
+    assert summary(old) == ("warning", "developers", NEEDS_SOMEBODY_READY, 2)
+    assert summary(new) == ("blocker", "developers", NEEDS_SOMEBODY_READY, 2)
 
 
 def test_grandfathering_does_not_soften_a_rule_older_than_the_record():
@@ -788,7 +806,7 @@ def test_tasks_that_do_not_fit_in_the_weeks_the_bet_bought_say_so():
             kind="pitch",
             title="Q",
             person_weeks=8.0,
-            assignees=["jackdawrie", "merganserly"],
+            developers=["jackdawrie", "merganserly"],
         ),
         Task(
             id="task-000001",
@@ -796,7 +814,7 @@ def test_tasks_that_do_not_fit_in_the_weeks_the_bet_bought_say_so():
             title="A",
             parent="pitch-000001",
             person_weeks=4.0,
-            assignees=["jackdawrie"],
+            developers=["jackdawrie"],
         ),
         Task(
             id="task-000002",
@@ -804,7 +822,7 @@ def test_tasks_that_do_not_fit_in_the_weeks_the_bet_bought_say_so():
             title="B",
             parent="pitch-000001",
             person_weeks=0.5,
-            assignees=["jackdawrie"],
+            developers=["jackdawrie"],
         ),
     ]
     problem = only(rolled_up(*records), "pitch-000001", field="person_weeks")
@@ -830,7 +848,7 @@ def test_the_same_tasks_on_different_people_fit_and_say_nothing():
             kind="pitch",
             title="Q",
             person_weeks=8.0,
-            assignees=["jackdawrie", "merganserly"],
+            developers=["jackdawrie", "merganserly"],
         ),
         Task(
             id="task-000001",
@@ -838,7 +856,7 @@ def test_the_same_tasks_on_different_people_fit_and_say_nothing():
             title="A",
             parent="pitch-000001",
             person_weeks=4.0,
-            assignees=["jackdawrie"],
+            developers=["jackdawrie"],
         ),
         Task(
             id="task-000002",
@@ -846,7 +864,7 @@ def test_the_same_tasks_on_different_people_fit_and_say_nothing():
             title="B",
             parent="pitch-000001",
             person_weeks=0.5,
-            assignees=["merganserly"],
+            developers=["merganserly"],
         ),
     ]
     assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
@@ -872,7 +890,7 @@ def test_a_gap_between_the_tasks_is_not_work_and_is_not_warned_about():
             kind="pitch",
             title="Q",
             person_weeks=4.0,
-            assignees=["jackdawrie", "merganserly"],
+            developers=["jackdawrie", "merganserly"],
         ),
         Task(
             id="task-000001",
@@ -880,7 +898,7 @@ def test_a_gap_between_the_tasks_is_not_work_and_is_not_warned_about():
             title="A",
             parent="pitch-000001",
             person_weeks=1.0,
-            assignees=["jackdawrie"],
+            developers=["jackdawrie"],
         ),
         Task(
             id="task-000002",
@@ -888,7 +906,7 @@ def test_a_gap_between_the_tasks_is_not_work_and_is_not_warned_about():
             title="B",
             parent="pitch-000001",
             person_weeks=1.0,
-            assignees=["merganserly"],
+            developers=["merganserly"],
             start_date=date(2026, 11, 2),
         ),
     ]
@@ -974,7 +992,7 @@ def test_unsized_tasks_drop_out_of_the_rollup_and_the_sized_ones_still_warn():
             kind="pitch",
             title="Q",
             person_weeks=4.0,
-            assignees=["jackdawrie"],
+            developers=["jackdawrie"],
         ),
         Task(
             id="task-000001",
@@ -982,7 +1000,7 @@ def test_unsized_tasks_drop_out_of_the_rollup_and_the_sized_ones_still_warn():
             title="A",
             parent="pitch-000001",
             person_weeks=3.0,
-            assignees=["jackdawrie"],
+            developers=["jackdawrie"],
         ),
         Task(
             id="task-000002",
@@ -990,7 +1008,7 @@ def test_unsized_tasks_drop_out_of_the_rollup_and_the_sized_ones_still_warn():
             title="B",
             parent="pitch-000001",
             person_weeks=2.0,
-            assignees=["jackdawrie"],
+            developers=["jackdawrie"],
         ),
         Task(id="task-000003", kind="task", title="C", parent="pitch-000001"),
     ]
@@ -1016,7 +1034,7 @@ def test_a_bet_its_tasks_exactly_fill_is_level_with_the_box_and_says_nothing():
             kind="pitch",
             title="Q",
             person_weeks=2.5,
-            assignees=["jackdawrie"],
+            developers=["jackdawrie"],
         ),
         Task(
             id="task-000001",
@@ -1024,7 +1042,7 @@ def test_a_bet_its_tasks_exactly_fill_is_level_with_the_box_and_says_nothing():
             title="A",
             parent="pitch-000001",
             person_weeks=2.5,
-            assignees=["jackdawrie"],
+            developers=["jackdawrie"],
         ),
     ]
     assert [p for p in rolled_up(*records) if p.field == "person_weeks"] == []
@@ -1044,7 +1062,7 @@ def test_the_sentence_quotes_the_box_after_the_same_rounding_it_compares_with():
             kind="pitch",
             title="Q",
             person_weeks=2.5,
-            assignees=["jackdawrie"],
+            developers=["jackdawrie"],
         ),
         Task(
             id="task-000001",
@@ -1052,7 +1070,7 @@ def test_the_sentence_quotes_the_box_after_the_same_rounding_it_compares_with():
             title="A",
             parent="pitch-000001",
             person_weeks=3.0,
-            assignees=["jackdawrie"],
+            developers=["jackdawrie"],
         ),
     ]
     problem = only(rolled_up(*records), "pitch-000001", field="person_weeks")
@@ -1076,7 +1094,7 @@ def test_a_pitch_whose_tasks_are_all_unsized_is_not_compared_against_its_own_pla
             kind="pitch",
             title="Q",
             person_weeks=2.5,
-            assignees=["jackdawrie"],
+            developers=["jackdawrie"],
         ),
         Task(id="task-000001", kind="task", title="A", parent="pitch-000001"),
         Task(id="task-000002", kind="task", title="B", parent="pitch-000001"),
@@ -1145,7 +1163,7 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
     assert summaries(validate_all(records, config, spans, PLAN_TODAY)) == {
         # Nine records at ready or in_progress with nobody assigned, which is the
         # argument for that rule made against real files: an owner answers for a
-        # bet and assignees are who is doing it, and the scheduler prices a record
+        # bet and developers are who is doing it, and the scheduler prices a record
         # by the people on it — so each of these is forecast as though a whole
         # person were on it while naming nobody. All warnings, because the corpus
         # is created_schema_version 1 and the rule is 2.
@@ -1155,14 +1173,14 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         # `_appetite_problem` has always made about its appetite. The rule that
         # used to fire here is the one two lines below it now, about the key the
         # file still carries.
-        ("warning", "pitch-1b3f9a", "assignees", NEEDS_SOMEBODY_READY, 2),
-        ("warning", "task-0e4b7a", "assignees", NEEDS_SOMEBODY_READY, 2),
-        ("warning", "task-2b6c94", "assignees", NEEDS_SOMEBODY_READY, 2),
-        ("warning", "task-53a9f0", "assignees", NEEDS_SOMEBODY_WIP, 2),
-        ("warning", "task-58d7c6", "assignees", NEEDS_SOMEBODY_READY, 2),
-        ("warning", "task-5a4e39", "assignees", NEEDS_SOMEBODY_READY, 2),
-        ("warning", "task-5c1d84", "assignees", NEEDS_SOMEBODY_READY, 2),
-        ("warning", "task-5f062b", "assignees", NEEDS_SOMEBODY_READY, 2),
+        ("warning", "pitch-1b3f9a", "developers", NEEDS_SOMEBODY_READY, 2),
+        ("warning", "task-0e4b7a", "developers", NEEDS_SOMEBODY_READY, 2),
+        ("warning", "task-2b6c94", "developers", NEEDS_SOMEBODY_READY, 2),
+        ("warning", "task-53a9f0", "developers", NEEDS_SOMEBODY_WIP, 2),
+        ("warning", "task-58d7c6", "developers", NEEDS_SOMEBODY_READY, 2),
+        ("warning", "task-5a4e39", "developers", NEEDS_SOMEBODY_READY, 2),
+        ("warning", "task-5c1d84", "developers", NEEDS_SOMEBODY_READY, 2),
+        ("warning", "task-5f062b", "developers", NEEDS_SOMEBODY_READY, 2),
         # Two projects carrying people fields a project does not read, and they
         # are KEPT in the corpus rather than tidied out of it — these are the only
         # two files in the repository that exercise the sentence, and a corpus
@@ -1170,7 +1188,7 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         # seed corpus, which is what `openproj init` writes for somebody else's
         # plan, was stripped instead: that one has to be clean.
         ("warning", "proj-7e57a0", "reviewers", not_staffed("reviewers"), 1),
-        ("warning", "proj-9a4c25", "assignees", not_staffed("assignees"), 1),
+        ("warning", "proj-9a4c25", "developers", not_staffed("developers"), 1),
         ("warning", "proj-9a4c25", "reviewers", not_staffed("reviewers"), 1),
         # wip without a start date
         ("blocker", "proj-7e57a0", "start_date", NEEDS_START_DATE, 1),
@@ -1356,12 +1374,12 @@ def test_a_roster_that_does_not_exist_checks_nothing():
 def test_every_person_field_is_checked_against_the_roster():
     roster = Config(known_people=["jackdawrie"])
     problems = check(
-        task(owner="jackdawrie", reviewers=["ghost"], assignees=["phantom"]), config=roster
+        task(owner="jackdawrie", reviewers=["ghost"], developers=["phantom"]), config=roster
     )
 
     assert {(p.field, p.message.split()[0]) for p in problems} == {
         ("reviewers", "ghost"),
-        ("assignees", "phantom"),
+        ("developers", "phantom"),
     }
 
 
@@ -1649,15 +1667,15 @@ def test_a_parent_cycle_does_not_send_the_delete_walk_round_for_ever():
 
 
 def test_a_todo_record_needs_somebody_on_it():
-    """An owner answers for the bet; assignees are who is doing the work.
+    """An owner answers for the bet; developers are who is doing the work.
 
     Not the same question, and the scheduler already reads them as different
     things: it prices a record by the people on it, so a bet with an owner and
     nobody assigned is one that has been accepted and staffed with nobody — and it
     is then scheduled as if a full person were on it. jcanton, 2026-08-22.
     """
-    problem = only(check(task(assignees=[], created_schema_version=2)), TASK_ID)
-    assert summary(problem) == ("blocker", "assignees", NEEDS_SOMEBODY_READY, 2)
+    problem = only(check(task(developers=[], created_schema_version=2)), TASK_ID)
+    assert summary(problem) == ("blocker", "developers", NEEDS_SOMEBODY_READY, 2)
 
 
 def test_work_in_progress_needs_somebody_on_it():
@@ -1666,13 +1684,13 @@ def test_work_in_progress_needs_somebody_on_it():
             task(
                 status="in_progress",
                 start_date=date(2026, 8, 3),
-                assignees=[],
+                developers=[],
                 created_schema_version=2,
             )
         ),
         TASK_ID,
     )
-    assert summary(problem) == ("blocker", "assignees", NEEDS_SOMEBODY_WIP, 2)
+    assert summary(problem) == ("blocker", "developers", NEEDS_SOMEBODY_WIP, 2)
 
 
 def test_the_statuses_that_demand_nothing_are_not_asked_who_is_on_them():
@@ -1683,14 +1701,14 @@ def test_the_statuses_that_demand_nothing_are_not_asked_who_is_on_them():
     is not broken work.
     """
     for status in ("thinking", "shaping", "shelved"):
-        found = [p for p in check(task(status=status, assignees=[])) if p.field == "assignees"]
+        found = [p for p in check(task(status=status, developers=[])) if p.field == "developers"]
         assert found == [], status
 
 
 def test_nothing_is_asked_of_a_record_nobody_has_looked_at():
     """`thinking` is the foot of the ladder, and the gate at the foot is empty.
 
-    Stated as "nothing at all", not "nothing about assignees", because the point
+    Stated as "nothing at all", not "nothing about developers", because the point
     of the word is that it is where a half-formed record can sit without the tool
     nagging — which is the whole argument for having it. A record stripped of
     every gated field is the case: at `ready` it collects five blockers, and at
@@ -1702,7 +1720,7 @@ def test_nothing_is_asked_of_a_record_nobody_has_looked_at():
     """
     bare = {
         "owner": None,
-        "assignees": [],
+        "developers": [],
         "reviewers": [],
         "person_weeks": None,
         "start_date": None,
@@ -1713,7 +1731,7 @@ def test_nothing_is_asked_of_a_record_nobody_has_looked_at():
     # clean by accident.
     assert {p.field for p in check(task(status="ready", **bare))} == {
         "owner",
-        "assignees",
+        "developers",
         "reviewers",
         "person_weeks",
     }
@@ -1736,8 +1754,8 @@ def test_the_rule_only_blocks_a_record_written_after_it_existed():
     field existed, or the rule gets reverted rather than adopted. A record created
     at schema_version 1 is warned; one created at 2 is refused.
     """
-    older = only(check(task(assignees=[], created_schema_version=1)), TASK_ID)
-    newer = only(check(task(assignees=[], created_schema_version=2)), TASK_ID)
+    older = only(check(task(developers=[], created_schema_version=1)), TASK_ID)
+    newer = only(check(task(developers=[], created_schema_version=2)), TASK_ID)
     assert older.severity == "warning"
     assert newer.severity == "blocker"
     assert older.message == newer.message == NEEDS_SOMEBODY_READY
@@ -1748,7 +1766,7 @@ def test_the_form_is_told_to_ask_for_somebody():
     rather than restated — so this is the same rule, read the way a form reads
     it."""
     for kind in ("pitch", "task"):
-        assert set(required_at(kind)["assignees"]) == {"ready", "in_progress"}, kind
+        assert set(required_at(kind)["developers"]) == {"ready", "in_progress"}, kind
 
 
 def test_the_form_never_asks_a_project_for_hands():
@@ -1766,7 +1784,7 @@ def test_the_form_never_asks_a_project_for_hands():
     who answers for it, and that is a different question from who does the work.
     """
     gates = required_at("project")
-    assert "assignees" not in gates
+    assert "developers" not in gates
     assert "reviewers" not in gates
     assert set(gates["owner"]) == {"ready"}
 
@@ -1795,10 +1813,10 @@ def test_a_project_carrying_people_is_warned_and_not_refused():
     and says nothing, which is right, since a file saying "review is not waived"
     has stated nothing.
     """
-    carried = project(assignees=["jackdawrie"], reviewers=["merganserly"], review_waived=True)
+    carried = project(developers=["jackdawrie"], reviewers=["merganserly"], review_waived=True)
     assert summaries(check(carried)) == {
         ("warning", PROJECT_ID, field, not_staffed(field), 1)
-        for field in ("assignees", "reviewers", "review_waived")
+        for field in ("developers", "reviewers", "review_waived")
     }
 
 

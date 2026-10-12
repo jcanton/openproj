@@ -5,7 +5,7 @@ title: Tap-deck rewrite
 parent: proj-000002
 status: shelved
 owner: Ptarmigant
-assignees: [Ptarmigant]
+developers: [Ptarmigant]
 reviewers: [firecresta]
 review_waived: false
 start_date: null

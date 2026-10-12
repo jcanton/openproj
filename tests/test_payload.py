@@ -265,7 +265,7 @@ _SETUP = (
 )
 _PITCH = (
     "---\nid: pitch-e00001\nkind: pitch\ntitle: A pitch with tasks under it\n"
-    "status: in_progress\nperson_weeks: 2\ncycle: 37\nassignees: [ann]\n"
+    "status: in_progress\nperson_weeks: 2\ncycle: 37\ndevelopers: [ann]\n"
     "owner: ann\nreviewers: [bo]\n"
     "start_date: 2026-08-17\n---\n\n## Progress\n\n- [x] one\n- [ ] two\n"
 )
@@ -273,7 +273,7 @@ _TASK = (
     "---\nid: task-e00003\nkind: task\ntitle: A task under that pitch\n"
     "status: ready\nparent: pitch-e00001\nperson_weeks: {size}\n"
     "owner: ann\nreviewers: [bo]\n"
-    "assignees: [ann]\nstart_date: 2026-08-17\n---\n\nBody.\n"
+    "developers: [ann]\nstart_date: 2026-08-17\n---\n\nBody.\n"
 )
 
 

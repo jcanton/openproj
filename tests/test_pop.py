@@ -144,7 +144,7 @@ def index_holding_an_off_plan_parent(demo_root: Path) -> Index:
     records.append(
         parse_text(
             "---\nid: task-0ff001\nkind: task\ntitle: Filed off the plan\nstatus: ready\n"
-            "owner: jackdawrie\nassignees: [jackdawrie]\nreviewers: [mudlarkish]\n"
+            "owner: jackdawrie\ndevelopers: [jackdawrie]\nreviewers: [mudlarkish]\n"
             f"person_weeks: 1\nparent: {holder}\n---\n\nA hand-written parent.\n",
             "tasks/task-0ff001.md",
         )
@@ -3726,7 +3726,7 @@ def test_edit_opens_on_the_record_and_one_save_commits_what_was_answered(
     assert held["status"] == was["status"], held
     assert held["priority"] == (was["priority"] or ""), held
     assert held["owner"] == (was["owner"] or ""), held
-    assert held["assignees"] == ", ".join(was["assignees"] or []), held
+    assert held["developers"] == ", ".join(was["developers"] or []), held
     assert held["review_waived"] is bool(was["review_waived"]), held
     assert held["start_date"] == (was["start_date"] or ""), held
     assert got["opened"]["names"]["person_weeks"] == LABELS["person_weeks"], (
@@ -4283,7 +4283,7 @@ if (!row) return {error: 'the corpus draws no task'};
 openOn(row.id);
 itemIn('edit').click();
 const seen = {};
-for (const name of ['title', 'assignees']) {
+for (const name of ['title', 'developers']) {
   const box = openField(name);
   box.value = '';
   // A space, typed the way a browser delivers one: the `keydown` first, and then
@@ -4318,7 +4318,7 @@ def test_a_space_typed_into_a_field_reaches_the_field(index: Index, tmp_path: Pa
     space does not scroll the page under an open card. Written without asking
     whose key it was, it cancelled the space somebody was typing into the title:
     jcanton, 2026-09-18, on the released version — "when editing the new card I
-    can't add space characters in the fields (tried title and assignees)".
+    can't add space characters in the fields (tried title and developers)".
 
     `event.target !== part` is the fix, and it is asked rather than inferred from
     whether a control is open: a `<select>` inside the same element answers space
@@ -4331,7 +4331,7 @@ def test_a_space_typed_into_a_field_reaches_the_field(index: Index, tmp_path: Pa
     got = _at_a_form(index, tmp_path / "space.html", _A_SPACE)
 
     assert not got.get("error"), got
-    for name in ("title", "assignees"):
+    for name in ("title", "developers"):
         assert got["seen"][name]["stopped"] is False, (
             f"the space typed into {name} was cancelled before the box could have it"
         )
@@ -4403,7 +4403,7 @@ def test_every_field_that_completes_on_the_record_page_completes_in_the_card(
 
     Two halves were wrong and the second is the one that was noticed. The call
     was gated on `type === 'text'`, and a list field's type is `list` — so
-    `assignees`, `reviewers`, `tags`, `depends_on` and `prs`, five of the seven
+    `developers`, `reviewers`, `tags`, `depends_on` and `prs`, five of the seven
     fields anybody completes, had no datalist at all. And `tags`, `prs` and
     `cycles` were deliberately kept out of the schema when this box was a form of
     its own, so even the fields that did reach `popComplete` had nothing to offer.

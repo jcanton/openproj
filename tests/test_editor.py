@@ -657,7 +657,7 @@ def test_the_graph_explains_its_mode_once_and_beside_the_button(client: TestClie
     page = client.get("/graph").text
 
     assert re.search(r'<p class="hint" id="panhint">', page)
-    assert "Double-click a node to open it" in page
+    assert "Click a node for its card, double-click to open it" in page
     assert "howto" not in page, "the second explanation is gone, not merely hidden"
     assert "PANHINT" not in page, "and the standing one is no longer swapped out"
     # What edit mode adds, said once, in the live region beside the button that
@@ -759,7 +759,7 @@ def test_a_betting_cell_saves_only_what_somebody_typed(client: TestClient):
     """The bet table's fields are inputs from the start, so blur is not evidence
     of a decision: the browser restores form values across a reload, autofills,
     and the people picker rewrites a field to add its separator. All three used to
-    reach git — one of them emptied an assignees list nobody had touched."""
+    reach git — one of them emptied an developers list nobody had touched."""
     page = client.get("/cycle/37").text
     # A function now and not a loop over the page, because a refresh brings in
     # rows the loop never saw and they have to be wired the same way.
@@ -781,7 +781,7 @@ def test_picking_a_suggestion_counts_as_typing(client: TestClient):
 
 
 _BETS_ONE_KEY = """
-const box = document.querySelector('#bets input.live[data-field="assignees"]');
+const box = document.querySelector('#bets input.live[data-field="developers"]');
 const key = name => box.dispatchEvent(
   new KeyboardEvent('keydown', {key: name, bubbles: true, cancelable: true}));
 box.focus();
@@ -1254,7 +1254,7 @@ def test_every_control_on_the_form_has_a_name(page: str):
     for control_id, word in named.items():
         assert control_id.startswith(f"{TASK}-"), control_id
         assert re.search(rf'<(?:input|select|textarea)[^>]*\bid="{control_id}"', page), word
-    for field in ("owner", "assignees", "reviewers", "priority", "cycle"):
+    for field in ("owner", "developers", "reviewers", "priority", "cycle"):
         assert named[f"{TASK}-{field}"] == LABELS[field], field
 
     # Status is the exception and has to be: its control is a group of radios, and

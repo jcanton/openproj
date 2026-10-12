@@ -161,7 +161,7 @@ def test_a_note_reads_no_field_that_is_a_commitment():
     is unread, and a hand edit that writes one in is reported, not obeyed."""
     for field in (
         "owner",
-        "assignees",
+        "developers",
         "reviewers",
         "start_date",
         "cycle",
@@ -280,7 +280,7 @@ def test_a_note_promotes_into_a_record_that_validates(client: TestClient, repo_p
         assert f"An idea that becomes a {kind}" in stored, "the title crosses"
         assert "- grid" in stored, "and the tags"
         assert "Half a thought." in stored, "and the body, certainly"
-        for commitment in ("owner:", "person_weeks:", "cycle:", "assignees:"):
+        for commitment in ("owner:", "person_weeks:", "cycle:", "developers:"):
             assert commitment not in stored, commitment
 
     # Through the validator the CI gate runs, over the whole corpus, so nothing
@@ -449,7 +449,7 @@ def test_an_issue_promoted_into_a_task_lands_as_a_task_this_plan_can_read_back(
     # None of these: an issue has no owner, no size and no cycle to give, and a
     # promotion that invented one would be this tool asserting a commitment
     # nobody made. `parent` is the one that decides what kind of thing this is.
-    for commitment in ("owner:", "person_weeks:", "cycle:", "assignees:", "parent:"):
+    for commitment in ("owner:", "person_weeks:", "cycle:", "developers:", "parent:"):
         assert commitment not in stored, commitment
 
     records_now, config, unreadable = load_repo_from(repo_path)

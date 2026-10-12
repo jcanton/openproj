@@ -5,7 +5,7 @@ title: Scan operator on the GPU backend
 parent: proj-000002
 status: in_progress
 owner: firecresta
-assignees: [firecresta, siskinbury]
+developers: [firecresta, siskinbury]
 reviewers: [jackdawrie, Ptarmigant]
 review_waived: false
 start_date: 2026-08-17

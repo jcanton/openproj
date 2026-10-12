@@ -5,7 +5,7 @@ title: Freeze the backend API before the shutdown
 parent: pitch-7b3e94
 status: ready
 owner: Whimbrelson
-assignees: [Whimbrelson]
+developers: [Whimbrelson]
 reviewers: [redpollard]
 review_waived: false
 start_date: null

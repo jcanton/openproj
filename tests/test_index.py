@@ -257,7 +257,7 @@ def test_facets_cover_every_filterable_field(family_index: Index):
         "kind",
         "status",
         "owner",
-        "assignees",
+        "developers",
         "reviewers",
         "priority",
         "cycle",
@@ -511,7 +511,7 @@ def test_the_missing_required_fields_predicate_reads_the_problems():
     """Severity-agnostic on purpose: a grandfathered rule reports a warning, and a
     field the team has decided it wants is still missing whichever way it reports."""
     records = [
-        # No `assignees` and no `reviewers`: a project reads neither, so a project
+        # No `developers` and no `reviewers`: a project reads neither, so a project
         # carrying them is a project with a problem — and this fixture is here to
         # be the record that has none.
         a_project(
@@ -524,7 +524,7 @@ def test_the_missing_required_fields_predicate_reads_the_problems():
             "pitch-b00001",
             parent="proj-a00001",
             owner="alice",
-            assignees=["alice"],
+            developers=["alice"],
             reviewers=["bob"],
             person_weeks=2.0,
             status="ready",
@@ -534,7 +534,7 @@ def test_the_missing_required_fields_predicate_reads_the_problems():
             parent="pitch-b00001",
             status="ready",
             owner="alice",
-            assignees=["alice"],
+            developers=["alice"],
             reviewers=["bob"],
             person_weeks=1.0,
         ),
@@ -808,7 +808,7 @@ def test_the_seed_facets_are_the_menus_the_table_will_show(seed_index: Index):
         "sanderlingly",
         "stonechatty",
     ]
-    assert seed_index.facets["assignees"] == [
+    assert seed_index.facets["developers"] == [
         "(none)",
         "Dunnocksen",
         "Oxpeckerly",
@@ -885,7 +885,7 @@ def test_the_seed_review_waiver_is_the_only_one(seed_index: Index):
 
 
 def test_the_seed_incomplete_records_are_the_ones_missing_fields(seed_index: Index):
-    """pitch-1b3f9a is missing only the grandfathered `assignees`, so it has to
+    """pitch-1b3f9a is missing only the grandfathered `developers`, so it has to
     show up here despite reporting as a warning.
 
     The corpus's tasks carry a `cycle` their pitch now owns, which is a v4
@@ -901,7 +901,7 @@ def test_the_seed_incomplete_records_are_the_ones_missing_fields(seed_index: Ind
     file. Do not tidy it; the file's own body says so too.
 
     `proj-9a4c25` joined it on 2026-09-21 and is the same case one rung down. It
-    carries `assignees` and `reviewers`, which a project stopped reading when
+    carries `developers` and `reviewers`, which a project stopped reading when
     `Rung.staffed` split off `Rung.schedules` — a project is a grouping, and the
     pitches and tasks under it are what anybody is assigned to. It moved OUT of
     the clean list below rather than being tidied, for `prod-7c2b81`'s reason
@@ -1015,7 +1015,7 @@ def test_work_bet_in_an_earlier_cycle_and_still_running_counts_against_this_one(
         a_task(
             "task-c00001",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             person_weeks=2.0,
             cycle=37,
             status="ready",
@@ -1023,7 +1023,7 @@ def test_work_bet_in_an_earlier_cycle_and_still_running_counts_against_this_one(
         a_task(
             "task-c00002",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             person_weeks=3.0,
             cycle=36,
             status="in_progress",
@@ -1041,7 +1041,7 @@ def test_work_finished_in_the_earlier_cycle_is_not_carried_into_this_one():
         a_task(
             "task-c00001",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             person_weeks=3.0,
             cycle=36,
             status="done",
@@ -1068,15 +1068,15 @@ def test_work_nobody_has_sized_charges_nobody_and_is_counted_where_it_went():
         a_task(
             "task-c00001",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             person_weeks=2.0,
             cycle=37,
             status="ready",
         ),
-        a_pitch("pitch-b00001", owner="ann", assignees=["ann"], cycle=37, status="shaping"),
+        a_pitch("pitch-b00001", owner="ann", developers=["ann"], cycle=37, status="shaping"),
         # Two names on one unsized bet: one record on the cycle's count, and one
         # on each of their rows.
-        a_pitch("pitch-b00002", owner="ann", assignees=["ann", "bo"], cycle=37, status="shaping"),
+        a_pitch("pitch-b00002", owner="ann", developers=["ann", "bo"], cycle=37, status="shaping"),
     ]
     index = build_index(records, _two_cycles(), TODAY)
 
@@ -1094,12 +1094,12 @@ def test_a_pitch_with_children_is_no_more_unsized_than_it_is_charged():
     """A rollup charges nothing because its children do, and for exactly the same
     reason it cannot be missing from the total: it was never in it."""
     records = [
-        a_pitch("pitch-b00001", owner="ann", assignees=["ann"], cycle=37, status="shaping"),
+        a_pitch("pitch-b00001", owner="ann", developers=["ann"], cycle=37, status="shaping"),
         a_task(
             "task-c00001",
             parent="pitch-b00001",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             cycle=37,
             status="shaping",
         ),
@@ -1133,13 +1133,13 @@ def test_a_task_under_a_project_is_charged_to_the_cycle_it_was_bet_into():
             "task-c00001",
             parent="proj-a00001",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             person_weeks=4.0,
             cycle=37,
             status="ready",
         ),
         a_task(
-            "task-c00002", owner="bo", assignees=["bo"], person_weeks=4.0, cycle=37, status="ready"
+            "task-c00002", owner="bo", developers=["bo"], person_weeks=4.0, cycle=37, status="ready"
         ),
     ]
     index = build_index(records, _two_cycles(), TODAY)
@@ -1214,11 +1214,11 @@ def test_a_bet_nobody_has_sized_is_counted_where_it_was_bet_and_carried_into_not
     the control: real carryover is decided by the dates and still is.
     """
     records = [
-        a_pitch("pitch-b00001", owner="ann", assignees=["ann"], cycle=35, status="shaping"),
+        a_pitch("pitch-b00001", owner="ann", developers=["ann"], cycle=35, status="shaping"),
         a_task(
             "task-c00001",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             person_weeks=1.0,
             cycle=35,
             status="in_progress",
@@ -1256,7 +1256,7 @@ def test_work_that_has_started_is_counted_where_it_is_running_even_with_no_size(
         a_pitch(
             "pitch-b00001",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             cycle=35,
             status="in_progress",
             start_date=date(2026, 6, 1),
@@ -1265,7 +1265,7 @@ def test_work_that_has_started_is_counted_where_it_is_running_even_with_no_size(
             "task-c00001",
             parent="pitch-b00001",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             status="in_progress",
             start_date=date(2026, 6, 1),
         ),
@@ -1273,13 +1273,13 @@ def test_work_that_has_started_is_counted_where_it_is_running_even_with_no_size(
             "task-c00002",
             parent="pitch-b00001",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             person_weeks=8.0,
             status="in_progress",
             start_date=date(2026, 6, 1),
         ),
         a_task(
-            "task-c00003", parent="pitch-b00001", owner="ann", assignees=["ann"], status="shaping"
+            "task-c00003", parent="pitch-b00001", owner="ann", developers=["ann"], status="shaping"
         ),
     ]
     index = build_index(records, _three_cycles(), TODAY)
@@ -1315,7 +1315,7 @@ def test_the_scheduler_having_no_answer_is_not_the_same_as_there_being_nothing_t
         a_task(
             "task-c00001",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             person_weeks=1.0,
             cycle=35,
             status="ready",
@@ -1324,13 +1324,13 @@ def test_the_scheduler_having_no_answer_is_not_the_same_as_there_being_nothing_t
         a_task(
             "task-c00002",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             person_weeks=1.0,
             cycle=35,
             status="ready",
             depends_on=["task-c00001"],
         ),
-        a_pitch("pitch-b00001", owner="bo", assignees=["bo"], cycle=35, status="shaping"),
+        a_pitch("pitch-b00001", owner="bo", developers=["bo"], cycle=35, status="shaping"),
     ]
     index = build_index(records, _three_cycles(), TODAY)
 
@@ -1349,7 +1349,7 @@ def test_an_undated_cycle_counts_only_what_was_bet_into_it_by_name():
         a_task(
             "task-c00001",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             person_weeks=3.0,
             cycle=36,
             status="in_progress",
@@ -1367,7 +1367,7 @@ def test_a_carried_parent_charges_nothing_because_its_children_already_did():
         a_pitch(
             "pitch-b00001",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             person_weeks=4.0,
             cycle=36,
             status="in_progress",
@@ -1377,7 +1377,7 @@ def test_a_carried_parent_charges_nothing_because_its_children_already_did():
             "task-c00001",
             parent="pitch-b00001",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             person_weeks=1.0,
             cycle=36,
             status="in_progress",
@@ -1554,7 +1554,7 @@ def test_a_task_under_a_pitch_is_counted_in_the_cycle_its_pitch_was_bet_into():
             "task-c00001",
             parent="pitch-b00001",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             person_weeks=2.0,
             status="in_progress",
             start_date=date(2026, 7, 1),
@@ -1582,7 +1582,7 @@ def test_a_ready_task_carried_into_this_cycle_is_counted_by_its_dates():
             "task-c00001",
             parent="pitch-b00001",
             owner="ann",
-            assignees=["ann"],
+            developers=["ann"],
             person_weeks=2.0,
             status="ready",
         ),
@@ -1960,7 +1960,7 @@ def test_an_absurd_appetite_is_no_appetite_at_all_on_three_pages(
     assert len(records) == len(load_repo(seed_root)[0])
 
     dated = build_index(records, config, TODAY)
-    holder = dated.plan["task-6a5c02"].assignees[0]
+    holder = dated.plan["task-6a5c02"].developers[0]
     cycle = cycle_of(dated.plan["task-6a5c02"], dated.plan)
 
     # Built a second time, for a day inside the cycle the bet is in. The people
@@ -1976,7 +1976,7 @@ def test_an_absurd_appetite_is_no_appetite_at_all_on_three_pages(
 
     # The same corpus with the appetite REMOVED rather than made nonsense, which
     # is the property in one comparison: a size that is not a number is no size.
-    # Derived rather than written down — a bet is divided among its assignees, so
+    # Derived rather than written down — a bet is divided among its developers, so
     # a number typed in here would be this test asserting arithmetic it did just
     # as badly as the code might.
     unsized = tmp_path / "unsized"

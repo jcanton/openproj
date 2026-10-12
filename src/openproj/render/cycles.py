@@ -322,7 +322,7 @@ _CYCLE = """
 <div class="sideways">
 <table id="bets" class="unfitted" autocomplete="off"><thead><tr>
   <th>in {{ c.number }}</th>
-  {% for column in ("title", "kind", "status", "priority", "appetite", "assignees", "reviewers") %}
+  {% for column in ("title", "kind", "status", "priority", "appetite", "developers", "reviewers") %}
   <th data-sort="{{ loop.index }}" aria-sort="none">
     <button type="button" class="sorter">{{ column }}</button></th>
   {% endfor %}
@@ -381,9 +381,9 @@ _CYCLE = """
                aria-label="{{ row.title }} appetite in weeks"
                autocomplete="off" value="{{ row.size }}"
                placeholder="not sized"></td>
-    <td><input class="live wide" data-field="assignees" data-type="list"
-               aria-label="{{ row.title }} assignees"
-               data-suggest="people" autocomplete="off" value="{{ row.assignees }}"></td>
+    <td><input class="live wide" data-field="developers" data-type="list"
+               aria-label="{{ row.title }} developers"
+               data-suggest="people" autocomplete="off" value="{{ row.developers }}"></td>
     <td><input class="live wide" data-field="reviewers" data-type="list"
                aria-label="{{ row.title }} reviewers"
                data-suggest="people" autocomplete="off" value="{{ row.reviewers }}"></td>
@@ -711,7 +711,7 @@ async function flush(quiet) {
           clashed = true;
           // The report names the file first, which is the store's word for the
           // record this sentence has already named by its title.
-          const report = answer.conflict.replace(/^\S+ — /, '');
+          const report = answer.conflict.replace(/^\\S+ — /, '');
           problems.push(`${named(id)} was not saved — ${report}. `
                         + 'The row now shows what is stored; change it again to keep yours.');
           continue;
@@ -1111,7 +1111,7 @@ function betSearch(quiet = false) {
     // normalises per row per keystroke, over one cycle's candidates; it already
     // lowercased exactly this string just as often.
     //
-    // **A value, and not a box.** `assignees` and `reviewers` are one input each
+    // **A value, and not a box.** `developers` and `reviewers` are one input each
     // holding a comma-joined list, so a box plained whole welds its logins into
     // a single chunk and the leak comes back inside one cell — which is what it
     // did. Measured on cycle 37 of the test corpus, where two rows carry
@@ -1578,7 +1578,7 @@ input.rate { width: 4rem; }
    had focus; the shell's :focus-visible ring draws it now. */
 #bets input.live:focus { border-color: var(--accent); }
 /* No `#bets td { position: relative }`. It was here to anchor the suggestion
-   popup the assignees and reviewers boxes open, and the popup is parked on the
+   popup the developers and reviewers boxes open, and the popup is parked on the
    body now. Left in, it is a rule with nothing to do and a trap for whoever
    writes the next one: the identical rule on the table's cells is what stole
    `position: sticky` from the frozen title column.
@@ -2059,7 +2059,7 @@ _PEOPLE = """
       <button type="button" id="clear-filters">Clear filters</button>
       {% else %}
       <p class="headline">Nobody is named in this plan yet.</p>
-      <p class="hint">People appear here as soon as they own, are assigned, review or
+      <p class="hint">People appear here as soon as they own, develop, review or
         shape something.</p>
       {% endif %}
     </td></tr>
@@ -2455,14 +2455,14 @@ button.pick.unset::before { content: ""; width: 1.1rem; height: 1.1rem; border-r
 """
 )
 
-_ROLES = (("owner", "owner"), ("assignees", "assignee"), ("reviewers", "reviewer"))
+_ROLES = (("owner", "owner"), ("developers", "developer"), ("reviewers", "reviewer"))
 
 # Most answerable first. Grouped by record — which is what building the rows one
 # record at a time gave you — a person with twenty rows had their four ownerships
 # scattered through it, and ownership is the thing being on the page is for.
 # There is no shaper row any more: `shaped_by` retired into `owner`, so who
 # shaped a pitch is its Owner line.
-_ROLE_ORDER = ("owner", "assignee", "reviewer")
+_ROLE_ORDER = ("owner", "developer", "reviewer")
 
 # Which table filter answers "show me this person's <role>", and the words for
 # what that link opens. Every role this page draws is a table facet now, but the
@@ -2470,7 +2470,7 @@ _ROLE_ORDER = ("owner", "assignee", "reviewer")
 # than a dead link, which is what kept the shaper row honest while it existed.
 _ROLE_FILTER = {
     "owner": ("owner", "owns"),
-    "assignee": ("assignees", "is assigned"),
+    "developer": ("developers", "develops"),
     "reviewer": ("reviewers", "reviews"),
 }
 
@@ -2589,7 +2589,7 @@ def _bet_row(
         # now means nobody has bet a size, which is the one thing a betting table
         # is for settling, so the placeholder says that in the template and needs
         # no value from here.
-        "assignees": ", ".join(record.assignees),
+        "developers": ", ".join(record.developers),
         "reviewers": ", ".join(record.reviewers),
         "rung": rung,
         # The row's classes, built here rather than by three conditionals in the
@@ -2990,7 +2990,7 @@ def _cycle_totals(index: Index, number: int) -> dict:
     an appetite on charges nothing, so the sum is only over what the plan
     actually knows the weight of, and the count says how many records the sum
     could not include. Distinct records, not the per-person entries behind them:
-    one bet with two assignees is one thing nobody has sized, and it is on each
+    one bet with two developers is one thing nobody has sized, and it is on each
     of their rows on the cycle page for the same reason.
     """
     plan = index.plans.get(number)
@@ -3107,7 +3107,7 @@ def render_cycles(index: Index, links: Links = STATIC, base_commit: str | None =
 def _person_load(index: Index, logins: list[str]) -> dict:
     """What each person is on the hook for in weeks, against what they have.
 
-    Counts were the old answer — "1 as owner, 2 as assignee, 12 as reviewer" adds
+    Counts were the old answer — "1 as owner, 2 as developer, 12 as reviewer" adds
     a half-hour review to a six-week build and calls the sum a workload. The
     weeks come from `index.load`, the same function the cycle page bets with, so
     the two pages cannot come to different conclusions about the same person.

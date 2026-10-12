@@ -53,7 +53,7 @@ from collections.abc import Callable, Sequence
 from datetime import date
 from pathlib import Path
 from typing import Literal
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import httpx
 import pygit2
@@ -66,6 +66,8 @@ from starlette.websockets import WebSocketDisconnect
 
 from . import __version__, coedit, render, tailnet, vendor
 from .auth import (
+    COOKIE_SECONDS,
+    RENEW_AFTER_SECONDS,
     OAuthError,
     User,
     exchange_code,
@@ -73,6 +75,7 @@ from .auth import (
     login_url,
     read_session,
     sign_session,
+    signed_at,
 )
 from .index import Index, build_index, cascade_of
 from .model import (
@@ -471,6 +474,30 @@ async def _refuse_socket(
 SESSION_COOKIE = "__Host-openproj_session"
 SESSION_COOKIE_INSECURE = "openproj_session"
 STATE_COOKIE = "op_state"
+# How long a sign-in may sit on GitHub's side before coming back. It was ten
+# minutes, and on 2026-10-12 a sign-in started at 13:50 came back at 14:07 — a
+# second factor, a tab left open, somebody walking off — to a 400 saying "that
+# sign-in did not start here", when it had. An hour costs nothing: the state is a
+# nonce bound to this browser, and its lifetime is not what makes it one.
+STATE_SECONDS = 3600
+# Where the browser was when the sign-in started, so the callback can put it
+# back there. Beside the state rather than in the redirect URI, because GitHub
+# compares that against the one the OAuth app registered.
+NEXT_COOKIE = "op_next"
+# Set on the way out to a renewal and read on the way back in: a browser that
+# was sent to GitHub in the last few minutes is not sent again. Without it, a
+# browser that keeps the old session cookie and refuses the new one — a full
+# jar, a policy — would go round GitHub and back until it gave up with "too many
+# redirects", and a reader who abandoned GitHub's sign-in page would be put back
+# on it by every link they clicked.
+RENEWING_COOKIE = "op_renewing"
+RENEWING_SECONDS = 600
+# What a `next` may be: a path on this server, and nothing that could become
+# somebody else's. A leading `/` and then no second one, so `//evil.example` —
+# which a browser reads as a host — is refused, and no backslash, which some
+# browsers read as a slash. The rest is the characters this app's own paths and
+# queries are made of.
+_NEXT_PATTERN = re.compile(r"\A/(?![/\\])[A-Za-z0-9/_.~%?=&+:,-]*\Z")
 # Under `--auth tailscale`, which listed person a shared device is writing as.
 # Not a session: the tailnet still decides whether this request may write at
 # all, and this only picks between names the same list already gave write to.
@@ -987,7 +1014,7 @@ def _as_positive(value: object, name: str, most: float = math.inf) -> float:
 
 
 _NUMERIC = ("cycle", "person_weeks")
-_LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on", "pitched_into", "became")
+_LISTS = ("developers", "reviewers", "tags", "prs", "depends_on", "pitched_into", "became")
 
 
 def _deletion_message(record_id: str, doomed: list[str], edited: list[str]) -> str:
@@ -2010,6 +2037,52 @@ def create_app(
     # write never costs a question to tailscaled.
     app.add_middleware(SameSite)
 
+    if auth == "github":
+
+        @app.middleware("http")
+        async def renew_on_the_way_in(request: Request, call_next):
+            """A page opened with a session past half its life goes round GitHub first.
+
+            The session is the membership answer GitHub gave at sign-in, signed
+            and good for a day, and it cannot be extended here: the token that
+            could ask again was thrown away on purpose (`auth.py`). So it is asked
+            again the only way it can be — a sign-in — and for somebody who is
+            signed in to GitHub and has authorised this app before, GitHub answers
+            that without showing a page: two redirects and back on the page they
+            asked for. Membership is still re-checked at least daily, and nobody
+            meets a signed-out page for having signed in yesterday.
+
+            On the way in to a page and nowhere else. A `fetch` cannot follow a
+            redirect to GitHub and back, and a save that was turned into one would
+            be a save that silently did not happen; `Sec-Fetch-Dest: document` is
+            the browser's own word that this is a page being opened. A browser
+            that sends no such header is not renewed and is no worse off than it
+            was. Never `/login` or the callback, which are the renewal itself.
+            """
+            if (
+                request.method == "GET"
+                and request.headers.get("sec-fetch-dest") == "document"
+                and request.headers.get("sec-fetch-mode") == "navigate"
+                and request.url.path not in ("/login", "/auth/callback")
+                and RENEWING_COOKIE not in request.cookies
+                and due_for_renewal(request)
+            ):
+                where = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+                response = RedirectResponse(
+                    "/login?" + urlencode({"next": where}), status_code=307
+                )
+                response.set_cookie(
+                    RENEWING_COOKIE,
+                    "1",
+                    max_age=RENEWING_SECONDS,
+                    httponly=True,
+                    secure=secure_for(request),
+                    samesite="lax",
+                    path="/",
+                )
+                return response
+            return await call_next(request)
+
     @app.middleware("http")
     async def say_what_this_page_may_do(request: Request, call_next):
         """The four headers, on every response including the JSON and the errors.
@@ -2252,6 +2325,24 @@ def create_app(
             if user is not None:
                 return user
         return None
+
+    def due_for_renewal(request: Request) -> bool:
+        """Whether this browser holds a session this server signed that is old
+        enough to renew — and none that is not.
+
+        Expired ones included, which is the point of `COOKIE_SECONDS`: a cookie
+        past its day is no session (`viewer` refuses it) but it is still this
+        server's word that the browser signed in. Both names, as `viewer` reads
+        them, and a fresh one under either name means there is nothing to do.
+        """
+        stamps = [
+            stamped
+            for name in (SESSION_COOKIE, SESSION_COOKIE_INSECURE)
+            if (stamped := signed_at(request.cookies.get(name), secret)) is not None
+        ]
+        if not stamps:
+            return False
+        return time.time() - max(stamps).timestamp() >= RENEW_AFTER_SECONDS
 
     def acting_as(request: Request, device: str) -> str:
         """The plan login a tailnet-named request writes as.
@@ -3411,7 +3502,7 @@ def create_app(
         Both computed before anything is written, and both handed back to the
         page BEFORE it commits — the fields are a compare-and-swap on the shape
         of the change, exactly as `also` is for a cascading delete. A reader who
-        was shown "this drops its appetite and its assignees" and then had
+        was shown "this drops its appetite and its developers" and then had
         something else dropped was not asked.
 
         **This is not a second copy of the containment ladder, and the sentence
@@ -5382,15 +5473,26 @@ def create_app(
         return response
 
     @app.get("/login")
-    def login(request: Request) -> RedirectResponse:
+    def login(request: Request, next: str = "/") -> RedirectResponse:
         state = secrets.token_urlsafe(32)
         redirect_uri = str(request.url_for("callback"))
         response = RedirectResponse(login_url(client_id, redirect_uri, state))
         # SameSite=Lax, not Strict: the callback is a top-level cross-site GET, and
         # Strict would drop this cookie so every login would fail state validation.
         response.set_cookie(
-            STATE_COOKIE, state, max_age=600, httponly=True, samesite="lax", path="/"
+            STATE_COOKIE, state, max_age=STATE_SECONDS, httponly=True, samesite="lax", path="/"
         )
+        # Back to the page the sign-in started from rather than to `/`, which is
+        # where both of the Edge sign-ins on 2026-10-12 landed before their reader
+        # clicked their way back to the pitch they had been on. Anything that is
+        # not one of this server's own paths is dropped rather than refused: the
+        # sign-in is still wanted, only the destination was not ours to give.
+        if _NEXT_PATTERN.match(next):
+            response.set_cookie(
+                NEXT_COOKIE, next, max_age=STATE_SECONDS, httponly=True, samesite="lax", path="/"
+            )
+        else:
+            response.delete_cookie(NEXT_COOKIE, path="/")
         return response
 
     @app.get("/auth/callback", name="callback")
@@ -5407,11 +5509,24 @@ def create_app(
         # that is broken. `OAuthError` already carries GitHub's own wording.
         denied = request.query_params.get("error")
         if denied:
-            raise HTTPException(
-                400,
-                f"GitHub did not authorise this sign-in ({denied}): "
-                + request.query_params.get("error_description", "no description given"),
+            refusal = JSONResponse(
+                {
+                    "detail": f"GitHub did not authorise this sign-in ({denied}): "
+                    + request.query_params.get("error_description", "no description given")
+                },
+                status_code=400,
             )
+            # A browser that turned the sign-in down keeps its old cookie otherwise,
+            # and an old cookie is what sends a page round GitHub again — so saying
+            # no to a renewal would be asked again ten minutes later, for ever.
+            refusal.delete_cookie(
+                session_name(request),
+                path="/",
+                secure=secure_for(request),
+                httponly=True,
+                samesite="lax",
+            )
+            return refusal
 
         async with httpx.AsyncClient() as client:
             try:
@@ -5423,17 +5538,24 @@ def create_app(
                 raise HTTPException(400, str(exc)) from exc
         # The token established who they are and is now dropped: it is never
         # written to the session and never used to push.
-        response = RedirectResponse("/", status_code=303)
+        back_to = request.cookies.get(NEXT_COOKIE, "/")
+        response = RedirectResponse(
+            back_to if _NEXT_PATTERN.match(back_to) else "/", status_code=303
+        )
+        # `COOKIE_SECONDS` and not the session's own day: how long the browser
+        # keeps the cookie and how long the signature is good for are two
+        # numbers, and `auth.py` says why they differ.
         response.set_cookie(
             session_name(request),
             sign_session(user, secret),
-            max_age=86400,
+            max_age=COOKIE_SECONDS,
             httponly=True,
             secure=secure_for(request),
             samesite="lax",
             path="/",
         )
         response.delete_cookie(STATE_COOKIE, path="/")
+        response.delete_cookie(NEXT_COOKIE, path="/")
         return response
 
     @app.post("/logout")

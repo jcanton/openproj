@@ -19,6 +19,7 @@ Three details here are not obvious and each was a real trap:
 
 from __future__ import annotations
 
+from datetime import datetime
 from urllib.parse import urlencode
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -37,6 +38,26 @@ _API_HEADERS = {
     "User-Agent": USER_AGENT,
 }
 _SALT = "openproj.session"
+
+# How long a signature is good for writing: an unrevocable `member: true` for this
+# long, which is how long somebody who has left the org keeps write access.
+SESSION_SECONDS = 86400
+# How long the browser keeps the cookie, which is a different question and is
+# deliberately much longer. A cookie past `SESSION_SECONDS` grants nothing — the
+# signature check refuses it — but it is still this server's own word that this
+# browser signed in, and that is what lets `web.py` send it back through GitHub
+# without a click instead of drawing the page signed out. When the two were the
+# same 24 hours, the browser threw the cookie away at the very moment it could
+# have been renewed, and everybody was signed out once a working day at whatever
+# time they had signed in the day before — 2026-10-12, read off the Cloud Run log:
+# a re-sign-in at +25.1h, +26.1h, +24.2h, +28.6h, four of them after a save had
+# already been refused with a 401.
+COOKIE_SECONDS = 30 * 86400
+# How old a session may be before a page load renews it. Half the signature's
+# life, so that a page opened at any point in a working day leaves the session
+# good for the rest of it: the renewal that matters is the one that happens
+# BEFORE a save is refused, because the one after it has already cost a save.
+RENEW_AFTER_SECONDS = SESSION_SECONDS // 2
 
 
 class User(BaseModel):
@@ -136,7 +157,9 @@ def sign_session(user: User, secret: str) -> str:
     return _serializer(secret).dumps({"login": user.login, "member": user.member})
 
 
-def read_session(cookie: str | None, secret: str, max_age: int = 86400) -> User | None:
+def read_session(
+    cookie: str | None, secret: str, max_age: int = SESSION_SECONDS
+) -> User | None:
     """The user this server signed, or None. Never trust a cookie you did not sign."""
     if not cookie:
         return None
@@ -145,3 +168,21 @@ def read_session(cookie: str | None, secret: str, max_age: int = 86400) -> User 
     except (BadSignature, SignatureExpired):
         return None
     return User(login=payload["login"], member=payload["member"])
+
+
+def signed_at(cookie: str | None, secret: str) -> datetime | None:
+    """When this server signed the session, whatever its age, or None if it did not.
+
+    Not a session: an expired signature is still answered here, because the one
+    question this exists for is whether a browser that is no longer signed in
+    used to be — which only a cookie past its `max_age` can say. Never trust it
+    for anything else. Write access is `read_session`'s, and stays bounded by
+    `SESSION_SECONDS`.
+    """
+    if not cookie:
+        return None
+    try:
+        _, stamped = _serializer(secret).loads(cookie, return_timestamp=True)
+    except BadSignature:
+        return None
+    return stamped

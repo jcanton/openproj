@@ -216,9 +216,9 @@ allowed to differ are the ones that say a value can be pressed.
 **The card lists the kind's editable fields, always, with a dash where there is nothing.** Off
 `card_facts()` (`tokens.py`), which asks `_editable_for` over a blank record — the same function the
 record page, the create form and this box draw their controls from. The card used to list its own
-shorter vocabulary, including `With`, which is the assignees minus the owner: a compression that
+shorter vocabulary, including `With`, which is the developers minus the owner: a compression that
 reads well and is not a field anybody can edit. A box that shows `With` and a box that edits
-`assignees` are two boxes however alike they look. Empty rows are drawn for the same reason: a field
+`developers` are two boxes however alike they look. Empty rows are drawn for the same reason: a field
 with nothing in it is the field somebody opens this box to fill.
 
 Two facts on the card are not fields and are not editable: **kind**, because changing a record's rung
@@ -368,7 +368,7 @@ will not pass.
 **Everything that completes on a record's page completes in the card.** jcanton: *"autocomplete
 doesn't work in the forms inside our new editable card. can you enable all as in the /detail?"*. Two
 halves were wrong and the second is the one anybody would notice. `popComplete` was called behind
-`type === 'text'`, and a list field's type is `list` — so `assignees`, `reviewers`, `tags`,
+`type === 'text'`, and a list field's type is `list` — so `developers`, `reviewers`, `tags`,
 `depends_on` and `prs`, five of the seven fields anybody completes, carried no datalist at all. And
 the schema deliberately shipped only the `people` and `records` sources, on the argument that a field
 pointing at a list nobody serves completes nothing; so the fields that did reach `popComplete` had

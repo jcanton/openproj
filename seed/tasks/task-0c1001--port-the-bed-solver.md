@@ -5,7 +5,7 @@ title: Port the bed solver
 parent: pitch-0c0001
 status: ready
 owner: jackdawrie
-assignees: [jackdawrie, mudlarkish]
+developers: [jackdawrie, mudlarkish]
 reviewers: [hoopoegrove, turnstonegru]
 review_waived: false
 start_date: 2026-08-17

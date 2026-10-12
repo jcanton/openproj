@@ -7,7 +7,7 @@ status: ready
 owner: hoopoegrove
 reviewers: [ibisbillie]
 person_weeks: 1
-assignees: []
+developers: []
 start_date: null
 cycle: 36
 priority: medium

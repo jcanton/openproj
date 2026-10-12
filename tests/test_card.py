@@ -139,7 +139,7 @@ def test_the_card_says_the_things_a_row_does_not(index: Index):
     the record has filled them in: a field with nothing in it is the field
     somebody opens the box to fill, and a row that is not there is a field that
     cannot be clicked. The card used to list five compressed facts and leave the
-    empty ones out — `With`, the assignees minus the owner, was one of them, and
+    empty ones out — `With`, the developers minus the owner, was one of them, and
     it is not a field anybody can edit.
     """
     record_id = one_pitch(index)
@@ -160,7 +160,7 @@ def test_the_card_says_the_things_a_row_does_not(index: Index):
         assert word in rows, f"{word} is an editable field and no row of the card"
     assert "With" not in rows, (
         "the card still lists `With`, which reads well and is not a field: the box beside "
-        "it edits `assignees`, and one of them is lying"
+        "it edits `developers`, and one of them is lying"
     )
 
 
@@ -466,17 +466,8 @@ def test_one_card_holds_one_document(index: Index, tmp_path: Path):
     assert got["text"] == 1
 
 
-# The card is queued behind a delay, so this cannot read `hidden` in the same
-# breath as the hover — it would report "no card" about a card that was on its
-# way. The answer is written from a continuation instead: `--dump-dom` reads the
-# page at the end of its virtual time, so the last write of `data-report` is the
-# one the harness brings back.
-#
-# The arithmetic matters and it is the harness's `patience` that pays for it: the
-# script is injected at 1200ms and the virtual clock stops `patience` later, so a
-# continuation that runs past it leaves the placeholder in the DOM and the test
-# reports nothing at all — which reads exactly like a card that never came up.
-# `CARD_DELAY` is 600, and this waits 660 once per box plus once at the start.
+# A click opens the card at once — no hover-intent delay on the graph any more —
+# so this answers in one breath rather than from a continuation.
 _OVER_A_BOX = """
 const card = document.getElementById('card');
 // One box of each kind that draws one. A project holding pitches and a pitch
@@ -491,8 +482,8 @@ for (const node of cy.nodes().filter(one => one.isParent())) {
 const picked = Object.values(boxes);
 if (!picked.length) return {error: 'the corpus has no box'};
 
-const hover = (node, at) =>
-  node.emit({type: 'mouseover', position: at, originalEvent: {clientX: 10, clientY: 10}});
+const click = (node, at) =>
+  node.emit({type: 'tap', position: at, originalEvent: {clientX: 10, clientY: 10}});
 const middleOf = node => {
   const box = node.boundingBox({includeLabels: false});
   return {x: (box.x1 + box.x2) / 2, y: (box.y1 + box.y2) / 2};
@@ -503,33 +494,22 @@ const titleOf = node => {
 };
 
 // Every middle first, so nothing is showing before the titles are tried.
-picked.forEach(node => hover(node, middleOf(node)));
-setTimeout(() => {
-  const middles = card.hidden;
-  const said = {};
-  // One title at a time, each answered before the next is asked — two hovers in
-  // one frame would leave only the last one's card up.
-  const askEach = i => {
-    if (i === picked.length) {
-      document.body.dataset.report = JSON.stringify({middles, said});
-      return;
-    }
-    hover(picked[i], titleOf(picked[i]));
-    setTimeout(() => {
-      said[picked[i].data('kind')] = card.hidden ? 'nothing' : 'a card';
-      cy.emit('pan');   // put it away before the next one is asked
-      askEach(i + 1);
-    }, 660);
-  };
-  askEach(0);
-}, 660);
-return {middles: null};
+picked.forEach(node => click(node, middleOf(node)));
+const middles = card.hidden;
+const said = {};
+for (const node of picked) {
+  click(node, titleOf(node));
+  said[node.data('kind')] = card.hidden ? 'nothing' : 'a card';
+  cy.emit('pan');   // put it away before the next one is asked
+}
+return {middles, said};
 """
 
 
 def test_a_box_answers_for_its_label_and_not_for_its_acres(index: Index, tmp_path: Path):
     """jcanton, 2026-08-20: the card should come up over a box's title, not over
-    the whole box.
+    the whole box. Asked of a click since 2026-10-12, when the graph's card
+    stopped opening on hover.
 
     A compound node is hit over its entire area, and almost all of that area is
     where its children are drawn. So reading a project's tasks meant dragging the
@@ -537,14 +517,10 @@ def test_a_box_answers_for_its_label_and_not_for_its_acres(index: Index, tmp_pat
     read, on the view whose whole job is showing what is inside what.
     """
     page = render_graph(index, ROUTES, base_commit=HEAD, may_write=True)
-    # Longer than the default: this answers from a continuation, and the waits it
-    # needs are one `CARD_DELAY` per box plus the first one.
-    got = measured_in(
-        chrome(), page, tmp_path / "boxcard.html", 1400, _OVER_A_BOX, height=1000, patience=3800
-    )
+    got = measured_in(chrome(), page, tmp_path / "boxcard.html", 1400, _OVER_A_BOX, height=1000)
 
     assert not got.get("error"), got
-    assert got["middles"] is not None, "the continuation never ran, so nothing was measured"
+    assert got["middles"] is not None, "the script never ran, so nothing was measured"
     assert got["middles"] is True, "a card came up over the middle of a box"
     # A project holding pitches and a pitch holding tasks, both of them.
     assert set(got["said"]) >= {"project", "pitch"}, (

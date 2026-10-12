@@ -46,12 +46,12 @@ HALF_TIME = CONFIG.model_copy(update={"nominal_availability": 0.6})
 # the claim is about the title itself — an assertion that a sentence names the
 # title proves nothing while the title is a substring of the id beside it.
 #
-# `owner` is also the one assignee unless `assignees` is passed, because that is
+# `owner` is also the one developer unless `developers` is passed, because that is
 # what almost every record in a real plan is and what almost every test here
-# means by it: "ann is doing this". Only the assignees are booked (2026-09-23),
-# so the tests that are about the difference pass `assignees` and say so.
+# means by it: "ann is doing this". Only the developers are booked (2026-09-23),
+# so the tests that are about the difference pass `developers` and say so.
 def _staffed(owner: str | None, fields: dict) -> dict:
-    return {"assignees": [owner] if owner else [], **fields}
+    return {"developers": [owner] if owner else [], **fields}
 
 
 def task(
@@ -344,7 +344,7 @@ def test_a_pitch_whose_children_are_all_unsized_is_not_scheduled_as_a_leaf():
     Every live child used to get one, so an empty `kids` meant "no children" and
     nothing else. With no default appetite it also means "children, none of them
     placeable" — and a pitch in that state fell past the rollup into the LEAF
-    path, where it was placed against its own bet and BOOKED its own assignees.
+    path, where it was placed against its own bet and BOOKED its own developers.
     That breaks the second invariant in the module docstring: the pitch holds a
     booking while `Index._charged` skips it as a rollup and charges nobody, so
     the same person is priced twice by the scheduler and once by the ledger. The
@@ -816,8 +816,8 @@ def test_step7_one_item_per_worker_at_a_time_but_unowned_work_is_unlimited():
     assert spans["task-aaa004"].start == MONDAY  # reviewing is not doing
 
 
-def test_step7_assignees_consume_capacity_and_are_not_unowned():
-    records = [task("aaa001", owner=None, assignees=["cy"]), task("aaa002", owner="cy")]
+def test_step7_developers_consume_capacity_and_are_not_unowned():
+    records = [task("aaa001", owner=None, developers=["cy"]), task("aaa002", owner="cy")]
     spans, _ = run(records)
     assert spans["task-aaa001"] == Span(
         start=MONDAY, end=date(2026, 8, 21), budget_weeks=1.0, staffed_at=1.0, elapsed_weeks=1.0
@@ -904,17 +904,17 @@ def test_a_size_is_person_weeks_and_the_people_on_it_divide_it():
     never divided. That was right about the arithmetic the code did and wrong
     about what the number meant."""
     alone, _ = run([pitch("bbb001", owner="ann", size=6.0)])
-    shared, _ = run([pitch("bbb001", owner="ann", assignees=["ann", "bo", "cy"], size=6.0)])
+    shared, _ = run([pitch("bbb001", owner="ann", developers=["ann", "bo", "cy"], size=6.0)])
 
     assert alone["pitch-bbb001"].end == date(2026, 9, 25)  # six working weeks
     assert shared["pitch-bbb001"].end == date(2026, 8, 28)  # two
 
 
-def test_an_owner_who_is_also_an_assignee_is_one_person():
+def test_an_owner_who_is_also_an_developer_is_one_person():
     """Most owners are. Counted twice they were booked twice, and now that the
     people on a bet divide it, they would have halved it single-handed."""
-    once, _ = run([pitch("bbb001", owner="ann", assignees=["ann"], size=4.0)])
-    twice, _ = run([pitch("bbb001", owner="ann", assignees=["ann", "ann"], size=4.0)])
+    once, _ = run([pitch("bbb001", owner="ann", developers=["ann"], size=4.0)])
+    twice, _ = run([pitch("bbb001", owner="ann", developers=["ann", "ann"], size=4.0)])
 
     assert once["pitch-bbb001"] == twice["pitch-bbb001"]
 
@@ -926,8 +926,8 @@ def test_an_owner_who_is_not_assigned_is_not_booked():
     Nor does the owner divide the size: bo alone takes the whole four weeks."""
     spans, explanations = run(
         [
-            task("aaa001", owner="ann", assignees=["bo"], size=4.0),
-            task("aaa002", owner="cy", assignees=["ann"], size=1.0),
+            task("aaa001", owner="ann", developers=["bo"], size=4.0),
+            task("aaa002", owner="cy", developers=["ann"], size=1.0),
         ]
     )
 
@@ -939,7 +939,7 @@ def test_an_owner_who_is_not_assigned_is_not_booked():
 def test_an_owner_with_nobody_assigned_is_unowned_work():
     """Not booked, and marked as having nobody on it — which is what the ready
     gate's "needs somebody on it" has been saying about this record all along."""
-    spans, _ = run([task("aaa001", owner="ann", assignees=[], size=2.0)])
+    spans, _ = run([task("aaa001", owner="ann", developers=[], size=2.0)])
 
     assert spans["task-aaa001"].unowned
 
@@ -1205,7 +1205,7 @@ def dags(draw: st.DrawFn) -> list[Record]:
                 kind="task",
                 title=f"generated {i}",
                 owner=draw(st.sampled_from([*WORKERS, None])),
-                assignees=draw(st.lists(st.sampled_from(WORKERS), max_size=1, unique=True)),
+                developers=draw(st.lists(st.sampled_from(WORKERS), max_size=1, unique=True)),
                 person_weeks=draw(st.sampled_from([None, 0.1, 0.5, 1.0, 2.0])),
                 priority=draw(st.sampled_from(["high", "medium", "low"])),
                 parent=PARENT_ID if draw(st.booleans()) else None,
@@ -1219,7 +1219,7 @@ def dags(draw: st.DrawFn) -> list[Record]:
 
 
 def workers_of(record: Record) -> list[str]:
-    return record.assignees
+    return record.developers
 
 
 @settings(deadline=None)
@@ -1262,7 +1262,7 @@ def test_property_adding_an_item_that_shares_no_worker_and_no_ancestor_never_mov
 ):
     before, _ = run(records)
     stranger = Task(
-        id="task-ffffff", kind="task", title="stranger", assignees=["zed"], person_weeks=2.0
+        id="task-ffffff", kind="task", title="stranger", developers=["zed"], person_weeks=2.0
     )
     after, _ = run([*records, stranger])
     assert {i: after[i] for i in before} == before
@@ -1320,7 +1320,7 @@ GOLDEN_TODAY = date(2026, 8, 17)
 #
 # OWNERS STOPPED BEING WORKERS, 2026-09-23 (jcanton: an owner sees the work done
 # and is booked only if also assigned). Eight corpus records have an owner and
-# `assignees: []`; they are now one notional person at nominal rate who books
+# `developers: []`; they are now one notional person at nominal rate who books
 # nobody. Four of them moved, each because the owner had been queued behind
 # their own other work, and each was derived here before the run was read:
 #   pitch-1b3f9a  size 1.0, no blockers, no start_date. Was held behind
@@ -1386,7 +1386,7 @@ GOLDEN_SPANS = {
 # its parent pitch's roster and carries no `cycle:` of its own.
 #
 #   task-6a5c02  size 1.5; workers dedup to [redpollard, chiffchaffy] (redpoll is
-#                owner AND assignee and counts once); cycle 37 rates 0.5 + 0.25
+#                owner AND developer and counts once); cycle 37 rates 0.5 + 0.25
 #                = 0.75; 1.5 / 0.75 = 2.0 weeks = 10 working days. No blockers.
 #                `in_progress` with a `start_date`, so `begun`: starts on
 #                2026-08-17 and today does not move it.

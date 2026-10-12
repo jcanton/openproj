@@ -5,7 +5,7 @@ title: Retire the f2py shim
 parent: null
 status: ready
 owner: jackdawrie
-assignees: [jackdawrie]
+developers: [jackdawrie]
 reviewers: [hoopoegrove]
 review_waived: false
 start_date: 2026-08-17
