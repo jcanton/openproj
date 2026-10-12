@@ -3334,6 +3334,52 @@ def test_the_bet_table_names_a_status_in_the_colour_every_other_page_uses(
     assert ">in_progress<" not in page, "the identifier is the class, never the word"
 
 
+def test_a_task_bet_on_its_own_leaves_its_pitch_for_the_project_and_is_a_bet(
+    client: TestClient, repo_path: Path
+):
+    """jcanton, 2026-10-12: betting `task-46ea60` into cycle 39 out of
+    `pitch-370004`, which was bet in an earlier one.
+
+    The button stages two fields and Save sends them as one PATCH, so this is
+    that PATCH, sent with what the button carries: where the markup says the
+    task goes is read off the page and not written down here, and it has to be
+    the pitch's project — out of the pitch, not out of the plan. Then the task
+    is a bet of its own on the next page, ticked into this cycle, and the commit
+    names both fields."""
+    client.put(
+        "/api/cycle/48",
+        json={
+            "base_commit": git_head(repo_path),
+            "fields": {"starts_on": "2027-04-05", "build_weeks": 4},
+            "body": None,
+        },
+    )
+    page = client.get("/cycle/48").text
+    button = re.search(
+        rf'<tr data-id="{TASK}"[^>]*>.*?<button type="button" class="ownbet" '
+        r'data-out="([^"]*)"\s+data-holder="([^"]*)"',
+        page,
+        re.S,
+    )
+    assert button, f"{TASK} sits under {PITCH} and has no Bet on its own"
+    assert (button.group(1), button.group(2)) == (PROJECT, PITCH_TITLE)
+    assert TASK not in [record_id for record_id, _, _ in bet_rows(page)]
+
+    answer = save(client, TASK, {"parent": button.group(1), "cycle": 48})
+    assert answer.status_code == 200, answer.text
+    assert commit_at(repo_path, answer.json()["commit"]).message == f"{TASK}: parent, cycle"
+    written = file_at(repo_path, answer.json()["commit"], PATH)
+    assert "parent: proj-a10000" in written and "pitch-b20000" not in written
+
+    page = client.get("/cycle/48").text
+    assert TASK in [record_id for record_id, _, _ in bet_rows(page)], "it is not a bet of its own"
+    tick = re.search(
+        rf'<tr data-id="{TASK}"[^>]*>\s*<td><input type="checkbox" class="bet"[^>]*>', page
+    )
+    assert tick and "checked" in tick.group(0), "it is a bet, and not in this cycle"
+    assert f'<tr data-id="{TASK}" data-rung=""' in page
+
+
 def test_every_cycle_the_plan_names_is_on_the_index(client: TestClient, repo_path: Path):
     """F25. The index listed the cycles with a record, which are the ones somebody
     has already thought about. A cycle holding work and holding no record is the

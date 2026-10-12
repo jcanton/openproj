@@ -3027,6 +3027,13 @@ function refuses(childId, parentId) {
   return '';
 }
 
+// Where both ways out — the bar and the `+` row — file a row: the record the
+// server worked out for it, or nothing. Read and never walked here, because the
+// walk needs the kinds of rows this table may be filtering away. `landing` is
+// the same answer in the words the bar, the label and the announcement add.
+const outTo = childId => (DATA.rows[childId] || {}).out_to || null;
+const landing = row => row.out_to ? `, into ${titleOf(row.out_to)}` : '';
+
 // Why this row may not be dropped on that target, in words, or '' when it may.
 // The `+` row is the one target that is not a record: dropping on it means
 // belonging to nothing, which is only a move when there is something to leave.
@@ -3122,8 +3129,9 @@ const namedOf = id => {
 // rather than naming itself.
 function intoWords(target) {
   if (target.classList.contains('adder')) {
-    const parent = (DATA.rows[MOVING] || {}).parent;
-    return parent ? `→ out of ${titleOf(parent)}` : '';
+    const row = DATA.rows[MOVING] || {};
+    if (!row.parent) return '';
+    return `→ out of ${titleOf(row.parent)}` + landing(row);
   }
   return `→ into ${titleOf(target.dataset.id)}`;
 }
@@ -3158,7 +3166,12 @@ function sayMoveOut() {
   // does: this is a control somebody is about to press, and "Take task-0f1001
   // out of pitch-0f0001" makes them check two ids against a screen that draws
   // neither of them.
-  out.textContent = parent ? `Take ${titleOf(MOVING)} out of ${titleOf(parent)}` : '';
+  //
+  // And where it lands, because that is not nowhere: out of a pitch inside a
+  // project is into the project (`out_to`, `model.py`), and a bar that only said
+  // "out of" was a bar promising the top of the tree.
+  out.textContent = parent
+    ? `Take ${titleOf(MOVING)} out of ${titleOf(parent)}${landing(row)}` : '';
   rootless.hidden = !row || !!parent;
   rootless.textContent = row && !parent ? `${titleOf(MOVING)} is not inside anything` : '';
 }
@@ -3177,7 +3190,7 @@ function startMoving(id) {
   sayMoveOut();
   announce(`Moving ${titleOf(id)}. Drop it on ${holders(row.kind)}, or press Enter on one. ` +
            (row.parent
-             ? 'The row at the bottom takes it out of ' + titleOf(row.parent) + '. '
+             ? 'The row at the bottom takes it out of ' + titleOf(row.parent) + landing(row) + '. '
              : '') +
            'Escape leaves it where it is.');
 }
@@ -3475,7 +3488,7 @@ if (EDITABLE) {
     else if (pressed === 'unparent' && MOVING) {
       const child = MOVING;
       stopMoving();
-      reparent(child, null);
+      reparent(child, outTo(child));
     }
   });
 
@@ -3540,7 +3553,7 @@ if (EDITABLE) {
     // answer both handlers ask for, so the two cannot disagree about it.
     const why = whyNotOnto(child, over);
     if (why) { announce(why); return; }
-    reparent(child, over.classList.contains('adder') ? null : over.dataset.id);
+    reparent(child, over.classList.contains('adder') ? outTo(child) : over.dataset.id);
   });
 
   // Fires however the drag ended — dropped, cancelled with Escape, let go over

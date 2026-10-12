@@ -933,6 +933,20 @@ const cy = cytoscape({
         'target-arrow-color': edge => edgeInk(edge),
         'target-arrow-shape': 'triangle',
         'width': 1.5 } },
+    // The edges of the node under the pointer, and everything else stepped back —
+    // see `lightEdges`. Width and depth and nothing about colour: each edge keeps
+    // its own ink, which is how two lines leaving one card are told apart, and a
+    // single highlight colour would erase that at the moment somebody is reading
+    // them. Both rules come BEFORE the two below, and cytoscape resolves a tie by
+    // order alone, so an edge being drawn or removed keeps its green or red dash
+    // while it is lit.
+    //
+    // `top` lifts a lit edge over the boxes it normally runs beneath. That rule
+    // exists so a line is not read as passing THROUGH a card; while somebody is
+    // pointing at one end of it, the whole route is the question.
+    { selector: 'edge.lit', style: {
+        'width': 3.5, 'z-compound-depth': 'top', 'z-index': 1 } },
+    { selector: 'edge.unlit', style: { 'opacity': .25 } },
     // The two uncommitted states, told apart by colour rather than by dash
     // pattern: both are dashed, because dashed is what "not in the plan yet"
     // looks like here, and one is being added while the other is being taken
@@ -1360,22 +1374,58 @@ let onLabelOf = null;
 // same question is asked on the table and the timeline.
 const CARDED = {{ carded|tojson }};
 
-cy.on('mouseover', 'node', evt => {
-  if (connecting) return;
-  const node = evt.target;
+// What pointing at a node lights: its own edges, with every other edge faded —
+// jcanton, 2026-10-12, "highlight edges connected to a node when hovering over a
+// node", and fading the rest was his pick over leaving them alone. In a plan of
+// two hundred records a thicker line among a hundred thin ones is still a line
+// you have to hunt for.
+//
+// A node with no edges fades nothing. Dimming the whole drawing to say "this has
+// no dependencies" reads as the drawing breaking under the pointer.
+//
+// Its OWN edges, and on a box that means the box's and not its contents': what a
+// pitch waits for is what the pitch's file says, and a box lit up with every line
+// its eleven tasks draw would be the box answering a question about somebody
+// else.
+function lightEdges(node) {
+  const own = node.connectedEdges();
+  if (!own.length) return;
+  cy.batch(() => {
+    cy.edges().not(own).addClass('unlit');
+    own.addClass('lit');
+  });
+}
+function unlightEdges() {
+  cy.batch(() => cy.edges().removeClass('lit unlit'));
+}
+
+// The two things pointing at a node does, for the two handlers that decide the
+// pointer has arrived — `mouseover` on a card or a box's label, and `mousemove`
+// onto a box's label from inside the box. One function, because the second of
+// those used to carry its own copy of the card call and not the product check
+// above it, so a product's label reached from inside the product opened a card
+// of dashes.
+function pointedAt(node, evt) {
+  lightEdges(node);
   // A product carries a title and a sentence and nothing else — no owner, no
   // dates, no appetite, no document. A card of it would be a box of dashes,
   // which teaches a reader that cards are not worth hovering for.
   if (CARDED[node.data('kind')] === false) return;
-  if (node.isParent()) {
-    if (!onLabel(node, evt.position)) return;
-    onLabelOf = node.id();
-  }
   // `data()` and not a lookup: a node's data IS the row — `_elements` builds it
   // from the same `_row` the table is drawn from — and this page has no `DATA` of
   // its own to look anything up in. The first version of this read `DATA.rows`
   // and drew nothing at all, on the one view the card was added for.
   queueCard(node.data(), evt.originalEvent.clientX, evt.originalEvent.clientY);
+}
+
+cy.on('mouseover', 'node', evt => {
+  if (connecting) return;
+  const node = evt.target;
+  if (node.isParent()) {
+    if (!onLabel(node, evt.position)) return;
+    onLabelOf = node.id();
+  }
+  pointedAt(node, evt);
 });
 
 // Entering a box below its title is not entering its label, and the pointer can
@@ -1387,15 +1437,17 @@ cy.on('mousemove', 'node', evt => {
   if (onLabel(node, evt.position)) {
     if (onLabelOf === node.id()) return;
     onLabelOf = node.id();
-    queueCard(node.data(), evt.originalEvent.clientX, evt.originalEvent.clientY);
+    pointedAt(node, evt);
   } else if (onLabelOf === node.id()) {
     onLabelOf = null;
+    unlightEdges();
     hideCard();
   }
 });
 
 cy.on('mouseout', 'node', evt => {
   if (evt.target.isParent() && onLabelOf === evt.target.id()) onLabelOf = null;
+  unlightEdges();
   hideCard();
 });
 // A node dragged out from under a card, and a canvas panned or zoomed under one:
@@ -1409,7 +1461,7 @@ cy.on('mouseout', 'node', evt => {
 // the node has left, and `relayout()` ends in `cy.fit()`, which moves everything
 // at once. `popClose` takes no arguments and moves no focus, which is what makes
 // it safe to call from a handler cytoscape also passes its own event object to.
-cy.on('drag pan zoom', () => { onLabelOf = null; hideCardNow(); popClose(); });
+cy.on('drag pan zoom', () => { onLabelOf = null; unlightEdges(); hideCardNow(); popClose(); });
 
 // --- the right-click menu, on a node --------------------------------------
 //

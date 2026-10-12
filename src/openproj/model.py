@@ -4020,6 +4020,37 @@ CHILD_KINDS = {
 }
 
 
+def out_to(record: Record, by_id: dict[str, Record]) -> str | None:
+    """Where taking this record out of its parent files it: the nearest record
+    above that parent which may hold its kind, or nothing.
+
+    jcanton, 2026-10-12: "move-out should always move to the upper parent".
+    Every way out wrote `parent: null` — `Take out of "X"` on the right-click
+    menu, the table's move bar and its `+` row — so a pitch taken out of the
+    pitch it had been hand-filed under, inside `proj-370001`, left the project
+    as well and landed at the top of the tree. Nobody taking a thing out of a
+    box means it to leave the room the box is in.
+
+    The NEAREST holder and not the grandparent: a pitch inside a project inside
+    a product cannot be filed under the product, so the walk goes on past it and
+    finds nothing, which is the honest answer for a pitch with no project left
+    to hold it. The walk stays inside `by_id`, which every caller passes as
+    `index.plan`, so an inbox id never comes back to reach a page — and stops on
+    a name nobody wrote, for the same reason `is_bettable` keeps a record's own
+    number there. `seen` is for a loop somebody committed by hand: the write
+    path refuses one (`loop_made`) and a file can still hold one.
+    """
+    allowed = PARENT_KINDS.get(record.kind, ())
+    seen = {record.id}
+    holder = by_id.get(record.parent) if record.parent else None
+    while holder is not None and holder.id not in seen:
+        seen.add(holder.id)
+        holder = by_id.get(holder.parent) if holder.parent else None
+        if holder is not None and holder.kind in allowed and holder.id not in seen:
+            return holder.id
+    return None
+
+
 def is_bettable(record: Record, by_id: dict[str, Record]) -> bool:
     """Whether a cycle can be bet on this record.
 

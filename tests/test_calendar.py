@@ -978,6 +978,44 @@ def test_picking_a_day_tells_the_page_the_way_a_date_field_would(
     assert found["heard"] == ["input:start", "change:start"]
 
 
+CLEAR_IT = """
+  const box = document.getElementById('start');
+  const form = document.getElementById('edit');
+  const heard = [];
+  form.addEventListener('input', (event) => heard.push('input:' + event.target.id));
+  form.addEventListener('change', (event) => heard.push('change:' + event.target.id));
+
+  openCalendar(box);
+  const clear = document.querySelector('.datepicker.active .clear-button');
+  const drawn = clear ? clear.getBoundingClientRect() : null;
+  const shown = !!drawn && drawn.width > 0 && drawn.height > 0;
+  if (clear) clear.click();
+  return {shown, value: box.value, heard};
+"""
+
+
+def test_a_date_once_set_can_be_cleared_from_the_calendar(seed_index: Index, tmp_path: Path):
+    """jcanton, 2026-10-12: "remove dates for start end from a record even after
+    they've been assigned".
+
+    The native popup this widget replaced has a Clear button of its own, and with
+    the indicator hidden it was gone. The library draws one too, and drew it at
+    `display: none` because `clearButton` was off — so the only way left to empty
+    a date was to Backspace each of its three segments in turn, which nobody
+    finds. `shown` is measured as a box with an area and not as an element in the
+    DOM: the button was in the DOM the whole time.
+
+    Through the same channel picking a day uses — `changeDate` answered with
+    `input` and `change` — or the save bar never hears that the date went.
+    """
+    page = _page_with_a_date_field(seed_index, date(2026, 8, 17))
+    found = measured_in(chrome(), page, tmp_path / "calendar.html", 1280, CLEAR_IT)
+
+    assert found["shown"], "the calendar offers no Clear button to press"
+    assert found["value"] == "", "Clear left a date in the box"
+    assert found["heard"] == ["input:start", "change:start"]
+
+
 def test_replacing_a_tbody_takes_its_calendars_with_it(seed_index: Index, tmp_path: Path):
     """The second path that sets a date field from outside: the table's `draw()`,
     which assigns `tbody.innerHTML` and throws every row away.

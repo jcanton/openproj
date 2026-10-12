@@ -9068,6 +9068,443 @@ def test_the_wash_does_not_take_away_the_ground_it_is_drawn_over(
     assert "rgba(0, 0, 0, 0)" not in before[:2], f"the frozen pair is not opaque: {before[:2]}"
 
 
+def test_the_betting_table_holds_every_bet_and_shortlists_ready_and_in_progress(
+    demo_rendered: tuple[Path, Index],
+):
+    """jcanton, 2026-10-12: "cycle betting table: option to filter all records,
+    not only ready or in progress" — a pitch still marked `shaping` the morning it
+    was argued for was not on the table at all.
+
+    Every bet the plan holds is a row now, and the ones a room does not see until
+    it ticks Every status are marked `offlist`. Asked against `is_bettable` over
+    the whole plan rather than a list of ids, so a bet added to the demo is in the
+    census on the commit that adds it.
+    """
+    from openproj.model import is_bettable
+    from openproj.render import _cycle_view
+
+    _, index = demo_rendered
+    rows = _cycle_view(index, 37)["candidates"]
+    bets = {row["id"]: row for row in rows if not row["rung"]}
+
+    assert set(bets) == {r.id for r in index.plan.values() if is_bettable(r, index.plan)}, (
+        "a bet the plan holds is not on the betting table"
+    )
+    off = {i for i, row in bets.items() if row["offlist"]}
+    assert off, "the demo has no bet outside ready and in progress, so this proves nothing"
+    for record_id, row in bets.items():
+        record = index.plan[record_id]
+        assert row["offlist"] == (record.status not in ("ready", "in_progress")), (
+            f"{record_id} is {record.status} and offlist={row['offlist']}"
+        )
+    # And a task is off the list when it is finished, dropped, or under a bet that
+    # is: a row drawn under a hidden bet is a connector hanging off nothing.
+    for row in rows:
+        if not row["rung"]:
+            held = row
+            continue
+        status = index.plan[row["id"]].status
+        assert row["offlist"] == (held["offlist"] or status in ("done", "shelved")), row["id"]
+
+
+def test_a_bet_already_in_this_cycle_stays_on_the_shortlist_whatever_its_status(
+    demo_rendered: tuple[Path, Index],
+):
+    """A `shaping` pitch ticked while Every status was on is a bet in this cycle,
+    and unticking the box must not take it off the page that made it — that reads
+    as the tick having been lost. Finished and dropped bets are history and stay
+    off; a bet in another cycle is not this cycle's business."""
+    from openproj.render.cycles import _shortlisted
+
+    _, index = demo_rendered
+    pitch = next(r for r in index.plan.values() if r.kind == "pitch")
+
+    def bet(status: str, cycle: int | None):
+        return pitch.model_copy(update={"status": status, "cycle": cycle})
+
+    assert _shortlisted(bet("shaping", 37), 37)
+    assert _shortlisted(bet("thinking", 37), 37)
+    assert not _shortlisted(bet("shaping", 36), 37)
+    assert not _shortlisted(bet("shaping", None), 37)
+    assert not _shortlisted(bet("done", 37), 37)
+    assert not _shortlisted(bet("shelved", 37), 37)
+    assert _shortlisted(bet("ready", None), 37)
+
+
+# What the betting table shows, as the ids of the rows a reader can see.
+_BETS_SHOWN = """
+  const shown = () => [...document.querySelectorAll('#bets tbody tr')]
+    .filter(row => row.getClientRects().length).map(row => row.dataset.id);
+"""
+
+
+def test_every_status_is_one_box_that_widens_the_table_and_is_remembered(
+    demo_rendered: tuple[Path, Index], tmp_path: Path
+):
+    """Off by default and the table is the shortlist; on and every bet is drawn,
+    with the sentence describing the table saying which of the two it is. Asked
+    of what is PAINTED — `getClientRects` — because `hidden` on a row is only a
+    promise until the cascade agrees, and a `tr` given `display` by some other
+    rule keeps it.
+
+    Then the page is loaded a second time in the same browser, because the box
+    is remembered and a remembered setting that is not read back on load is a
+    setting that resets itself every time the room refreshes."""
+    import time
+
+    from browser import _devtools, _evaluated, chrome
+
+    from openproj.render import render_cycle
+
+    _, index = demo_rendered
+    where = tmp_path / "cycle.html"
+    where.write_text(render_cycle(index, 37, ROUTES, base_commit="deadbee"))
+    ask = _BETS_SHOWN + """
+      return {shown: shown(), every: BETEVERY.checked,
+              scope: [...document.querySelectorAll('.betscope')]
+                .filter(s => s.getClientRects().length).map(s => s.dataset.every)};
+    """
+    ask = f"(() => {{ {ask} }})()"
+    with _devtools(chrome(), where.as_uri(), tmp_path / "every-profile") as (call, _said):
+        time.sleep(2)
+        before = _evaluated(call, ask)
+        _evaluated(call, "BETEVERY.click(); 1")
+        during = _evaluated(call, ask)
+        call("Page.reload", {})
+        time.sleep(2)
+        reloaded = _evaluated(call, ask)
+        _evaluated(call, "BETEVERY.click(); 1")
+        call("Page.reload", {})
+        time.sleep(2)
+        forgotten = _evaluated(call, ask)
+
+    rows = _cycle_view_rows(index)
+    listed = [row["id"] for row in rows if not row["offlist"]]
+    assert before == {"shown": listed, "every": False, "scope": ["no"]}
+    assert during == {"shown": [row["id"] for row in rows], "every": True, "scope": ["yes"]}
+    assert reloaded == during, "the box was not read back when the page loaded again"
+    assert forgotten == before, "unticking the box was not remembered"
+
+
+def _cycle_view_rows(index: Index) -> list[dict]:
+    from openproj.render import _cycle_view
+
+    return _cycle_view(index, 37)["candidates"]
+
+
+def test_an_empty_shortlist_says_so_and_offers_every_status(demo_root: Path, tmp_path: Path):
+    """Nothing ready or in progress, while the plan holds bets in other states: a
+    header over no rows reads as the page failing to load. Finding F1 — empty
+    must not look like broken — with the control that gets you out of it."""
+    from browser import chrome, measured_in
+
+    from openproj.render import render_cycle
+
+    records, config, _ = load_repo(demo_root)
+    quiet = [
+        r.model_copy(update={"status": "shaping", "cycle": None})
+        if r.status in ("ready", "in_progress")
+        else r
+        for r in records
+    ]
+    index = build_index(quiet, config, date(2026, 8, 17))
+    page = render_cycle(index, 37, ROUTES, base_commit="deadbee")
+    got = measured_in(
+        chrome(),
+        page,
+        tmp_path / "quiet.html",
+        1280,
+        _BETS_SHOWN
+        + """
+      const said = !!document.getElementById('betshort').getClientRects().length;
+      const before = shown();
+      document.getElementById('betwiden').click();
+      return {said, before, after: shown(), every: BETEVERY.checked,
+              still: !!document.getElementById('betshort').getClientRects().length};
+    """,
+    )
+
+    assert got["before"] == [], "the shortlist was not empty, so this asked nothing"
+    assert got["said"], "an empty shortlist said nothing"
+    assert got["after"] and got["every"], "Show every status did not show them"
+    assert not got["still"], "the sentence stayed after the table filled"
+
+
+def test_bet_on_its_own_stages_the_move_and_the_tick_and_undo_takes_back_only_those(
+    demo_rendered: tuple[Path, Index], tmp_path: Path
+):
+    """jcanton, 2026-10-12: a task out of the pitch it was bet in, so it can be
+    bet into this cycle on its own.
+
+    Pressed, the row holds two staged fields and nothing is written — this page
+    has one save model, and a button that wrote at once beside a table that
+    waits for Save is the mixed model it was rebuilt to get rid of. Where the
+    task goes is the pitch's project, worked out here from the plan and not read
+    off the button. Undo takes back those two and leaves an appetite typed on
+    the same row alone. And the button's words are not the row's: searched for,
+    its label found every task on the table."""
+    from browser import chrome, measured_in
+
+    from openproj.render import render_cycle
+
+    _, index = demo_rendered
+    page = render_cycle(index, 37, ROUTES, base_commit="deadbee")
+    got = measured_in(
+        chrome(),
+        page,
+        tmp_path / "own.html",
+        1280,
+        """
+      const button = [...document.querySelectorAll('#bets button.ownbet')]
+        .find(one => one.getClientRects().length);
+      const row = button.closest('tr');
+      const id = row.dataset.id;
+      const staged = () => JSON.stringify(PENDING.get(id) || null);
+      const size = row.querySelector('input.live');
+      size.value = '7';
+      size.dispatchEvent(new Event('input'));
+      size.dispatchEvent(new Event('blur'));
+      button.click();
+      const pressed = {staged: staged(), word: button.textContent,
+                       pending: row.classList.contains('pending'), save: SAVE.textContent};
+      button.click();
+      const undone = {staged: staged(), word: button.textContent, save: SAVE.textContent};
+      BETFIND.value = 'bet on its own';
+      BETFIND.dispatchEvent(new Event('input'));
+      const found = [...document.querySelectorAll('#bets tbody tr')]
+        .filter(one => one.getClientRects().length).length;
+      return {id, pressed, undone, found};
+    """,
+    )
+
+    task = index.plan[got["id"]]
+    project = index.plan[index.plan[task.parent].parent]
+    assert project.kind == "project", "the demo's pitch is not in a project, so this asks nothing"
+    assert json.loads(got["pressed"]["staged"]) == {
+        "person_weeks": 7,
+        "parent": project.id,
+        "cycle": 37,
+    }, "out of the pitch and into its project, ticked into this cycle"
+    assert got["pressed"]["word"] == "Undo" and got["pressed"]["pending"]
+    assert got["pressed"]["save"] == "Save 3 changes"
+    assert json.loads(got["undone"]["staged"]) == {"person_weeks": 7}, (
+        "Undo took back more than the two fields the button staged"
+    )
+    assert got["undone"]["word"] == "Bet on its own"
+    assert got["undone"]["save"] == "Save 1 change"
+    assert got["found"] == 0, "the search reads the button's label as the row's words"
+
+
+def _betting_while_others_edit(demo_root: Path) -> tuple[str, str, list[dict], str]:
+    """The cycle page twice — as the room opened it, and as the server draws it
+    after somebody else renamed one bet — and the shortlist, in order, to pick
+    rows from. Rows are chosen off the plan rather than written down, so the demo
+    is free to change under these tests."""
+    from openproj.render import _cycle_view, render_cycle
+
+    records, config, _ = load_repo(demo_root)
+    today = date(2026, 8, 17)
+    index = build_index(records, config, today)
+    listed = [row for row in _cycle_view(index, 37)["candidates"] if not row["offlist"]]
+    renamed = next(row for row in listed[2:] if not row["rung"])["id"]
+    elsewhere = [
+        r.model_copy(update={"title": "Renamed by somebody else"}) if r.id == renamed else r
+        for r in records
+    ]
+    fresh = render_cycle(build_index(elsewhere, config, today), 37, ROUTES, base_commit="beefcafe")
+    page = render_cycle(index, 37, ROUTES, base_commit="deadbee")
+    return page, fresh, listed, renamed
+
+
+# The page as the server would answer it, in a script — escaped so that neither
+# `</script>` nor the `</body>` `measured_in` hooks onto can end anything early.
+def _served_as(fresh: str) -> str:
+    return "const FRESH = " + json.dumps(fresh).replace("<", "\\u003c") + ";\n"
+
+
+def test_a_refresh_keeps_what_the_room_is_doing_and_wires_what_it_brings_in(
+    demo_root: Path, tmp_path: Path
+):
+    """jcanton, 2026-10-12: "there will be several occasions when people are
+    editing records during the betting table, so it should be possible for the
+    two to happen simultaneously".
+
+    The refresh used to wait for a table with nothing unsaved and no focus in it,
+    which a betting table in use never is — and when it did swap, nothing on the
+    rows it brought in did anything: a tick that staged nothing, a box with no
+    suggestions. So, with a row edited and unsaved, a box half-typed under the
+    cursor and the table sorted, somebody else renames a bet and the page
+    refreshes:
+
+    the rename arrives; the edited row is still the room's, value and base commit
+    both; the half-typed box keeps its focus and its text; the sort holds; and a
+    row the refresh brought in ticks, picks and suggests like one that was served.
+    """
+    from browser import chrome, measured_in
+
+    page, fresh, listed, renamed = _betting_while_others_edit(demo_root)
+    edited, typing = listed[0]["id"], listed[1]["id"]
+    tick = next(
+        row
+        for row in listed
+        if row["bettable"] and not row["carried"] and row["id"] not in (edited, typing, renamed)
+    )
+    got = measured_in(
+        chrome(),
+        page,
+        tmp_path / "simultaneous.html",
+        1280,
+        _served_as(fresh)
+        + f"""
+      const EDITED = {json.dumps(edited)}, TYPING = {json.dumps(typing)};
+      const RENAMED = {json.dumps(renamed)}, TICK = {json.dumps(tick["id"])};
+      window.fetch = async () => new Response(FRESH, {{status: 200}});
+      BETS.querySelector('th[data-sort="5"] .sorter').click();
+      const size = betRow(EDITED).querySelector('input.live[data-field="person_weeks"]');
+      size.focus(); size.value = '8'; size.dispatchEvent(new Event('input')); size.blur();
+      const held = betRow(TYPING).querySelector('input.live[data-field="reviewers"]');
+      held.focus(); held.value = 'half'; held.dispatchEvent(new Event('input'));
+      const swapped = await betRefresh();
+      const order = () => betRows().map(row => row.dataset.id);
+      const kept = {{
+        swapped,
+        renamed: betRow(RENAMED).querySelector('.betname a').textContent.trim(),
+        renamedBase: betRow(RENAMED).dataset.base,
+        edited: PENDING.get(EDITED), editedBox: betRow(EDITED)
+          .querySelector('input.live[data-field="person_weeks"]').value,
+        editedBase: betRow(EDITED).dataset.base, editedPending:
+          betRow(EDITED).classList.contains('pending'),
+        focus: document.activeElement === held, typed: held.value,
+        sorted: BETS.classList.contains('sorted'),
+        aria: BETS.querySelector('th[data-sort="5"]').getAttribute('aria-sort'),
+        showing: window.SHOWING.includes(RENAMED),
+      }};
+      const before = order();
+      betSort(5, false);
+      kept.stillSorted = JSON.stringify(order()) === JSON.stringify(before);
+      held.blur();
+      const box = betRow(TICK).querySelector('input.bet');
+      box.click();
+      const pick = betRow(RENAMED).querySelector('select[data-field="priority"]');
+      pick.value = [...pick.options].find(o => o.value !== pick.value).value;
+      pick.dispatchEvent(new Event('change'));
+      const named = betRow(RENAMED).querySelector('input.live[data-field="assignees"]');
+      return {{...kept, ticked: PENDING.get(TICK), picked: PENDING.get(RENAMED),
+               pickedTo: pick.value, suggests: named.getAttribute('role'),
+               typedStaged: PENDING.get(TYPING)}};
+    """,
+    )
+
+    assert got["swapped"] is True
+    assert got["renamed"] == "Renamed by somebody else", "somebody else's edit never arrived"
+    assert got["renamedBase"] == "beefcafe", "a row brought in is read at the commit it came from"
+    assert got["edited"] == {"person_weeks": 8} and got["editedBox"] == "8", (
+        "the refresh threw away an edit nobody had saved"
+    )
+    assert got["editedBase"] == "deadbee", (
+        "the unsaved row was given a commit its values were never read at, so a clash "
+        "with somebody else's edit to the same field would merge as no clash at all"
+    )
+    assert got["editedPending"], "the unsaved row lost its unsaved mark"
+    assert got["focus"] and got["typed"] == "half", "the box under the cursor moved or emptied"
+    assert got["sorted"] and got["aria"] == "ascending" and got["stillSorted"], (
+        "the refresh undid the room's sort"
+    )
+    assert got["showing"], "the shell's banner does not know the refreshed rows are here"
+    assert got["typedStaged"] == {"reviewers": ["half"]}, "the held box stopped staging"
+    assert got["ticked"] == {"cycle": None if tick["in_cycle"] else 37}, (
+        f"a tick on a row the refresh brought in staged {got['ticked']!r}"
+    )
+    assert got["picked"] == {"priority": got["pickedTo"]}, "a picker it brought in staged nothing"
+    assert got["suggests"] == "combobox", "a names box it brought in has no suggestions"
+
+
+def test_a_save_sends_each_row_against_its_own_commit_and_a_clash_costs_only_its_row(
+    demo_root: Path, tmp_path: Path
+):
+    """The server merges a save field by field against the commit it names, so
+    which commit each row names is the whole of whether two people editing at
+    once is safe.
+
+    Every row used to name the commit the LAST write returned, so from the second
+    row on the base and the stored file were the same and somebody else's edit to
+    the same field was overwritten without a word. Each row names the commit its
+    values were read at now. A clash is that row's news: it is told, taken back to
+    what is stored, and the rows after it still save — each is its own commit.
+    """
+    from browser import chrome, measured_in
+
+    page, fresh, listed, renamed = _betting_while_others_edit(demo_root)
+    # Saved first, so the old code would have handed the next row its commit.
+    first = listed[0]["id"]
+    clash = renamed if renamed != first else listed[3]["id"]
+    after = next(row["id"] for row in listed[1:] if row["id"] not in (first, clash))
+    got = measured_in(
+        chrome(),
+        page,
+        tmp_path / "clash.html",
+        1280,
+        _served_as(fresh)
+        + f"""
+      const FIRST = {json.dumps(first)}, CLASH = {json.dumps(clash)};
+      const AFTER = {json.dumps(after)};
+      const SENT = [];
+      // Read while the Save is still going, because the refresh after a clash
+      // re-reads every row nobody is editing — this one included.
+      let firstBase = null;
+      window.fetch = async (url, options = {{}}) => {{
+        if (!options.method) return new Response(FRESH, {{status: 200}});
+        const body = JSON.parse(options.body);
+        const id = decodeURIComponent(url.split('/').pop());
+        SENT.push({{id, base: body.base_commit}});
+        if (id === CLASH) {{
+          firstBase = betRow(FIRST).dataset.base;
+          return new Response(JSON.stringify({{outcome: 'conflict', commit: null,
+            conflict: 'pitches/clash.md — somebody changed this before you, in the same '
+                      + 'places:\\n  person_weeks: stored 3 · yours 8'}}), {{status: 409}});
+        }}
+        return new Response(JSON.stringify({{outcome: 'committed',
+          commit: 'c0ffee' + SENT.length}}), {{status: 200}});
+      }};
+      // A row edited before somebody else's change arrives, and one after.
+      const appetite = id => betRow(id).querySelector('input.live[data-field="person_weeks"]');
+      const type = (id, value) => {{
+        const box = appetite(id);
+        box.focus(); box.value = value; box.dispatchEvent(new Event('input')); box.blur();
+      }};
+      type(FIRST, '4');
+      type(CLASH, '8');
+      await betRefresh();
+      type(AFTER, '2');
+      const saved = await flush(false);
+      await new Promise(done => setTimeout(done, 300));
+      return {{saved, sent: SENT, pending: [...PENDING.keys()],
+               said: document.getElementById('state').textContent,
+               clashBox: appetite(CLASH).value, firstBase}};
+    """,
+        patience=4000,
+    )
+
+    assert got["sent"] == [
+        {"id": first, "base": "deadbee"},
+        {"id": clash, "base": "deadbee"},
+        {"id": after, "base": "beefcafe"},
+    ], "each row is saved against the commit it was read at, and a clash stops nothing"
+    assert got["saved"] is False, "a Save with a row that did not land reloaded the page"
+    assert got["pending"] == [], "the clashing row is still waiting to overwrite somebody"
+    # Named as the room saw it: the row was edited before the rename arrived, so
+    # it was held, title and all.
+    title = next(row["title"] for row in listed if row["id"] == clash)
+    assert got["said"].startswith(
+        f"{title} was not saved — somebody changed this before you"
+    ), got["said"]
+    assert "person_weeks: stored 3 · yours 8" in got["said"]
+    assert "clash.md" not in got["said"], "the sentence names a file where it has a title"
+    assert got["said"].endswith("2 other changes saved."), got["said"]
+    assert got["clashBox"] != "8", "the clashing row still shows the edit that did not save"
+    assert got["firstBase"] == "c0ffee1", "a row that saved is read at the commit it made"
+
+
 def test_the_betting_table_says_what_a_bet_is_being_made_against(
     server_pages: dict[str, str], seed_index: Index
 ):
@@ -9187,7 +9624,16 @@ def test_the_betting_table_puts_a_bets_tasks_under_it(
     body = re.search(r'<table id="bets".*?<tbody>(.*?)</tbody>', page, re.S)
     assert body, "the betting table has no body"
     body = body.group(1)
-    drawn = re.findall(r'<tr data-id="([^"]+)" data-rung="([^"]*)"', body)
+    # The rows a room sees before it ticks Every status. The others are in the
+    # markup too, hidden, and `test_the_betting_table_holds_every_bet_and_
+    # shortlists_ready_and_in_progress` is about them.
+    drawn = [
+        (record_id, rung)
+        for record_id, rung, off in re.findall(
+            r'<tr data-id="([^"]+)" data-rung="([^"]*)" class="[^"]*"( data-offlist)?', body
+        )
+        if not off
+    ]
     assert drawn, "the betting table drew no rows at all"
 
     holder, under = "", {}
@@ -9411,6 +9857,9 @@ def test_the_betting_tables_connectors_follow_what_is_on_screen(
 
 
 _BETTING_BOX = """
+// Every status on, so the search is asked over every row the table holds and
+// "an empty box hides nothing" means all of them.
+BETEVERY.checked = true;
 const shown = () => betRows().filter(row => !row.hidden).map(row => row.dataset.id);
 const ask = needle => { BETFIND.value = needle; betSearch(); return shown(); };
 const out = {all: betRows().length};

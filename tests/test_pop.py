@@ -2072,14 +2072,23 @@ def test_the_owner_submenu_writes_a_person_and_nobody_clears_it(index: Index, tm
 
 
 _TAKING_OUT = """
-const inside = rowWhere(one => one.parent && !one.off_plan_parent);
+// Two that act, told apart by what is ABOVE the parent, and found by walking the
+// rows' own `parent` rather than by reading `out_to` — a test that took its
+// expectation from the field under test would agree with it by construction.
+const above = one => (DATA.rows[one.parent] || {}).parent;
+const inside = rowWhere(one => one.kind === 'task' && !one.off_plan_parent
+                               && (DATA.rows[above(one)] || {}).kind === 'project');
+const topmost = rowWhere(one => one.kind === 'pitch' && !one.off_plan_parent
+                                && (DATA.rows[above(one)] || {}).kind === 'product');
 const off = rowWhere(one => one.off_plan_parent);
 const loose = rowWhere(one => !one.parent && !one.off_plan_parent
                               && (POP_SCHEMA.parent_kinds[one.kind] || []).length);
 const top = rowWhere(one => !(POP_SCHEMA.parent_kinds[one.kind] || []).length);
-if (!inside || !off || !loose || !top)
-  return {error: 'the corpus does not hold all four shapes',
-          have: {inside: !!inside, off: !!off, loose: !!loose, top: !!top}};
+if (!inside || !topmost || !off || !loose || !top)
+  return {error: 'the corpus does not hold all five shapes',
+          have: {inside: !!inside, topmost: !!topmost, off: !!off, loose: !!loose, top: !!top}};
+const insideAbove = above(inside);
+const topmostAbove = above(topmost);
 // Each refusal is opened, read and PRESSED, because "drawn dim" and "does
 // nothing" are two claims and only the second one is about the plan.
 const readItem = id => {
@@ -2094,19 +2103,31 @@ const readItem = id => {
 };
 const refused = {off: readItem(off.id), loose: readItem(loose.id), top: readItem(top.id)};
 const quiet = {sent: patches().length, base: baseNow(), beats: beatsNow()};
-// The one that acts, last, so the count above cannot be confused with this one.
-openOn(inside.id);
-const acting = {word: wordIn(itemIn('take-out')),
-                disabled: itemIn('take-out').getAttribute('aria-disabled')};
+// The two that act, last, so the count above cannot be confused with these.
+const act = row => {
+  openOn(row.id);
+  return {word: wordIn(itemIn('take-out')),
+          disabled: itemIn('take-out').getAttribute('aria-disabled')};
+};
+const acting = act(inside);
 itemIn('take-out').click();
 await rest(700);
-return {refused, quiet, acting,
-        inside: {id: inside.id, title: inside.title,
-                 parentTitle: DATA.rows[inside.parent].title},
+const insideSaid = said();
+const insideClosed = !popIsOpen();
+const lifting = act(topmost);
+itemIn('take-out').click();
+await rest(700);
+return {refused, quiet, acting, lifting,
+        inside: {id: inside.id, title: inside.title, above: insideAbove,
+                 parentTitle: DATA.rows[inside.parent].title,
+                 aboveTitle: DATA.rows[insideAbove].title},
+        topmost: {id: topmost.id, title: topmost.title, above: topmostAbove,
+                  parentTitle: DATA.rows[topmost.parent].title},
         off: {id: off.id, title: off.title}, loose: {id: loose.id, title: loose.title},
         top: {id: top.id, title: top.title, kind: top.kind},
-        sent: patches(), said: said(), closed: !popIsOpen(),
-        now: DATA.rows[inside.id].parent, beats: beatsNow()};
+        sent: patches(), said: insideSaid, closed: insideClosed, liftSaid: said(),
+        now: DATA.rows[inside.id].parent, liftNow: DATA.rows[topmost.id].parent,
+        beats: beatsNow()};
 """
 
 
@@ -2165,21 +2186,38 @@ def test_take_out_acts_on_a_parent_and_refuses_the_three_ways_there_is_not_one(
     assert got["quiet"]["base"] == HEAD
     assert got["quiet"]["beats"] == {"writing": 0, "wrote": []}, got["quiet"]["beats"]
 
+    # Out of a pitch is into the project the pitch is in — jcanton, 2026-10-12,
+    # "move-out should always move to the upper parent". It sent `null`, and a
+    # pitch taken out of a pitch on the graph left its project with it.
+    inside = got["inside"]
     assert got["acting"]["disabled"] is None, "the row that IS inside something was refused"
-    assert got["acting"]["word"] == f'Take out of "{got["inside"]["parentTitle"]}"', (
-        f"the item names {got['acting']['word']!r} and the parent is "
-        f"{got['inside']['parentTitle']!r}"
-    )
-    assert len(got["sent"]) == 1, got["sent"]
-    assert got["sent"][0]["url"] == f"/api/record/{got['inside']['id']}"
-    assert got["sent"][0]["body"]["fields"] == {"parent": None}, (
-        "`parent: ''` and `parent: null` are not the same write — `patch_text` "
-        f"round-trips a value: {got['sent'][0]['body']['fields']}"
+    assert got["acting"]["word"] == (
+        f'Take out of "{inside["parentTitle"]}" into "{inside["aboveTitle"]}"'
+    ), f"the item reads {got['acting']['word']!r}"
+    assert len(got["sent"]) == 2, got["sent"]
+    assert got["sent"][0]["url"] == f"/api/record/{inside['id']}"
+    assert got["sent"][0]["body"]["fields"] == {"parent": inside["above"]}, (
+        f"taking a task out of its pitch sent {got['sent'][0]['body']['fields']}, and the "
+        f"pitch is in {inside['above']}"
     )
     assert got["closed"] is True
-    assert got["said"] == f"{got['inside']['title']} is no longer inside anything"
-    assert got["now"] is None, "the row is still filed under its parent after the write"
-    assert got["beats"] == {"writing": 1, "wrote": ["c0ffee1"]}, got["beats"]
+    assert got["said"] == f'{inside["title"]} is now inside "{inside["aboveTitle"]}"'
+    assert got["now"] == inside["above"], "the row is not where the write put it"
+
+    # And where nothing above may hold it — a pitch out of its project, under a
+    # product that cannot hold a pitch — it is the top of the tree, as before.
+    topmost = got["topmost"]
+    assert got["lifting"]["word"] == f'Take out of "{topmost["parentTitle"]}"', (
+        f"the item names somewhere to land and there is nowhere: {got['lifting']['word']!r}"
+    )
+    assert got["sent"][1]["url"] == f"/api/record/{topmost['id']}"
+    assert got["sent"][1]["body"]["fields"] == {"parent": None}, (
+        "`parent: ''` and `parent: null` are not the same write — `patch_text` "
+        f"round-trips a value: {got['sent'][1]['body']['fields']}"
+    )
+    assert got["liftSaid"] == f"{topmost['title']} is no longer inside anything"
+    assert got["liftNow"] is None, "the row is still filed under its parent after the write"
+    assert got["beats"] == {"writing": 2, "wrote": ["c0ffee1", "c0ffee2"]}, got["beats"]
 
 
 # --------------------------------------------------------------------------- #

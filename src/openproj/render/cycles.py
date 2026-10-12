@@ -13,6 +13,7 @@ from ..model import (
     Record,
     days_after,
     is_bettable,
+    out_to,
     size_weeks,
     without_comments,
     workers_on,
@@ -266,16 +267,27 @@ _CYCLE = """
     belongs to this table and not to the page, so it sits with the table's own
     caption rather than in a control bar above the heading.
 
-    A box and not the facet bar the three plan views share. The facets it would
-    offer are status and kind, and this table is ALREADY only ready and
-    in-progress bettable records — a filter whose whole vocabulary has been
-    applied is a control with one setting. What a betting table actually needs
-    is "where is the thing somebody just said out loud", which is a search, and
-    "put the big ones together", which is a sort. -#}
+    A box and not the facet bar the three plan views share. What a betting table
+    actually needs is "where is the thing somebody just said out loud", which is
+    a search, and "put the big ones together", which is a sort.
+
+    And one box for status, rather than the six-way facet: jcanton, 2026-10-12,
+    "option to filter all records, not only ready or in progress", and one
+    checkbox was his pick over a chip per status. The table is a shortlist and
+    the question is whether to look past it, which has two answers. Remembered
+    per browser, the way a column width is.
+
+    The two openings of the sentence are both in the markup and the box swaps
+    them, so the words the page says are the template's and not a string in a
+    script that has to be kept the same as this one. -#}
 <p class="hint betsearch">
   <label for="betfind" class="sr-only">Search the betting table</label>
   <input type="search" id="betfind" placeholder="Search" autocomplete="off">
-  <span>Everything ready or in progress, with the tasks each one is made of
+  <label for="betevery" class="betevery"><input type="checkbox" id="betevery"
+    autocomplete="off"> Every status</label>
+  <span><span class="betscope" data-every="no">Everything ready or in
+  progress</span><span class="betscope" data-every="yes" hidden>Everything a cycle
+  can be bet on, whatever its status</span>, with the tasks each one is made of
   underneath it. Ticking one stamps it with cycle
   {{ c.number }}; an item already in progress from an earlier cycle keeps the cycle it
   was bet in, so its overrun keeps counting. A task has no tick of its own — it is
@@ -289,6 +301,12 @@ _CYCLE = """
 <p class="hint" id="betnone" hidden>Nothing here matches
   <strong id="betterm"></strong>. <button type="button" id="betclear">Clear the
   search</button></p>
+{#- And the other way to arrive at an empty table: nothing is ready or in
+    progress, while the plan does hold something a cycle could be bet on. A
+    header over no rows there reads as the page failing to load, and the way
+    out is the box above, so it is offered here too. -#}
+<p class="hint" id="betshort" hidden>Nothing is ready or in progress.
+  <button type="button" id="betwiden">Show every status</button></p>
 {#- No `table-scroll` wrapper. It wore one from the day it was written, against a
     stylesheet that has never carried the rule, so the class did nothing — and
     the rule is the table page's own, sized against a stack of controls this page
@@ -320,7 +338,10 @@ _CYCLE = """
       pitch has to become the `└─` whatever it was rendered as. The attribute is
       the drawing's own state, in the same place `td[data-rungs]` on the table
       page keeps it. -#}
-  <tr data-id="{{ row.id }}" data-rung="{{ row.rung }}" class="{{ row.classes }}">
+  {#- Off the list and `hidden` from the start, so a page that has not run
+      its script yet still shows the shortlist and not everything. -#}
+  <tr data-id="{{ row.id }}" data-rung="{{ row.rung }}" class="{{ row.classes }}"
+      {%- if row.offlist %} data-offlist hidden{% endif %}>
     {#- Empty and not absent on a task's row. Every column below is addressed by
         position — `betCell` sorts on `row.cells[at]` — so a row one cell short
         would sort its title against everybody else's kind. It is also what keeps
@@ -366,7 +387,16 @@ _CYCLE = """
     <td><input class="live wide" data-field="reviewers" data-type="list"
                aria-label="{{ row.title }} reviewers"
                data-suggest="people" autocomplete="off" value="{{ row.reviewers }}"></td>
-    <td class="derived">{{ row.cycle }}</td>
+    {#- A task's cell is empty, and on a page that writes it holds the one way a
+        task gets a cycle of its own: out of its pitch and into this cycle,
+        staged like every other edit here and written on Save. -#}
+    <td class="derived">{% if editable and row.own_bet -%}
+      <button type="button" class="ownbet" data-out="{{ row.out_to }}"
+        data-holder="{{ row.holder }}"
+        aria-label="Bet {{ row.title }} on its own into cycle {{
+          c.number }}, out of {{ row.holder }}"
+        >Bet on its own</button>
+      {%- else %}{{ row.cycle }}{% endif %}</td>
   </tr>
   {% endfor %}
 </tbody></table>
@@ -547,7 +577,7 @@ if (GOAL) GOAL.oninput = () => {
 // Ticking is a write to the RECORD, not to the cycle: `cycle` lives on the thing
 // being bet, and one row is one commit so a half-finished betting table is still
 // a readable history rather than one commit nobody can unpick.
-for (const box of document.querySelectorAll('input.bet')) {
+function wireTick(box) {
   box.onchange = () => {
     const row = box.closest('tr');
     pend(row.dataset.id, 'cycle', box.checked ? NUMBER : null);
@@ -602,14 +632,32 @@ addEventListener('beforeunload', event => {
 // record whose title is blank is one `validate_all` complains about but still
 // draws.
 function named(id) {
-  // Walked rather than selected: an id goes into an attribute selector as text,
-  // and the shim the JS tests drive this page under has no `CSS.escape` to make
-  // that safe. `dataset.id` is the same string the row was drawn with.
-  const row = [...document.querySelectorAll('#bets tbody tr')]
-    .find(tr => tr.dataset.id === id);
+  const row = betRow(id);
   const title = row && row.querySelector('.betname a');
   return (title && title.textContent.trim()) || id;
 }
+
+// Walked rather than selected: an id goes into an attribute selector as text,
+// and the shim the JS tests drive this page under has no `CSS.escape` to make
+// that safe. `dataset.id` is the same string the row was drawn with.
+function betRow(id) {
+  return [...document.querySelectorAll('#bets tbody tr')].find(tr => tr.dataset.id === id);
+}
+
+// True while a Save is going out, which is the one time the rows may not be
+// swapped: a page fetched before a commit lands would put back the values the
+// commit has just replaced.
+let FLUSHING = false;
+// Bumped by every record this page writes, so a refresh can tell that one landed
+// while its page was in flight — see `betRefresh`.
+let WROTE = 0;
+// The refresh's own state, declared here and not beside it: `flush` calls
+// `betRefresh` after a clash, and a script stopped anywhere between the two would
+// otherwise turn that call into a ReferenceError on a `let` not yet reached.
+let betHead = null;
+let betSwapping = false;
+const BET_POLL_MS = 30000;
+const BET_CURRENT = 'The betting table is up to date with the plan';
 
 async function flush(quiet) {
   if (!PENDING.size && !ROSTER_DIRTY && !NOTES_DIRTY && !GOAL_DIRTY) return true;
@@ -627,53 +675,93 @@ async function flush(quiet) {
     if (!(await saveSetup())) { mark(); return false; }
     saved += edits;
   }
-  // One record per commit, each against the commit the last one returned: a
-  // batch that fails half way is still a readable history rather than one commit
-  // nobody can unpick.
-  for (const [id, fields] of [...PENDING]) {
-    dispatchEvent(new Event('openproj:writing'));
-    let committed = null;
-    try {
-      const response = await fetch(`/api/record/${encodeURIComponent(id)}`, {
-        method: 'PATCH', headers: {'content-type': 'application/json'},
-        body: JSON.stringify({base_commit: BASE.value, fields, body: null}),
-      });
-      const answer = await answerOf(response);
-      if (!response.ok) {
-        say(`${named(id)}: ${refusal(answer, response.status)}`
-            + (saved ? ` — ${saved} already saved` : ''));
+  // One record per commit: a batch that fails half way is still a readable
+  // history rather than one commit nobody can unpick.
+  //
+  // **Each against the commit its own row was read at**, and not the one the
+  // last write returned. People edit records while the betting table is going on
+  // — jcanton, 2026-10-12, "there will be several occasions" — and the server
+  // merges field by field against that base. Handing every row the newest commit
+  // made that merge blind from the second row on: somebody's appetite of 3,
+  // typed on the record page while this table held 5, was the base AND the
+  // stored value, so the table's 5 went over it without a word.
+  //
+  // A row nobody else touched merges as before. A clash on one row is that
+  // row's news and not the batch's: the others are separate commits, so they go
+  // on, and the row is taken back to what is stored and says what it lost.
+  const problems = [];
+  let clashed = false;
+  FLUSHING = true;
+  try {
+    for (const [id, fields] of [...PENDING]) {
+      const row = betRow(id);
+      const base = (row && row.dataset.base) || BASE.value;
+      dispatchEvent(new Event('openproj:writing'));
+      let committed = null;
+      try {
+        const response = await fetch(`/api/record/${encodeURIComponent(id)}`, {
+          method: 'PATCH', headers: {'content-type': 'application/json'},
+          body: JSON.stringify({base_commit: base, fields, body: null}),
+        });
+        const answer = await answerOf(response);
+        // A merge conflict carries its report in `conflict`; a 409 without one
+        // is a rule refusing the value, which the row keeps so it can be fixed.
+        if (response.status === 409 && answer.conflict) {
+          PENDING.delete(id);
+          clashed = true;
+          // The report names the file first, which is the store's word for the
+          // record this sentence has already named by its title.
+          const report = answer.conflict.replace(/^\S+ — /, '');
+          problems.push(`${named(id)} was not saved — ${report}. `
+                        + 'The row now shows what is stored; change it again to keep yours.');
+          continue;
+        }
+        if (!response.ok) {
+          problems.push(`${named(id)}: ${refusal(answer, response.status)}`);
+          continue;
+        }
+        committed = answer.commit;
+        BASE.value = answer.commit || BASE.value;
+        if (row && answer.commit) row.dataset.base = answer.commit;
+        WROTE++;
+        PENDING.delete(id);
+        saved += Object.keys(fields).length;
+      } catch (error) {
+        // The connection went mid-batch. With no `catch` the rejection escaped
+        // `flush`, so Save stayed disabled over a bar still counting the edits
+        // and nothing said which row the batch stopped on — and the rows before
+        // it had really been committed, one per commit, so "nothing happened"
+        // would have been the wrong thing to say as well as an unsaid one.
+        //
+        // `PENDING` keeps this row and every row after it, which is what makes
+        // the repeat safe: `mark()` gives Save back and the retry re-sends only
+        // what is still pending, with the same values it sent this time. That is
+        // why a row that really did land is not written twice —
+        // `_merge_frontmatter` skips every key whose stored value already equals
+        // the one being sent, so the re-send merges with itself and answers 200.
+        // It is NOT refused, and this sentence used to promise that it would be.
+        say(`${named(id)}: not saved — ${error.message}`
+            + (saved ? ` — ${saved} already saved` : '')
+            + '. Press Save again: the retry sends the same values, so a row that '
+            + 'did land is not written twice.');
         mark();
         return false;
+      } finally {
+        dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
       }
-      committed = answer.commit;
-      BASE.value = answer.commit || BASE.value;
-      PENDING.delete(id);
-      saved += Object.keys(fields).length;
-    } catch (error) {
-      // The connection went mid-batch. With no `catch` the rejection escaped
-      // `flush`, so Save stayed disabled over a bar still counting the edits and
-      // nothing said which row the batch stopped on — and the rows before it had
-      // really been committed, one per commit, so "nothing happened" would have
-      // been the wrong thing to say as well as an unsaid one.
-      //
-      // `PENDING` keeps this row and every row after it, which is what makes the
-      // repeat safe: `mark()` gives Save back and the retry re-sends only what is
-      // still pending, with the same values it sent this time. That is why a row
-      // that really did land is not written twice — `_merge_frontmatter` skips
-      // every key whose stored value already equals the one being sent, so the
-      // re-send merges with itself and answers 200. It is NOT refused, and this
-      // sentence used to promise that it would be.
-      say(`${named(id)}: not saved — ${error.message}`
-          + (saved ? ` — ${saved} already saved` : '')
-          + '. Press Save again: the retry sends the same values, so a row that '
-          + 'did land is not written twice.');
-      mark();
-      return false;
-    } finally {
-      dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
     }
+  } finally {
+    FLUSHING = false;
   }
   mark();
+  if (problems.length) {
+    const others = saved ? ` ${saved} other change${saved === 1 ? '' : 's'} saved.` : '';
+    say(problems.join(' ') + others);
+    // The clashing row back to what is stored, now and not in thirty seconds:
+    // the sentence above says it shows that.
+    if (clashed) betRefresh();
+    return false;
+  }
   receipt = `${quiet ? 'Autosaved' : 'Saved'} ${saved} change${saved === 1 ? '' : 's'}`;
   say(receipt);
   return true;
@@ -702,8 +790,9 @@ setInterval(() => {
 // script's own sweep — which runs above this block — has already attached the
 // widget. Attaching again put a second widget on the same box: two lists opened
 // together, and one Enter picked a name from each — choosing `bo` wrote
-// `bo, ann, `.
-for (const input of document.querySelectorAll('#bets input.live')) {
+// `bo, ann, `. A row a refresh brings in is the exception, and `betRefresh`
+// attaches it there, once, before this runs.
+function wireLive(input) {
   let was = input.value;
   // Saving on blur alone is not safe when the field is already an input: the
   // browser restores form values across a reload, autofills, and the picker
@@ -754,7 +843,7 @@ for (const input of document.querySelectorAll('#bets input.live')) {
 // drew, and `change` fires only when somebody picked. What it shares with the
 // boxes above is the thing that matters — nothing is written here, it is staged,
 // and the one Save button on this page commits it with everything else.
-for (const pick of document.querySelectorAll('#bets select.pick')) {
+function wirePick(pick) {
   let was = pick.value;
   pick.onchange = () => {
     if (pick.value === was) return;
@@ -772,6 +861,24 @@ for (const pick of document.querySelectorAll('#bets select.pick')) {
     pend(pick.closest('tr').dataset.id, pick.dataset.field, pick.value);
   };
 }
+
+// Every control in these rows, wired. A function and not three loops over the
+// page, because a refresh brings in rows these loops never saw: the swap used
+// to put fresh rows in and nothing on them did anything — a tick that staged
+// nothing and a box whose typing went nowhere, until somebody reloaded and lost
+// whatever else they had not saved.
+function wireBets(root) {
+  for (const box of root.querySelectorAll('input.bet')) wireTick(box);
+  for (const input of root.querySelectorAll('input.live')) wireLive(input);
+  for (const pick of root.querySelectorAll('select.pick')) wirePick(pick);
+}
+
+// The rows as served: wired, and read at the commit this page was drawn at.
+// Here, where the three loops this replaced ran, and asked of the document
+// rather than of `BETS.tBodies`, which is declared further down and which the
+// node shim the write tests drive this page under does not have.
+for (const row of document.querySelectorAll('#bets tbody tr')) row.dataset.base = BASE.value;
+wireBets(document.getElementById('bets'));
 
 // **The browser's copy of `_percent` (`tokens.py`), and it has to stay one.**
 // Whoever changes either of these is changing an invariant written in two
@@ -950,10 +1057,16 @@ document.getElementById('add').onclick = () => {
 const BETS = document.getElementById('bets');
 const BETFIND = document.getElementById('betfind');
 const BETNONE = document.getElementById('betnone');
+const BETEVERY = document.getElementById('betevery');
+const BETSHORT = document.getElementById('betshort');
+const BET_EVERY_KEY = 'openproj:bet-every';
 
 function betRows() { return [...BETS.tBodies[0].rows]; }
 
-function betSearch() {
+// `quiet` leaves the live region alone: a refresh re-filters rows it has just
+// brought in, and its "N of M shown" — or its blank, with nothing searched —
+// went over a row that did not save, which is the line somebody needs to read.
+function betSearch(quiet = false) {
   // `said` is what is in the box and `term` is what can be searched for. They
   // part company wherever normalising leaves less than a needle: `#` is
   // something somebody typed, so this is not an empty box and the rows must
@@ -971,8 +1084,18 @@ function betSearch() {
   // comment in `_SHELL` is where the rule is written down.
   const said = BETFIND.value.trim();
   const term = sought(said);
+  // Every status widens what the search looks through, rather than being a
+  // second filter applied after it: "N of M shown" counts against the rows in
+  // scope, so with the box off a search reports out of the shortlist and not out
+  // of a hundred finished bets nobody can see.
+  const every = BETEVERY.checked;
+  for (const scope of document.querySelectorAll('.betscope'))
+    scope.hidden = (scope.dataset.every === 'yes') !== every;
   let shown = 0;
+  let inScope = 0;
   for (const row of betRows()) {
+    if (!every && 'offlist' in row.dataset) { row.hidden = true; continue; }
+    inScope++;
     // The whole row's text, which is what somebody means by "search": a title,
     // an owner, a kind and an id are all things said out loud at a betting
     // table. `textContent` misses what is inside the editable cells, whose
@@ -1002,7 +1125,7 @@ function betSearch() {
       .filter(box => box.type !== 'checkbox')
       .flatMap(box => box.dataset.type === 'list' ? box.value.split(',') : [box.value])
       .map(value => plain(value));
-    const haystack = [...row.cells].map(cell => plain(cell.textContent))
+    const haystack = [...row.cells].map(cell => plain(betText(cell)))
       .concat(typed).join(' ');
     const hit = !said || !!found(term, haystack);
     row.hidden = !hit;
@@ -1013,7 +1136,10 @@ function betSearch() {
   // cycle has nothing to bet on" — with the control that gets you out of it.
   BETNONE.hidden = shown > 0 || !said;
   if (!BETNONE.hidden) document.getElementById('betterm').textContent = said;
-  say(said ? `${shown} of ${betRows().length} shown` : '');
+  // The shortlist empty while the plan holds bets off it: a different sentence
+  // from a search that matched nothing, with the box's own way out.
+  BETSHORT.hidden = every || inScope > 0 || !betRows().length;
+  if (!quiet) say(said ? `${shown} of ${inScope} shown` : '');
   betTree();
 }
 
@@ -1054,12 +1180,57 @@ function betTree() {
   });
 }
 
-BETFIND.addEventListener('input', betSearch);
+BETFIND.addEventListener('input', () => betSearch());
+// Read back before the first draw, through `remembered` because a storage that
+// throws must cost the remembered box and not the table.
+BETEVERY.checked = remembered.get(BET_EVERY_KEY) === 'yes';
+BETEVERY.addEventListener('change', () => {
+  if (BETEVERY.checked) remembered.set(BET_EVERY_KEY, 'yes');
+  else remembered.forget(BET_EVERY_KEY);
+  betSearch();
+  say(BETEVERY.checked ? 'Showing every status' : 'Showing ready and in progress');
+});
+// Shown only while the box is off, so a click is always the box going on.
+document.getElementById('betwiden').onclick = () => {
+  BETEVERY.click();
+  BETEVERY.focus();
+};
+betSearch();
 document.getElementById('betclear').onclick = () => {
   BETFIND.value = '';
   betSearch();
   BETFIND.focus();
 };
+
+// Bet on its own: a task out of its pitch and into this cycle, as two staged
+// fields on one row, so Save writes them as one commit and Undo takes back only
+// these two and not an appetite typed on the same row a minute ago. Where it is
+// filed is the server's answer (`data-out`), the one `Take out` reads too.
+//
+// Delegated from the table and not bound per button, because `betRefresh`
+// replaces the whole tbody and a listener on the old rows goes with them.
+BETS.addEventListener('click', event => {
+  const button = event.target.closest('button.ownbet');
+  if (!button) return;
+  const id = button.closest('tr').dataset.id;
+  const holder = button.dataset.holder;
+  const staged = PENDING.get(id) || {};
+  if ('parent' in staged) {
+    const {parent, cycle, ...rest} = staged;
+    if (Object.keys(rest).length) PENDING.set(id, rest); else PENDING.delete(id);
+    button.textContent = 'Bet on its own';
+    button.setAttribute('aria-label',
+      `Bet ${named(id)} on its own into cycle ${NUMBER}, out of ${holder}`);
+    mark();
+    say(`${named(id)} stays in ${holder}`);
+    return;
+  }
+  pend(id, 'parent', button.dataset.out || null);
+  pend(id, 'cycle', NUMBER);
+  button.textContent = 'Undo';
+  button.setAttribute('aria-label', `Undo betting ${named(id)} on its own`);
+  say(`${named(id)} will leave ${holder} and be bet into cycle ${NUMBER} on Save`);
+});
 
 // Sorting, by the text a reader can see. `appetite` is the one column where
 // that is a number and sorting it as a string would put 10 before 2 — so a cell
@@ -1084,7 +1255,14 @@ function betCell(row, at) {
   const pick = cell.querySelector('select');
   if (pick) return String(pick.selectedIndex).padStart(3, '0');
   const box = cell.querySelector('input:not([type=checkbox])');
-  return (box ? box.value : cell.textContent).trim();
+  return (box ? box.value : betText(cell)).trim();
+}
+
+// What a cell says about the record, which a button in it does not: "Bet on its
+// own" on every task row made `own` find all of them and sorted the bet-in column
+// by a control's label.
+function betText(cell) {
+  return cell.querySelector('button.ownbet') ? '' : cell.textContent;
 }
 
 function betSort(at, descending) {
@@ -1099,7 +1277,7 @@ function betSort(at, descending) {
   // Re-appending a row MOVES it, so the checkboxes and their state travel with
   // it. This is the whole reason the sort is done on the live rows rather than
   // by re-rendering the table from data: the data is in the form.
-  for (const row of rows) BETS.tBodies[0].append(row);
+  betPlace(rows);
   // And the tree goes, because it has stopped being true. Sorted by appetite a
   // task sits wherever its number falls and the bet it belongs to is somewhere
   // else entirely, so the indent points at a stranger — the same rule the table
@@ -1107,6 +1285,20 @@ function betSort(at, descending) {
   // is no way back to it but a reload, which is also the table page's answer:
   // the order a tree can be drawn over is the server's own.
   BETS.classList.add('sorted');
+}
+
+// The rows in this order, moving every one but the row somebody is in. A row
+// taken out of the document takes the focus with it — the box being typed in
+// blurs, which stages it half-typed — and a refresh now runs while people work,
+// so the row under the cursor is the one row that never moves.
+function betPlace(order) {
+  const body = BETS.tBodies[0];
+  const anchor = order.find(tr => tr.contains(document.activeElement));
+  for (const tr of [...body.rows]) if (tr !== anchor) tr.remove();
+  if (!anchor) { body.append(...order); return; }
+  const at = order.indexOf(anchor);
+  anchor.before(...order.slice(0, at));
+  anchor.after(...order.slice(at + 1));
 }
 
 // --- The table follows the plan while the table is going on ------------------
@@ -1121,53 +1313,87 @@ function betSort(at, descending) {
 // on a reading page and wrong here for the same reason it was wrong on the deck:
 // this page is a FORM, and a reload throws away every tick nobody has saved yet.
 //
-// **So it swaps the rows, and only when swapping them cannot cost anything.**
-// Three refusals, and each is a way somebody loses work:
+// **So it swaps the rows, one at a time, and never one somebody is working in.**
+// It used to swap the whole body and refuse while anything was unsaved or the
+// focus was in the table — and a betting table always has one or the other, so
+// it stopped following the plan for the length of the meeting. jcanton,
+// 2026-10-12: people edit records while the table is going on, "so it should be
+// possible for the two to happen simultaneously". So the rule is per row:
 //
-//   - not while anything on this page is unsaved, because a swap would drop
-//     ticks that are the whole point of the meeting;
-//   - not while the focus is inside the table, because the row under somebody's
-//     cursor moving mid-sentence is worse than a stale row;
-//   - not while a save is in flight, because the answer is about to move again.
+//   - a row with an unsaved edit stays exactly as the room left it, values and
+//     base commit, until Save takes it — then the next poll replaces it with
+//     what was merged, somebody else's changes to its other fields included;
+//   - the row the focus is in stays, and does not move (`betPlace`);
+//   - every other row is the server's, wired, and read at the server's commit;
+//   - nothing is swapped while a Save is going out, nor from a page fetched
+//     before one landed, because that page predates the commit.
 //
-// What it costs is that a busy table stops updating until somebody saves, which
-// is the right way round: the unsaved ticks are the thing that cannot be got
-// back, and the sentence below says so rather than leaving it silent.
-let betHead = null;
-let betSwapping = false;
-const BET_POLL_MS = 30000;
-
-// The same four things `beforeunload` above refuses to leave over, asked as one
-// question. Written as a call to that state rather than as a fifth copy of the
-// list: a swap and a tab close are the two ways unsaved work here is lost, and
-// they must not be able to disagree about what "unsaved" means.
-function betBusy() {
-  if (PENDING.size || ROSTER_DIRTY || NOTES_DIRTY || GOAL_DIRTY) return 'unsaved changes';
-  if (BETS.contains(document.activeElement)) return 'the table has focus';
-  return '';
+// A sort holds across a swap, and so do the search and Every status: the room
+// arranged the table, and a table that rearranges itself every time somebody
+// edits a record is a table nobody can point at.
+// Whether a refresh must leave this row alone.
+function betHeld(row) {
+  return PENDING.has(row.dataset.id) || row.contains(document.activeElement);
 }
 
+// True when the rows were brought up to date, false when they could not be, so
+// the poll asks again rather than believing it is current.
 async function betRefresh() {
-  if (betSwapping) return;
+  if (betSwapping || FLUSHING) return false;
   betSwapping = true;
+  const wrote = WROTE;
   try {
     const answer = await fetch(location.pathname + location.search,
                               {headers: {'accept': 'text/html'}});
-    if (!answer.ok) return;
+    if (!answer.ok) return false;
     const fresh = new DOMParser().parseFromString(await answer.text(), 'text/html');
     const rows = fresh.querySelector('#bets tbody');
-    if (!rows) return;
-    // Which rows were ticked, by id, so the swap cannot lose a decision that
-    // has been made and saved — and so a row that arrives already bet in comes
-    // back ticked rather than blank.
-    BETS.tBodies[0].replaceWith(rows);
-    // The fresh rows arrive in the server's order, which is the order the tree
-    // is drawn over — so whatever sort was applied to the rows that have just
-    // been thrown away no longer describes anything, and the class that hides
-    // the tree while a sort holds goes with them.
-    BETS.classList.remove('sorted');
-    betSearch();
-    say('The betting table was refreshed — somebody changed the plan');
+    if (!rows || FLUSHING || WROTE !== wrote) return false;
+    const base = (fresh.getElementById('base') || {}).value || BASE.value;
+    // Everything below runs without yielding, so what is held is decided in the
+    // same instant the rows are replaced.
+    const held = new Map(betRows().filter(betHeld).map(row => [row.dataset.id, row]));
+    const added = [];
+    const order = [...rows.rows].map(row => {
+      const kept = held.get(row.dataset.id);
+      if (kept) { held.delete(row.dataset.id); return kept; }
+      row.dataset.base = base;
+      added.push(row);
+      return row;
+    });
+    // A row the room is still working on that the plan no longer draws here —
+    // moved, or no longer bettable — stays at the end until it is saved or
+    // left, rather than vanishing with the edit in it.
+    order.push(...held.values());
+    betPlace(order);
+    for (const row of added) {
+      // Attached here and not by the combobox's own sweep, which ran once at
+      // load, and BEFORE the row's own keys are wired: the suggestion list has
+      // to answer Escape and Enter first (see `wireLive`).
+      for (const input of row.querySelectorAll('[data-suggest]')) attachSuggest(input);
+      wireBets(row);
+    }
+    window.SHOWING = ['cycle-' + NUMBER].concat(betRows().map(row => row.dataset.id));
+    const sorted = BETS.querySelector('th[aria-sort="ascending"], th[aria-sort="descending"]');
+    if (sorted) {
+      betSort(Number(sorted.dataset.sort), sorted.getAttribute('aria-sort') === 'descending');
+    } else {
+      BETS.classList.remove('sorted');
+    }
+    mark();
+    betSearch(true);
+    // Said only over silence or over the last time it was said. A refresh now
+    // happens while people work, and the line it would overwrite is a receipt or
+    // a row that did not save, which is the line somebody needs to read.
+    const now = (document.getElementById('state') || {}).textContent || '';
+    if (!now.trim() || now.trim() === BET_CURRENT) say(BET_CURRENT);
+    betHead = base;
+    return true;
+  } catch {
+    // Offline for a moment, or an answer that would not parse: the rows stay as
+    // they are and the next poll asks again. `flush` calls this without waiting
+    // for it, so a rejection here would have nobody to land on.
+    return false;
   } finally {
     betSwapping = false;
   }
@@ -1176,17 +1402,8 @@ async function betRefresh() {
 async function betPoll() {
   try {
     const health = await (await fetch('/api/health')).json();
-    if (betHead !== null && health.head !== betHead) {
-      const why = betBusy();
-      if (why) {
-        // Said, not swallowed. A table that has quietly stopped following the
-        // plan looks exactly like a plan that has not changed.
-        say(`The plan changed — this table will refresh once ${why} is cleared`);
-      } else {
-        await betRefresh();
-      }
-    }
-    betHead = health.head;
+    if (betHead === null) { betHead = health.head; return; }
+    if (health.head !== betHead) await betRefresh();
   } catch { /* a moment offline is not news at a betting table */ }
 }
 
@@ -1231,7 +1448,8 @@ _CYCLE_STYLE = (
    table rather than in a bar above the heading: it belongs to this table. The
    box first, because it is the control and the sentence is the caption. */
 .betsearch { display: flex; align-items: baseline; gap: .6rem; }
-.betsearch input { flex: none; width: 12rem; }
+.betsearch input[type="search"] { flex: none; width: 12rem; }
+.betsearch .betevery { flex: none; white-space: nowrap; }
 .betsearch > span { flex: 1 1 auto; min-width: 0; }
 /* A column head that sorts. It is a real button so a keyboard can reach it, and
    it wears the head's own type so the row still reads as a header row. */
@@ -1391,18 +1609,25 @@ input.rate { width: 4rem; }
 button.drop { border: none; background: none; cursor: pointer; padding: 0 .2rem;
               color: var(--muted); font-size: 13px; line-height: 1; }
 button.drop:hover { color: var(--danger); }
+/* Upright inside a `.derived` cell, which italicises a value worked out from
+   somewhere else — and this is a control, not a value. */
+#bets button.ownbet { font-size: 12px; font-style: normal; padding: 1px 6px;
+                      white-space: nowrap; }
 /* A thumb's worth of box on a phone. Both pass WCAG's spacing test at their
    drawn size — 22x13 and 13x13 with nothing else within reach — and a review on
    a phone still landed a tap on them only by aiming at the exact centre, which
    is the test being right about the rule and wrong about the thumb. */
 @media """ + PHONE + """ {
-  button.drop { min-width: 24px; min-height: 24px; }
+  button.drop, #bets button.ownbet { min-width: 24px; min-height: 24px; }
   input.bet { width: 20px; height: 20px; }
   /* The search box over the explanation rather than beside it: a 12rem box on
      one flex row with the sentence left the sentence a 148px column eighteen
      lines tall. */
   .betsearch { flex-wrap: wrap; }
-  .betsearch input { width: 100%; }
+  /* The search box and not every input in the line: the Every status checkbox
+     sits in it too, and a checkbox 100% wide is a box drawn in the middle of an
+     empty row. (0,2,1) here and in the rule above, so this wins on order. */
+  .betsearch input[type="search"] { width: 100%; }
   /* "Start a cycle": three labelled boxes and a button on one wrapping line,
      which on a phone put each box wherever its label happened to end — three
      boxes at three different x's, 24px tall. One to a line, the label over its
@@ -2298,7 +2523,9 @@ def _proposed(index: Index, number: int, window: tuple[date, date] | None) -> Cy
     )
 
 
-def _bet_row(record: Record, number: int, by_id: dict[str, Record], rung: str = "") -> dict:
+def _bet_row(
+    record: Record, number: int, by_id: dict[str, Record], rung: str = "", offlist: bool = False
+) -> dict:
     """One row of the betting table: a bet, or one of the tasks that make it up.
 
     One shape for both, because they are the same row. A task's appetite is typed
@@ -2317,6 +2544,10 @@ def _bet_row(record: Record, number: int, by_id: dict[str, Record], rung: str = 
     `by_id` is here for `is_bettable`, which asks what kind of record holds this
     one — a chore under a project is bet in its own right and a task inside a
     pitch is not, and neither is visible from the record alone.
+
+    `offlist` is a row drawn only once somebody ticks Every status — see
+    `_shortlisted`. Decided by the caller, because a task is off the list when
+    the bet above it is, and a row cannot see the row above it.
     """
     size = size_weeks(record)
     # Whether a cycle can be bet on this row at all, which is the one control a
@@ -2376,7 +2607,40 @@ def _bet_row(record: Record, number: int, by_id: dict[str, Record], rung: str = 
         "cycle": (record.cycle if record.cycle is not None else "—") if rung == "" else "",
         "in_cycle": record.cycle == number,
         "carried": carried,
+        "offlist": offlist,
+        # A task can leave its pitch and be bet on its own — jcanton, 2026-10-12,
+        # betting `task-46ea60` into cycle 39 out of `pitch-370004`, which was
+        # bet in an earlier one. Nothing in the model is new: a task no pitch
+        # holds is already bettable, so this is a move and a tick staged as one
+        # gesture. Out to wherever the right-click menu's `Take out` files it
+        # (`out_to`, `model.py`), because "out of the pitch" is the same move
+        # on every page. Not on finished or dropped work, which nobody bets.
+        "own_bet": bool(rung) and record.status not in HISTORY,
+        "out_to": (out_to(record, by_id) or "") if rung else "",
+        "holder": by_id[record.parent].title if rung else "",
     }
+
+
+# What a betting table is about before anybody asks it for more, and the two
+# rungs that are history rather than a decision: off it whatever cycle they
+# carry, and off it under a bet that is on it.
+SHORTLIST = ("ready", "in_progress")
+HISTORY = ("done", "shelved")
+
+
+def _shortlisted(record: Record, number: int) -> bool:
+    """Whether a bet is on the betting table before anybody ticks Every status.
+
+    Ready and in progress, which is what the table always listed — and also
+    anything already bet into THIS cycle that is not finished or dropped. The
+    second half is new with the box: a `shaping` pitch ticked while Every status
+    was on is a bet in this cycle, and unticking the box would otherwise take it
+    off the page that made it, which reads as the tick having been lost. Done
+    and shelved are history, listed under Delivered or nowhere, and stay off.
+    """
+    if record.status in SHORTLIST:
+        return True
+    return record.cycle == number and record.status not in HISTORY
 
 
 def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
@@ -2545,7 +2809,16 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
     candidates = []
     # Ready first, then in progress, and by id inside each: the question at a
     # betting table is what to pick up, and what is already running is context.
-    order = ("ready", "in_progress")
+    # Then every other rung in the ladder's own order, which is drawn only when
+    # somebody ticks Every status — jcanton, 2026-10-12: "option to filter all
+    # records, not only ready or in progress". A pitch still marked `shaping`
+    # the morning it is argued for was not on the table at all, and the status
+    # lagging the meeting is the ordinary case rather than a mistake.
+    #
+    # Every row is rendered and the box only hides some, the way the search
+    # does, so ticking it costs no reload — this page is a form, and a reload
+    # throws away every tick nobody has saved.
+    order = SHORTLIST + tuple(status for status in STATUSES if status not in SHORTLIST)
     for record_id, record in sorted(
         index.plan.items(),
         key=lambda kv: (order.index(kv[1].status) if kv[1].status in order else len(order), kv[0]),
@@ -2556,9 +2829,10 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         # milestone and eleven of its own tasks on the table beside the five
         # pitches they belong to, and ticking any of them stamped a second cycle
         # onto one decision.
-        if record.status not in order or not is_bettable(record, index.plan):
+        if not is_bettable(record, index.plan):
             continue
-        candidates.append(_bet_row(record, number, index.plan))
+        offlist = not _shortlisted(record, number)
+        candidates.append(_bet_row(record, number, index.plan, offlist=offlist))
         # And what is inside the bet, under it. The appetite the room argues
         # about is the pitch's, but the thing that has to change for it to be met
         # is a task's — and until now that meant leaving the meeting's own page
@@ -2570,23 +2844,27 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         # table through the branch above instead, with a tick of its own: nothing
         # holds its bet, so there is no second decision to stamp.
         #
-        # Neither parked nor finished. A shelved task is not in the bet at all,
-        # and a done one is in it and cannot be changed by anybody in the room —
-        # its appetite is history, and no amount of re-sizing it makes the rest
-        # fit. What is left is exactly the work the meeting can move, which
-        # includes the `shaping` and `thinking` tasks nobody has sized: those are
-        # the rows the appetite column is here for.
+        # Neither parked nor finished, until somebody asks for every status. A
+        # shelved task is not in the bet at all, and a done one is in it and
+        # cannot be changed by anybody in the room — its appetite is history, and
+        # no amount of re-sizing it makes the rest fit. What is left is exactly
+        # the work the meeting can move, which includes the `shaping` and
+        # `thinking` tasks nobody has sized: those are the rows the appetite
+        # column is here for. The other two are rendered off the list, and so is
+        # every task under a bet that is itself off it.
         #
         # This is deliberately NOT the list the table's rollup counts. That
         # number is what the bet has to hold, finished work included; this is
         # what the room can do something about. Two questions, and the table
         # answering both with one list would be the table answering neither.
-        kids = sorted(
-            child
-            for child in index.children.get(record_id, ())
-            if child in index.plan and index.plan[child].status not in ("shelved", "done")
-        )
-        for at, child in enumerate(kids):
+        kids = sorted(child for child in index.children.get(record_id, ()) if child in index.plan)
+        hidden = {kid for kid in kids if offlist or index.plan[kid].status in HISTORY}
+        # The rows drawn before anybody ticks the box, which is what the markup's
+        # connectors describe: a done task last under a pitch is hidden, and the
+        # task above it is the one that ends the tree.
+        listed = [kid for kid in kids if kid not in hidden]
+        for child in kids:
+            peers = kids if child in hidden else listed
             candidates.append(
                 _bet_row(
                     index.plan[child],
@@ -2596,10 +2874,11 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
                     # is the whole of `connectors()` at one level deep — the only
                     # depth this table has, because a bet's contents are its
                     # tasks and a task holds nothing. The browser re-decides it
-                    # whenever the search hides a row, for the reason that
-                    # function exists: a `├─` over a row the filter removed
+                    # whenever the search or the box hides a row, for the reason
+                    # that function exists: a `├─` over a row the filter removed
                     # promises a sibling that is not there.
-                    rung="end" if at == len(kids) - 1 else "tee",
+                    rung="end" if child == peers[-1] else "tee",
+                    offlist=child in hidden,
                 )
             )
 
