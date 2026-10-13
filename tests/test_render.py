@@ -9159,7 +9159,10 @@ def test_every_status_is_one_box_that_widens_the_table_and_is_remembered(
     _, index = demo_rendered
     where = tmp_path / "cycle.html"
     where.write_text(render_cycle(index, 37, ROUTES, base_commit="deadbee"))
+    # Over an empty search: the page opens on `cycle:37`, and this is about what
+    # the box widens the table to, not about what the prefill narrows it to.
     ask = _BETS_SHOWN + """
+      BETFIND.value = ''; betSearch(true);
       return {shown: shown(), every: BETEVERY.checked,
               scope: [...document.querySelectorAll('.betscope')]
                 .filter(s => s.getClientRects().length).map(s => s.dataset.every)};
@@ -9184,6 +9187,100 @@ def test_every_status_is_one_box_that_widens_the_table_and_is_remembered(
     assert during == {"shown": [row["id"] for row in rows], "every": True, "scope": ["yes"]}
     assert reloaded == during, "the box was not read back when the page loaded again"
     assert forgotten == before, "unticking the box was not remembered"
+
+
+def test_the_betting_box_speaks_the_query_language_and_opens_on_its_cycle(
+    demo_rendered: tuple[Path, Index], tmp_path: Path
+):
+    """jcanton, 2026-10-13, on the cycle page: "the search box doesn't know the query
+    language (e.g. `cycle:39` doesn't work)", "pre-fill the search box with
+    cycle:<cycle-nr>", "the table doesn't show the count x out of N as the other
+    pages", and "it is also not obvious that columns are sortable until you click
+    on one".
+
+    **The rows a query keeps are the ones `query.evaluate` keeps**, over the data
+    each row ships — so this box and the server's parser are held together by
+    result, the claim `tests/test_search.py` makes about the other boxes. Under
+    the old substring search `cycle:37` plained to `cycle37` and found nothing.
+
+    The prefilled `cycle:37` keeps the tasks under every bet in 37, which carry
+    no cycle of their own; a malformed query says why beside the box and matches
+    nothing; the count is the other views' sentence; and every sortable head
+    says it sorts before anybody clicks it, the tick column's excepted.
+
+    In Chrome, because which rows are hidden and what a pseudo-element draws are
+    both answers only a browser has.
+    """
+    from browser import chrome, measured_in
+
+    from openproj.index import NO_VALUE
+    from openproj.query import evaluate, parse
+    from openproj.render import render_cycle
+
+    _, index = demo_rendered
+    rows = _cycle_view_rows(index)
+    developer = next(
+        login for row in rows for login in row["query"]["fields"]["developers"]
+    )
+    queries = ["cycle:37", "kind:task", "status:ready", "not cycle:37",
+               f"developer:{developer}", "cycle:37 kind:pitch"]
+
+    def kept(query: str) -> list[str]:
+        asked = parse(query)
+        return [
+            row["id"] for row in rows
+            if not row["offlist"]
+            and evaluate(asked, row["query"]["fields"], row["query"]["search"],
+                         row["query"]["name"], NO_VALUE)
+        ]
+
+    page = render_cycle(index, 37, ROUTES, base_commit="deadbee")
+    got = measured_in(
+        chrome(),
+        page,
+        tmp_path / "bet-language.html",
+        1400,
+        _BETS_SHOWN
+        + """
+      const count = () => document.querySelector('.betcount').textContent
+        .replace(/\\s+/g, ' ').trim();
+      const out = {box: BETFIND.value, opened: shown(), openedCount: count(), asked: {}};
+      for (const q of """ + json.dumps(queries) + """) {
+        BETFIND.value = q; BETFIND.dispatchEvent(new Event('input'));
+        out.asked[q] = {shown: shown(), count: count()};
+      }
+      BETFIND.value = 'kind:task and ('; BETFIND.dispatchEvent(new Event('input'));
+      out.broken = {shown: shown(), error: BETERROR.getClientRects().length
+        ? BETERROR.textContent : '', none: !!BETNONE.getClientRects().length};
+      const after = head => getComputedStyle(head.querySelector('.sorter') || head, '::after')
+        .content;
+      out.heads = [...BETS.tHead.rows[0].cells].map(after);
+      BETS.querySelector('th[data-sort="5"] .sorter').click();
+      out.sorted = [...BETS.tHead.rows[0].cells].map(after);
+      return out;
+    """,
+        height=1200,
+        patience=2500,
+    )
+
+    in_scope = sum(not row["offlist"] for row in rows)
+    assert got["box"] == "cycle:37", "the box did not open on this page's cycle"
+    assert got["opened"] == kept("cycle:37"), "the page did not open filtered by its cycle"
+    assert got["openedCount"] == f"{len(kept('cycle:37'))} of {in_scope} shown"
+    assert any(
+        row["query"]["cycle_from"] and row["id"] in got["opened"] for row in rows
+    ), "no task under a bet in cycle 37 answered `cycle:37`, so the bets lost their tasks"
+    for query in queries:
+        assert got["asked"][query]["shown"] == kept(query), query
+        assert got["asked"][query]["count"] == f"{len(kept(query))} of {in_scope} shown", query
+    assert {len(got["asked"][q]["shown"]) for q in queries} != {0}, "every query found nothing"
+    assert got["broken"] == {
+        "shown": [], "error": "a bracket is opened and never closed", "none": True,
+    }
+    quiet, up = '" ↕"', '" ↑"'
+    assert got["heads"][0] == "none", "the tick column does not sort and must not say it does"
+    assert got["heads"][1:] == [quiet] * (len(got["heads"]) - 1), got["heads"]
+    assert got["sorted"][5] == up and got["sorted"].count(quiet) == len(got["heads"]) - 2
 
 
 def _cycle_view_rows(index: Index) -> list[dict]:
@@ -9216,6 +9313,8 @@ def test_an_empty_shortlist_says_so_and_offers_every_status(demo_root: Path, tmp
         1280,
         _BETS_SHOWN
         + """
+      // Cleared first, for the reason the Every status test above gives.
+      BETFIND.value = ''; betSearch(true);
       const said = !!document.getElementById('betshort').getClientRects().length;
       const before = shown();
       document.getElementById('betwiden').click();
