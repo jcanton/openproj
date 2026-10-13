@@ -1528,24 +1528,25 @@ p.goal.read { font-size: 15px; margin: 0 0 1rem; }
    why `table.load .field` and `table.load .read` below stay as they are — a
    delivered row has no control in it to hide a printed value behind. */
 table.load, table.delivered { border-collapse: collapse; font-size: 13px;
-                              margin: .5rem 0 1rem; width: 100%; }
+                              margin: .5rem 0 1rem; }
 /* One right edge for the page, the window's — jcanton, 2026-10-13: "the widths
    of elements in the page seem quite inconsistent". The setup bar, the
-   warnings and the betting table already reached it, while the roster stopped
-   where its columns did and the goal and notes boxes stopped at 52rem: four
-   right edges down one page. So both tables are the page's width and so are
-   both boxes. The roster's slack goes after its last column, so the rows' rules
-   reach the window while the figures stay together on the left: given to the
-   load bar instead, the bar ran the width of the page and squeezed BET and
-   SCHEDULED UNTIL onto two lines — jcanton, the same day: "the super large
-   page-wide bars were better before actually". The bar is the shell's 140px
-   again. */
-table.load th:last-child, table.load td:last-child { width: 100%; }
-/* And every other column at its one-line width, which the 100% above would
-   otherwise squeeze to its narrowest: "2.5 wk" broke at its space and drew a
-   41px column two lines tall. A login, a rate, a figure and a date each fit on
-   one line by construction. */
-table.load th, table.load td { white-space: nowrap; }
+   warnings and the betting table already reached it, and the goal and notes
+   boxes stopped at 52rem, so the boxes and the delivered list are the page's
+   width.
+
+   **The roster is not, and it was, twice in one day.** Stretched, its slack had
+   to go somewhere. Given to the load bar, the bar ran the width of the page and
+   squeezed BET and SCHEDULED UNTIL onto two lines ("the super large page-wide
+   bars were better before actually"). Given to an empty strip after the last
+   column, the figures sat together on the left and every row's rule ran on to
+   the window under nothing: "the columns are now good size, but the row
+   separation lines remained page-width". A table of seven short columns has no
+   column that reads better wider, so it is as wide as its columns, and a rule
+   under a row ends where the row does. At its own width each column is also
+   at its one-line width, which is what the `nowrap` this replaces was there to
+   force against the stretch. */
+table.delivered { width: 100%; }
 table.load th, table.load td, table.delivered th, table.delivered td {
   border-bottom: 1px solid var(--line); padding: .3rem .6rem; text-align: left;
 }

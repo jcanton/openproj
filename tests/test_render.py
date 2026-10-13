@@ -4032,6 +4032,67 @@ def test_a_cycle_card_carries_the_meter_the_cycle_page_draws(
     )
 
 
+def test_the_roster_is_as_wide_as_its_columns(
+    server_pages: dict[str, str], tmp_path: Path
+):
+    """A rule under a roster row ends where the row does.
+
+    The roster was stretched to the page's width twice on 2026-10-13, and each
+    time the slack went somewhere it was seen. To the load bar first, which ran
+    the width of the page. Then to an empty strip after the last column, which
+    left the figures together on the left and every row's rule running on to the
+    window under nothing — jcanton: "the columns are now good size, but the row
+    separation lines remained page-width". Measured on that version at 1400: a
+    1360px table whose last column was 837px wide.
+
+    So, at a desktop width: the table is narrower than the box it sits in, its
+    last column is no wider than what it holds, the bar is the shell's 140px,
+    and no cell that holds only words breaks onto a second line.
+    """
+    from browser import chrome, measured_in
+
+    got = measured_in(
+        chrome(),
+        server_pages["cycle"],
+        tmp_path / "roster.html",
+        1400,
+        """
+        const t = document.querySelector('table.load');
+        const box = t.getBoundingClientRect();
+        const lines = cell => {
+          const range = document.createRange();
+          range.selectNodeContents(cell);
+          return new Set([...range.getClientRects()].filter(r => r.height > 0)
+            .map(r => Math.round(r.top))).size;
+        };
+        const last = [...t.querySelectorAll('tr > :last-child')];
+        const words = [...t.querySelectorAll('th, td')]
+          .filter(cell => !cell.querySelector('input, button, span.bar'));
+        return {
+          table: Math.round(box.width),
+          room: Math.round(t.parentElement.getBoundingClientRect().width),
+          // The column's widest cell, which is what sets its width: a "—" under
+          // a SCHEDULED UNTIL heading leaves room by right.
+          lastSlack: Math.min(...last.map(cell => {
+            const range = document.createRange();
+            range.selectNodeContents(cell);
+            const used = range.getBoundingClientRect().width;
+            return Math.round(cell.clientWidth - used);
+          })),
+          bar: Math.round(t.querySelector('span.bar').getBoundingClientRect().width),
+          wrapped: words.filter(cell => lines(cell) > 1).map(cell => cell.textContent.trim()),
+        };
+        """,
+    )
+
+    assert got["table"] < got["room"], f"the roster is stretched to its box again: {got}"
+    # Padding is .6rem a side, 19px; the stretched roster measured 728. The bound
+    # sits well between, so a font's hinting is not a failure.
+    assert got["lastSlack"] < 40, f"the last column holds slack, not a value: {got}"
+    assert got["bar"] == 140, f"the load bar is not the shell's 140px: {got}"
+    assert got["wrapped"] == [], f"a roster cell broke onto two lines: {got}"
+
+
 def test_a_cycle_bet_into_by_somebody_off_the_roster_is_not_counted_short(
     demo_rendered: tuple[Path, Index],
 ):

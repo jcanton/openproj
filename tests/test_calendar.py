@@ -2175,11 +2175,19 @@ def test_firefox_is_left_with_one_calendar_and_a_whole_field(
       well in every unit except the one a person uses;
     - and the clipped strip does not answer a click, which is the whole point: a
       button that is only invisible is still a second calendar.
+
+    **Asked with Write pressed**, and it was not, until 2026-10-13. A record page
+    opens on its read view, where the input is `display: none` — so the box's
+    rectangle was all zeros, `elementFromPoint` was asked about a point off the
+    page, and "something else" answered for the last claim with nothing drawn at
+    all. The same read view was also where the wrapper drew an empty bordered box
+    of its own, which the next test is about.
     """
     rid = next(i for i, r in seed_index.plan.items() if r.kind == "task")
     page = render_detail(seed_index, only=rid, base_commit="deadbee", may_write=True)
 
     with driving(page, tmp_path / "firefox-calendar.html") as browser:
+        browser.js("document.getElementById('view-edit').click()")
         found = browser.js("""(() => {
           const box = document.querySelector('input.field[type="date"]');
           if (!box) return {missing: true};
@@ -2190,6 +2198,7 @@ def test_firefox_is_left_with_one_calendar_and_a_whole_field(
           const over = document.elementFromPoint(r.right - 6, r.top + r.height / 2);
           return {
             missing: false,
+            drawn: r.width > 0 && r.height > 0,
             canHide: CSS.supports('selector(::-webkit-calendar-picker-indicator)'),
             wrapped: wrap.classList.contains('datewrap'),
             wrapBorder: around.borderRightWidth,
@@ -2201,6 +2210,7 @@ def test_firefox_is_left_with_one_calendar_and_a_whole_field(
         })()""")
 
     assert found["missing"] is False, "the record page drew no date field, so nothing was asked"
+    assert found["drawn"] is True, f"Write did not draw the field, so nothing was asked: {found}"
     assert found["canHide"] is False, (
         "this Firefox hides the native button after all, so the wrapper is no "
         "longer the fix and this test measures a thing that need not exist"
@@ -2213,6 +2223,45 @@ def test_firefox_is_left_with_one_calendar_and_a_whole_field(
     assert found["clipped"] is True, found
     assert found["overTheStrip"] == "something else", (
         "the native button is still under the pointer, so it still opens a second calendar"
+    )
+
+
+def test_a_date_that_is_being_read_leaves_no_frame_behind(seed_index: Index, tmp_path: Path):
+    """The read view hides the input and must hide the frame it wears.
+
+    `.field { display: none }` reaches the input and not the `.datewrap` around
+    it, which is a block with the field's own border and padding — so every date
+    on a record that was only being read sat over an empty 10px box. jcanton,
+    2026-10-13, from Firefox: "date boxes not in edit mode show a bar/empty field
+    beneath them". Chrome makes no wrapper and cannot see it.
+
+    Measured as the wrapper's own box, because that is what was drawn: a
+    computed `display` would pass for a wrapper made `contents` and still say
+    nothing about pixels, and a height of zero is the claim a reader can see.
+    Then Write is pressed and the same frame has to come back, or the fix is a
+    field that has vanished in both modes.
+    """
+    rid = next(i for i, r in seed_index.plan.items() if r.kind == "task")
+    page = render_detail(seed_index, only=rid, base_commit="deadbee", may_write=True)
+    frames = """(() => [...document.querySelectorAll('input.field[type="date"]')].map(box => {
+      const r = box.parentNode.getBoundingClientRect();
+      return {name: box.name, wrapped: box.parentNode.classList.contains('datewrap'),
+              height: r.height};
+    }))()"""
+
+    with driving(page, tmp_path / "firefox-read.html") as browser:
+        reading = browser.js(frames)
+        browser.js("document.getElementById('view-edit').click()")
+        writing = browser.js(frames)
+
+    assert reading and all(one["wrapped"] for one in reading), (
+        f"no date box was wrapped, so this Firefox is not the browser this is about: {reading}"
+    )
+    assert all(one["height"] == 0 for one in reading), (
+        f"a date that is only being read still draws an empty frame: {reading}"
+    )
+    assert all(one["height"] > 0 for one in writing), (
+        f"pressing Write did not bring the date field back: {writing}"
     )
 
 

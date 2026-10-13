@@ -1844,6 +1844,17 @@ article.record:not(.editing) .req { display: none; }
    editing, and the values they replace are hidden once it is. */
 .field { display: none; }
 .record.editing .field { display: block; }
+/* And the frame a date field wears on Firefox goes with it. `.datewrap`
+   (`_CALENDAR_STYLE`, `calendar.py`) is a block carrying the field's border and
+   padding, and the line above hides only the input inside it — so every date on
+   a record being read sat over an empty 10px box with a border round it:
+   jcanton, 2026-10-13, "date boxes not in edit mode show a bar/empty field
+   beneath them". (0,3,0) over the wrapper's (0,1,0), so it wins on weight and
+   not on which sheet is inlined second. Inert on Chrome and Safari, where no
+   wrapper is ever made. Keyed to the same mode as the rule above, and NOT to
+   `.slideedit`, whose fields show outside an editing session — it has no date
+   box, and one added there must answer this rule as well as that one. */
+.record:not(.editing) .datewrap { display: none; }
 /* Where the other people in the room are. One band per person on the line their
    caret is in, translucent so the text keeps its own contrast, with the login on
    the right — a colour on its own is a colour a reader has to be told the
