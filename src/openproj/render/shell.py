@@ -1600,6 +1600,12 @@ dt:has(+ dd .hill) { align-self: start; }
 .gripped th .grip:hover::before,
 .gripped th .grip.dragging::before { background: var(--accent); width: 2px; }
 .gripped th.sorted { color: inherit; font-weight: 700; }
+/* Sized by hand, a row is one line high and a cell that does not fit ends in an
+   ellipsis — jcanton, 2026-10-13: "eclipsing instead of new lines when reducing
+   the widths of columns". Only once a grip has been used: a table laid out by
+   the browser still wraps a long title, which is what it has always done. */
+.gripped.sized th, .gripped.sized td { white-space: nowrap; overflow: hidden;
+                                       text-overflow: ellipsis; }
 .gripped th .dir { display: inline-block; width: .8em; color: var(--accent); }
 .gripped th button.sorter { font: inherit; color: inherit; background: none; border: 0;
                             padding: 0; cursor: pointer; text-transform: inherit;
@@ -2629,43 +2635,47 @@ function sortHeads(table, th, descending) {
   }
 }
 
-// A grip on the right edge of every head of `table`: drag it and that column is
-// as wide as you left it, remembered per browser under `key`; double-click any
-// grip and the table lays itself out again. The table page's own grips are not
-// this — they live inside its fit model, which clamps, sheds and re-proportions
-// fourteen columns to the window — and the two tables this serves have no fit
-// to keep in step with, so this is only the gesture.
+// A grip on the right edge of every head of `table`: drag it and the line between
+// that column and the next one moves, remembered per browser under `key`;
+// double-click any grip and the table lays itself out again. The table page's own
+// grips are not this — they live inside its fit model, which clamps, sheds and
+// re-proportions fourteen columns to the window — and the two tables this serves
+// have no fit to keep in step with, so this is only the gesture.
+//
+// **The table stays as wide as the page** — jcanton, 2026-10-13. So a drag moves
+// a line between two columns and never the table's right edge: what one column
+// gains the next one gives up, and the last column has no grip at all, because
+// its right edge is the page's. The widths are kept as SHARES of the table, not
+// pixels, so a layout made in one window is the same layout in another one.
 //
 // Every column is frozen at the width it is DRAWN at when a drag starts, the
-// table page's rule and for its reason: resizing one column of an automatic
-// layout reflows all the others under the pointer. And nothing on a phone, where
-// the record lists stop being columns at all.
+// table page's rule and for its reason: sizing one column of an automatic layout
+// reflows all the others under the pointer. Sized by hand, a cell holds one line
+// and ends what does not fit in an ellipsis (`.sized` in the stylesheet) rather
+// than growing a second line. And nothing on a phone, where the record lists
+// stop being columns at all.
 function gripColumns(table, key) {
   // A table with no head row has no columns to grip — and the JS tests' DOM
   // shim, which builds no `tHead`, is the page this would otherwise throw on.
   if (!table || !table.tHead) return;
   const heads = [...table.tHead.rows[0].cells];
   const name = th => th.dataset.col || String(heads.indexOf(th));
-  let widths = {};
-  try { widths = JSON.parse(remembered.get(key) || '{}') || {}; } catch (e) { widths = {}; }
+  let shares = {};
+  try { shares = JSON.parse(remembered.get(key) || '{}') || {}; } catch (e) { shares = {}; }
   const apply = () => {
-    let total = 0;
-    for (const th of heads) {
-      th.style.width = widths[name(th)] + 'px';
-      total += widths[name(th)];
-    }
+    for (const th of heads) th.style.width = shares[name(th)] + '%';
     table.style.tableLayout = 'fixed';
-    table.style.width = total + 'px';
+    table.classList.add('sized');
   };
   const reset = () => {
-    widths = {};
+    shares = {};
     remembered.forget(key);
     for (const th of heads) th.style.width = '';
     table.style.tableLayout = '';
-    table.style.width = '';
+    table.classList.remove('sized');
   };
   table.classList.add('gripped');
-  for (const th of heads) {
+  heads.slice(0, -1).forEach((th, at) => {
     const grip = document.createElement('span');
     grip.className = 'grip';
     grip.setAttribute('aria-hidden', 'true');
@@ -2676,27 +2686,40 @@ function gripColumns(table, key) {
       event.stopPropagation();
       event.preventDefault();
       grip.classList.add('dragging');
-      for (const other of heads)
-        widths[name(other)] = Math.round(other.getBoundingClientRect().width);
-      apply();
+      const drawn = heads.map(head => head.getBoundingClientRect().width);
+      const whole = drawn.reduce((sum, width) => sum + width, 0);
+      const next = at + 1;
+      const share = widths => {
+        heads.forEach((head, k) => {
+          shares[name(head)] = Math.round(widths[k] / whole * 10000) / 100;
+        });
+        apply();
+      };
+      share(drawn);
       const from = event.clientX;
-      const was = widths[name(th)];
-      const move = e => { widths[name(th)] = Math.max(40, was + e.clientX - from); apply(); };
+      const move = e => {
+        // Neither column narrower than 40px, which is the table page's floor.
+        const delta = Math.max(40 - drawn[at], Math.min(drawn[next] - 40, e.clientX - from));
+        const widths = drawn.slice();
+        widths[at] += delta;
+        widths[next] -= delta;
+        share(widths);
+      };
       const stop = () => {
         grip.classList.remove('dragging');
-        remembered.set(key, JSON.stringify(widths));
+        remembered.set(key, JSON.stringify(shares));
         removeEventListener('pointermove', move);
         removeEventListener('pointerup', stop);
       };
       addEventListener('pointermove', move);
       addEventListener('pointerup', stop);
     };
-  }
+  });
   // Read back only when it still describes these columns: a list that has
   // gained or lost one since is laid out afresh rather than half by hand.
   const wide = getComputedStyle(table.tHead).display !== 'none';
-  if (wide && heads.every(th => widths[name(th)] > 0)
-      && Object.keys(widths).length === heads.length) apply();
+  if (wide && heads.every(th => shares[name(th)] > 0)
+      && Object.keys(shares).length === heads.length) apply();
 }
 
 function bare(needle, wide, narrow) {

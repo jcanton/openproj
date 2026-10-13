@@ -1468,6 +1468,10 @@ _CYCLE_STYLE = (
 #bets th .sorter:hover { color: var(--accent); }
 #bets th.sorted { color: inherit; font-weight: 700; }
 #bets thead th { position: relative; }
+/* A list box keeps a floor of 11rem so two logins fit side by side, which in a
+   column narrowed by hand is a box running out of its cell. Sized, the column
+   decides: (1,3,1) here over `#bets input.live.wide`'s (1,2,1). */
+#bets.sized input.live.wide { min-width: 0; }
 
 /* .commitbar, #unsaved and #save are the shell's: the cycle page was the first
    to need a bar that says whether the page is saved, and then the detail page

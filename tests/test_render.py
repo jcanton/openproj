@@ -9193,7 +9193,7 @@ def test_the_betting_box_speaks_the_query_language_and_opens_on_its_cycle(
         {clientX: grip.left, clientY: grip.top, bubbles: true}));
       dispatchEvent(new PointerEvent('pointerup', {clientX: grip.left, clientY: grip.top}));
       const now = widths();
-      out.jumped = JSON.stringify(still) === JSON.stringify(now) ? '' : `${still} → ${now}`;
+      out.jumped = still.every((w, i) => Math.abs(w - now[i]) <= 1) ? '' : `${still} → ${now}`;
       return out;
     """,
         height=1200,
@@ -9218,8 +9218,9 @@ def test_the_betting_box_speaks_the_query_language_and_opens_on_its_cycle(
     # separators and the same bold for the sorted column and the little
     # triangles for sorting instead of the arrows". A grip on every head; no
     # triangle until a column is sorted, then ▴ and bold on that one alone, and
-    # ▾ on the second click.
-    assert all(head["grip"] for head in got["heads"]), got["heads"]
+    # ▾ on the second click. No grip on the last head, whose right edge is the
+    # page's: "the grabber thing to the very right should not even be drawn".
+    assert [head["grip"] for head in got["heads"]] == [True] * (len(got["heads"]) - 1) + [False]
     assert got["heads"][0]["dir"] is None, "the tick column does not sort and must not say it does"
     assert {head["dir"] for head in got["heads"][1:]} == {""}, got["heads"]
     assert {head["weight"] for head in got["heads"]} == {"400"}, got["heads"]
@@ -9250,8 +9251,9 @@ def test_the_record_list_sorts_and_resizes_like_the_table(
     with draggable column separators and the same bold for the sorted column and
     the little triangles for sorting" — those three and nothing else of the table
     page's. A click on a head orders the rows by it and says so the table page's
-    way; a second click turns it round; a grip on every head's edge, and a drag
-    of one leaves that column the width it was dragged to.
+    way; a second click turns it round; a grip on every head's edge but the
+    last, and a drag of one moves the line between two columns while the table
+    stays the page's width, with what no longer fits cut by an ellipsis.
 
     In Chrome, because the order is the one a reader sees and the width is a
     pixel.
@@ -9277,14 +9279,20 @@ def test_the_record_list_sorts_and_resizes_like_the_table(
       const title = t.querySelector('th[data-col="title"]');
       const grip = title.querySelector('.grip');
       const was = title.getBoundingClientRect().width;
+      const table = Math.round(t.getBoundingClientRect().width);
       const at = grip.getBoundingClientRect();
       const x = at.left + at.width / 2, y = at.top + at.height / 2;
       grip.dispatchEvent(new PointerEvent('pointerdown', {clientX: x, clientY: y, bubbles: true}));
       dispatchEvent(new PointerEvent('pointermove', {clientX: x - 60, clientY: y}));
       dispatchEvent(new PointerEvent('pointerup', {clientX: x - 60, clientY: y}));
+      const cell = t.tBodies[0].querySelector('tr[data-id] td[data-col="title"]');
       return {up, down, grips: t.querySelectorAll('th .grip').length,
               heads: t.tHead.rows[0].cells.length,
               narrowed: Math.round(was - title.getBoundingClientRect().width),
+              tableMoved: Math.round(t.getBoundingClientRect().width) - table,
+              page: Math.round(t.parentElement.getBoundingClientRect().width) - table,
+              lastGrip: !!t.tHead.rows[0].lastElementChild.querySelector('.grip'),
+              cut: [getComputedStyle(cell).whiteSpace, getComputedStyle(cell).textOverflow],
               last: t.tBodies[0].lastElementChild.id};
     """,
         height=900,
@@ -9297,8 +9305,15 @@ def test_the_record_list_sorts_and_resizes_like_the_table(
         "kinds": None, "dir": "▴", "weight": "700", "aria": "ascending",
     }
     assert got["down"] == {"kinds": got["up"]["kinds"][::-1], "dir": "▾"}
-    assert got["grips"] == got["heads"]
-    assert got["narrowed"] == 60, f"dragging a grip 60px moved the column {got['narrowed']}px"
+    assert got["grips"] == got["heads"] - 1 and not got["lastGrip"], (
+        "the last column's right edge is the page's, and must not be offered as a grip"
+    )
+    assert abs(got["narrowed"] - 60) <= 1, f"a 60px drag moved the column {got['narrowed']}px"
+    # "the tables keep same width as page width": the drag moved a line between
+    # two columns and not the table's edge.
+    assert got["tableMoved"] == 0 and got["page"] == 0, got
+    # "eclipsing instead of new lines when reducing the widths of columns"
+    assert got["cut"] == ["nowrap", "ellipsis"], got["cut"]
     assert got["last"] == "records-empty", "the empty sentence stopped being the last row"
 
 
