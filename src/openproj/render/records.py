@@ -202,7 +202,7 @@ for (const th of RECORD_TABLE && RECORD_TABLE.tHead ? RECORD_TABLE.tHead.rows[0]
   };
 }
 // One remembered layout per list: /issues and /notes draw other columns.
-gripColumns(RECORD_TABLE, 'openproj:widths' + location.pathname);
+gripColumns(RECORD_TABLE, 'openproj:shares' + location.pathname);
 </script>
 """
 

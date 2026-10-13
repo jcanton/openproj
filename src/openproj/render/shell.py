@@ -2717,9 +2717,11 @@ function gripColumns(table, key) {
   });
   // Read back only when it still describes these columns: a list that has
   // gained or lost one since is laid out afresh rather than half by hand.
+  // And only when it is shares at all: a hundred, give or take the rounding.
   const wide = getComputedStyle(table.tHead).display !== 'none';
+  const total = heads.reduce((sum, th) => sum + (shares[name(th)] || 0), 0);
   if (wide && heads.every(th => shares[name(th)] > 0)
-      && Object.keys(shares).length === heads.length) apply();
+      && Object.keys(shares).length === heads.length && Math.abs(total - 100) < 1) apply();
 }
 
 function bare(needle, wide, narrow) {

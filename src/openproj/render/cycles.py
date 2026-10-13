@@ -1429,7 +1429,7 @@ for (const head of BETS.querySelectorAll('th[data-sort]')) {
     say(`Sorted by ${head.dataset.col}, ${descending ? 'descending' : 'ascending'}`);
   };
 }
-gripColumns(BETS, 'openproj:bet-widths');
+gripColumns(BETS, 'openproj:bet-shares');
 </script>
 {% endif %}
 {#- The setup form's two date boxes are drawn on this page in BOTH modes —
