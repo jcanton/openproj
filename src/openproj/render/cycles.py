@@ -1504,6 +1504,16 @@ p.goal.read { font-size: 15px; max-width: 52rem; margin: 0 0 1rem; }
 .goalbar { margin: 0 0 1rem; }
 #setup .field, table.load .field { display: inline-block; }
 #setup .field { width: 12rem; }
+/* Firefox's half of that width. There the calendar wraps a date box in
+   `.datewrap` and moves its border onto the wrapper (`_CALENDAR_STYLE`), and the
+   wrapper is `width: 100%` from `_DETAIL_STYLE` — so the 12rem above sized an
+   input inside a frame as wide as the page. jcanton, 2026-10-13: "shorten /
+   adapt the date fields: they span the whole page width". (1,1,0) over the
+   wrapper's (0,1,0), and the input fills it at (1,2,0) over `#setup .field`.
+   Inert on Chrome and Safari, where the wrapper is `display: contents` and has
+   no box for a width to size. */
+#setup .datewrap { width: 12rem; }
+#setup .datewrap > .field { width: 100%; }
 #setup .read, table.load .read { display: none; }
 /* The roster and the delivered list wear one dress, said once. They are the two
    plain tables on this page — the betting table below is a grid of controls and
