@@ -314,13 +314,17 @@ _CYCLE = """
     cannot reach and a screen reader does not announce — the quality floor this
     repository holds every page to. -#}
 <div class="sideways">
-<table id="bets" class="unfitted" autocomplete="off"><thead><tr>
-  <th>in {{ c.number }}</th>
+{#- The heads are the table page's: `.dir` for the triangle `sortHeads` draws,
+    and `data-col` for the width `gripColumns` remembers. -#}
+<table id="bets" class="unfitted gripped" autocomplete="off"><thead><tr>
+  <th data-col="bet">in {{ c.number }}</th>
   {% for column in ("title", "kind", "status", "priority", "appetite", "developers", "reviewers") %}
-  <th data-sort="{{ loop.index }}" aria-sort="none">
-    <button type="button" class="sorter">{{ column }}</button></th>
+  <th data-col="{{ column }}" data-sort="{{ loop.index }}" aria-sort="none">
+    <button type="button" class="sorter">{{ column }}<span class="dir"
+      aria-hidden="true"></span></button></th>
   {% endfor %}
-  <th data-sort="8" aria-sort="none"><button type="button" class="sorter">bet in</button></th>
+  <th data-col="cycle" data-sort="8" aria-sort="none"><button type="button"
+    class="sorter">bet in<span class="dir" aria-hidden="true"></span></button></th>
 </tr></thead><tbody>
   {#- Every box in this table is named after the row it is in, not after its
       column. A column header names a cell to somebody reading down the page; to
@@ -1419,15 +1423,13 @@ betPoll();
 for (const head of BETS.querySelectorAll('th[data-sort]')) {
   head.querySelector('.sorter').onclick = () => {
     const at = Number(head.dataset.sort);
-    const was = head.getAttribute('aria-sort');
-    const descending = was === 'ascending';
-    for (const other of BETS.querySelectorAll('th[data-sort]'))
-      other.setAttribute('aria-sort', 'none');
-    head.setAttribute('aria-sort', descending ? 'descending' : 'ascending');
+    const descending = head.getAttribute('aria-sort') === 'ascending';
+    sortHeads(BETS, head, descending);
     betSort(at, descending);
-    say(`Sorted by ${head.textContent.trim()}, ${descending ? 'descending' : 'ascending'}`);
+    say(`Sorted by ${head.dataset.col}, ${descending ? 'descending' : 'ascending'}`);
   };
 }
+gripColumns(BETS, 'openproj:bet-widths');
 </script>
 {% endif %}
 {#- The setup form's two date boxes are drawn on this page in BOTH modes —
@@ -1456,29 +1458,16 @@ _CYCLE_STYLE = (
 .betsearch > .beterror { font-size: 12px; color: var(--sev-warn); }
 .betsearch > .betcount { margin-left: auto; white-space: nowrap; color: var(--muted);
                          font-size: 13px; }
-/* A column head that sorts. It is a real button so a keyboard can reach it, and
-   it wears the head's own type so the row still reads as a header row. */
-#bets th .sorter {
-  font: inherit; color: inherit; background: none; border: 0; padding: 0;
-  cursor: pointer; text-transform: inherit; letter-spacing: inherit;
-}
+/* A column head that sorts is the table page's: `.gripped` in the shell draws its
+   button, its triangle and its grip. Two things are this page's own. The bold,
+   because `#bets th` below sets the weight at (1,0,1) and the shell's
+   `.gripped th.sorted` at (0,2,1) loses to it — (1,1,1) here wins on weight.
+   And a positioned head for the grip to stand in: no `thead th { position:
+   sticky }` reaches this page (that rule is `_SCROLL_STYLE`'s, which it does
+   not load), so without this every grip was absolute against the page. */
 #bets th .sorter:hover { color: var(--accent); }
-/* The arrows as CHARACTERS and not as CSS escapes. `_CYCLE_STYLE` is a Python
-   string that is not raw, so `\2191` never reaches the browser as one: Python
-   reads `\21` as an octal escape first and the declaration arrives as
-   `content: " \11 93"`, which Chrome renders as the literal text "93" beside
-   every column head. `shell.py` carries a comment about this exact trap, written
-   the last time somebody put a backslash in one of these blocks. */
-#bets th[aria-sort="ascending"] .sorter::after { content: " ↑"; }
-#bets th[aria-sort="descending"] .sorter::after { content: " ↓"; }
-/* And a quiet pair on every head that is not the sorted one, so a column that
-   sorts says so before anybody clicks it — jcanton, 2026-10-13: "it is also not
-   obvious that columns are sortable until you click on one". Muted, so the one
-   column that IS sorted is still the one arrow in the accent's weight; and on
-   `none` alone, so the sorted head's own arrow replaces it rather than sitting
-   beside it. Not on the table page, whose fourteen heads are what its fit model
-   is paid in. */
-#bets th[aria-sort="none"] .sorter::after { content: " ↕"; color: var(--muted); }
+#bets th.sorted { color: inherit; font-weight: 700; }
+#bets thead th { position: relative; }
 
 /* .commitbar, #unsaved and #save are the shell's: the cycle page was the first
    to need a bar that says whether the page is saved, and then the detail page

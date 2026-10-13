@@ -9175,11 +9175,25 @@ def test_the_betting_box_speaks_the_query_language_and_opens_on_its_cycle(
       BETFIND.value = 'kind:task and ('; BETFIND.dispatchEvent(new Event('input'));
       out.broken = {shown: shown(), error: BETERROR.getClientRects().length
         ? BETERROR.textContent : '', none: !!BETNONE.getClientRects().length};
-      const after = head => getComputedStyle(head.querySelector('.sorter') || head, '::after')
-        .content;
-      out.heads = [...BETS.tHead.rows[0].cells].map(after);
+      const head = th => ({dir: th.querySelector('.dir') && th.querySelector('.dir').textContent,
+                           weight: getComputedStyle(th).fontWeight,
+                           grip: !!th.querySelector('.grip')});
+      out.heads = [...BETS.tHead.rows[0].cells].map(head);
       BETS.querySelector('th[data-sort="5"] .sorter').click();
-      out.sorted = [...BETS.tHead.rows[0].cells].map(after);
+      out.sorted = [...BETS.tHead.rows[0].cells].map(head);
+      BETS.querySelector('th[data-sort="5"] .sorter').click();
+      out.again = head(BETS.querySelector('th[data-sort="5"]'));
+      // A grip touched and let go where it was: nothing may move. In content-box
+      // the freeze grew every column by its padding.
+      const widths = () => [...BETS.tHead.rows[0].cells]
+        .map(th => Math.round(th.getBoundingClientRect().width));
+      const still = widths();
+      const grip = BETS.querySelector('th .grip').getBoundingClientRect();
+      BETS.querySelector('th .grip').dispatchEvent(new PointerEvent('pointerdown',
+        {clientX: grip.left, clientY: grip.top, bubbles: true}));
+      dispatchEvent(new PointerEvent('pointerup', {clientX: grip.left, clientY: grip.top}));
+      const now = widths();
+      out.jumped = JSON.stringify(still) === JSON.stringify(now) ? '' : `${still} → ${now}`;
       return out;
     """,
         height=1200,
@@ -9200,10 +9214,21 @@ def test_the_betting_box_speaks_the_query_language_and_opens_on_its_cycle(
     assert got["broken"] == {
         "shown": [], "error": "a bracket is opened and never closed", "none": True,
     }
-    quiet, up = '" ↕"', '" ↑"'
-    assert got["heads"][0] == "none", "the tick column does not sort and must not say it does"
-    assert got["heads"][1:] == [quiet] * (len(got["heads"]) - 1), got["heads"]
-    assert got["sorted"][5] == up and got["sorted"].count(quiet) == len(got["heads"]) - 2
+    # The table page's heads — jcanton, the same day: "draggable column
+    # separators and the same bold for the sorted column and the little
+    # triangles for sorting instead of the arrows". A grip on every head; no
+    # triangle until a column is sorted, then ▴ and bold on that one alone, and
+    # ▾ on the second click.
+    assert all(head["grip"] for head in got["heads"]), got["heads"]
+    assert got["heads"][0]["dir"] is None, "the tick column does not sort and must not say it does"
+    assert {head["dir"] for head in got["heads"][1:]} == {""}, got["heads"]
+    assert {head["weight"] for head in got["heads"]} == {"400"}, got["heads"]
+    sorted_head = got["sorted"][5]
+    assert sorted_head["dir"] == "▴" and sorted_head["weight"] == "700", sorted_head
+    others = got["sorted"][:5] + got["sorted"][6:]
+    assert {h["weight"] for h in others} == {"400"} and {h["dir"] for h in others} <= {"", None}
+    assert got["again"]["dir"] == "▾", got["again"]
+    assert not got["jumped"], f"touching a grip moved the columns: {got['jumped']}"
 
     # Cleared, the box hides nothing: every status, which is what the retired
     # Every status box was for.
@@ -9216,6 +9241,65 @@ def test_the_betting_box_speaks_the_query_language_and_opens_on_its_cycle(
     assert got["layout"]["countAfterBox"] and abs(got["layout"]["countRight"]) <= 1, (
         f"the count is not at the far end of the line: {got['layout']}"
     )
+
+
+def test_the_record_list_sorts_and_resizes_like_the_table(
+    demo_rendered: tuple[Path, Index], tmp_path: Path
+):
+    """jcanton, 2026-10-13: the records page "same as the table in table/ style:
+    with draggable column separators and the same bold for the sorted column and
+    the little triangles for sorting" — those three and nothing else of the table
+    page's. A click on a head orders the rows by it and says so the table page's
+    way; a second click turns it round; a grip on every head's edge, and a drag
+    of one leaves that column the width it was dragged to.
+
+    In Chrome, because the order is the one a reader sees and the width is a
+    pixel.
+    """
+    from browser import chrome, measured_in
+
+    out, _ = demo_rendered
+    got = measured_in(
+        chrome(),
+        (out / "index.html").read_text(),
+        tmp_path / "records-sort.html",
+        1400,
+        """
+      const t = document.getElementById('records');
+      const kinds = () => [...t.tBodies[0].querySelectorAll('tr[data-id]')]
+        .map(tr => tr.cells[0].textContent.trim());
+      const th = t.querySelector('th[data-col="kind"]');
+      th.querySelector('button').click();
+      const up = {kinds: kinds(), dir: th.querySelector('.dir').textContent,
+                  weight: getComputedStyle(th).fontWeight, aria: th.getAttribute('aria-sort')};
+      th.querySelector('button').click();
+      const down = {kinds: kinds(), dir: th.querySelector('.dir').textContent};
+      const title = t.querySelector('th[data-col="title"]');
+      const grip = title.querySelector('.grip');
+      const was = title.getBoundingClientRect().width;
+      const at = grip.getBoundingClientRect();
+      const x = at.left + at.width / 2, y = at.top + at.height / 2;
+      grip.dispatchEvent(new PointerEvent('pointerdown', {clientX: x, clientY: y, bubbles: true}));
+      dispatchEvent(new PointerEvent('pointermove', {clientX: x - 60, clientY: y}));
+      dispatchEvent(new PointerEvent('pointerup', {clientX: x - 60, clientY: y}));
+      return {up, down, grips: t.querySelectorAll('th .grip').length,
+              heads: t.tHead.rows[0].cells.length,
+              narrowed: Math.round(was - title.getBoundingClientRect().width),
+              last: t.tBodies[0].lastElementChild.id};
+    """,
+        height=900,
+        patience=2500,
+    )
+
+    assert got["up"]["kinds"] == sorted(got["up"]["kinds"]), got["up"]["kinds"]
+    assert len(set(got["up"]["kinds"])) > 1, "every row is one kind, so the sort proves nothing"
+    assert got["up"] | {"kinds": None} == {
+        "kinds": None, "dir": "▴", "weight": "700", "aria": "ascending",
+    }
+    assert got["down"] == {"kinds": got["up"]["kinds"][::-1], "dir": "▾"}
+    assert got["grips"] == got["heads"]
+    assert got["narrowed"] == 60, f"dragging a grip 60px moved the column {got['narrowed']}px"
+    assert got["last"] == "records-empty", "the empty sentence stopped being the last row"
 
 
 def _cycle_view_rows(index: Index) -> list[dict]:

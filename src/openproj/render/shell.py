@@ -1578,6 +1578,32 @@ dt:has(+ dd .hill) { align-self: start; }
    what stop it making the row taller than the box in it, the same reason
    `.keyrow`'s children lose theirs. */
 #controls .searching #summary { margin: 0 0 0 auto; text-align: right; }
+/* The table page's column heads on a table that is not the table page — the
+   betting table and the record lists, through `gripColumns` and `sortHeads`
+   below: a grip on each head's right edge, the sorted head in bold, and its
+   direction as a small triangle in the accent. jcanton, 2026-10-13: "same as
+   the table in table/ style: with draggable column separators and the same bold
+   for the sorted column and the little triangles for sorting". The same
+   numbers as `_TABLE_STYLE`'s rules, under `.gripped` so neither page's rules
+   can reach the other's: (0,2,1) here against the table page's (0,1,1), on
+   tables the table page never draws. `th` keeps the `position: sticky` that
+   `thead th` gives it, which is what the grip is absolute against. */
+/* Border-box, because a drag freezes each head at the width it is DRAWN at, which
+   includes its padding: in content-box that width went back in as the content,
+   and the first touch of a grip grew every column by its padding — the betting
+   table jumped from 1360px to 1504px before the pointer had moved. */
+.gripped th { box-sizing: border-box; }
+.gripped th .grip { position: absolute; top: 0; right: 0; width: 7px; height: 100%;
+                    cursor: col-resize; }
+.gripped th .grip::before { content: ""; position: absolute; top: 20%; bottom: 20%;
+                            right: 3px; width: 1px; background: var(--line-strong); }
+.gripped th .grip:hover::before,
+.gripped th .grip.dragging::before { background: var(--accent); width: 2px; }
+.gripped th.sorted { color: inherit; font-weight: 700; }
+.gripped th .dir { display: inline-block; width: .8em; color: var(--accent); }
+.gripped th button.sorter { font: inherit; color: inherit; background: none; border: 0;
+                            padding: 0; cursor: pointer; text-transform: inherit;
+                            letter-spacing: inherit; text-align: inherit; }
 /* The whole phrase, not the digit: "1 blocking problems" in danger red with the
    count black beside it read as two separate facts. And the colour has to mean
    something — at zero it is muted, because danger nobody can act on is danger
@@ -2590,6 +2616,89 @@ function found(needle, hay) {
 // A login, a tag and a pull request are copied off a screen, so the substring
 // tier already serves them and the loose tier only costs them. `nameable` in
 // `index.py` builds `narrow`.
+// Which column a table is sorted by, drawn the way the table page draws it: the
+// head in bold, ▴ or ▾ in its `.dir`, and `aria-sort` for a reader who cannot see
+// either. `th` is the sorted head, or null for none.
+function sortHeads(table, th, descending) {
+  for (const head of table.querySelectorAll('th[data-sort]')) {
+    const here = head === th;
+    head.classList.toggle('sorted', here);
+    head.setAttribute('aria-sort', here ? (descending ? 'descending' : 'ascending') : 'none');
+    const dir = head.querySelector('.dir');
+    if (dir) dir.textContent = here ? (descending ? '▾' : '▴') : '';
+  }
+}
+
+// A grip on the right edge of every head of `table`: drag it and that column is
+// as wide as you left it, remembered per browser under `key`; double-click any
+// grip and the table lays itself out again. The table page's own grips are not
+// this — they live inside its fit model, which clamps, sheds and re-proportions
+// fourteen columns to the window — and the two tables this serves have no fit
+// to keep in step with, so this is only the gesture.
+//
+// Every column is frozen at the width it is DRAWN at when a drag starts, the
+// table page's rule and for its reason: resizing one column of an automatic
+// layout reflows all the others under the pointer. And nothing on a phone, where
+// the record lists stop being columns at all.
+function gripColumns(table, key) {
+  // A table with no head row has no columns to grip — and the JS tests' DOM
+  // shim, which builds no `tHead`, is the page this would otherwise throw on.
+  if (!table || !table.tHead) return;
+  const heads = [...table.tHead.rows[0].cells];
+  const name = th => th.dataset.col || String(heads.indexOf(th));
+  let widths = {};
+  try { widths = JSON.parse(remembered.get(key) || '{}') || {}; } catch (e) { widths = {}; }
+  const apply = () => {
+    let total = 0;
+    for (const th of heads) {
+      th.style.width = widths[name(th)] + 'px';
+      total += widths[name(th)];
+    }
+    table.style.tableLayout = 'fixed';
+    table.style.width = total + 'px';
+  };
+  const reset = () => {
+    widths = {};
+    remembered.forget(key);
+    for (const th of heads) th.style.width = '';
+    table.style.tableLayout = '';
+    table.style.width = '';
+  };
+  table.classList.add('gripped');
+  for (const th of heads) {
+    const grip = document.createElement('span');
+    grip.className = 'grip';
+    grip.setAttribute('aria-hidden', 'true');
+    th.append(grip);
+    grip.onclick = event => event.stopPropagation();
+    grip.ondblclick = event => { event.stopPropagation(); reset(); };
+    grip.onpointerdown = event => {
+      event.stopPropagation();
+      event.preventDefault();
+      grip.classList.add('dragging');
+      for (const other of heads)
+        widths[name(other)] = Math.round(other.getBoundingClientRect().width);
+      apply();
+      const from = event.clientX;
+      const was = widths[name(th)];
+      const move = e => { widths[name(th)] = Math.max(40, was + e.clientX - from); apply(); };
+      const stop = () => {
+        grip.classList.remove('dragging');
+        remembered.set(key, JSON.stringify(widths));
+        removeEventListener('pointermove', move);
+        removeEventListener('pointerup', stop);
+      };
+      addEventListener('pointermove', move);
+      addEventListener('pointerup', stop);
+    };
+  }
+  // Read back only when it still describes these columns: a list that has
+  // gained or lost one since is laid out afresh rather than half by hand.
+  const wide = getComputedStyle(table.tHead).display !== 'none';
+  if (wide && heads.every(th => widths[name(th)] > 0)
+      && Object.keys(widths).length === heads.length) apply();
+}
+
 function bare(needle, wide, narrow) {
   if (!needle) return 0;
   if (wide.includes(needle)) return 1;

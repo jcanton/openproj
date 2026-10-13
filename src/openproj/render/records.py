@@ -45,7 +45,7 @@ _RECORDS = """
     <td data-col="title"><a href="{{ links.record }}{{ r.id }}">{{ r.title or r.id }}</a></td>
     <td data-col="who">{{ r.who or '—' }}</td>
     <td data-col="tags">{{ r.tags|join(', ') or '—' }}</td>
-    {%- if timed %}<td data-col="edited">{{ r.ago }}</td>{% endif %}
+    {%- if timed %}<td data-col="edited" data-at="{{ r.epoch }}">{{ r.ago }}</td>{% endif %}
   </tr>
 {%- endfor %}
 {#- The no-records state is server-rendered so it is right before any script
@@ -154,6 +154,55 @@ function recordsApply() {
 }
 addEventListener('openproj:filter', recordsApply);
 recordsApply();
+
+// Sorting, and the table page's column heads to do it with — jcanton,
+// 2026-10-13: these lists "same as the table in table/ style: with draggable
+// column separators and the same bold for the sorted column and the little
+// triangles for sorting". The button and its triangle are built here rather
+// than rendered, because without this script there is nothing for them to do.
+// By the text a reader can see, numbers as numbers, and "edited" by the stamp
+// under its "3 days ago" — sorted as words, a week ago would come before
+// yesterday.
+const RECORD_TABLE = document.getElementById('records');
+function recordsSort(th, descending) {
+  const at = [...th.parentNode.cells].indexOf(th);
+  const said = tr => {
+    const td = tr.cells[at];
+    return td ? (td.dataset.at || td.textContent).trim() : '';
+  };
+  const rows = [...RECORD_TABLE.tBodies[0].querySelectorAll('tr[data-id]')];
+  rows.sort((a, b) => {
+    const one = said(a), two = said(b);
+    const x = parseFloat(one), y = parseFloat(two);
+    const by = Number.isFinite(x) && Number.isFinite(y)
+      ? x - y : one.localeCompare(two, undefined, {numeric: true});
+    return descending ? -by : by;
+  });
+  // Before the empty row, which stays last: it is the table's own sentence.
+  for (const tr of rows) RECORD_TABLE.tBodies[0].insertBefore(tr, recordsEmpty);
+  sortHeads(RECORD_TABLE, th, descending);
+}
+for (const th of RECORD_TABLE && RECORD_TABLE.tHead ? RECORD_TABLE.tHead.rows[0].cells : []) {
+  const label = th.textContent.trim();
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'sorter';
+  button.append(...th.childNodes);
+  const dir = document.createElement('span');
+  dir.className = 'dir';
+  dir.setAttribute('aria-hidden', 'true');
+  button.append(dir);
+  th.append(button);
+  th.dataset.sort = th.dataset.col;
+  th.setAttribute('aria-sort', 'none');
+  button.onclick = () => {
+    const descending = th.getAttribute('aria-sort') === 'ascending';
+    recordsSort(th, descending);
+    announce(`Sorted by ${label}, ${descending ? 'descending' : 'ascending'}`);
+  };
+}
+// One remembered layout per list: /issues and /notes draw other columns.
+gripColumns(RECORD_TABLE, 'openproj:widths' + location.pathname);
 </script>
 """
 
