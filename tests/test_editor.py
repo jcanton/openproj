@@ -781,6 +781,9 @@ def test_picking_a_suggestion_counts_as_typing(client: TestClient):
 
 
 _BETS_ONE_KEY = """
+// Over an empty search: the page opens on `cycle:N`, and a box in a row the
+// prefill hid cannot be focused at all.
+BETFIND.value = ''; betSearch(true);
 const box = document.querySelector('#bets input.live[data-field="developers"]');
 const key = name => box.dispatchEvent(
   new KeyboardEvent('keydown', {key: name, bubbles: true, cancelable: true}));

@@ -361,11 +361,7 @@ _CYCLE = """
       page keeps it. -#}
   {#- Off the list and `hidden` from the start, so a page that has not run
       its script yet still shows the shortlist and not everything. -#}
-  {#- `data-query` is what the box asks this row — see `_bet_query`. Single
-      quotes, because `tojson` escapes `'`, `<`, `>` and `&` and not `"`: it is
-      the attribute form Jinja documents the filter for. -#}
   <tr data-id="{{ row.id }}" data-rung="{{ row.rung }}" class="{{ row.classes }}"
-      data-query='{{ row.query|tojson }}'
       {%- if row.offlist %} data-offlist hidden{% endif %}>
     {#- Empty and not absent on a task's row. Every column below is addressed by
         position — `betCell` sorts on `row.cells[at]` — so a row one cell short
@@ -415,7 +411,12 @@ _CYCLE = """
     {#- A task's cell is empty, and on a page that writes it holds the one way a
         task gets a cycle of its own: out of its pitch and into this cycle,
         staged like every other edit here and written on Save. -#}
-    <td class="derived">{% if editable and row.own_bet -%}
+    {#- `data-query` is what the box asks this row — see `_bet_query`. On the
+        last cell and not on the `<tr>`, whose attributes are read in their
+        written order by more than one test. Single quotes, because `tojson`
+        escapes `'`, `<`, `>` and `&` and not `"`: the attribute form Jinja
+        documents the filter for. -#}
+    <td class="derived" data-query='{{ row.query|tojson }}'>{% if editable and row.own_bet -%}
       <button type="button" class="ownbet" data-out="{{ row.out_to }}"
         data-holder="{{ row.holder }}"
         aria-label="Bet {{ row.title }} on its own into cycle {{
@@ -1107,7 +1108,8 @@ function betAsked(said) {
 // a refresh replaces the row, and the new one brings its own.
 function betQuery(row) {
   if (!row._query) {
-    try { row._query = JSON.parse(row.dataset.query || '{}'); } catch { row._query = {}; }
+    const cell = row.querySelector('td[data-query]');
+    try { row._query = JSON.parse(cell ? cell.dataset.query : '{}'); } catch { row._query = {}; }
   }
   return row._query;
 }
