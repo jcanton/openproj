@@ -45,7 +45,7 @@ _RECORDS = """
     <td data-col="title"><a href="{{ links.record }}{{ r.id }}">{{ r.title or r.id }}</a></td>
     <td data-col="who">{{ r.who or '—' }}</td>
     <td data-col="tags">{{ r.tags|join(', ') or '—' }}</td>
-    {%- if timed %}<td data-col="edited" data-at="{{ r.epoch }}">{{ r.ago }}</td>{% endif %}
+    {%- if timed %}<td data-col="edited">{{ r.ago }}</td>{% endif %}
   </tr>
 {%- endfor %}
 {#- The no-records state is server-rendered so it is right before any script
@@ -166,9 +166,11 @@ recordsApply();
 const RECORD_TABLE = document.getElementById('records');
 function recordsSort(th, descending) {
   const at = [...th.parentNode.cells].indexOf(th);
+  const edited = th.dataset.col === 'edited' ? (RECORDS.edited || {}) : null;
   const said = tr => {
+    if (edited) return String(edited[tr.dataset.id] || 0);
     const td = tr.cells[at];
-    return td ? (td.dataset.at || td.textContent).trim() : '';
+    return td ? td.textContent.trim() : '';
   };
   const rows = [...RECORD_TABLE.tBodies[0].querySelectorAll('tr[data-id]')];
   rows.sort((a, b) => {
@@ -483,7 +485,10 @@ def render_records(
         create=create,
         said=said,
         columns=("kind", "title", "who", "tags") + (("edited",) if timed else ()),
-        payload={"rows": asks},
+        # `edited` beside the rows the box asks, for the sort: "3 days ago" sorted
+        # as words puts a week ago before yesterday. In the payload and not on
+        # the cell, whose markup the export tests read as written.
+        payload={"rows": asks, "edited": {row["id"]: row["epoch"] for row in rows}},
         # No dropdowns: facets are plan vocabulary and this page is the whole
         # record population. The bar still renders #q, #query-error and
         # #unfilter, which is all `_FILTER_JS`'s unguarded listeners need.

@@ -9620,7 +9620,7 @@ def test_the_betting_table_says_what_a_bet_is_being_made_against(
     head = re.search(r'<table id="bets".*?</thead>', page, re.S)
     assert head, "the betting table has no header row"
     columns = [
-        name.strip() for name in re.findall(r'class="sorter">([^<]*)</button>', head.group(0))
+        name.strip() for name in re.findall(r'class="sorter">([^<]*)<', head.group(0))
     ]
     assert "priority" in columns, columns
     assert columns.index("status") < columns.index("priority") < columns.index("appetite"), (
