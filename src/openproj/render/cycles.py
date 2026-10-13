@@ -6,7 +6,7 @@ from datetime import date
 
 from markupsafe import Markup
 
-from ..index import Index
+from ..index import Index, query_fields
 from ..model import (
     Config,
     Cycle,
@@ -21,7 +21,7 @@ from ..model import (
 from ..query import plain
 from ..schedule import build_end
 from .calendar import _CALENDAR_STYLE, _calendar_js
-from .controls import _FILTER_JS, _combobox_html, _cycle_numbers, _facets_html
+from .controls import _FILTER_JS, _QUERY_JS, _combobox_html, _cycle_numbers, _facets_html
 from .env import PHONE, _compiled
 from .icons import _ICON_ART, ICONS, icon_svg
 from .markdown import _markdown
@@ -279,12 +279,29 @@ _CYCLE = """
 
     The two openings of the sentence are both in the markup and the box swaps
     them, so the words the page says are the template's and not a string in a
-    script that has to be kept the same as this one. -#}
+    script that has to be kept the same as this one.
+
+    The box opens holding `cycle:N` — jcanton, 2026-10-13: "pre-fill the search
+    box with cycle:<cycle-nr>". In the `value` attribute and not set by the
+    script, so the box says what the rows were filtered by from the first paint,
+    and `autocomplete="off"` so a reload puts the prefill back rather than the
+    browser's memory of whatever was typed last.
+
+    The count is the other views' "N of M shown", in the same words — the same
+    jcanton message, "the table doesn't show the count x out of N as the other
+    pages". Rendered as the shortlist before the script narrows it, because a
+    count that is blank until JavaScript runs is a count that is wrong for a
+    moment; the script writes both numbers on every search. -#}
 <p class="hint betsearch">
   <label for="betfind" class="sr-only">Search the betting table</label>
-  <input type="search" id="betfind" placeholder="Search" autocomplete="off">
+  <input type="search" id="betfind" placeholder="Search" autocomplete="off"
+    value="cycle:{{ c.number }}">
   <label for="betevery" class="betevery"><input type="checkbox" id="betevery"
     autocomplete="off"> Every status</label>
+  {%- set listed = c.candidates|rejectattr("offlist")|list|length %}
+  <span class="betcount"><span id="betshown" class="num">{{ listed }}</span> of <span
+    id="bettotal" class="num">{{ listed }}</span> shown</span>
+  <span id="beterror" class="beterror" hidden></span>
   <span><span class="betscope" data-every="no">Everything ready or in
   progress</span><span class="betscope" data-every="yes" hidden>Everything a cycle
   can be bet on, whatever its status</span>, with the tasks each one is made of
@@ -300,7 +317,11 @@ _CYCLE = """
     back through new mechanisms. -#}
 <p class="hint" id="betnone" hidden>Nothing here matches
   <strong id="betterm"></strong>. <button type="button" id="betclear">Clear the
-  search</button></p>
+  search</button>
+  {#- Offered only when Every status would find something: every past cycle's
+      bets are done, so `cycle:37` over the shortlist is empty on purpose and the
+      rows it means are one box away. -#}
+  <button type="button" id="betbeyond" hidden>Show every status</button></p>
 {#- And the other way to arrive at an empty table: nothing is ready or in
     progress, while the plan does hold something a cycle could be bet on. A
     header over no rows there reads as the page failing to load, and the way
@@ -340,7 +361,11 @@ _CYCLE = """
       page keeps it. -#}
   {#- Off the list and `hidden` from the start, so a page that has not run
       its script yet still shows the shortlist and not everything. -#}
+  {#- `data-query` is what the box asks this row — see `_bet_query`. Single
+      quotes, because `tojson` escapes `'`, `<`, `>` and `&` and not `"`: it is
+      the attribute form Jinja documents the filter for. -#}
   <tr data-id="{{ row.id }}" data-rung="{{ row.rung }}" class="{{ row.classes }}"
+      data-query='{{ row.query|tojson }}'
       {%- if row.offlist %} data-offlist hidden{% endif %}>
     {#- Empty and not absent on a task's row. Every column below is addressed by
         position — `betCell` sorts on `row.cells[at]` — so a row one cell short
@@ -428,6 +453,7 @@ what would make it a bet next time. Markdown.">{{ c.raw_body }}</textarea>
 {% if editable %}
 {{ combobox }}
 <script>
+{{ query_js }}
 const BASE = document.getElementById('base');
 const BAR = document.getElementById('commitbar');
 const UNSAVED = document.getElementById('unsaved');
@@ -1059,31 +1085,92 @@ const BETFIND = document.getElementById('betfind');
 const BETNONE = document.getElementById('betnone');
 const BETEVERY = document.getElementById('betevery');
 const BETSHORT = document.getElementById('betshort');
+const BETBEYOND = document.getElementById('betbeyond');
+const BETERROR = document.getElementById('beterror');
 const BET_EVERY_KEY = 'openproj:bet-every';
 
 function betRows() { return [...BETS.tBodies[0].rows]; }
 
+// What the box asks, parsed once per search and not once per row. A query that
+// cannot be read matches nothing and says why, beside the box — the rule every
+// other view keeps (`query.py`).
+function betAsked(said) {
+  try {
+    return {tree: queryTree(said), error: ''};
+  } catch (error) {
+    if (!(error instanceof QueryError)) throw error;
+    return {tree: null, error: error.message};
+  }
+}
+
+// The row's query data as the server drew it (`_bet_query`), parsed once per row:
+// a refresh replaces the row, and the new one brings its own.
+function betQuery(row) {
+  if (!row._query) {
+    try { row._query = JSON.parse(row.dataset.query || '{}'); } catch { row._query = {}; }
+  }
+  return row._query;
+}
+
+// The row's fields as the ROOM has them, which is the server's with every edit
+// nobody has saved yet laid over them. A tick is `cycle` staged in PENDING, so
+// `cycle:39` answers for a bet ticked a minute ago and stops answering for one
+// unticked — and a task with no cycle of its own takes its bet's, ticks
+// included, for the reason `_bet_query` gives.
+function betFields(row) {
+  const query = betQuery(row);
+  const fields = {...(query.fields || {})};
+  if (query.cycle_from) {
+    const bet = betRow(query.cycle_from);
+    if (bet) fields.cycle = betFields(bet).cycle;
+  }
+  for (const [field, value] of Object.entries(PENDING.get(row.dataset.id) || {}))
+    if (field in fields)
+      fields[field] = [].concat(value ?? []).map(String).map(v => v.toLowerCase())
+        .filter(v => v !== '');
+  return fields;
+}
+
+// Whether a row answers the query. A bare word reads the row's `searchable` blob,
+// which is what it reads on every other view, and the values typed into this
+// row's boxes since — the blob is the plan as the page was drawn, and the box
+// beside the row is the plan as the room is arguing it.
+function betAnswers(tree, row) {
+  if (tree === null) return true;
+  const query = betQuery(row);
+  // Plained per VALUE and joined on a space, the boundary `found` stops at. A
+  // list box plained whole welds its logins into one chunk: measured on cycle 37
+  // of the test corpus, `redpollard, chiffchaffy` answered `dchi` and `llardch`.
+  const typed = [...row.querySelectorAll('input.live')]
+    .flatMap(box => box.dataset.type === 'list' ? box.value.split(',') : [box.value])
+    .map(value => plain(value)).filter(Boolean);
+  return answers(tree, betFields(row),
+    [query.search || '', ...typed].join(' '), query.name || '');
+}
+
 // `quiet` leaves the live region alone: a refresh re-filters rows it has just
 // brought in, and its "N of M shown" — or its blank, with nothing searched —
 // went over a row that did not save, which is the line somebody needs to read.
+//
+// It also leaves alone every row somebody is working in. A refresh runs while the
+// room works, and `cycle:39` with a bet unticked a moment ago no longer answers
+// for that row — so without this the next poll took the row away with the edit
+// still in it, which is `betPlace`'s rule broken by the search instead of by
+// the sort. Typing in the box is a person asking, and asks every row.
 function betSearch(quiet = false) {
-  // `said` is what is in the box and `term` is what can be searched for. They
-  // part company wherever normalising leaves less than a needle: `#` is
-  // something somebody typed, so this is not an empty box and the rows must
-  // narrow — to nothing, and with the sentence below saying which `#` found
-  // none. Reading `!term` for "the box is empty" would show the whole table back
-  // instead, which is the one answer a search must never give to a term it
-  // cannot answer.
+  // `said` is what is in the box and `term` is what the language makes of it.
+  // `#` is something somebody typed, so this is not an empty box and the rows
+  // must narrow — to nothing, with the sentence below saying which `#` found
+  // none. `queryTree` makes it the empty word, which `bare` answers nothing for.
   //
-  // `sought` and not `plain`, which is the half of that split this box was
-  // missing. `plain('C++')` is `'c'` — not empty, so nothing above catches it,
-  // and a one-character substring answers almost everything: measured on cycle
-  // 37 of the test corpus, `C++` and `c#` each kept 13 of the table's 14 rows.
-  // `sought` empties a needle `plain` truncated, so those narrow to nothing the
-  // way `#` already did. Every other box on every page reads `sought`; its
-  // comment in `_SHELL` is where the rule is written down.
+  // The language, and not a substring over the row's text: jcanton, 2026-10-13,
+  // "the search box doesn't know the query language (e.g. `cycle:39` doesn't
+  // work) while all other ones do". The haystack this replaced also read every
+  // `<option>` of the two pickers, so `shelved` found every row on the table.
   const said = BETFIND.value.trim();
-  const term = sought(said);
+  const asked = betAsked(said);
+  BETERROR.textContent = asked.error;
+  BETERROR.hidden = !asked.error;
   // Every status widens what the search looks through, rather than being a
   // second filter applied after it: "N of M shown" counts against the rows in
   // scope, so with the box off a search reports out of the shortlist and not out
@@ -1093,53 +1180,30 @@ function betSearch(quiet = false) {
     scope.hidden = (scope.dataset.every === 'yes') !== every;
   let shown = 0;
   let inScope = 0;
+  let beyond = 0;
   for (const row of betRows()) {
-    if (!every && 'offlist' in row.dataset) { row.hidden = true; continue; }
+    const hit = !asked.error && betAnswers(asked.tree, row);
+    if (!every && 'offlist' in row.dataset) {
+      row.hidden = true;
+      if (said && hit) beyond++;
+      continue;
+    }
     inScope++;
-    // The whole row's text, which is what somebody means by "search": a title,
-    // an owner, a kind and an id are all things said out loud at a betting
-    // table. `textContent` misses what is inside the editable cells, whose
-    // value lives on the input rather than in the tree, so those are asked
-    // separately.
-    //
-    // **Plained per cell and per typed VALUE, then joined on a space**, which is
-    // the boundary `found` stops at. Joining the row first and plaining the
-    // result would delete the whitespace between the cells and let a subsequence
-    // run out of a title and into the owner beside it — the cross-value leak
-    // that `searchable`'s space exists to prevent, reintroduced by the one box
-    // that has no server-built blob to read. This is also the one box that
-    // normalises per row per keystroke, over one cycle's candidates; it already
-    // lowercased exactly this string just as often.
-    //
-    // **A value, and not a box.** `developers` and `reviewers` are one input each
-    // holding a comma-joined list, so a box plained whole welds its logins into
-    // a single chunk and the leak comes back inside one cell — which is what it
-    // did. Measured on cycle 37 of the test corpus, where two rows carry
-    // `redpollard, chiffchaffy`: `dchi`, `ardchi` and `llardch` each found
-    // exactly those two rows and no others, and `redpollardchiffchaffy` found
-    // them too — as a SUBSTRING, so this was never only the loose tier's doing.
-    // Split on the comma the blur handler above stages a list on, so the
-    // boundary this box searches by is the boundary the file is written with,
-    // and one chunk per list element is what `_joined` builds on the server.
-    const typed = [...row.querySelectorAll('input')]
-      .filter(box => box.type !== 'checkbox')
-      .flatMap(box => box.dataset.type === 'list' ? box.value.split(',') : [box.value])
-      .map(value => plain(value));
-    const haystack = [...row.cells].map(cell => plain(betText(cell)))
-      .concat(typed).join(' ');
-    const hit = !said || !!found(term, haystack);
-    row.hidden = !hit;
-    if (hit) shown++;
+    if (!(quiet && betHeld(row))) row.hidden = !hit;
+    if (!row.hidden) shown++;
   }
+  document.getElementById('betshown').textContent = shown;
+  document.getElementById('bettotal').textContent = inScope;
   // Empty must not look like broken. A search matching nothing is the commonest
   // way to arrive at an empty table, and it is a different sentence from "this
   // cycle has nothing to bet on" — with the control that gets you out of it.
   BETNONE.hidden = shown > 0 || !said;
   if (!BETNONE.hidden) document.getElementById('betterm').textContent = said;
+  BETBEYOND.hidden = BETNONE.hidden || !beyond;
   // The shortlist empty while the plan holds bets off it: a different sentence
   // from a search that matched nothing, with the box's own way out.
   BETSHORT.hidden = every || inScope > 0 || !betRows().length;
-  if (!quiet) say(said ? `${shown} of ${inScope} shown` : '');
+  if (!quiet) say(asked.error || (said ? `${shown} of ${inScope} shown` : ''));
   betTree();
 }
 
@@ -1191,11 +1255,15 @@ BETEVERY.addEventListener('change', () => {
   say(BETEVERY.checked ? 'Showing every status' : 'Showing ready and in progress');
 });
 // Shown only while the box is off, so a click is always the box going on.
-document.getElementById('betwiden').onclick = () => {
-  BETEVERY.click();
-  BETEVERY.focus();
-};
-betSearch();
+for (const widen of [document.getElementById('betwiden'), BETBEYOND]) {
+  widen.onclick = () => {
+    BETEVERY.click();
+    BETEVERY.focus();
+  };
+}
+// Quiet: the page opening filtered by `cycle:N` is not news, and a load that
+// announced "3 of 14 shown" would say it over whatever the region holds.
+betSearch(true);
 document.getElementById('betclear').onclick = () => {
   BETFIND.value = '';
   betSearch();
@@ -1451,6 +1519,10 @@ _CYCLE_STYLE = (
 .betsearch input[type="search"] { flex: none; width: 12rem; }
 .betsearch .betevery { flex: none; white-space: nowrap; }
 .betsearch > span { flex: 1 1 auto; min-width: 0; }
+/* (0,2,0) over the rule above's (0,1,1): the count and the error are as wide as
+   what they say, and the caption is the span that takes the rest of the line. */
+.betsearch > .betcount, .betsearch > .beterror { flex: none; white-space: nowrap; }
+.betsearch > .beterror { font-size: 12px; color: var(--sev-warn); }
 /* A column head that sorts. It is a real button so a keyboard can reach it, and
    it wears the head's own type so the row still reads as a header row. */
 #bets th .sorter {
@@ -1466,6 +1538,14 @@ _CYCLE_STYLE = (
    the last time somebody put a backslash in one of these blocks. */
 #bets th[aria-sort="ascending"] .sorter::after { content: " ↑"; }
 #bets th[aria-sort="descending"] .sorter::after { content: " ↓"; }
+/* And a quiet pair on every head that is not the sorted one, so a column that
+   sorts says so before anybody clicks it — jcanton, 2026-10-13: "it is also not
+   obvious that columns are sortable until you click on one". Muted, so the one
+   column that IS sorted is still the one arrow in the accent's weight; and on
+   `none` alone, so the sorted head's own arrow replaces it rather than sitting
+   beside it. Not on the table page, whose fourteen heads are what its fit model
+   is paid in. */
+#bets th[aria-sort="none"] .sorter::after { content: " ↕"; color: var(--muted); }
 
 /* .commitbar, #unsaved and #save are the shell's: the cycle page was the first
    to need a bar that says whether the page is saved, and then the detail page
@@ -2621,6 +2701,40 @@ def _bet_row(
     }
 
 
+def _bet_query(index: Index, record_id: str, bet: str = "") -> dict:
+    """What the betting table's box asks one row about: the query language's data.
+
+    The same three things every other view ships on a row — `query_fields`, and
+    the `searchable` and `nameable` blobs a bare word reads — so `cycle:39` and
+    `developer:ann` mean on this box what they mean on the table's, the graph's
+    and the timeline's. jcanton, 2026-10-13: this box "doesn't know the query
+    language … while all other ones do".
+
+    **One difference, and it is this table's own sentence.** A task inside a pitch
+    has no cycle of its own — "a task has no tick of its own — it is part of the
+    bet above it" — so here it answers `cycle:` with its bet's. Asked literally,
+    the box this page now opens with (`cycle:39`) drew every bet in the cycle and
+    not one of the tasks the room types appetites into under it. A task that
+    does carry a cycle (bet on its own, or stamped by hand) keeps its own.
+
+    `cycle_from` names the bet when the cycle was borrowed, because the browser
+    has to borrow it again: a tick nobody has saved yet moves the cycle of every
+    task under it, and the row has to know whose tick to read.
+    """
+    fields = query_fields(index, record_id)
+    borrowed = bool(bet) and not fields["cycle"]
+    if borrowed:
+        fields["cycle"] = query_fields(index, bet)["cycle"]
+    return {
+        "query": {
+            "fields": fields,
+            "search": index.search_blob[record_id],
+            "name": index.name_blob[record_id],
+            "cycle_from": bet if borrowed else "",
+        }
+    }
+
+
 # What a betting table is about before anybody asks it for more, and the two
 # rungs that are history rather than a decision: off it whatever cycle they
 # carry, and off it under a bet that is on it.
@@ -2832,7 +2946,9 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         if not is_bettable(record, index.plan):
             continue
         offlist = not _shortlisted(record, number)
-        candidates.append(_bet_row(record, number, index.plan, offlist=offlist))
+        candidates.append(
+            _bet_row(record, number, index.plan, offlist=offlist) | _bet_query(index, record_id)
+        )
         # And what is inside the bet, under it. The appetite the room argues
         # about is the pitch's, but the thing that has to change for it to be met
         # is a task's — and until now that meant leaving the meeting's own page
@@ -2880,6 +2996,7 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
                     rung="end" if child == peers[-1] else "tee",
                     offlist=child in hidden,
                 )
+                | _bet_query(index, child, record_id)
             )
 
     return {
@@ -2931,6 +3048,9 @@ def render_cycle(
         statuses=STATUSES,
         priorities=PRIORITIES,
         combobox=_combobox_html(index, live=base_commit is not None),
+        # The query language's parser, for the betting table's box — the same
+        # script the control bar's `_FILTER_JS` carries, without the bar.
+        query_js=Markup(_QUERY_JS),
         # Ungated, unlike the record page's and the table's: `#setup` draws its
         # two date boxes whatever `base_commit` is — this page has no
         # reading/editing toggle — so a reader has the boxes and would otherwise

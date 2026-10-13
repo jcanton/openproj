@@ -144,27 +144,19 @@ _PLAN_FACETS = (
     "predicate",
 )
 
-# The filter model itself, shared by every view that offers the bar above. The
-# README has always said three views filter the same plan the same way; while
-# `matches` lived inside the table's script, that was true of one of them, and a
-# second copy of it is how a facet comes to mean something different per page.
-_FILTER_JS = Markup(r"""
-<script>
-const params = new URLSearchParams(location.search);
-
-// Every field the control bar offers. A field in one list and not the other is a
-// dropdown that changes the URL and filters nothing.
-const FILTERS = ['kind','status','owner','developers','reviewers','priority',
-                 'cycle','product','project','tags'];
-
+# The query language, in the browser: the parser and `answers`, and nothing that
+# reads a page. Its own block because the cycle page's betting-table box speaks the
+# language without having the control bar the rest of `_FILTER_JS` drives —
+# jcanton, 2026-10-13: "the search box doesn't know the query language (e.g.
+# `cycle:39` doesn't work) while all other ones do". A second copy for that box
+# would be a third parser, and two is already one more than anybody wants.
+_QUERY_JS = r"""
 // The menu option that means "this field is empty". Spelled here as a literal
 // and in `index.NO_VALUE` in Python, because this block is a constant rather
 // than a template — `test_empty_is_spelled_the_same_on_both_sides_of_the_wire`
 // is what stops the two drifting, and a drift would filter differently in the
 // browser than on the server with neither one erroring.
 const NO_VALUE = '(none)';
-
-function wanted(field) { return params.getAll(field).filter(Boolean); }
 
 // --- the query language ----------------------------------------------------
 //
@@ -408,6 +400,27 @@ function answers(node, fields, text, names) {
   return !!want && held.some(value => plain(value) === want);
 }
 
+"""
+
+# The filter model itself, shared by every view that offers the bar above. The
+# README has always said three views filter the same plan the same way; while
+# `matches` lived inside the table's script, that was true of one of them, and a
+# second copy of it is how a facet comes to mean something different per page.
+_FILTER_JS = Markup(
+    r"""
+<script>
+const params = new URLSearchParams(location.search);
+
+// Every field the control bar offers. A field in one list and not the other is a
+// dropdown that changes the URL and filters nothing.
+const FILTERS = ['kind','status','owner','developers','reviewers','priority',
+                 'cycle','product','project','tags'];
+
+function wanted(field) { return params.getAll(field).filter(Boolean); }
+
+"""
+    + _QUERY_JS
+    + r"""
 // Parsed once per query and not once per row: the table redraws on every
 // keystroke over as many rows as the plan has, and parsing `kind:task` two
 // hundred times to answer one question is two hundred parses.
@@ -713,7 +726,8 @@ addEventListener('pointerdown', event => {
 
 syncFilters();
 </script>
-""")
+"""
+)
 
 
 # Raw, because the JS in here contains regex escapes. `\\.` is not a Python escape,
