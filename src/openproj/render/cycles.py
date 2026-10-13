@@ -1484,7 +1484,7 @@ td .confirm { white-space: nowrap; }
 .confirm button.yes { border-color: var(--danger); color: var(--danger); }
 /* The notes box, at the width of the prose it holds rather than the width of the
    betting table beside it. */
-textarea.notes { display: block; width: 100%; max-width: 52rem; box-sizing: border-box;
+textarea.notes { display: block; width: 100%; box-sizing: border-box;
                  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                  font-size: 13px; line-height: 1.55; padding: .4rem;
                  border: 1px solid var(--line-strong); border-radius: 3px;
@@ -1500,11 +1500,11 @@ textarea.notes { display: block; width: 100%; max-width: 52rem; box-sizing: bord
    sheet is concatenated after _DETAIL_STYLE and is loaded by the two cycle pages
    only, so there is no third page for it to reach. */
 .doc { border-top: 0; padding-top: 0; }
-textarea.goal { display: block; width: 100%; max-width: 52rem; box-sizing: border-box;
+textarea.goal { display: block; width: 100%; box-sizing: border-box;
                 font: inherit; font-size: 15px; line-height: 1.5; padding: .4rem;
                 border: 1px solid var(--line-strong); border-radius: 3px;
                 background: var(--surface); color: inherit; resize: vertical; }
-p.goal.read { font-size: 15px; max-width: 52rem; margin: 0 0 1rem; }
+p.goal.read { font-size: 15px; margin: 0 0 1rem; }
 .goalbar { margin: 0 0 1rem; }
 #setup .field, table.load .field { display: inline-block; }
 #setup .field { width: 12rem; }
@@ -1528,7 +1528,17 @@ p.goal.read { font-size: 15px; max-width: 52rem; margin: 0 0 1rem; }
    why `table.load .field` and `table.load .read` below stay as they are — a
    delivered row has no control in it to hide a printed value behind. */
 table.load, table.delivered { border-collapse: collapse; font-size: 13px;
-                              margin: .5rem 0 1rem; }
+                              margin: .5rem 0 1rem; width: 100%; }
+/* One right edge for the page, the window's — jcanton, 2026-10-13: "the widths
+   of elements in the page seem quite inconsistent". The setup bar, the
+   warnings and the betting table already reached it, while the roster stopped
+   where its columns did and the goal and notes boxes stopped at 52rem: four
+   right edges down one page. So both tables are the page's width and so are
+   both boxes. The roster's slack goes to the load bar, which is the one column
+   whose reading improves with width, rather than spreading as gaps between
+   figures. */
+table.load td:has(> span.bar) { width: 100%; }
+table.load span.bar { width: 100%; min-width: 140px; }
 table.load th, table.load td, table.delivered th, table.delivered td {
   border-bottom: 1px solid var(--line); padding: .3rem .6rem; text-align: left;
 }
