@@ -9068,67 +9068,31 @@ def test_the_wash_does_not_take_away_the_ground_it_is_drawn_over(
     assert "rgba(0, 0, 0, 0)" not in before[:2], f"the frozen pair is not opaque: {before[:2]}"
 
 
-def test_the_betting_table_holds_every_bet_and_shortlists_ready_and_in_progress(
+def test_the_betting_table_holds_every_bet_whatever_its_status(
     demo_rendered: tuple[Path, Index],
 ):
-    """jcanton, 2026-10-12: "cycle betting table: option to filter all records,
-    not only ready or in progress" — a pitch still marked `shaping` the morning it
-    was argued for was not on the table at all.
-
-    Every bet the plan holds is a row now, and the ones a room does not see until
-    it ticks Every status are marked `offlist`. Asked against `is_bettable` over
-    the whole plan rather than a list of ids, so a bet added to the demo is in the
-    census on the commit that adds it.
+    """Every bet the plan holds is a row, and every task under one, whatever its
+    status: the search box is the only thing that hides a row now — jcanton,
+    2026-10-13, retiring the ready-or-in-progress shortlist: "now the default
+    logic is the search engine pre-filled with cycle:nr". Asked against
+    `is_bettable` over the whole plan rather than a list of ids, so a bet added
+    to the demo is in the census on the commit that adds it.
     """
     from openproj.model import is_bettable
     from openproj.render import _cycle_view
 
     _, index = demo_rendered
     rows = _cycle_view(index, 37)["candidates"]
-    bets = {row["id"]: row for row in rows if not row["rung"]}
+    bets = {row["id"] for row in rows if not row["rung"]}
 
-    assert set(bets) == {r.id for r in index.plan.values() if is_bettable(r, index.plan)}, (
+    assert bets == {r.id for r in index.plan.values() if is_bettable(r, index.plan)}, (
         "a bet the plan holds is not on the betting table"
     )
-    off = {i for i, row in bets.items() if row["offlist"]}
-    assert off, "the demo has no bet outside ready and in progress, so this proves nothing"
-    for record_id, row in bets.items():
-        record = index.plan[record_id]
-        assert row["offlist"] == (record.status not in ("ready", "in_progress")), (
-            f"{record_id} is {record.status} and offlist={row['offlist']}"
-        )
-    # And a task is off the list when it is finished, dropped, or under a bet that
-    # is: a row drawn under a hidden bet is a connector hanging off nothing.
-    for row in rows:
-        if not row["rung"]:
-            held = row
-            continue
-        status = index.plan[row["id"]].status
-        assert row["offlist"] == (held["offlist"] or status in ("done", "shelved")), row["id"]
-
-
-def test_a_bet_already_in_this_cycle_stays_on_the_shortlist_whatever_its_status(
-    demo_rendered: tuple[Path, Index],
-):
-    """A `shaping` pitch ticked while Every status was on is a bet in this cycle,
-    and unticking the box must not take it off the page that made it — that reads
-    as the tick having been lost. Finished and dropped bets are history and stay
-    off; a bet in another cycle is not this cycle's business."""
-    from openproj.render.cycles import _shortlisted
-
-    _, index = demo_rendered
-    pitch = next(r for r in index.plan.values() if r.kind == "pitch")
-
-    def bet(status: str, cycle: int | None):
-        return pitch.model_copy(update={"status": status, "cycle": cycle})
-
-    assert _shortlisted(bet("shaping", 37), 37)
-    assert _shortlisted(bet("thinking", 37), 37)
-    assert not _shortlisted(bet("shaping", 36), 37)
-    assert not _shortlisted(bet("shaping", None), 37)
-    assert not _shortlisted(bet("done", 37), 37)
-    assert not _shortlisted(bet("shelved", 37), 37)
-    assert _shortlisted(bet("ready", None), 37)
+    statuses = {index.plan[row["id"]].status for row in rows}
+    assert statuses - {"ready", "in_progress"}, (
+        "the demo has no row outside ready and in progress, so this proves nothing"
+    )
+    assert all("offlist" not in row for row in rows)
 
 
 # What the betting table shows, as the ids of the rows a reader can see.
@@ -9138,57 +9102,6 @@ _BETS_SHOWN = """
 """
 
 
-def test_every_status_is_one_box_that_widens_the_table_and_is_remembered(
-    demo_rendered: tuple[Path, Index], tmp_path: Path
-):
-    """Off by default and the table is the shortlist; on and every bet is drawn,
-    with the sentence describing the table saying which of the two it is. Asked
-    of what is PAINTED — `getClientRects` — because `hidden` on a row is only a
-    promise until the cascade agrees, and a `tr` given `display` by some other
-    rule keeps it.
-
-    Then the page is loaded a second time in the same browser, because the box
-    is remembered and a remembered setting that is not read back on load is a
-    setting that resets itself every time the room refreshes."""
-    import time
-
-    from browser import _devtools, _evaluated, chrome
-
-    from openproj.render import render_cycle
-
-    _, index = demo_rendered
-    where = tmp_path / "cycle.html"
-    where.write_text(render_cycle(index, 37, ROUTES, base_commit="deadbee"))
-    # Over an empty search: the page opens on `cycle:37`, and this is about what
-    # the box widens the table to, not about what the prefill narrows it to.
-    ask = _BETS_SHOWN + """
-      BETFIND.value = ''; betSearch(true);
-      return {shown: shown(), every: BETEVERY.checked,
-              scope: [...document.querySelectorAll('.betscope')]
-                .filter(s => s.getClientRects().length).map(s => s.dataset.every)};
-    """
-    ask = f"(() => {{ {ask} }})()"
-    with _devtools(chrome(), where.as_uri(), tmp_path / "every-profile") as (call, _said):
-        time.sleep(2)
-        before = _evaluated(call, ask)
-        _evaluated(call, "BETEVERY.click(); 1")
-        during = _evaluated(call, ask)
-        call("Page.reload", {})
-        time.sleep(2)
-        reloaded = _evaluated(call, ask)
-        _evaluated(call, "BETEVERY.click(); 1")
-        call("Page.reload", {})
-        time.sleep(2)
-        forgotten = _evaluated(call, ask)
-
-    rows = _cycle_view_rows(index)
-    listed = [row["id"] for row in rows if not row["offlist"]]
-    assert before == {"shown": listed, "every": False, "scope": ["no"]}
-    assert during == {"shown": [row["id"] for row in rows], "every": True, "scope": ["yes"]}
-    assert reloaded == during, "the box was not read back when the page loaded again"
-    assert forgotten == before, "unticking the box was not remembered"
-
-
 def test_the_betting_box_speaks_the_query_language_and_opens_on_its_cycle(
     demo_rendered: tuple[Path, Index], tmp_path: Path
 ):
@@ -9196,7 +9109,10 @@ def test_the_betting_box_speaks_the_query_language_and_opens_on_its_cycle(
     language (e.g. `cycle:39` doesn't work)", "pre-fill the search box with
     cycle:<cycle-nr>", "the table doesn't show the count x out of N as the other
     pages", and "it is also not obvious that columns are sortable until you click
-    on one".
+    on one". And the same day, the cleanup: no description beside the box, no
+    shortlist and no Every status — "clearing the search engine clears that and
+    gives the same result" — and the count "to the right of the pages as in the
+    table and graph views".
 
     **The rows a query keeps are the ones `query.evaluate` keeps**, over the data
     each row ships — so this box and the server's parser are held together by
@@ -9222,15 +9138,14 @@ def test_the_betting_box_speaks_the_query_language_and_opens_on_its_cycle(
     developer = next(
         login for row in rows for login in row["query"]["fields"]["developers"]
     )
-    queries = ["cycle:37", "kind:task", "status:ready", "not cycle:37",
+    queries = ["", "cycle:37", "kind:task", "status:ready", "not cycle:37",
                f"developer:{developer}", "cycle:37 kind:pitch"]
 
     def kept(query: str) -> list[str]:
         asked = parse(query)
         return [
             row["id"] for row in rows
-            if not row["offlist"]
-            and evaluate(asked, row["query"]["fields"], row["query"]["search"],
+            if evaluate(asked, row["query"]["fields"], row["query"]["search"],
                          row["query"]["name"], NO_VALUE)
         ]
 
@@ -9245,6 +9160,14 @@ def test_the_betting_box_speaks_the_query_language_and_opens_on_its_cycle(
       const count = () => document.querySelector('.betcount').textContent
         .replace(/\\s+/g, ' ').trim();
       const out = {box: BETFIND.value, opened: shown(), openedCount: count(), asked: {}};
+      const edge = el => el.getBoundingClientRect();
+      const line = edge(document.querySelector('.betsearch'));
+      out.layout = {
+        countRight: Math.round(line.right - edge(document.querySelector('.betcount')).right),
+        countAfterBox: edge(document.querySelector('.betcount')).left > edge(BETFIND).right,
+        every: !!document.getElementById('betevery'),
+        words: document.querySelector('.betsearch').textContent.replace(/\\s+/g, ' ').trim(),
+      };
       for (const q of """ + json.dumps(queries) + """) {
         BETFIND.value = q; BETFIND.dispatchEvent(new Event('input'));
         out.asked[q] = {shown: shown(), count: count()};
@@ -9252,18 +9175,32 @@ def test_the_betting_box_speaks_the_query_language_and_opens_on_its_cycle(
       BETFIND.value = 'kind:task and ('; BETFIND.dispatchEvent(new Event('input'));
       out.broken = {shown: shown(), error: BETERROR.getClientRects().length
         ? BETERROR.textContent : '', none: !!BETNONE.getClientRects().length};
-      const after = head => getComputedStyle(head.querySelector('.sorter') || head, '::after')
-        .content;
-      out.heads = [...BETS.tHead.rows[0].cells].map(after);
+      const head = th => ({dir: th.querySelector('.dir') && th.querySelector('.dir').textContent,
+                           weight: getComputedStyle(th).fontWeight,
+                           grip: !!th.querySelector('.grip')});
+      out.heads = [...BETS.tHead.rows[0].cells].map(head);
       BETS.querySelector('th[data-sort="5"] .sorter').click();
-      out.sorted = [...BETS.tHead.rows[0].cells].map(after);
+      out.sorted = [...BETS.tHead.rows[0].cells].map(head);
+      BETS.querySelector('th[data-sort="5"] .sorter').click();
+      out.again = head(BETS.querySelector('th[data-sort="5"]'));
+      // A grip touched and let go where it was: nothing may move. In content-box
+      // the freeze grew every column by its padding.
+      const widths = () => [...BETS.tHead.rows[0].cells]
+        .map(th => Math.round(th.getBoundingClientRect().width));
+      const still = widths();
+      const grip = BETS.querySelector('th .grip').getBoundingClientRect();
+      BETS.querySelector('th .grip').dispatchEvent(new PointerEvent('pointerdown',
+        {clientX: grip.left, clientY: grip.top, bubbles: true}));
+      dispatchEvent(new PointerEvent('pointerup', {clientX: grip.left, clientY: grip.top}));
+      const now = widths();
+      out.jumped = still.every((w, i) => Math.abs(w - now[i]) <= 1) ? '' : `${still} → ${now}`;
       return out;
     """,
         height=1200,
         patience=2500,
     )
 
-    in_scope = sum(not row["offlist"] for row in rows)
+    in_scope = len(rows)
     assert got["box"] == "cycle:37", "the box did not open on this page's cycle"
     assert got["opened"] == kept("cycle:37"), "the page did not open filtered by its cycle"
     assert got["openedCount"] == f"{len(kept('cycle:37'))} of {in_scope} shown"
@@ -9277,56 +9214,113 @@ def test_the_betting_box_speaks_the_query_language_and_opens_on_its_cycle(
     assert got["broken"] == {
         "shown": [], "error": "a bracket is opened and never closed", "none": True,
     }
-    quiet, up = '" ↕"', '" ↑"'
-    assert got["heads"][0] == "none", "the tick column does not sort and must not say it does"
-    assert got["heads"][1:] == [quiet] * (len(got["heads"]) - 1), got["heads"]
-    assert got["sorted"][5] == up and got["sorted"].count(quiet) == len(got["heads"]) - 2
+    # The table page's heads — jcanton, the same day: "draggable column
+    # separators and the same bold for the sorted column and the little
+    # triangles for sorting instead of the arrows". A grip on every head; no
+    # triangle until a column is sorted, then ▴ and bold on that one alone, and
+    # ▾ on the second click. No grip on the last head, whose right edge is the
+    # page's: "the grabber thing to the very right should not even be drawn".
+    assert [head["grip"] for head in got["heads"]] == [True] * (len(got["heads"]) - 1) + [False]
+    assert got["heads"][0]["dir"] is None, "the tick column does not sort and must not say it does"
+    assert {head["dir"] for head in got["heads"][1:]} == {""}, got["heads"]
+    assert {head["weight"] for head in got["heads"]} == {"400"}, got["heads"]
+    sorted_head = got["sorted"][5]
+    assert sorted_head["dir"] == "▴" and sorted_head["weight"] == "700", sorted_head
+    others = got["sorted"][:5] + got["sorted"][6:]
+    assert {h["weight"] for h in others} == {"400"} and {h["dir"] for h in others} <= {"", None}
+    assert got["again"]["dir"] == "▾", got["again"]
+    assert not got["jumped"], f"touching a grip moved the columns: {got['jumped']}"
+
+    # Cleared, the box hides nothing: every status, which is what the retired
+    # Every status box was for.
+    assert got["asked"][""]["shown"] == [row["id"] for row in rows]
+    assert not got["layout"]["every"], "the Every status box is still drawn"
+    opened = f"{len(kept('cycle:37'))} of {in_scope} shown"
+    assert got["layout"]["words"] == f"Search the betting table {opened}", (
+        "the line holds more than the box and the count: " + got["layout"]["words"]
+    )
+    assert got["layout"]["countAfterBox"] and abs(got["layout"]["countRight"]) <= 1, (
+        f"the count is not at the far end of the line: {got['layout']}"
+    )
+
+
+def test_the_record_list_sorts_and_resizes_like_the_table(
+    demo_rendered: tuple[Path, Index], tmp_path: Path
+):
+    """jcanton, 2026-10-13: the records page "same as the table in table/ style:
+    with draggable column separators and the same bold for the sorted column and
+    the little triangles for sorting" — those three and nothing else of the table
+    page's. A click on a head orders the rows by it and says so the table page's
+    way; a second click turns it round; a grip on every head's edge but the
+    last, and a drag of one moves the line between two columns while the table
+    stays the page's width, with what no longer fits cut by an ellipsis.
+
+    In Chrome, because the order is the one a reader sees and the width is a
+    pixel.
+    """
+    from browser import chrome, measured_in
+
+    out, _ = demo_rendered
+    got = measured_in(
+        chrome(),
+        (out / "index.html").read_text(),
+        tmp_path / "records-sort.html",
+        1400,
+        """
+      const t = document.getElementById('records');
+      const kinds = () => [...t.tBodies[0].querySelectorAll('tr[data-id]')]
+        .map(tr => tr.cells[0].textContent.trim());
+      const th = t.querySelector('th[data-col="kind"]');
+      th.querySelector('button').click();
+      const up = {kinds: kinds(), dir: th.querySelector('.dir').textContent,
+                  weight: getComputedStyle(th).fontWeight, aria: th.getAttribute('aria-sort')};
+      th.querySelector('button').click();
+      const down = {kinds: kinds(), dir: th.querySelector('.dir').textContent};
+      const title = t.querySelector('th[data-col="title"]');
+      const grip = title.querySelector('.grip');
+      const was = title.getBoundingClientRect().width;
+      const table = Math.round(t.getBoundingClientRect().width);
+      const at = grip.getBoundingClientRect();
+      const x = at.left + at.width / 2, y = at.top + at.height / 2;
+      grip.dispatchEvent(new PointerEvent('pointerdown', {clientX: x, clientY: y, bubbles: true}));
+      dispatchEvent(new PointerEvent('pointermove', {clientX: x - 60, clientY: y}));
+      dispatchEvent(new PointerEvent('pointerup', {clientX: x - 60, clientY: y}));
+      const cell = t.tBodies[0].querySelector('tr[data-id] td[data-col="title"]');
+      return {up, down, grips: t.querySelectorAll('th .grip').length,
+              heads: t.tHead.rows[0].cells.length,
+              narrowed: Math.round(was - title.getBoundingClientRect().width),
+              tableMoved: Math.round(t.getBoundingClientRect().width) - table,
+              page: Math.round(t.parentElement.getBoundingClientRect().width) - table,
+              lastGrip: !!t.tHead.rows[0].lastElementChild.querySelector('.grip'),
+              cut: [getComputedStyle(cell).whiteSpace, getComputedStyle(cell).textOverflow],
+              last: t.tBodies[0].lastElementChild.id};
+    """,
+        height=900,
+        patience=2500,
+    )
+
+    assert got["up"]["kinds"] == sorted(got["up"]["kinds"]), got["up"]["kinds"]
+    assert len(set(got["up"]["kinds"])) > 1, "every row is one kind, so the sort proves nothing"
+    assert got["up"] | {"kinds": None} == {
+        "kinds": None, "dir": "▴", "weight": "700", "aria": "ascending",
+    }
+    assert got["down"] == {"kinds": got["up"]["kinds"][::-1], "dir": "▾"}
+    assert got["grips"] == got["heads"] - 1 and not got["lastGrip"], (
+        "the last column's right edge is the page's, and must not be offered as a grip"
+    )
+    assert abs(got["narrowed"] - 60) <= 1, f"a 60px drag moved the column {got['narrowed']}px"
+    # "the tables keep same width as page width": the drag moved a line between
+    # two columns and not the table's edge.
+    assert got["tableMoved"] == 0 and got["page"] == 0, got
+    # "eclipsing instead of new lines when reducing the widths of columns"
+    assert got["cut"] == ["nowrap", "ellipsis"], got["cut"]
+    assert got["last"] == "records-empty", "the empty sentence stopped being the last row"
 
 
 def _cycle_view_rows(index: Index) -> list[dict]:
     from openproj.render import _cycle_view
 
     return _cycle_view(index, 37)["candidates"]
-
-
-def test_an_empty_shortlist_says_so_and_offers_every_status(demo_root: Path, tmp_path: Path):
-    """Nothing ready or in progress, while the plan holds bets in other states: a
-    header over no rows reads as the page failing to load. Finding F1 — empty
-    must not look like broken — with the control that gets you out of it."""
-    from browser import chrome, measured_in
-
-    from openproj.render import render_cycle
-
-    records, config, _ = load_repo(demo_root)
-    quiet = [
-        r.model_copy(update={"status": "shaping", "cycle": None})
-        if r.status in ("ready", "in_progress")
-        else r
-        for r in records
-    ]
-    index = build_index(quiet, config, date(2026, 8, 17))
-    page = render_cycle(index, 37, ROUTES, base_commit="deadbee")
-    got = measured_in(
-        chrome(),
-        page,
-        tmp_path / "quiet.html",
-        1280,
-        _BETS_SHOWN
-        + """
-      // Cleared first, for the reason the Every status test above gives.
-      BETFIND.value = ''; betSearch(true);
-      const said = !!document.getElementById('betshort').getClientRects().length;
-      const before = shown();
-      document.getElementById('betwiden').click();
-      return {said, before, after: shown(), every: BETEVERY.checked,
-              still: !!document.getElementById('betshort').getClientRects().length};
-    """,
-    )
-
-    assert got["before"] == [], "the shortlist was not empty, so this asked nothing"
-    assert got["said"], "an empty shortlist said nothing"
-    assert got["after"] and got["every"], "Show every status did not show them"
-    assert not got["still"], "the sentence stayed after the table filled"
 
 
 def test_bet_on_its_own_stages_the_move_and_the_tick_and_undo_takes_back_only_those(
@@ -9404,7 +9398,7 @@ def _betting_while_others_edit(demo_root: Path) -> tuple[str, str, list[dict], s
     records, config, _ = load_repo(demo_root)
     today = date(2026, 8, 17)
     index = build_index(records, config, today)
-    listed = [row for row in _cycle_view(index, 37)["candidates"] if not row["offlist"]]
+    listed = _cycle_view(index, 37)["candidates"]
     renamed = next(row for row in listed[2:] if not row["rung"])["id"]
     elsewhere = [
         r.model_copy(update={"title": "Renamed by somebody else"}) if r.id == renamed else r
@@ -9458,6 +9452,9 @@ def test_a_refresh_keeps_what_the_room_is_doing_and_wires_what_it_brings_in(
       const EDITED = {json.dumps(edited)}, TYPING = {json.dumps(typing)};
       const RENAMED = {json.dumps(renamed)}, TICK = {json.dumps(tick["id"])};
       window.fetch = async () => new Response(FRESH, {{status: 200}});
+      // Over an empty search: the page opens on `cycle:37`, and a box in a row
+      // the prefill hid cannot take the focus this test is about.
+      BETFIND.value = ''; betSearch(true);
       BETS.querySelector('th[data-sort="5"] .sorter').click();
       const size = betRow(EDITED).querySelector('input.live[data-field="person_weeks"]');
       size.focus(); size.value = '8'; size.dispatchEvent(new Event('input')); size.blur();
@@ -9623,7 +9620,7 @@ def test_the_betting_table_says_what_a_bet_is_being_made_against(
     head = re.search(r'<table id="bets".*?</thead>', page, re.S)
     assert head, "the betting table has no header row"
     columns = [
-        name.strip() for name in re.findall(r'class="sorter">([^<]*)</button>', head.group(0))
+        name.strip() for name in re.findall(r'class="sorter">([^<]*)<', head.group(0))
     ]
     assert "priority" in columns, columns
     assert columns.index("status") < columns.index("priority") < columns.index("appetite"), (
@@ -9708,12 +9705,9 @@ def test_the_betting_table_puts_a_bets_tasks_under_it(
     is stamped on the bet, and stamping a task too would put a second cycle on
     one decision.
 
-    Finished and shelved tasks are left out, and for two different reasons that
-    land in the same place. A shelved task is not in the bet. A done one is, and
-    nobody in the room can change it — its appetite is history, and no amount of
-    re-sizing it makes the rest fit. What is left is what the meeting can move,
-    which includes the `shaping` work nobody has sized yet: those are the rows
-    this column is here for.
+    Every task under the bet, whatever its status: since 2026-10-13 the search
+    box is the only thing that hides a row on this table, and `status:` is how a
+    room leaves the finished ones out.
     """
     page = server_pages["cycle"]
     # This table's own body and no other. The cycle page draws three tables, and
@@ -9723,16 +9717,7 @@ def test_the_betting_table_puts_a_bets_tasks_under_it(
     body = re.search(r'<table id="bets".*?<tbody>(.*?)</tbody>', page, re.S)
     assert body, "the betting table has no body"
     body = body.group(1)
-    # The rows a room sees before it ticks Every status. The others are in the
-    # markup too, hidden, and `test_the_betting_table_holds_every_bet_and_
-    # shortlists_ready_and_in_progress` is about them.
-    drawn = [
-        (record_id, rung)
-        for record_id, rung, off in re.findall(
-            r'<tr data-id="([^"]+)" data-rung="([^"]*)" class="[^"]*"( data-offlist)?', body
-        )
-        if not off
-    ]
+    drawn = re.findall(r'<tr data-id="([^"]+)" data-rung="([^"]*)" class="[^"]*"', body)
     assert drawn, "the betting table drew no rows at all"
 
     holder, under = "", {}
@@ -9744,13 +9729,8 @@ def test_the_betting_table_puts_a_bets_tasks_under_it(
     assert under, "no bet on this table drew anything underneath it"
 
     for bet, kids in under.items():
-        # Every child of that bet the room can still do something about, in id
-        # order, and nothing else.
-        expected = sorted(
-            one
-            for one in seed_index.children[bet]
-            if one in seed_index.plan and seed_index.plan[one].status not in ("shelved", "done")
-        )
+        # Every child of that bet the plan holds, in id order, and nothing else.
+        expected = sorted(one for one in seed_index.children[bet] if one in seed_index.plan)
         assert [one for one, _ in kids] == expected, bet
         # `└─` on the last one drawn and `├─` on the rest, which is the whole of
         # the drawing at the one depth a bet has.
@@ -9956,9 +9936,8 @@ def test_the_betting_tables_connectors_follow_what_is_on_screen(
 
 
 _BETTING_BOX = """
-// Every status on, so the search is asked over every row the table holds and
+// Cleared, so the search is asked over every row the table holds and
 // "an empty box hides nothing" means all of them.
-BETEVERY.checked = true;
 const shown = () => betRows().filter(row => !row.hidden).map(row => row.dataset.id);
 const ask = needle => { BETFIND.value = needle; betSearch(); return shown(); };
 const out = {all: betRows().length};
