@@ -1534,11 +1534,18 @@ table.load, table.delivered { border-collapse: collapse; font-size: 13px;
    warnings and the betting table already reached it, while the roster stopped
    where its columns did and the goal and notes boxes stopped at 52rem: four
    right edges down one page. So both tables are the page's width and so are
-   both boxes. The roster's slack goes to the load bar, which is the one column
-   whose reading improves with width, rather than spreading as gaps between
-   figures. */
-table.load td:has(> span.bar) { width: 100%; }
-table.load span.bar { width: 100%; min-width: 140px; }
+   both boxes. The roster's slack goes after its last column, so the rows' rules
+   reach the window while the figures stay together on the left: given to the
+   load bar instead, the bar ran the width of the page and squeezed BET and
+   SCHEDULED UNTIL onto two lines — jcanton, the same day: "the super large
+   page-wide bars were better before actually". The bar is the shell's 140px
+   again. */
+table.load th:last-child, table.load td:last-child { width: 100%; }
+/* And every other column at its one-line width, which the 100% above would
+   otherwise squeeze to its narrowest: "2.5 wk" broke at its space and drew a
+   41px column two lines tall. A login, a rate, a figure and a date each fit on
+   one line by construction. */
+table.load th, table.load td { white-space: nowrap; }
 table.load th, table.load td, table.delivered th, table.delivered td {
   border-bottom: 1px solid var(--line); padding: .3rem .6rem; text-align: left;
 }
