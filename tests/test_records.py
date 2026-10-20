@@ -418,7 +418,7 @@ def test_the_landing_offers_no_kind_the_plan_has_turned_off():
 
 def test_the_landing_says_a_filter_from_the_address_is_on(tmp_path: Path):
     """`/?owner=ann` is where People sends a name in a plan without a Table, and
-    where the switched-off `/table?owner=ann` sends its reader. Records filters by
+    where the switched-off `/issues?owner=ann` sends its reader. Records filters by
     it — `matches` reads every field in `FILTERS` — but draws no menu for any of
     them, and "Clear filters" counted only the menus a page draws: the rows
     narrowed to ann's and nothing on screen said a filter was on or offered to

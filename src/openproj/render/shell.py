@@ -195,19 +195,36 @@ assert _NAV_KEYS - {"records"} <= set(VIEWS), "a nav item that is not a view can
 
 
 def links_for(views: Sequence[str], base: Links) -> Links:
-    """`base` — `ROUTES` or `STATIC` — for a plan that has exactly these views.
+    """`base` — `ROUTES` or `STATIC` — for a plan that lists exactly these views.
 
-    The field of every view that is off is blanked, which is the convention
-    `new` and `deck` already had in the export: a template asks the field before
-    it draws the link, so a switched-off page is one nothing links to rather than
-    one every page links to and the router refuses. `nav` is Records and then the
-    views that have a slot, in the order the plan gave them.
+    The field of every view that is not listed is blanked, which is the
+    convention `new` and `deck` already had in the export: a template asks the
+    field before it draws the link, so an unlisted page is one nothing links to.
+    Unlisted is not off — the page still answers at its address
+    (`model.reachable`), and `opened` below is how it is drawn there. `nav` is
+    Records and then the views that have a slot, in the order the plan gave them.
 
     Once per index build, not per request: `views` is a fact about one commit.
     """
     off = {field: "" for view in VIEWS if view not in views for field in _FIELDS_OF[view]}
     nav = ("records", *(view for view in views if view in VIEWS and view in _NAV_KEYS))
     return base.model_copy(update={**off, "nav": nav})
+
+
+def opened(links: Links, base: Links, view: str) -> Links:
+    """`links` as drawn ON `view`'s own page: its own fields put back from `base`.
+
+    An unlisted view reached at its address has to work once it is there —
+    `/cycles` linking to each `/cycle/<n>`, the Timeline's controls submitting to
+    `/timeline` — and every one of those is the view's own field, which
+    `links_for` blanked so that the OTHER pages would not link to it. Only the
+    view's own: a deck reached by address whose Cycles are unlisted still draws no
+    way back to the cycle page, and the nav is untouched, so it shows what the plan
+    lists and nothing more (jcanton, 2026-10-20: "nothing extra").
+
+    A no-op for a listed view, whose fields were never blanked.
+    """
+    return links.model_copy(update={field: getattr(base, field) for field in _FIELDS_OF[view]})
 
 
 _SHELL = """<!doctype html>
@@ -5210,25 +5227,12 @@ def _page(
     )
 
 
-# What a switched-off page says it was, as the subject of its one sentence. Written
-# out rather than built from the nav's words, because English is not uniform across
-# them — "Cycles are", "The review deck is" — and a view with no nav slot has no word
-# there to build from. Held to `VIEWS` below, so a ninth view cannot arrive with no
-# sentence to answer its address with.
-_OFF_PHRASE = {
-    "table": "The Table is",
-    "graph": "The Graph is",
-    "timeline": "The Timeline is",
-    "cycles": "Cycles are",
-    "deck": "The review deck is",
-    "people": "The People page is",
-    "issues": "The Issues list is",
-    "notes": "The Notes list is",
-}
-# And the page's heading: the nav's word where it has one, since that is what the
-# reader was looking for.
-_OFF_HEADING = {**{key: label for key, label in _NAV if key in VIEWS}, "deck": "Review deck"}
-assert set(_OFF_PHRASE) == set(_OFF_HEADING) == set(VIEWS), "every view has its sentence"
+# The views whose address can answer "turned off": the lists of an optional kind,
+# which exist exactly when their kind does (`model.reachable`). Every other view
+# answers at its address in every plan, listed or not. Each has a nav word, which
+# is the page's heading, since that is what the reader was looking for.
+_CAN_BE_OFF = tuple(view for view in VIEWS if VIEW_NEEDS.get(view) in RUNG)
+assert all(view in _NAV_KEYS for view in _CAN_BE_OFF), "a list that can be off has a nav word"
 _OFF_STYLE = ".switched-off code { font-family: var(--font-mono); }\n"
 # Every key of an address that Records filters on: the bar's fields, which are
 # `FILTERS` in `_FILTER_JS` plus `predicate`, and the search box. What a
@@ -5274,11 +5278,9 @@ def render_not_found(index: Index, links: Links = STATIC, said: str = "", path: 
 def render_switched_off(
     index: Index,
     links: Links = STATIC,
-    view: str = "table",
+    view: str = "issues",
     off_kind: str = "",
     query: str = "",
-    record_id: str = "",
-    cycle: str = "",
 ) -> str:
     """What an address answers when the plan has switched its page off.
 
@@ -5288,20 +5290,17 @@ def render_switched_off(
     that silently landed on Records would be a page that changed under its reader
     with nothing saying why — empty looking like broken, which is finding F1.
 
-    `view` is the view that is off; `off_kind`, when given, is a kind that is off
-    instead, and its sentence is `kind_refusal`'s (`model.py`) with the setting
-    and the file marked up. **The setting named is the one that did it.** A view
-    that needs something the plan has not got (`VIEW_NEEDS`) is off because of
-    that, whatever `views` says: the Issues list of a plan whose `kinds` leaves
-    issues out is off with `views` never written, and a sentence sending that
-    reader to `views` sent them to a key they had not written and whose every
-    fix — `views: [issues]` — turned the other views off and left Issues off.
-    `_scope` on the Help page asks the same question the same way.
+    `view` is the list that is off — only the Issues and Notes lists can be,
+    because every other view answers at its address whether `views` lists it or
+    not (`model.reachable`); `off_kind`, when given, is a kind that is off
+    instead, at the create form. Either way **the setting named is `kinds`**,
+    because that is the one that did it: a sentence sending the reader of
+    `/issues` to `views` sent them to a key whose every fix — `views: [issues]`
+    — turned the other views out of the nav and left Issues off. `_scope` on the
+    Help page asks the same question the same way.
 
-    The way out is the record, for a slide view that is one record's view; the
-    cycle, for a deck that is one cycle's review, when Cycles are on; otherwise
-    Records with the filters the address carried; and Records bare when it
-    carried none. **Only the filters**, which are the keys Records reads —
+    The way out is Records with the filters the address carried, and Records
+    bare when it carried none. **Only the filters**, which are the keys Records reads —
     `_RECORDS_READS` — and not the query as it came: `/timeline?zoom=week` has no
     filter in it, and a link promising "the same filters" that landed on every
     record with Clear hidden said something that was not going to happen. And an
@@ -5313,47 +5312,23 @@ def render_switched_off(
     parameter but `index` has a default, because the namespace censuses draw
     every `render_*` from an index alone.
     """
-    need = VIEW_NEEDS.get(view, "")
+    kinds_from = index.switches_from.get("kinds", SWITCHES_FILE)
     if off_kind:
-        heading = f"New {off_kind}"
+        heading, need = f"New {off_kind}", ""
         said = Markup(
             "{} are turned off for this plan. <code>kinds</code> in <code>{}</code> "
             "decides which kinds of record it has."
-        ).format(
-            RUNG[off_kind].directory.capitalize(),
-            index.switches_from.get("kinds", SWITCHES_FILE),
-        )
-    elif need in RUNG and need not in index.kinds:
-        heading = _OFF_HEADING[view]
-        said = Markup(
-            "{} turned off for this plan, because {} are. <code>kinds</code> in "
-            "<code>{}</code> decides which kinds of record it has."
-        ).format(
-            _OFF_PHRASE[view],
-            RUNG[need].directory,
-            index.switches_from.get("kinds", SWITCHES_FILE),
-        )
+        ).format(RUNG[off_kind].directory.capitalize(), kinds_from)
     else:
-        heading = _OFF_HEADING[view]
-        # The deck, without Cycles: `views` is the key either way, and the
-        # sentence says which of its items the deck is missing.
-        because = (
-            Markup(", because {}").format(_OFF_PHRASE[need])
-            if need in VIEWS and need not in index.views
-            else ""
-        )
+        heading, need = dict(_NAV)[view], VIEW_NEEDS[view]
         said = Markup(
-            "{} turned off for this plan{}. <code>views</code> in <code>{}</code> "
-            "decides which views it has."
-        ).format(_OFF_PHRASE[view], because, index.switches_from.get("views", SWITCHES_FILE))
+            "The {} list is turned off for this plan, because {} are. <code>kinds</code> "
+            "in <code>{}</code> decides which kinds of record it has."
+        ).format(heading, RUNG[need].directory, kinds_from)
     kept = [(key, value) for key, value in parse_qsl(query) if key in _RECORDS_READS]
-    if kept and need in RUNG:
+    if kept and need:
         kept = [("kind", need), *((key, value) for key, value in kept if key != "kind")]
-    if record_id:
-        out = Markup('<a href="{}{}">Open the record</a>').format(links.record, record_id)
-    elif view == "deck" and cycle and links.cycle:
-        out = Markup('<a href="{}{}">Open cycle {}</a>').format(links.cycle, cycle, cycle)
-    elif kept:
+    if kept:
         out = Markup('<a href="{}?{}">Show the same filters on Records</a>').format(
             links.records, urlencode(kept)
         )

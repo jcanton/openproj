@@ -177,8 +177,9 @@ cooldown_weeks: 2.0
 # offer their open pull requests. Empty means it offers only what the plan
 # already cites and asks nothing of the network.
 repositories: []
-# Which views this plan has, in nav order after Records. Records, every record page and Help
-# (in the footer) are always there. deck needs cycles; issues and notes need their kind below.
+# Which views this plan's nav shows, in order after Records. A view left out is not linked from
+# anywhere and still answers at its address. Records, every record page and Help (in the footer)
+# are always there. deck needs cycles; issues and notes need their kind below to exist at all.
 views: [table, graph, timeline, cycles, deck, people, issues, notes]
 # The optional kinds of record. task, pitch, project and product are always on.
 kinds: [issue, note]

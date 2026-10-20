@@ -26,6 +26,7 @@ from openproj.render import (
     STATUS_GLYPH,
     STATUSES,
     links_for,
+    opened,
     preview_html,
     render_detail,
     render_static,
@@ -177,8 +178,8 @@ def test_the_export_carries_drawings_as_well_as_assets(seed_index, tmp_path: Pat
     assert (out / "drawings" / "draw-a1b2c3.png").is_file()
 
 
-# The views a plan has with each one off on its own, and whatever cannot be on
-# without it (`VIEW_NEEDS`) off with it — Cycles takes the deck.
+# The views a plan lists with each one left out on its own, and whatever cannot be
+# listed without it (`VIEW_NEEDS`) left out with it — Cycles takes the deck.
 _EACH_VIEW_OFF_ALONE = [
     tuple(one for one in VIEWS if one != view and VIEW_NEEDS.get(one) != view) for view in VIEWS
 ]
@@ -189,43 +190,36 @@ _EACH_VIEW_OFF_ALONE = [
     [("cycles", "graph", "timeline"), *_EACH_VIEW_OFF_ALONE],
     ids=["icon4py", *(f"no-{view}" for view in VIEWS)],
 )
-def test_the_export_writes_only_the_views_the_plan_has(
+def test_the_export_writes_every_view_and_links_the_listed_ones(
     seed_index: Index, tmp_path: Path, views: tuple[str, ...]
 ):
-    """A plan exports the views it has, the landing, the record page and Help —
-    and no written page links to a file that was not written. The first row is
-    icon4py's; the rest are each view off alone.
+    """A plan exports every view it has, listed or not, the landing, the record
+    page and Help — and no page links to a view the plan does not list, except
+    that view's own page to itself. The first row is icon4py's; the rest are each
+    view left out alone.
 
-    The export wrote all ten files whatever the plan said, and drew every page
-    with the bare `STATIC`, whose nav is every view. Cutting the files without the
-    links would leave `table.html` named in the nav of every page it did write, so
-    the links are read out of the parsed pages rather than trusted: a page drawn
-    with the wrong `Links` fails here on its first nav item.
+    The export is the server written to disk: an unlisted view answers at its
+    address there, so here it is a file, drawn with its own links put back
+    (`render.opened`) and named by nothing else. The links are read out of the
+    parsed pages rather than trusted: a page drawn with the wrong `Links` fails
+    here on its first nav item.
 
     Into a directory an export with every view already wrote, which is how the
-    README runs it: the file of a view that is now off is gone rather than left
-    there drawing the plan as it was.
+    README runs it; and then with a kind turned off, whose list does not exist and
+    whose file is gone rather than left there drawing the plan as it was.
     """
     everything = render_static(seed_index, tmp_path)
     assert len(everything) == 10, everything
     written = render_static(seed_index.model_copy(update={"views": views}), tmp_path)
+    assert written == everything, "an unlisted view is still written"
+    assert sorted(path.name for path in tmp_path.iterdir()) == sorted(written)
 
-    assert set(written) == {
+    listed = {
         "index.html",
         "detail.html",
         "help.html",
         *(f"{view}.html" for view in views if view != "deck"),
     }
-    if views == ("cycles", "graph", "timeline"):
-        assert written == (
-            "index.html",
-            "detail.html",
-            "cycles.html",
-            "graph.html",
-            "timeline.html",
-            "help.html",
-        )
-    assert sorted(path.name for path in tmp_path.iterdir()) == sorted(written)
     linked: set[str] = set()
     for page in written:
         for one in elements(read(tmp_path, page)):
@@ -235,10 +229,22 @@ def test_the_export_writes_only_the_views_the_plan_has(
                 if "://" in target or not path.endswith(".html"):
                     continue
                 assert path in written, f"{page} links to {target}, which was not written"
+                assert path in listed or path == page, (
+                    f"{page} links to {target}, which this plan does not list"
+                )
                 linked.add(path)
-    # Not vacuous: every view that is on was found as a link somewhere, so the
+    # Not vacuous: every view that is listed was found as a link somewhere, so the
     # parse above read the nav it was meant to be reading.
-    assert {f"{view}.html" for view in views if view != "deck"} <= linked, linked
+    assert listed <= linked, linked
+
+    without = seed_index.model_copy(
+        update={"views": views, "kinds": seed_index.kinds - {"issue"}}
+    )
+    rewritten = render_static(without, tmp_path)
+    assert "issues.html" not in rewritten and not (tmp_path / "issues.html").exists(), (
+        "the Issues list of a plan without issues was written, or left behind"
+    )
+    assert set(rewritten) == set(everything) - {"issues.html"}, rewritten
 
 
 def fetches_nothing(body: str, where: str) -> None:
@@ -4493,13 +4499,13 @@ def test_a_cycle_card_links_to_its_page_wherever_a_server_serves_one(seed_index:
     assert headings_linked(STATIC.model_copy(update={"cycle": "/cycle/"})) == []
 
 
-def test_a_view_that_is_off_is_not_in_the_nav_and_the_nav_keeps_the_plans_order(
+def test_an_unlisted_view_is_not_in_the_nav_and_the_nav_keeps_the_plans_order(
     seed_index: Index,
 ):
     """`views` is the nav, in the order the plan wrote it — jcanton chose the list
     over a fixed order ("do B") — after Records, which is always first.
 
-    And a view that is off is a blank field, the convention `deck` already had in
+    And a view that is not listed is a blank field, the convention `deck` already had in
     the export, so every template that asks the field before it draws a link asks
     the same question the nav does. Cycles owns two fields: a cycle number that
     stayed a link would lead to a per-cycle page, which is Cycles too.
@@ -4538,10 +4544,22 @@ def test_a_view_that_is_off_is_not_in_the_nav_and_the_nav_keeps_the_plans_order(
     assert links_for(VIEWS, ROUTES) == ROUTES
     assert links_for(VIEWS, STATIC) == STATIC
 
+    # And drawn on its own page, an unlisted view gets its own fields back and
+    # nobody else's — the nav is still the plan's, which is jcanton's "nothing
+    # extra" — so `/cycles` reached by address still leads to each cycle.
+    on_table = opened(links, ROUTES, "table")
+    assert (on_table.table, on_table.graph, on_table.nav) == ("/table", "", links.nav)
+    on_cycles = opened(nothing, ROUTES, "cycles")
+    assert (on_cycles.cycles, on_cycles.cycle, on_cycles.deck) == ("/cycles", "/cycle/", "")
+    assert opened(links, ROUTES, "cycles") == links, "a listed view is unchanged"
+
 
 def test_the_switched_off_page_names_the_setting_and_the_way_out(seed_index: Index):
-    """What `/table` answers in a plan without a Table: the ordinary shell and this
+    """What `/issues` answers in a plan without issues: the ordinary shell and this
     plan's nav, one sentence naming the setting and the file, and one way out.
+
+    Only a list of a kind that is off answers this page at all: every other view
+    the plan does not list still answers at its address (`model.reachable`).
 
     The way out carries the address's filters to Records, which honours the same
     ones, and that query is text somebody typed into an address bar — so the
@@ -4554,10 +4572,11 @@ def test_the_switched_off_page_names_the_setting_and_the_way_out(seed_index: Ind
 
     from pages import nav_of
 
-    from openproj.model import KIND_NAMES, OPTIONAL_KINDS, RUNG, VIEW_NEEDS, VIEWS, kind_refusal
-    from openproj.render.shell import _OFF_PHRASE
+    from openproj.model import KIND_NAMES, OPTIONAL_KINDS, RUNG, kind_refusal
+    from openproj.render.shell import _CAN_BE_OFF, _NAV
 
     links = links_for(("cycles",), ROUTES)
+    without = seed_index.model_copy(update={"kinds": seed_index.kinds - {"issue"}})
     way = "Show the same filters on Records"
 
     def said(page: str) -> tuple[list[str], list[str], list[tuple[str, str]]]:
@@ -4568,17 +4587,17 @@ def test_the_switched_off_page_names_the_setting_and_the_way_out(seed_index: Ind
             [(one.text, one.attrs.get("href", "")) for one in found if one.tag == "a"],
         )
 
-    page = render_switched_off(seed_index, links, view="table", query="owner=ann")
+    page = render_switched_off(without, links, view="issues", query="owner=ann")
     codes, paragraphs, anchors = said(page)
-    assert codes == ["views", "config/defaults.yaml"]
+    assert codes == ["kinds", "config/defaults.yaml"]
     assert (
-        "The Table is turned off for this plan. views in config/defaults.yaml decides "
-        "which views it has." in paragraphs
+        "The Issues list is turned off for this plan, because issues are. kinds in "
+        "config/defaults.yaml decides which kinds of record it has." in paragraphs
     ), paragraphs
-    assert [href for text, href in anchors if text == way] == ["/?owner=ann"]
-    assert [text for _, text in headings(page)] == ["Table"]
+    assert [href for text, href in anchors if text == way] == ["/?kind=issue&owner=ann"]
+    assert [text for _, text in headings(page)] == ["Issues"]
     assert [label for label, _, _ in nav_of(page)] == ["Records", "Cycles"]
-    # Nothing lit (D8): a page that marked Table would stamp itself as the tab's
+    # Nothing lit (D8): a page that marked Issues would stamp itself as the tab's
     # origin, and the next record's back link would come straight back here.
     assert lit(page) == []
 
@@ -4588,36 +4607,36 @@ def test_the_switched_off_page_names_the_setting_and_the_way_out(seed_index: Ind
         'q="><script>alert(1)</script>',
         "q=' onmouseover='alert(1)",
     ):
-        found = elements(render_switched_off(seed_index, links, view="table", query=hostile))
+        found = elements(render_switched_off(without, links, view="issues", query=hostile))
         assert sum(one.tag == "script" for one in found) == scripts, hostile
         out = [one.attrs for one in found if one.tag == "a" and one.text == way]
         assert [set(attrs) for attrs in out] == [{"href"}], hostile
         # Re-encoded on the way through, so the href is not the address's own
-        # spelling — and it asks Records exactly what the address asked.
+        # spelling — and it asks Records exactly what the address asked, behind
+        # the list's own kind.
         where = urlparse(out[0]["href"])
-        assert (where.path, parse_qs(where.query)) == ("/", parse_qs(hostile)), hostile
+        assert (where.path, parse_qs(where.query)) == (
+            "/",
+            {"kind": ["issue"], **parse_qs(hostile)},
+        ), hostile
 
-    # Only what Records filters on goes with it. The timeline's window and the
-    # table's sort are not filters, and a link saying "the same filters" that
-    # landed on every record with Clear hidden said something untrue. An inbox's
-    # kind is in its route, and goes with its filters so the rows are the same.
+    # Only what Records filters on goes with it. A sort is not a filter, and a link
+    # saying "the same filters" that landed on every record with Clear hidden said
+    # something untrue. An inbox's kind is in its route, and goes with its filters
+    # so the rows are the same.
     for view, query, expected in (
-        ("timeline", "zoom=week&from=2026-01-01", ("Go to Records", "/")),
-        ("table", "sort=title&desc=1", ("Go to Records", "/")),
-        ("people", "role=owner", ("Go to Records", "/")),
-        ("table", "owner=ann&sort=title&predicate=late", (way, "/?owner=ann&predicate=late")),
-        ("issues", "owner=ann", (way, "/?kind=issue&owner=ann")),
+        ("issues", "sort=title&desc=1", ("Go to Records", "/")),
+        (
+            "issues",
+            "owner=ann&sort=title&predicate=late",
+            (way, "/?kind=issue&owner=ann&predicate=late"),
+        ),
         ("notes", "kind=issue&q=draft", (way, "/?kind=note&q=draft")),
+        ("issues", "", ("Go to Records", "/")),
     ):
-        _, _, anchors = said(render_switched_off(seed_index, links, view=view, query=query))
+        _, _, anchors = said(render_switched_off(without, links, view=view, query=query))
         outs = {"Go to Records", way}
         assert [(text, href) for text, href in anchors if text in outs] == [expected], query
-
-    # Every view has its sentence, derived from `VIEWS` so a ninth cannot be the one
-    # whose address answers a KeyError.
-    for view in VIEWS:
-        _, paragraphs, _ = said(render_switched_off(seed_index, links, view=view))
-        assert [p for p in paragraphs if p.endswith("decides which views it has.")], view
 
     # A kind that is off says `kind_refusal`'s sentence — the one the CLI and the
     # 422 say — with the setting and the file marked up.
@@ -4635,58 +4654,27 @@ def test_the_switched_off_page_names_the_setting_and_the_way_out(seed_index: Ind
         ]
         assert [text for _, text in headings(page)] == [f"New {kind}"]
 
-    # A list that is off because its KIND is off names `kinds`, and the file that
-    # wrote it: a reader sent to `views` would write `views: [issues]`, turn every
-    # other view off, and still have no Issues. Help's `_scope` says the same.
-    inboxes = [view for view in VIEWS if VIEW_NEEDS.get(view) in KIND_NAMES]
-    assert inboxes, "no view lists a kind"
-    for view in inboxes:
+    # Every list that can be off names `kinds`, and the file that wrote it (D12): a
+    # reader sent to `views` would write `views: [issues]`, take every other view
+    # out of the nav, and still have no Issues. Help's `_scope` says the same.
+    # Derived, so a third inbox cannot be the one whose address answers a KeyError.
+    assert set(_CAN_BE_OFF) == {"issues", "notes"}, _CAN_BE_OFF
+    for view in _CAN_BE_OFF:
         need = VIEW_NEEDS[view]
-        without = seed_index.model_copy(
+        moved = seed_index.model_copy(
             update={
                 "kinds": seed_index.kinds - {need},
                 "switches_from": {"kinds": "config/local.yaml"},
             }
         )
-        codes, paragraphs, _ = said(render_switched_off(without, links, view=view))
+        codes, paragraphs, _ = said(render_switched_off(moved, links, view=view))
         assert codes == ["kinds", "config/local.yaml"], view
         sentence = [p for p in paragraphs if "turned off" in p]
         assert sentence == [
-            f"{_OFF_PHRASE[view]} turned off for this plan, because {RUNG[need].directory} "
-            "are. kinds in config/local.yaml decides which kinds of record it has."
+            f"The {dict(_NAV)[view]} list is turned off for this plan, because "
+            f"{RUNG[need].directory} are. kinds in config/local.yaml decides which kinds "
+            "of record it has."
         ], view
-
-    # The deck without Cycles says which of its items it is missing; with Cycles,
-    # a deck is one cycle's review and its way out is that cycle.
-    no_cycles = seed_index.model_copy(
-        update={"views": tuple(v for v in VIEWS if v not in ("cycles", "deck"))}
-    )
-    drawn = render_switched_off(
-        no_cycles, links_for(no_cycles.views, ROUTES), view="deck", cycle="37"
-    )
-    _, paragraphs, anchors = said(drawn)
-    assert "Open cycle 37" not in [text for text, _ in anchors], "Cycles are off"
-    assert (
-        "The review deck is turned off for this plan, because Cycles are. views in "
-        "config/defaults.yaml decides which views it has." in paragraphs
-    ), paragraphs
-    _, _, anchors = said(render_switched_off(seed_index, links, view="deck", cycle="37"))
-    assert ("Open cycle 37", "/cycle/37") in anchors
-
-    # The slide view is one record's view, so its way out is that record.
-    one = next(iter(seed_index.plan))
-    slide = render_switched_off(seed_index, links, view="deck", record_id=one)
-    _, paragraphs, anchors = said(slide)
-    assert "The review deck is turned off for this plan." in " ".join(paragraphs)
-    assert [href for text, href in anchors if text == "Open the record"] == [f"/detail/{one}"]
-    # And with no query there is nothing to carry.
-    _, _, anchors = said(render_switched_off(seed_index, links, view="people"))
-    assert [href for text, href in anchors if text == "Go to Records"] == ["/"]
-
-    # The file named is the one that wrote the key (D12), not the one it usually is.
-    moved = seed_index.model_copy(update={"switches_from": {"views": "config/local.yaml"}})
-    codes, _, _ = said(render_switched_off(moved, links, view="graph"))
-    assert codes == ["views", "config/local.yaml"]
 
 
 # --------------------------------------------------------------------------- #
@@ -4860,11 +4848,12 @@ def test_every_record_in_the_export_carries_the_link_back(rendered: Path):
     assert set(got) == {f"{here} ← Table"}
 
 
-def test_a_back_link_to_a_view_that_was_switched_off_goes_to_records(seed_index: Index):
+def test_a_back_link_to_a_view_that_is_not_listed_goes_to_records(seed_index: Index):
     """A tab sat on `/table?owner=ann` while somebody committed `views` without the
-    Table. Every record it opens afterwards would have sent its reader back to a
-    page that answers 404 — so a stamp is honoured only while the page it names is
-    one this plan still has.
+    Table, or somebody typed `/table` into a plan that never listed it. The page
+    is still there, and the back link still does not lead to it: an unlisted view
+    is one no page links to, and the back link is a link — so a stamp is honoured
+    only while the page it names is one this plan lists.
 
     The nav's hrefs are not the whole answer, which is why the cases are these:
     `/cycle/37` and `/deck/37` are stamped and are no nav href, so each is judged
@@ -4921,14 +4910,14 @@ def test_a_back_link_to_a_view_that_was_switched_off_goes_to_records(seed_index:
 
     # And the page a switched-off address answers with leaves no stamp of its own,
     # so the stale one it replaced is not renewed by visiting it.
-    left = run_js(render_switched_off(seed_index, cycles), page=True, here="/table?owner=ann")
+    left = run_js(render_switched_off(seed_index, cycles), page=True, here="/issues?owner=ann")
     assert ORIGIN not in left["tabbed"], left["tabbed"]
 
 
-def test_a_record_page_offers_no_slide_view_when_the_deck_is_off(seed_index: Index):
-    """jcanton: "if deck is off all of it is off." The slide button opens
-    `?view=slide`, which answers the switched-off page in a plan without a deck, so
-    a record page in that plan draws no button rather than a door onto a refusal.
+def test_a_record_page_offers_no_slide_view_when_the_deck_is_not_listed(seed_index: Index):
+    """The slide button opens `?view=slide`, which answers in every plan; in one
+    that does not list the deck it is a page nothing links to (jcanton,
+    2026-10-20: "URL only"), so a record page in that plan draws no button.
 
     Asked of the renderer with each set of links, and not only through the served
     sweep: `_slidebar` has two callers, and the guard is inside it so the record
@@ -4947,18 +4936,22 @@ def test_a_record_page_offers_no_slide_view_when_the_deck_is_off(seed_index: Ind
         ]
 
     without = links_for(tuple(one for one in VIEWS if one != "deck"), ROUTES)
-    assert without.deck == "" and without.cycles, "the deck alone is off"
+    assert without.deck == "" and without.cycles, "the deck alone is unlisted"
     for links, wanted in ((without, []), (ROUTES, [f"/detail/{pitch}?view=slide"])):
         record = render_detail(
             seed_index, links, only=pitch, base_commit="deadbee", may_write=True
         )
         assert slide_buttons(record) == wanted, links.deck
-    # The slide editor is behind the same gate in `web.py`, so it is only ever
-    # drawn with the deck on; with it off its own button goes too, from the same
-    # guard, rather than pointing at the page it is.
-    for links, wanted in ((without, []), (ROUTES, [f"/detail/{pitch}?view=slide"])):
+    # The slide editor is the deck's own page, and `web.py` draws it with the deck's
+    # links put back whether the plan lists the deck or not — so its control is
+    # there either way, pressed, saying which view this is. With the links blank
+    # it would go, from the same guard, which is why `web.py` does not pass them.
+    wanted = [f"/detail/{pitch}?view=slide"]
+    for links in (opened(without, ROUTES, "deck"), ROUTES):
         slide = render_slide_editor(seed_index, pitch, links, base_commit="deadbee", may_write=True)
         assert slide_buttons(slide) == wanted, links.deck
+    blank = render_slide_editor(seed_index, pitch, without, base_commit="deadbee", may_write=True)
+    assert slide_buttons(blank) == []
 
 
 def test_people_links_land_on_records_when_there_is_no_table(seed_index: Index):
@@ -5775,10 +5768,10 @@ def test_a_short_nav_and_the_switched_off_page_are_drawn_where_a_reader_finds_th
     as a box that fills the window, never its heading, its sentence or its way
     out, and never on a phone.
 
-    icon4py's own setting, and the page a reader of that plan meets at a
-    bookmarked `/table?owner=ann`: Records and three views in the nav, a heading,
-    the sentence naming `views` and its file, and the link that carries the
-    filter on. Each is asked whether it is inside the window and whether it is
+    icon4py's own nav, in a plan without issues, and the page a reader of that
+    plan meets at a bookmarked `/issues?owner=ann`: Records and three views in the
+    nav, a heading, the sentence naming `kinds` and its file, and the link that
+    carries the filter on. Each is asked whether it is inside the window and whether it is
     what the browser finds at its own centre, on a laptop and through
     `measured_on_a_phone`, where the corner's controls have moved to the footer
     and the nav is the row that is left.
@@ -5786,7 +5779,8 @@ def test_a_short_nav_and_the_switched_off_page_are_drawn_where_a_reader_finds_th
     from browser import chrome, measured_in, measured_on_a_phone
 
     links = links_for(("cycles", "graph", "timeline"), ROUTES)
-    page = render_switched_off(seed_index, links, view="table", query="owner=ann")
+    without = seed_index.model_copy(update={"kinds": seed_index.kinds - {"issue"}})
+    page = render_switched_off(without, links, view="issues", query="owner=ann")
     browser = chrome()
     laptop = measured_in(browser, page, tmp_path / "off.html", 1280, _PAINTED)
     phone = measured_on_a_phone(browser, {"off": page}, tmp_path / "phone", _PAINTED)["off"]
@@ -5796,10 +5790,10 @@ def test_a_short_nav_and_the_switched_off_page_are_drawn_where_a_reader_finds_th
         where = f"at {width}px"
         assert got["sideways"] <= 0, f"{where}: the page scrolls {got['sideways']}px sideways"
         assert [one["text"] for one in got["nav"]] == ["Records", "Cycles", "Graph", "Timeline"]
-        assert got["heading"]["text"] == "Table"
-        assert [one["text"] for one in got["codes"]] == ["views", "config/defaults.yaml"]
+        assert got["heading"]["text"] == "Issues"
+        assert [one["text"] for one in got["codes"]] == ["kinds", "config/defaults.yaml"]
         assert (got["out"]["href"], got["out"]["text"]) == (
-            "/?owner=ann",
+            "/?kind=issue&owner=ann",
             "Show the same filters on Records",
         )
         for one in (*got["nav"], got["heading"], got["said"], *got["codes"], got["out"]):

@@ -790,7 +790,7 @@ class Config(BaseModel):
     # is who the team says is on it. Neither answers the other's question, and a
     # login in one and not the other is the normal state of both.
     people: dict[str, Person] = {}
-    # Which views this plan has, in nav order, and which kinds of record — both
+    # Which views this plan lists, in nav order, and which kinds of record — both
     # RESOLVED, never as the file wrote them. `read_config` pulls the two keys
     # out before the file is validated and hands them to `resolve_switches`, so
     # a value that is not a list costs that switch and not the file around it,
@@ -1756,7 +1756,8 @@ KIND_NAMES: tuple[str, ...] = tuple(rung.name for rung in KINDS)
 # field and the `_NAV` key (`render/shell.py`): there is no second spelling
 # anywhere to map it to, which is what keeps the config, the router, the nav and
 # the export from each growing their own. `deck` has no nav slot and is here
-# because it is a page a plan can turn off.
+# because it is a page a plan can list, which puts a link to it on the record
+# and cycle pages.
 #
 # Here and not in `render`, because `openproj check` has to know the vocabulary
 # to say what is wrong with a setting, and `check` does not import jinja.
@@ -1787,15 +1788,17 @@ _ALWAYS_ON_SAID = {
     "detail": "views names detail, which is always on: every record has its page",
 }
 ALWAYS_ON_VIEWS: tuple[str, ...] = tuple(_ALWAYS_ON_SAID)
-# What a view cannot be on without. A value that is a kind is a kind the view
-# lists; anything else is another view. The deck is one cycle's review, reached
+# What a view cannot be listed without. A value that is a kind is a kind the view
+# lists, and also what the view cannot EXIST without (`reachable`); anything else
+# is another view, and every view exists. The deck is one cycle's review, reached
 # from that cycle's page, so it goes with `cycles` — jcanton: "should not be
 # possible to turn it on without having cycles". A list of a kind the plan does
 # not have is a list of nothing, and each inbox view is named for its rung's
 # directory, so that half is derived and a third inbox needs no line here.
 #
-# Only one way round: a kind may be on while its view is off, which is exactly
-# icon4py's notes — kept as a kind for drafting, dropped from the nav.
+# Only one way round: a kind may be on while its view is unlisted, which is
+# exactly icon4py's notes — kept as a kind for drafting, dropped from the nav, and
+# still at `/notes` for whoever types it.
 VIEW_NEEDS: dict[str, str] = {
     "deck": "cycles",
     **{rung.directory: rung.name for rung in KINDS if not rung.planned},
@@ -1828,6 +1831,27 @@ def _needs_met(view: str, kinds: Collection[str], views: Collection[str]) -> boo
     return need in kinds if need in KIND_NAMES else need in views
 
 
+def reachable(view: str, kinds: Collection[str]) -> bool:
+    """Whether a view's address answers in a plan with these kinds, listed or not.
+
+    **Unlisted is not off.** `views` decides what the nav shows and what the
+    other pages link to; it does not decide what exists. jcanton, 2026-10-20:
+    "the derived-only views actually exist but are hidden in the nav". The
+    Table, the Graph, the Timeline, Cycles, the deck and People are drawn from
+    records every plan has, so each answers at its address in every plan —
+    and reached that way, nothing else on the site links to it. The Issues and
+    Notes lists are the exception: each is a view of an optional kind, and a
+    list of a kind the plan has not got is a list of nothing, so those two
+    exist exactly when their kind does. Reaching one cannot add records of a
+    kind the plan turned off, so `/notes` answers in a plan with `note` on
+    whatever `views` says, and `/issues` is a 404 in one without `issue`.
+
+    Every other view in `VIEW_NEEDS` needs another view, and every view
+    exists, so this is `_needs_met` against all of them.
+    """
+    return _needs_met(view, kinds, VIEWS)
+
+
 def resolve_switches(
     views_raw: object, kinds_raw: object, views_from: str, kinds_from: str
 ) -> tuple[tuple[str, ...], frozenset[str], list[Unusable]]:
@@ -1836,7 +1860,7 @@ def resolve_switches(
     Parse permissively, validate strictly, and here that means the answer is
     always usable and whatever it could not use is said: a name that is not a
     view is left out, a duplicate counts once at its first place, a name that is
-    always on is a no-op, a view whose dependency is off stays off, and a value
+    always on is a no-op, a view whose dependency is off stays unlisted, and a value
     that is not a list is the key's default. Each of those is one `Unusable`, so
     the banner and `openproj check` name it. A typo that silently hid the Cycles
     page is finding F1 — a page gone and nothing saying why.
@@ -1952,7 +1976,7 @@ def resolve_switches(
                 said(
                     "views",
                     views_from,
-                    f"views names {item}, which needs {need}, so the {item} is off",
+                    f"views names {item}, which needs {need}, so nothing links to the {item}",
                 )
         elif isinstance(item, str) and item in _ALWAYS_ON_SAID:
             said("views", views_from, _ALWAYS_ON_SAID[item])

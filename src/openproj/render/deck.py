@@ -148,7 +148,11 @@ _DECK = (
 {#- Screen furniture, and the first thing `@media print` takes away: a deck is
     printed to reach the people who were not in the room, and neither a back link
     nor a Present button is part of it. -#}
-<p class="back deckbar"><a href="{{ links.cycle }}{{ d.number }}">← cycle {{ d.number }}</a></p>
+{#- Asked, because the deck can be reached by its address in a plan that does not
+    list Cycles, and there `links.cycle` is blank: the cycle page answers too, but
+    an unlisted view is one nothing else links to (`render.opened`). -#}
+{% if links.cycle %}<p class="back deckbar"><a href="{{ links.cycle }}{{ d.number }}">← cycle {{
+  d.number }}</a></p>{% endif %}
 {#- The controls on a line of their own, under the way back — jcanton,
     2026-08-25: "I'd like the buttons for present a zoom to be on a newline,
     below <- cycle N". A back link and a verb are two different kinds of thing
@@ -218,7 +222,8 @@ _DECK = (
   <h2>Nothing is bet into cycle {{ d.number }}</h2>
   <p>A deck is one slide per piece of work in the cycle, and this cycle holds
      none yet. Bet something into it on
-     <a href="{{ links.cycle }}{{ d.number }}">the cycle {{ d.number }} page</a>
+     {% if links.cycle %}<a href="{{ links.cycle }}{{ d.number }}">the cycle {{ d.number
+     }} page</a>{% else %}the cycle {{ d.number }} page{% endif %}
      and it will have a slide here.</p>
 </article>
 {% endfor %}

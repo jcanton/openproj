@@ -17,23 +17,30 @@ is this documentation.
 Issues and notes are records whose rung says `planned=False`: they are on
 Records and on their own pages, and never in the plan views.
 
-A plan says which views it has. There are eight — `table`, `graph`, `timeline`,
-`cycles`, `deck`, `people`, `issues` and `notes`, the deck being one cycle's
-review with no place in the nav — and `views` in `config/defaults.yaml` lists the
-ones this plan has, in the order its nav shows them after Records. Without the key
-a plan has every one of them; `views: []` is Records alone. Records, every record
-page and Help, in the footer, are always there whatever the list says: Records is
-the landing and the home of Create, and every bar, node and cycle row links to a
-record. `deck` needs `cycles`, and the Issues and Notes lists need their kind,
-which `kinds` beside it switches: `kinds: [note]` is a plan with notes and no
-issues, and the four planned kinds are always on. A view that is off is off
-everywhere — gone from the nav, linked from nowhere, and its address answers 404
-with a page naming the setting and the file, rather than a redirect that would
-change the page under a bookmark with nothing saying why. `openproj render`
-writes the same views and no others. A switch takes away a page and never a fact
-the schedule is computed from: with Cycles off, the cycle windows and the rosters
-still schedule the work, and no API is switched, because the plan is on GitHub and
-a switch is focus rather than secrecy. A name that cannot be used — a typo, a
+A plan says which views its nav shows. There are eight — `table`, `graph`,
+`timeline`, `cycles`, `deck`, `people`, `issues` and `notes`, the deck being one
+cycle's review with no place in the nav — and `views` in `config/defaults.yaml`
+lists the ones this plan shows, in the order its nav shows them after Records.
+Without the key a plan lists every one of them; `views: []` is a nav of Records
+alone. Records, every record page and Help, in the footer, are always there
+whatever the list says: Records is the landing and the home of Create, and every
+bar, node and cycle row links to a record. `deck` needs `cycles` to be listed.
+
+**A view left out is unlisted, not off.** It is gone from the nav and linked from
+nowhere — no slide button without the deck, no cycle number that leads to a cycle
+page without Cycles — and its address still answers, drawn with its own links so
+it works once you are on it: typing `/table` or `/people` gets the page. The Help
+page names the addresses of the unlisted ones. The exception is the Issues and
+Notes lists, which need their kind, switched by `kinds` beside it: `kinds: [note]`
+is a plan with notes and no issues, and there `/issues` answers 404 with a page
+naming the setting and the file, rather than a redirect that would change the
+page under a bookmark with nothing saying why. A list of a kind the plan has on is
+unlisted like any other view: icon4py's nav has no Notes, and `/notes` works. The
+four planned kinds are always on. `openproj render` writes every view that exists
+and links the listed ones. A switch never takes away a fact the schedule is
+computed from: with Cycles unlisted, the cycle windows and the rosters still
+schedule the work, and no API is switched, because the plan is on GitHub and a
+switch is focus rather than secrecy. A name that cannot be used — a typo, a
 duplicate, an always-on name, a view whose dependency is off — is left out and
 said, in the banner on every page and by `openproj check`.
 

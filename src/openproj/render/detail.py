@@ -112,9 +112,11 @@ _VIEW_SEGMENTS = (
 # the current view, and a control that says which one you are in is what the
 # three beside it already do.
 def _slidebar(record_id: str, links: Links, here: bool = False) -> Markup:
-    # Nothing when the plan has no deck: a slide is a page of one, and its address
-    # answers the switched-off page. Here and not at either caller, so the record
-    # page and the slide editor cannot disagree about it.
+    # Nothing when the plan does not list the deck: an unlisted view is one no page
+    # links to, though its address still answers. Here and not at either caller,
+    # so the record page and the slide editor cannot disagree about it — the slide
+    # editor is drawn with the deck's own links put back (`render.opened`), so on
+    # that page the control is always there to say which view this is.
     if not links.deck:
         return Markup("")
     return Markup(
