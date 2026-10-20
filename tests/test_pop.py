@@ -6321,3 +6321,93 @@ def test_an_answer_to_one_menus_delete_does_not_reach_the_menu_opened_after_it(
     # `landed.open is False`, and it is `popClose` in `popDelete`'s `finally`
     # that keeps it rather than the event.
     assert got["beats"] == {"writing": 0, "wrote": []}, got["beats"]
+
+
+_BLOCKERS_ON_THE_CARD = """
+popMenu(300, 250, ID);
+const edit = [...POP.querySelectorAll('[data-kind="edit"]')][0];
+if (!edit) return {error: 'no Edit item on the graph'};
+edit.click();
+const fact = POP.querySelector('[data-field="depends_on"]:not(input):not(select)');
+if (!fact) return {error: 'no Blocked by on the card'};
+fact.click();
+const box = fact.querySelector('input');
+if (!box) return {error: 'Blocked by would not open', why: fact.title};
+const words = () => [...fact.querySelectorAll('.ref > span')].map(one => one.textContent);
+const key = name => box.dispatchEvent(
+  new KeyboardEvent('keydown', {key: name, bubbles: true, cancelable: true}));
+// The text drawn inside the box, which is the browser's own `value` — the input's
+// own `value` answers the whole list, chips and all.
+const drawn = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+const opened = {value: box.value, words: words(),
+                hover: [...fact.querySelectorAll('.ref')].map(one => one.title)};
+key('Backspace');
+const marked = {value: box.value, marked: fact.querySelectorAll('.ref.on').length};
+key('Escape');
+const escaped = {open: !!fact.querySelector('input'), value: box.value,
+                 marked: fact.querySelectorAll('.ref.on').length};
+fact.querySelector('.ref button').click();
+const removed = {value: box.value, words: words()};
+// What picking from the card's datalist does: the browser writes the whole id
+// into the box and says `input`.
+drawn.set.call(box, FIRST);
+box.dispatchEvent(new Event('input', {bubbles: true}));
+const picked = {value: box.value, words: words(), typed: drawn.get.call(box)};
+return {opened, marked, escaped, removed, picked};
+"""
+
+
+def test_the_cards_blockers_are_their_titles_on_the_graph(demo_root: Path, tmp_path: Path):
+    """jcanton, 2026-10-20, of the right-click card's Edit: "same problem for the
+    same field". The graph is the host whose card edits `depends_on` — the table's
+    rows carry a count and its card locks the field — and the card completes
+    through a `<datalist>`, not through `attachSuggest`, so the chips are asked
+    for here separately rather than assumed from the record page.
+
+    And the card's Escape: it gives the whole field up, so with a chip marked by
+    Backspace one Escape must let go of the mark and nothing more.
+    """
+    records, config, _ = load_repo(demo_root)
+    plan = {record.id: record for record in records if RUNG[record.kind].planned}
+    tasks = sorted(one for one, record in plan.items() if record.kind == "task")
+    waiting, first, second = tasks[-1], tasks[0], tasks[1]
+    records = [
+        record.model_copy(update={"depends_on": [first, second]})
+        if record.id == waiting
+        else record
+        for record in records
+    ]
+    index = build_index(records, config, date(2026, 8, 17))
+    assert index.blocked_by[waiting] == [first, second], "the corpus did not take the edges"
+    titles = [plan[first].title, plan[second].title]
+
+    got = measured_in(
+        chrome(),
+        render_graph(index, ROUTES, base_commit=HEAD, may_write=True),
+        tmp_path / "blockers.html",
+        1280,
+        f"const ID = {json.dumps(waiting)};\nconst FIRST = {json.dumps(first)};\n"
+        + _BLOCKERS_ON_THE_CARD,
+        patience=3000,
+    )
+
+    assert not got.get("error"), got
+    assert got["opened"]["value"] == f"{first}, {second}", got["opened"]
+    assert got["opened"]["words"] == titles, (
+        f"the card's Blocked by opens on {got['opened']['words']}, not on {titles}"
+    )
+    assert got["opened"]["hover"] == [
+        f"{first} — {titles[0]}",
+        f"{second} — {titles[1]}",
+    ], got["opened"]["hover"]
+    assert got["marked"] == {"value": f"{first}, {second}", "marked": 1}, got["marked"]
+    assert got["escaped"] == {"open": True, "value": f"{first}, {second}", "marked": 0}, (
+        f"one Escape over a marked chip did {got['escaped']}: it should let go of the "
+        "mark and leave the field open with both references in it"
+    )
+    assert got["removed"] == {"value": second, "words": [titles[1]]}, got["removed"]
+    assert got["picked"] == {
+        "value": f"{second}, {first}",
+        "words": [titles[1], titles[0]],
+        "typed": "",
+    }, f"a whole id written into the box is not a chip: {got['picked']}"

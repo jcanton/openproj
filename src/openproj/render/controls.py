@@ -3533,6 +3533,10 @@ function park(input, list, follow) {
 function attachSuggest(input) {
   const source = SUGGEST[input.dataset.suggest] || [];
   const multi = input.dataset.type === 'list';
+  // A box of record ids reads as their titles (`refChips`, in the shell). First,
+  // so its own `input` listener has turned a finished id into a chip before
+  // `open` below asks what is being typed.
+  const refs = input.dataset.suggest === 'records' ? refChips(input, source, multi) : null;
   const list = document.createElement('ul');
   const id = 'suggest-' + (++SUGGEST_N);
   list.className = 'suggest';
@@ -3585,9 +3589,20 @@ function attachSuggest(input) {
   }
 
   const tokens = () => input.value.split(',').map(s => s.trim());
-  const typed = () => (multi ? tokens()[tokens().length - 1] : input.value).trim().toLowerCase();
+  function typed() {
+    if (refs) return refs.typed().trim().toLowerCase();
+    return (multi ? tokens()[tokens().length - 1] : input.value).trim().toLowerCase();
+  }
+  // What the box already holds, so it is not offered again.
+  const taken = () => (refs ? refs.ids() : tokens().slice(0, -1));
 
   function choose(value) {
+    if (refs) {
+      refs.add(value);
+      input.focus();
+      close();
+      return;
+    }
     // `kilnlab/kiln4py#` is half a reference. Appending the separator after one would
     // end the entry at the point where the number still has to be typed.
     const partial = value.endsWith('#');
@@ -3637,7 +3652,7 @@ function attachSuggest(input) {
     const matches = source
       .map(item => ({item, rank: found(needle, plain(item.value) + ' ' + plain(item.label))}))
       .filter(m => !said || m.rank)
-      .filter(m => !multi || !tokens().slice(0, -1).includes(m.item.value))
+      .filter(m => !multi || !taken().includes(m.item.value))
       // Eight are shown, so the cap already throws matches away and the eighth
       // used to be decided by the id. A substring before a subsequence — the one
       // place where a weak match can evict a strong one, and the reason `found`
@@ -3670,11 +3685,14 @@ function attachSuggest(input) {
     highlight();
   }
 
-  input.addEventListener('input', open);
+  // Not over a chip's removal: the list opening on the rest of the plan because
+  // somebody took one reference away is a popup nobody asked for.
+  input.addEventListener('input', event => { if (!event.fromRefs) open(); });
   input.addEventListener('focus', () => {
     // A list that already holds a name needs a separator before the next one, or
     // the first thing typed lands inside the previous value and matches nothing.
-    if (multi && input.value.trim() && !input.value.trim().endsWith(',')) {
+    // Not a box of chips, whose text is only ever the one being added.
+    if (multi && !refs && input.value.trim() && !input.value.trim().endsWith(',')) {
       input.value = input.value.trim() + ', ';
       input.setSelectionRange(input.value.length, input.value.length);
     }

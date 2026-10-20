@@ -1644,6 +1644,26 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
 .chip { display: inline-block; font-family: var(--font-mono); font-size: 11px;
         line-height: 1.45; text-transform: uppercase; letter-spacing: .04em;
         padding: .1rem .4rem; border-radius: 2px; white-space: nowrap; }
+/* The record references a box holds, by title, above the box that adds one
+   (`refChips`). Not `.chip`, which is the uppercase mono label a kind or a status
+   wears: these are titles somebody reads, at the page's own size. A long title
+   wraps rather than being cut: the right-click card's column cut "Port the
+   bed-side throughflow" to "Port the bed-side t…", and two titles that share a
+   beginning are exactly the pair this exists to tell apart. `[hidden]` written
+   out, because the `display` above it would otherwise keep an empty row laid out. */
+.refs { display: flex; flex-wrap: wrap; gap: .25rem; margin: 0 0 .25rem; }
+.refs[hidden] { display: none; }
+.ref { display: inline-flex; align-items: center; max-width: 100%; box-sizing: border-box;
+       border: 1px solid var(--line-strong); border-radius: 3px; background: var(--surface);
+       padding: .05rem 0 .05rem .45rem; font-size: 13px; line-height: 1.45; }
+/* `white-space` said outright: the right-click card draws each fact on one line,
+   `nowrap` on the cell, and a chip's title inherited it and ran out under the ×
+   and off the card. */
+.ref > span { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.ref > button { border: 0; background: none; margin: 0; padding: 0 .4rem; font: inherit;
+                line-height: 1; color: var(--muted); cursor: pointer; }
+.ref > button:hover { color: var(--danger); }
+.ref.on { outline: 2px solid var(--focus); outline-offset: 1px; }
 {#- Written by the loop rather than by hand: five statuses times four tokens is
     twenty values to keep in step, and the pair that drifts is the pair nobody
     reads until a chip turns white on white.
@@ -3414,6 +3434,186 @@ function announce(message) {
     return;
   }
   where.textContent = message;
+}
+
+// --- record references, by their titles ------------------------------------
+//
+// jcanton, 2026-10-20: "when editing dependencies of a record (in the blocked-by
+// field) it shows record ids but not titles … when going in editing view I see
+// [task-c4d934, pitch-4a7250, pitch-bdb8d1] and it's not immediately obvious
+// which one that is." And of the right-click card's Edit: "same problem for the
+// same field". Adding one was already fine — the completion offers titles — so
+// the defect was the list you remove from.
+//
+// So every box that holds record ids draws them as titles: one chip per
+// reference, with × to take it away, above the box that still adds one. Here in
+// the shell and not beside either completion, because there are two and they
+// cannot share anything else: `attachSuggest` (`controls.py`) on the record
+// page, the create form and the table's cells, and `popComplete` (`pop.py`) on
+// the right-click card, which completes through a `<datalist>` because two of
+// its three host pages carry no `SUGGEST` at all. `known` is `{value, label}`
+// rows, the shape both already hold.
+//
+// **The box stays the box.** Every host reads and writes `input.value` — the
+// detail page's Reset, the table's commit on blur, the card's save — and the
+// table commits the moment its input loses focus. So the input keeps focus, keeps
+// every key and keeps its listeners, and `.value` is redefined ON THIS INPUT to
+// answer the whole list (chips, then whatever is still being typed) while the
+// text drawn inside it is only what is being typed. Writing `.value` from
+// anywhere redraws the chips, which is what keeps a Reset or a redraw honest
+// without every host having to know the chips exist. The × buttons are kept out
+// of the focus order and take no focus when pressed, because a button that took
+// it would blur the table's cell and commit a half-made edit.
+//
+// The keyboard path is Backspace: in an empty box it marks the last chip and a
+// second press removes it, so holding the key down to clear what you typed does
+// not run on into the references. ←/→ move the mark, Delete removes the marked
+// one, Escape lets go of it. Each is said through `announce`.
+function refChips(input, known, multi) {
+  const titles = new Map(known.map(one => [one.value, one.label]));
+  // Where the text drawn in the box lives: the browser's own `value` accessor,
+  // found on the prototype chain before it is shadowed below — or, under the node
+  // driver, whose elements carry `value` as a plain property, a variable.
+  const drawn = (() => {
+    for (let at = input; at; at = Object.getPrototypeOf(at)) {
+      const own = Object.getOwnPropertyDescriptor(at, 'value');
+      if (own && own.get) return {get: () => own.get.call(input), set: v => own.set.call(input, v)};
+      if (own) { let held = own.value || ''; return {get: () => held, set: v => { held = v; }}; }
+    }
+    let held = '';
+    return {get: () => held, set: v => { held = v; }};
+  })();
+  const split = text => String(text || '').split(',').map(one => one.trim()).filter(Boolean);
+  const said = id => titles.get(id) || id;
+  let ids = [];
+  // The chip the keyboard has marked, or -1.
+  let on = -1;
+  const row = document.createElement('span');
+  row.className = 'refs';
+  row.setAttribute('role', 'list');
+  row.hidden = true;
+  if (input.parentNode) input.parentNode.insertBefore(row, input);
+  // What the box under the chips is for, since it is empty most of the time it
+  // is on screen. A hint and not a name: the name is the field's label, which
+  // this leaves alone, and a box somebody already gave a hint keeps its own.
+  if (!input.getAttribute('placeholder'))
+    input.setAttribute('placeholder', multi ? 'Type to add…' : 'Type to change…');
+
+  function draw() {
+    row.innerHTML = '';
+    ids.forEach((id, i) => {
+      const chip = document.createElement('span');
+      chip.className = i === on ? 'ref on' : 'ref';
+      chip.setAttribute('role', 'listitem');
+      // The id is still there to be had, on hover: it is what a commit message
+      // or a teammate in chat will quote.
+      chip.title = titles.has(id) ? `${id} — ${titles.get(id)}` : id;
+      const word = document.createElement('span');
+      word.textContent = said(id);
+      const drop = document.createElement('button');
+      drop.type = 'button';
+      drop.textContent = '×';
+      drop.setAttribute('tabindex', '-1');
+      drop.setAttribute('aria-label', `Remove ${said(id)}`);
+      drop.addEventListener('mousedown', event => event.preventDefault());
+      drop.addEventListener('click', () => { remove(i); input.focus(); });
+      chip.append(word, drop);
+      row.append(chip);
+    });
+    row.hidden = !ids.length;
+  }
+  // Every host listens for `input` to know the value moved. Marked, so the
+  // completion beside this does not open its list over a removal.
+  function changed() {
+    const event = new Event('input', {bubbles: true});
+    event.fromRefs = true;
+    input.dispatchEvent(event);
+  }
+  function hold(id) {
+    if (!multi) ids = [id];
+    else if (!ids.includes(id)) ids.push(id);
+  }
+  function remove(i) {
+    const gone = ids[i];
+    ids.splice(i, 1);
+    on = -1;
+    draw();
+    changed();
+    announce(`${said(gone)} removed`);
+  }
+  function mark(i) {
+    on = i;
+    draw();
+    if (on >= 0) announce(`${said(ids[on])} — Backspace removes it`);
+  }
+
+  Object.defineProperty(input, 'value', {
+    configurable: true,
+    get() {
+      const typed = drawn.get().trim();
+      if (!multi) return typed || ids[0] || '';
+      return [...ids, ...split(typed).filter(one => !ids.includes(one))].join(', ');
+    },
+    set(text) {
+      ids = multi ? [...new Set(split(text))] : split(text).slice(0, 1);
+      drawn.set('');
+      on = -1;
+      draw();
+    },
+  });
+  input.value = drawn.get();
+
+  // A comma ends a reference, and a whole id is one already — typed, pasted, or
+  // picked from the card's `<datalist>`, which writes the id into the box.
+  input.addEventListener('input', event => {
+    if (event.fromRefs) return;
+    const marked = on >= 0;
+    on = -1;
+    const parts = drawn.get().split(',');
+    const last = parts.pop().trim();
+    const done = multi ? parts.map(one => one.trim()).filter(Boolean) : [];
+    const whole = titles.has(last);
+    if (!done.length && !whole) { if (marked) draw(); return; }
+    done.forEach(hold);
+    if (whole) hold(last);
+    drawn.set(whole ? '' : last);
+    draw();
+  });
+  input.addEventListener('blur', () => { if (on >= 0) { on = -1; draw(); } });
+  input.addEventListener('keydown', event => {
+    if (!ids.length || drawn.get() !== '') return;
+    if (event.key === 'Backspace') {
+      event.preventDefault();
+      if (on >= 0) remove(on);
+      else mark(ids.length - 1);
+    } else if (event.key === 'Delete' && on >= 0) {
+      event.preventDefault();
+      remove(on);
+    } else if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      mark(on < 0 ? ids.length - 1 : Math.max(0, on - 1));
+    } else if (event.key === 'ArrowRight' && on >= 0) {
+      event.preventDefault();
+      mark(on + 1 < ids.length ? on + 1 : -1);
+    } else if (event.key === 'Escape' && on >= 0) {
+      // Consumed, so the table's cell and the card's field, which both answer
+      // Escape by giving the whole edit up, leave it alone.
+      event.preventDefault();
+      mark(-1);
+    }
+  });
+
+  return {
+    ids: () => ids.slice(),
+    typed: () => drawn.get(),
+    add(id) {
+      hold(id);
+      drawn.set('');
+      on = -1;
+      draw();
+      changed();
+    },
+  };
 }
 
 // One reading of a write's answer, for every page that writes.
