@@ -459,7 +459,7 @@ wheels = [
 
 [[package]]
 name = "openproj"
-version = "0.77.2"
+version = "0.78.0"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
