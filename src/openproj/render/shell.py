@@ -3499,7 +3499,7 @@ function refChips(input, known, multi) {
   if (!input.getAttribute('placeholder'))
     input.setAttribute('placeholder', multi ? 'Type to add…' : 'Type to change…');
 
-  function draw() {
+  function drawChips() {
     row.innerHTML = '';
     ids.forEach((id, i) => {
       const chip = document.createElement('span');
@@ -3537,13 +3537,13 @@ function refChips(input, known, multi) {
     const gone = ids[i];
     ids.splice(i, 1);
     on = -1;
-    draw();
+    drawChips();
     changed();
     announce(`${said(gone)} removed`);
   }
   function mark(i) {
     on = i;
-    draw();
+    drawChips();
     if (on >= 0) announce(`${said(ids[on])} — Backspace removes it`);
   }
 
@@ -3558,7 +3558,7 @@ function refChips(input, known, multi) {
       ids = multi ? [...new Set(split(text))] : split(text).slice(0, 1);
       drawn.set('');
       on = -1;
-      draw();
+      drawChips();
     },
   });
   input.value = drawn.get();
@@ -3573,13 +3573,13 @@ function refChips(input, known, multi) {
     const last = parts.pop().trim();
     const done = multi ? parts.map(one => one.trim()).filter(Boolean) : [];
     const whole = titles.has(last);
-    if (!done.length && !whole) { if (marked) draw(); return; }
+    if (!done.length && !whole) { if (marked) drawChips(); return; }
     done.forEach(hold);
     if (whole) hold(last);
     drawn.set(whole ? '' : last);
-    draw();
+    drawChips();
   });
-  input.addEventListener('blur', () => { if (on >= 0) { on = -1; draw(); } });
+  input.addEventListener('blur', () => { if (on >= 0) { on = -1; drawChips(); } });
   input.addEventListener('keydown', event => {
     if (!ids.length || drawn.get() !== '') return;
     if (event.key === 'Backspace') {
@@ -3610,7 +3610,7 @@ function refChips(input, known, multi) {
       hold(id);
       drawn.set('');
       on = -1;
-      draw();
+      drawChips();
       changed();
     },
   };
