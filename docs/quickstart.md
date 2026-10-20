@@ -194,6 +194,7 @@ in the same commit that marks the source. **Delete** asks first.
 
 The button beside the image button opens a drawing canvas; what you draw is saved as a PNG in the
 plan repository and referenced from the body, so a sketch on a pitch is versioned with the pitch.
+Save keeps the canvas open, so you can save as you go; Close takes you back to the record.
 You can drop or paste a picture straight into the canvas and draw on top of it — a photograph is
 scaled down to 1440px on the way in, so one fits comfortably inside the 2 MB a drawing may weigh.
 Three or four full-size pictures in the same drawing will not, and the Save button says so and
