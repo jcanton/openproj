@@ -2689,6 +2689,12 @@ function popComplete(input, name, field) {
   };
   fill();
   if (many || refs) input.addEventListener('input', fill);
+  // Every chip added or taken away moves the card's bottom edge, and the card is
+  // placed once, against the pointer: jcanton, 2026-10-20, "adding several
+  // manages to move the bottom of the popup card outside the bottom of the page,
+  // making it impossible to save/cancel the edit". Placed again on each change,
+  // so `placeFloat` keeps Save and Cancel inside the window.
+  if (refs) input.addEventListener('input', popPlace);
   field.append(list);
 }
 

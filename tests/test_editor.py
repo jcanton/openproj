@@ -12300,11 +12300,18 @@ def test_blockers_are_edited_by_their_titles_and_saved_as_their_ids(
     the empty box marks the last chip and a second Backspace removes it, so a held
     key clearing what was typed does not run on into the references; a title
     typed and picked adds one; and Save writes ids, not titles.
+
+    And folded, as the card is (jcanton, the same day: "renders as plain text
+    until you click on the field for editing it"): while editing, the field is a
+    line of titles until it is pressed, and leaving it folds it again; while
+    reading, there are no chips at all, only the linked titles the page always had.
     """
     with httpx.Client(base_url=live_server) as client:
         assert save(client, TASK, {"depends_on": [OTHER, DONE]}).status_code == 200
     box = "document.querySelector('input[name=depends_on]')"
-    chips = f"[...{box}.previousElementSibling.querySelectorAll('.ref')]"
+    chips = f"[...{box}.parentNode.querySelectorAll('.ref')]"
+    folded = f"{box}.parentNode.querySelector('.refsays')"
+    shown = "(one => !!one && one.getClientRects().length > 0)"
     seen = f"""({{value: {box}.value,
         words: {chips}.map(one => one.querySelector('span').textContent),
         marked: {chips}.filter(one => one.classList.contains('on')).length,
@@ -12321,17 +12328,42 @@ def test_blockers_are_edited_by_their_titles_and_saved_as_their_ids(
     url = f"{live_server}/detail/{TASK}"
     with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
         time.sleep(2)
-        _evaluated(call, "flipEditing()")
         _until(call, f"!!{box}")
-        _evaluated(call, f"{box}.scrollIntoView({{block: 'center'}})")
+        reading = _evaluated(
+            call,
+            f"({{chips: {shown}({box}.parentNode.querySelector('.refs')),"
+            f" line: {shown}({folded}), box: {shown}({box})}})",
+        )
+        assert reading == {"chips": False, "line": False, "box": False}, (
+            f"a record being read draws its blockers as chips or a box as well as links: "
+            f"{reading}"
+        )
+
+        _evaluated(call, "flipEditing()")
+        time.sleep(0.5)
+        _evaluated(call, f"{folded}.scrollIntoView({{block: 'center'}})")
+        time.sleep(0.3)
+        closed = _evaluated(
+            call,
+            f"({{line: {shown}({folded}), says: {folded}.textContent,"
+            f" chips: {shown}({box}.parentNode.querySelector('.refs')), box: {shown}({box})}})",
+        )
+        assert closed == {
+            "line": True,
+            "says": f"{OTHER_TITLE}, {DONE_TITLE}",
+            "chips": False,
+            "box": False,
+        }, f"Blocked by, while editing and before it is pressed, is {closed}"
+        _evaluated(call, f"{folded}.click()")
         time.sleep(0.3)
         opened = _evaluated(call, seen)
         assert opened["value"] == f"{OTHER}, {DONE}", opened
         assert opened["words"] == [OTHER_TITLE, DONE_TITLE], (
             f"Blocked by opens on {opened['words']}, not on the titles of what it holds"
         )
+        assert opened["here"], "pressing the folded line did not put the keyboard in the box"
         hover = _evaluated(call, f"{chips}.map(one => one.title)")
-        assert hover == [f"{OTHER} — {OTHER_TITLE}", f"{DONE} — {DONE_TITLE}"], hover
+        assert hover == [f"{OTHER_TITLE} — {OTHER}", f"{DONE_TITLE} — {DONE}"], hover
         # Painted, and not merely in the DOM: the first chip is what the browser
         # finds at its own centre.
         assert _evaluated(
@@ -12341,7 +12373,6 @@ def test_blockers_are_edited_by_their_titles_and_saved_as_their_ids(
               return at.width > 0 && !!hit && chip.contains(hit); }})()""",
         ), "the first chip is not what the browser draws where it says it is"
 
-        _evaluated(call, f"{box}.focus()")
         x, y = _evaluated(
             call,
             f"(() => {{ const b = {chips}[0].querySelector('button').getBoundingClientRect();"
@@ -12387,6 +12418,12 @@ def test_blockers_are_edited_by_their_titles_and_saved_as_their_ids(
         key(call, "Enter", 13)
         picked = _evaluated(call, seen)
         assert (picked["value"], picked["words"]) == (OTHER, [OTHER_TITLE]), picked
+
+        # Leaving the box folds the field, and the line says what it holds now.
+        _evaluated(call, f"{box}.blur()")
+        time.sleep(0.3)
+        left = _evaluated(call, f"({{line: {shown}({folded}), says: {folded}.textContent}})")
+        assert left == {"line": True, "says": OTHER_TITLE}, left
 
         _evaluated(call, "document.getElementById('save').click()")
 

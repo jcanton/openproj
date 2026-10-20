@@ -6397,8 +6397,8 @@ def test_the_cards_blockers_are_their_titles_on_the_graph(demo_root: Path, tmp_p
         f"the card's Blocked by opens on {got['opened']['words']}, not on {titles}"
     )
     assert got["opened"]["hover"] == [
-        f"{first} — {titles[0]}",
-        f"{second} — {titles[1]}",
+        f"{titles[0]} — {first}",
+        f"{titles[1]} — {second}",
     ], got["opened"]["hover"]
     assert got["marked"] == {"value": f"{first}, {second}", "marked": 1}, got["marked"]
     assert got["escaped"] == {"open": True, "value": f"{first}, {second}", "marked": 0}, (

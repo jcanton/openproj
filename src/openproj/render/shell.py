@@ -1646,22 +1646,22 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
         padding: .1rem .4rem; border-radius: 2px; white-space: nowrap; }
 /* The record references a box holds, by title, above the box that adds one
    (`refChips`). Not `.chip`, which is the uppercase mono label a kind or a status
-   wears: these are titles somebody reads, at the page's own size. A long title
-   wraps rather than being cut: the right-click card's column cut "Port the
-   bed-side throughflow" to "Port the bed-side t…", and two titles that share a
-   beginning are exactly the pair this exists to tell apart. `[hidden]` written
+   wears: these are titles somebody reads, at the page's own size. One line each,
+   a long title cut with an ellipsis and given back whole on hover — jcanton,
+   2026-10-20, having seen them wrap in the card: "I'd make the titles eclipse,
+   not wrap, and display in full when hovering over them", and the × on the left
+   so it stays put while the titles end in different places. `[hidden]` written
    out, because the `display` above it would otherwise keep an empty row laid out. */
 .refs { display: flex; flex-wrap: wrap; gap: .25rem; margin: 0 0 .25rem; }
 .refs[hidden] { display: none; }
 .ref { display: inline-flex; align-items: center; max-width: 100%; box-sizing: border-box;
        border: 1px solid var(--line-strong); border-radius: 3px; background: var(--surface);
-       padding: .05rem 0 .05rem .45rem; font-size: 13px; line-height: 1.45; }
-/* `white-space` said outright: the right-click card draws each fact on one line,
-   `nowrap` on the cell, and a chip's title inherited it and ran out under the ×
-   and off the card. */
-.ref > span { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
-.ref > button { border: 0; background: none; margin: 0; padding: 0 .4rem; font: inherit;
-                line-height: 1; color: var(--muted); cursor: pointer; }
+       padding: .05rem .45rem .05rem 0; font-size: 13px; line-height: 1.45; }
+/* `white-space` said outright rather than inherited: the card draws each fact
+   on one line already, and the record page does not. */
+.ref > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ref > button { flex: none; border: 0; background: none; margin: 0; padding: 0 .35rem;
+                font: inherit; line-height: 1; color: var(--muted); cursor: pointer; }
 .ref > button:hover { color: var(--danger); }
 .ref.on { outline: 2px solid var(--focus); outline-offset: 1px; }
 {#- Written by the loop rather than by hand: five statuses times four tokens is
@@ -3468,8 +3468,19 @@ function announce(message) {
 // The keyboard path is Backspace: in an empty box it marks the last chip and a
 // second press removes it, so holding the key down to clear what you typed does
 // not run on into the references. ←/→ move the mark, Delete removes the marked
-// one, Escape lets go of it. Each is said through `announce`.
-function refChips(input, known, multi) {
+// one, Escape lets go of it. Each is said through `announce`. × leaves the
+// keyboard where it was: jcanton, on the first version, "clicking x on one moves
+// to the add field … not ideal" — it focused the box, which opened its list.
+//
+// **`folds`** is the record page's and the create form's, where every field of a
+// record is on screen at once: "I prefer the way the popup card works: renders as
+// plain text until you click on the field for editing it. the /detail page shows
+// all the chips all the time and that's not great". Folded, the field is one line
+// of titles — a button, so the keyboard reaches it — and pressing it opens the
+// chips and the box; leaving the box folds it again, saying what it now holds.
+// The card and the table's cell open a field only when it is pressed already,
+// so they never fold.
+function refChips(input, known, multi, folds) {
   const titles = new Map(known.map(one => [one.value, one.label]));
   // Where the text drawn in the box lives: the browser's own `value` accessor,
   // found on the prototype chain before it is shadowed below — or, under the node
@@ -3493,6 +3504,34 @@ function refChips(input, known, multi) {
   row.setAttribute('role', 'list');
   row.hidden = true;
   if (input.parentNode) input.parentNode.insertBefore(row, input);
+  let opened = !folds;
+  const say = folds ? document.createElement('button') : null;
+  if (say) {
+    say.type = 'button';
+    say.className = 'refsays';
+    if (input.parentNode) input.parentNode.insertBefore(say, row);
+    say.addEventListener('click', unfold);
+    // The field's own label names a box that is not drawn while folded, and a
+    // press on it would focus nothing. It opens the field instead.
+    for (const label of input.labels || []) {
+      label.addEventListener('click', event => {
+        if (opened) return;
+        event.preventDefault();
+        unfold();
+      });
+    }
+    // Folded on the way out, after the browser has said where focus went: a press
+    // on a suggestion or a × keeps it in the box and must not fold anything.
+    input.addEventListener('blur', () => setTimeout(() => {
+      if (document.activeElement !== input) fold();
+    }, 0));
+  }
+  // What the folded line says it is, for a reader who cannot see the line: the
+  // field's own name first, then what is in it.
+  const named = () => {
+    const label = (input.labels || [])[0];
+    return label ? label.textContent.trim() : input.getAttribute('aria-label') || '';
+  };
   // What the box under the chips is for, since it is empty most of the time it
   // is on screen. A hint and not a name: the name is the field's label, which
   // this leaves alone, and a box somebody already gave a hint keeps its own.
@@ -3505,22 +3544,44 @@ function refChips(input, known, multi) {
       const chip = document.createElement('span');
       chip.className = i === on ? 'ref on' : 'ref';
       chip.setAttribute('role', 'listitem');
-      // The id is still there to be had, on hover: it is what a commit message
-      // or a teammate in chat will quote.
-      chip.title = titles.has(id) ? `${id} — ${titles.get(id)}` : id;
+      // The whole title on hover, since the chip cuts a long one to its line, and
+      // the id with it: it is what a commit message or a teammate in chat will
+      // quote.
+      chip.title = titles.has(id) ? `${titles.get(id)} — ${id}` : id;
       const word = document.createElement('span');
       word.textContent = said(id);
+      // First, on the left: a cut title ends at a different place on every chip,
+      // and a × after it moved with it.
       const drop = document.createElement('button');
       drop.type = 'button';
       drop.textContent = '×';
       drop.setAttribute('tabindex', '-1');
       drop.setAttribute('aria-label', `Remove ${said(id)}`);
       drop.addEventListener('mousedown', event => event.preventDefault());
-      drop.addEventListener('click', () => { remove(i); input.focus(); });
-      chip.append(word, drop);
+      drop.addEventListener('click', () => remove(i));
+      chip.append(drop, word);
       row.append(chip);
     });
-    row.hidden = !ids.length;
+    row.hidden = !opened || !ids.length;
+    input.classList.toggle('folded', !opened);
+    if (say) {
+      const typed = drawn.get().trim();
+      const words = [...ids.map(said), ...(typed ? [typed] : [])];
+      say.hidden = opened;
+      say.textContent = words.length ? words.join(', ') : '—';
+      say.setAttribute('aria-label', `${named()}: ${say.textContent}, edit`);
+    }
+  }
+  function unfold() {
+    opened = true;
+    drawChips();
+    input.focus();
+  }
+  function fold() {
+    if (!opened) return;
+    opened = false;
+    on = -1;
+    drawChips();
   }
   // Every host listens for `input` to know the value moved. Marked, so the
   // completion beside this does not open its list over a removal.

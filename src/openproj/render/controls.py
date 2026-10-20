@@ -3535,8 +3535,12 @@ function attachSuggest(input) {
   const multi = input.dataset.type === 'list';
   // A box of record ids reads as their titles (`refChips`, in the shell). First,
   // so its own `input` listener has turned a finished id into a chip before
-  // `open` below asks what is being typed.
-  const refs = input.dataset.suggest === 'records' ? refChips(input, source, multi) : null;
+  // `open` below asks what is being typed. Folded inside a record's own page —
+  // the record page and the create form — which is where the stylesheet that
+  // folds it is (`_DETAIL_STYLE`), and where every field is on screen at once.
+  const refs = input.dataset.suggest === 'records'
+    ? refChips(input, source, multi, !!input.closest('article.record'))
+    : null;
   const list = document.createElement('ul');
   const id = 'suggest-' + (++SUGGEST_N);
   list.className = 'suggest';

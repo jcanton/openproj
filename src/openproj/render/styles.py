@@ -1898,6 +1898,29 @@ article.record:not(.editing) .req { display: none; }
    and the gutter note. */
 .record.editing .teach:empty { display: none; }
 .record.editing .read { display: none; }
+/* A field of record references, folded (`refChips` in the shell): one line of
+   titles until it is pressed, then the chips and the box. jcanton, 2026-10-20: "I
+   prefer the way the popup card works: renders as plain text until you click on
+   the field for editing it." So the line wears what the card's openable fields
+   wear on hover, and nothing else — it reads as the value, not as a button.
+
+   Which way the cascade resolves, since this file has lost that fight twice: the
+   box is hidden by `.record.editing .field.folded` at (0,4,0) over the (0,3,0)
+   that shows every `.field` while editing; the line's `[hidden]` is (0,4,0) over
+   its own (0,3,0); and outside editing the line is off at (0,1,0) and the chips
+   at (0,3,0) over the shell's (0,1,0) — in a record being read, `.read` holds the
+   same titles as links, and chips with a × beside them were the second copy
+   jcanton saw ("in preview mode they show up as text as well as chips"). */
+.refsays { display: none; }
+.record.editing .refsays {
+  display: block; width: 100%; margin: 0; padding: 0; border: 0; border-radius: 2px;
+  background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.record.editing .refsays:hover { background: var(--surface-2);
+                                 box-shadow: 0 0 0 2px var(--surface-2); }
+.record.editing .refsays[hidden] { display: none; }
+.record.editing .field.folded { display: none; }
+.record:not(.editing) .refs { display: none; }
 .record.editing dd .field[type=checkbox] { display: inline-block; }
 label { display: block; }
 /* Except in a fact list, where the label is one word in a line that also carries
