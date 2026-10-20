@@ -1913,6 +1913,14 @@ article.record:not(.editing) .req { display: none; }
    same titles as links, and chips with a × beside them were the second copy
    jcanton saw ("in preview mode they show up as text as well as chips"). */
 .refsays { display: none; }
+/* One record to a line, in a fact that lists them (`_link_lines`, and the folded
+   line's own lines in `refChips`), each cut by an ellipsis and whole on hover —
+   jcanton, 2026-10-20, "one line per blocker (with eclipsing) … instead of
+   comma-separated". `min-width: 0` on the cell is what lets the ellipsis happen
+   at all: a grid item's automatic minimum is its content, so a long title
+   would otherwise widen the column instead of being cut. */
+.refline { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+dd:has(> .read > .refline), dd:has(> .refsays) { min-width: 0; }
 .record.editing .refsays { display: block; margin: 0; text-align: left; cursor: text; }
 .record.editing .refsays:hover { border-color: var(--fg); }
 .record.editing .refsays[hidden] { display: none; }

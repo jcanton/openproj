@@ -3496,6 +3496,9 @@ function refChips(input, known, multi, folds) {
   })();
   const split = text => String(text || '').split(',').map(one => one.trim()).filter(Boolean);
   const said = id => titles.get(id) || id;
+  // What a reference says on hover, where its line cuts it: the whole title, and
+  // the id, which is what a commit message or a teammate in chat will quote.
+  const whole = id => (titles.has(id) ? `${titles.get(id)} — ${id}` : id);
   let ids = [];
   // The chip the keyboard has marked, or -1.
   let on = -1;
@@ -3544,10 +3547,7 @@ function refChips(input, known, multi, folds) {
       const chip = document.createElement('span');
       chip.className = i === on ? 'ref on' : 'ref';
       chip.setAttribute('role', 'listitem');
-      // The whole title on hover, since the chip cuts a long one to its line, and
-      // the id with it: it is what a commit message or a teammate in chat will
-      // quote.
-      chip.title = titles.has(id) ? `${titles.get(id)} — ${id}` : id;
+      chip.title = whole(id);
       const word = document.createElement('span');
       word.textContent = said(id);
       // First, on the left: a cut title ends at a different place on every chip,
@@ -3565,11 +3565,22 @@ function refChips(input, known, multi, folds) {
     row.hidden = !opened || !ids.length;
     input.classList.toggle('folded', !opened);
     if (say) {
+      // One title to a line, as the record being read draws the same field
+      // (`_link_lines` in `detail.py`), each cut to its line and whole on hover.
       const typed = drawn.get().trim();
-      const words = [...ids.map(said), ...(typed ? [typed] : [])];
+      const lines = [...ids.map(id => [said(id), whole(id)]), ...(typed ? [[typed, typed]] : [])];
       say.hidden = opened;
-      say.textContent = words.length ? words.join(', ') : '—';
-      say.setAttribute('aria-label', `${named()}: ${say.textContent}, edit`);
+      say.innerHTML = '';
+      for (const [text, whole] of lines) {
+        const line = document.createElement('span');
+        line.className = 'refline';
+        line.textContent = text;
+        line.title = whole;
+        say.append(line);
+      }
+      if (!lines.length) say.textContent = '—';
+      say.setAttribute('aria-label',
+        `${named()}: ${lines.map(([text]) => text).join(', ') || 'none'}, edit`);
     }
   }
   function unfold() {

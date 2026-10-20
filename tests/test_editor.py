@@ -12311,6 +12311,7 @@ def test_blockers_are_edited_by_their_titles_and_saved_as_their_ids(
     box = "document.querySelector('input[name=depends_on]')"
     chips = f"[...{box}.parentNode.querySelectorAll('.ref')]"
     folded = f"{box}.parentNode.querySelector('.refsays')"
+    lines = f"[...{folded}.querySelectorAll('.refline')].map(one => one.textContent)"
     shown = "(one => !!one && one.getClientRects().length > 0)"
     seen = f"""({{value: {box}.value,
         words: {chips}.map(one => one.querySelector('span').textContent),
@@ -12332,12 +12333,16 @@ def test_blockers_are_edited_by_their_titles_and_saved_as_their_ids(
         reading = _evaluated(
             call,
             f"({{chips: {shown}({box}.parentNode.querySelector('.refs')),"
-            f" line: {shown}({folded}), box: {shown}({box})}})",
+            f" line: {shown}({folded}), box: {shown}({box}),"
+            f" links: [...{box}.parentNode.querySelectorAll('.read .refline a')]"
+            f".map(one => one.textContent)}})",
         )
-        assert reading == {"chips": False, "line": False, "box": False}, (
-            f"a record being read draws its blockers as chips or a box as well as links: "
-            f"{reading}"
-        )
+        assert reading == {
+            "chips": False,
+            "line": False,
+            "box": False,
+            "links": [OTHER_TITLE, DONE_TITLE],
+        }, f"a record being read draws its blockers as {reading}, not one link to a line"
 
         _evaluated(call, "flipEditing()")
         time.sleep(0.5)
@@ -12345,12 +12350,14 @@ def test_blockers_are_edited_by_their_titles_and_saved_as_their_ids(
         time.sleep(0.3)
         closed = _evaluated(
             call,
-            f"({{line: {shown}({folded}), says: {folded}.textContent,"
+            f"({{line: {shown}({folded}), says: {lines},"
             f" chips: {shown}({box}.parentNode.querySelector('.refs')), box: {shown}({box})}})",
         )
+        # One title to a line, as the record being read draws it: jcanton, "one
+        # line per blocker … instead of comma-separated".
         assert closed == {
             "line": True,
-            "says": f"{OTHER_TITLE}, {DONE_TITLE}",
+            "says": [OTHER_TITLE, DONE_TITLE],
             "chips": False,
             "box": False,
         }, f"Blocked by, while editing and before it is pressed, is {closed}"
@@ -12422,8 +12429,8 @@ def test_blockers_are_edited_by_their_titles_and_saved_as_their_ids(
         # Leaving the box folds the field, and the line says what it holds now.
         _evaluated(call, f"{box}.blur()")
         time.sleep(0.3)
-        left = _evaluated(call, f"({{line: {shown}({folded}), says: {folded}.textContent}})")
-        assert left == {"line": True, "says": OTHER_TITLE}, left
+        left = _evaluated(call, f"({{line: {shown}({folded}), says: {lines}}})")
+        assert left == {"line": True, "says": [OTHER_TITLE]}, left
 
         _evaluated(call, "document.getElementById('save').click()")
 
