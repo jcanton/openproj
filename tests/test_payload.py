@@ -558,7 +558,7 @@ _VIEW_ROWS = [
     pytest.param(
         "views: [deck]\n",
         (),
-        ["views names deck, which needs cycles, so the deck is off"],
+        ["views names deck, which needs cycles, so nothing links to the deck"],
         id="the deck without cycles",
     ),
     pytest.param("views: [deck, cycles]\n", ("deck", "cycles"), [], id="the deck first"),
@@ -757,24 +757,25 @@ def test_every_row_is_said_in_the_banner_and_by_check(
 def test_a_views_typo_is_said_on_every_page_a_server_answers_the_switched_off_ones_too(
     tmp_path: Path,
 ):
-    """`views: [cycels]` is the typo the spec names: Cycles is off, and every
-    address under it answers the switched-off page, which is drawn by its own
-    entry point and hands the banner its own arguments. Nothing opened that page
-    with a setting it could not use — `_ROUTES` below is a plan with every view
-    on — so dropping `index.unusable` from its `_page` call failed no test, and
-    the one page a reader who lost Cycles is certain to land on would have been
-    the one page that did not say why.
+    """`views: [cycels]` is the typo the spec names: Cycles is unlisted, and
+    every address under it still answers — and so does the switched-off page of a
+    list whose kind is off, which is drawn by its own entry point and hands the
+    banner its own arguments. Nothing opened that page with a setting it could not
+    use — `_ROUTES` below is a plan with every view on — so dropping
+    `index.unusable` from its `_page` call failed no test, and the one page a
+    reader who lost a list is certain to land on would have been the one page that
+    did not say why.
 
-    Every route, so the pages that are still on and the ones that are not are
-    asked the same question. And a second name wrong in the same setting, for
-    the plural headline, which nothing asserted.
+    Every route, so the pages that are listed, unlisted and off are all asked the
+    same question. And a second name wrong in the same setting, for the plural
+    headline, which nothing asserted.
     """
     from pages import unusable_banner_says, unusable_in
 
     typo = f"config/defaults.yaml — views names 'cycels', {_NOT_A_VIEW}"
     other = f"config/defaults.yaml — views names 'grpah', {_NOT_A_VIEW}"
 
-    repo = whole_plan(tmp_path / "one", also="views: [cycels]\n")
+    repo = whole_plan(tmp_path / "one", also="views: [cycels]\nkinds: [note]\n")
     with TestClient(create_app(repo, auth="dev")) as client:
         refused = []
         for route in _ROUTES:
@@ -787,7 +788,8 @@ def test_a_views_typo_is_said_on_every_page_a_server_answers_the_switched_off_on
                 assert got.status_code == 200, f"{route}: {got.status_code}"
             assert unusable_in(got.text) == [typo], route
             assert unusable_banner_says(got.text) == _ONE_SETTING, route
-        assert {"/cycles", "/cycle/37", "/deck/37"} <= set(refused), refused
+        assert "/issues" in refused, refused
+        assert not {"/cycles", "/cycle/37", "/deck/37"} & set(refused), "unlisted is not off"
 
     # Two lines, one setting: the headline counts what the reader has to open
     # and fix, and that is one key.

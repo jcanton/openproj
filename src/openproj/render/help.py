@@ -30,7 +30,7 @@ from ..model import OPTIONAL_KINDS, RUNG, SWITCHES_FILE, VIEW_NEEDS
 from ..vendor import _docs_root
 from .env import _compiled
 from .markdown import _LEADING_HEADING, document_html
-from .shell import _NAV, _NAV_KEYS, STATIC, Links, _page
+from .shell import _NAV, ROUTES, STATIC, Links, _page
 from .styles import _DETAIL_STYLE, _SUGGEST_STYLE
 
 
@@ -376,32 +376,47 @@ def _scope(index: Index, links: Links) -> Markup:
     A nav item can be missing for either of two reasons, and the sentence names
     the one that holds. A list of a kind the plan has not got goes with the kind
     (`VIEW_NEEDS`), so `kinds: []` alone takes Issues and Notes out of the nav
-    without `views` saying a word — and "turned off by `views`" would send the
-    reader to a key they never wrote.
+    without `views` saying a word — and "left out by `views`" would send the
+    reader to a key they never wrote. Every other view `views` leaves out is
+    unlisted and not off (`model.reachable`), and this sentence is the one place
+    that says where each still is: an unlisted view is one no page links to, so an
+    address written out as text is how a reader who wants it finds it.
 
     Built here and not in the template: English is not something Jinja should
     be doing arithmetic about, and `Markup.format` is the one escaping boundary
     the `<code>` spans need.
     """
     kinds_off = [kind for kind in OPTIONAL_KINDS if kind not in index.kinds]
-    by_views = [key for key in _NAV_KEYS - set(links.nav) if VIEW_NEEDS.get(key) not in kinds_off]
-    if not by_views and not kinds_off:
+    # In the nav's own order, so the sentence reads the same on every load.
+    unlisted = [
+        key
+        for key, _ in _NAV
+        if key not in links.nav and VIEW_NEEDS.get(key) not in kinds_off
+    ]
+    if not unlisted and not kinds_off:
         return Markup("")
     lists = _listed([RUNG[kind].directory for kind in kinds_off])
     views_from = index.switches_from.get("views", SWITCHES_FILE)
     kinds_from = index.switches_from.get("kinds", SWITCHES_FILE)
-    if by_views:
+    if unlisted:
+        # Where each one is, from the full set of links and not from `links`,
+        # whose field for an unlisted view is blank by design.
+        base = ROUTES if links.served else STATIC
+        where = Markup(
+            _listed([Markup("<code>{}</code>").format(getattr(base, key)) for key in unlisted])
+        )
         said = Markup(
-            "This plan has {}. The guide below describes every view openproj has; the "
-            "others are turned off here by <code>views</code> in <code>{}</code>"
-        ).format(_listed([dict(_NAV)[key] for key in links.nav]), views_from)
+            "This plan's nav has {}. The guide below describes every view openproj has; "
+            "<code>views</code> in <code>{}</code> leaves the others out of the nav, and "
+            "each still answers at its address: {}."
+        ).format(_listed([dict(_NAV)[key] for key in links.nav]), views_from, where)
         if kinds_off:
-            said += Markup(", and {} by <code>kinds</code>").format(lists)
+            said += Markup(" {} are turned off by <code>kinds</code>").format(lists.capitalize())
             # Named only when it is another file: the two keys usually sit side
-            # by side, and a path said twice in one sentence reads as two places.
+            # by side, and a path said twice in one paragraph reads as two places.
             if kinds_from != views_from:
                 said += Markup(" in <code>{}</code>").format(kinds_from)
-        said += Markup(".")
+            said += Markup(".")
     else:
         # Said as the switch and not as a count. A file of a kind that is off still
         # loads and is listed on Records, so "this plan has no issues" was false of

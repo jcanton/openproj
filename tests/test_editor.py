@@ -31,7 +31,9 @@ from test_store import commit_directly
 from test_web import (
     ANN,
     DONE,
+    DONE_TITLE,
     OTHER,
+    OTHER_TITLE,
     PATH,
     PNG,
     SECRET,
@@ -12279,3 +12281,165 @@ def test_a_finger_drags_the_ball_along_the_hill(page: str, tmp_path: Path):
         f"a finger dragged the ball from {where_to['was']} to {where_to['wants']} and the hill "
         f"says {now}"
     )
+
+
+def test_blockers_are_edited_by_their_titles_and_saved_as_their_ids(
+    live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
+    tmp_path: Path,
+):
+    """jcanton, 2026-10-20: "when editing dependencies of a record (in the
+    blocked-by field) it shows record ids but not titles … when going in editing
+    view I see [task-c4d934, pitch-4a7250, pitch-bdb8d1] and it's not
+    immediately obvious which one that is."
+
+    Driven in Chrome with trusted presses, because every claim here is about the
+    keyboard and the pointer: the box is the table's and the card's as well, and
+    the table commits on blur — so a × that took the focus off the box would
+    commit a half-made edit there. Each blocker is a chip wearing its title, the
+    id on hover; × takes one away and leaves the keyboard in the box; Backspace in
+    the empty box marks the last chip and a second Backspace removes it, so a held
+    key clearing what was typed does not run on into the references; a title
+    typed and picked adds one; and Save writes ids, not titles.
+
+    And folded, as the card is (jcanton, the same day: "renders as plain text
+    until you click on the field for editing it"): while editing, the field is a
+    line of titles until it is pressed, and leaving it folds it again; while
+    reading, there are no chips at all, only the linked titles the page always had.
+    """
+    with httpx.Client(base_url=live_server) as client:
+        assert save(client, TASK, {"depends_on": [OTHER, DONE]}).status_code == 200
+    box = "document.querySelector('input[name=depends_on]')"
+    chips = f"[...{box}.parentNode.querySelectorAll('.ref')]"
+    folded = f"{box}.parentNode.querySelector('.refsays')"
+    lines = f"[...{folded}.querySelectorAll('.refline')].map(one => one.textContent)"
+    shown = "(one => !!one && one.getClientRects().length > 0)"
+    seen = f"""({{value: {box}.value,
+        words: {chips}.map(one => one.querySelector('span').textContent),
+        marked: {chips}.filter(one => one.classList.contains('on')).length,
+        here: document.activeElement === {box}}})"""
+
+    def key(call, name: str, code: int) -> None:
+        for kind in ("rawKeyDown", "keyUp"):
+            call(
+                "Input.dispatchKeyEvent",
+                {"type": kind, "key": name, "code": name, "windowsVirtualKeyCode": code},
+            )
+        time.sleep(0.2)
+
+    url = f"{live_server}/detail/{TASK}"
+    with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
+        time.sleep(2)
+        _until(call, f"!!{box}")
+        reading = _evaluated(
+            call,
+            f"({{chips: {shown}({box}.parentNode.querySelector('.refs')),"
+            f" line: {shown}({folded}), box: {shown}({box}),"
+            f" links: [...{box}.parentNode.querySelectorAll('.read .refline a')]"
+            f".map(one => one.textContent)}})",
+        )
+        assert reading == {
+            "chips": False,
+            "line": False,
+            "box": False,
+            "links": [OTHER_TITLE, DONE_TITLE],
+        }, f"a record being read draws its blockers as {reading}, not one link to a line"
+
+        _evaluated(call, "flipEditing()")
+        time.sleep(0.5)
+        _evaluated(call, f"{folded}.scrollIntoView({{block: 'center'}})")
+        time.sleep(0.3)
+        closed = _evaluated(
+            call,
+            f"({{line: {shown}({folded}), says: {lines},"
+            f" chips: {shown}({box}.parentNode.querySelector('.refs')), box: {shown}({box})}})",
+        )
+        # One title to a line, as the record being read draws it: jcanton, "one
+        # line per blocker … instead of comma-separated".
+        assert closed == {
+            "line": True,
+            "says": [OTHER_TITLE, DONE_TITLE],
+            "chips": False,
+            "box": False,
+        }, f"Blocked by, while editing and before it is pressed, is {closed}"
+        _evaluated(call, f"{folded}.click()")
+        time.sleep(0.3)
+        opened = _evaluated(call, seen)
+        assert opened["value"] == f"{OTHER}, {DONE}", opened
+        assert opened["words"] == [OTHER_TITLE, DONE_TITLE], (
+            f"Blocked by opens on {opened['words']}, not on the titles of what it holds"
+        )
+        assert opened["here"], "pressing the folded line did not put the keyboard in the box"
+        hover = _evaluated(call, f"{chips}.map(one => one.title)")
+        assert hover == [f"{OTHER_TITLE} — {OTHER}", f"{DONE_TITLE} — {DONE}"], hover
+        # Painted, and not merely in the DOM: the first chip is what the browser
+        # finds at its own centre.
+        assert _evaluated(
+            call,
+            f"""(() => {{ const chip = {chips}[0], at = chip.getBoundingClientRect();
+              const hit = document.elementFromPoint(at.left + at.width / 2, at.top + at.height / 2);
+              return at.width > 0 && !!hit && chip.contains(hit); }})()""",
+        ), "the first chip is not what the browser draws where it says it is"
+
+        x, y = _evaluated(
+            call,
+            f"(() => {{ const b = {chips}[0].querySelector('button').getBoundingClientRect();"
+            " return [b.left + b.width / 2, b.top + b.height / 2]; })()",
+        )
+        for kind, buttons in (("mousePressed", 1), ("mouseReleased", 0)):
+            call(
+                "Input.dispatchMouseEvent",
+                {
+                    "type": kind,
+                    "x": x,
+                    "y": y,
+                    "button": "left",
+                    "buttons": buttons,
+                    "clickCount": 1,
+                },
+            )
+        time.sleep(0.3)
+        crossed = _evaluated(call, seen)
+        assert crossed == {"value": DONE, "words": [DONE_TITLE], "marked": 0, "here": True}, (
+            f"× left {crossed}: the reference has to go and the keyboard has to stay"
+        )
+
+        key(call, "Backspace", 8)
+        marked = _evaluated(call, seen)
+        assert (marked["value"], marked["marked"]) == (DONE, 1), (
+            f"the first Backspace in an empty box should mark the last chip, not remove it: "
+            f"{marked}"
+        )
+        key(call, "Backspace", 8)
+        emptied = _evaluated(call, seen)
+        assert (emptied["value"], emptied["words"]) == ("", []), emptied
+
+        for letter in "Downgrade numpy":
+            call("Input.insertText", {"text": letter})
+        time.sleep(0.3)
+        offered = _evaluated(
+            call,
+            "[...document.querySelectorAll('ul.suggest:not([hidden]) li')]"
+            ".map(li => li.dataset.value)",
+        )
+        assert offered and offered[0] == OTHER, offered
+        key(call, "Enter", 13)
+        picked = _evaluated(call, seen)
+        assert (picked["value"], picked["words"]) == (OTHER, [OTHER_TITLE]), picked
+
+        # Leaving the box folds the field, and the line says what it holds now.
+        _evaluated(call, f"{box}.blur()")
+        time.sleep(0.3)
+        left = _evaluated(call, f"({{line: {shown}({folded}), says: {lines}}})")
+        assert left == {"line": True, "says": [OTHER_TITLE]}, left
+
+        _evaluated(call, "document.getElementById('save').click()")
+
+        def stored() -> list[str]:
+            plan = httpx.get(f"{live_server}/api/index.json").json()["plan"]
+            return plan[TASK].get("depends_on", [])
+
+        deadline = time.monotonic() + 20
+        while stored() != [OTHER] and time.monotonic() < deadline:
+            time.sleep(0.25)
+        assert stored() == [OTHER], f"Save wrote {stored()}, not the one blocker left in the box"
+        assert not [line for line in said if "TypeError" in line or "ReferenceError" in line], said

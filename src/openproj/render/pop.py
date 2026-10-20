@@ -2238,8 +2238,13 @@ function popOpenField(name) {
     // **It must not bubble**: `popClose` is listening for Escape on the way up
     // and would take the whole box down, when what was asked for was to undo one
     // field. The table's own editor stops it for exactly this reason.
-    event.preventDefault();
     event.stopPropagation();
+    // And it is not this field's when something inside it already answered it —
+    // a record reference marked for removal (`refChips`) lets go of its mark, and
+    // one Escape must not also throw away the edit around it. The table's cell
+    // asks the same question.
+    if (event.defaultPrevented) return;
+    event.preventDefault();
     popShutField(name, slot, was);
   };
   // Every control, and not only the status one. What a status demands moves when
@@ -2657,13 +2662,20 @@ function popComplete(input, name, field) {
   list.id = 'pop-list-' + (++POP_FIELD_N);
   input.setAttribute('list', list.id);
   const many = (POP_SCHEMA.types || {})[name] === 'list';
+  // Record ids read as their titles here exactly as on the record page
+  // (`refChips`, in the shell). The box then holds only the one being added, so
+  // an option is a bare id with no prefix carried through, and the chips are
+  // what is already taken.
+  const refs = source === 'records' ? refChips(input, options, many) : null;
   const fill = () => {
     const at = input.value.lastIndexOf(',');
-    const lead = many && at !== -1 ? input.value.slice(0, at + 1) + ' ' : '';
+    const lead = !refs && many && at !== -1 ? input.value.slice(0, at + 1) + ' ' : '';
     // Already chosen, so not offered again: picking a name that is in the list
     // is a slip and not an intent to have it twice, which is the same
     // deduplication `coerce` (`table.py`) does at the other end.
-    const taken = many ? input.value.split(',').map(one => one.trim()) : [];
+    let taken = [];
+    if (refs) taken = refs.ids();
+    else if (many) taken = input.value.split(',').map(one => one.trim());
     list.replaceChildren(...options
       .filter(one => !taken.includes(one.value))
       .map(one => {
@@ -2676,7 +2688,13 @@ function popComplete(input, name, field) {
       }));
   };
   fill();
-  if (many) input.addEventListener('input', fill);
+  if (many || refs) input.addEventListener('input', fill);
+  // Every chip added or taken away moves the card's bottom edge, and the card is
+  // placed once, against the pointer: jcanton, 2026-10-20, "adding several
+  // manages to move the bottom of the popup card outside the bottom of the page,
+  // making it impossible to save/cancel the edit". Placed again on each change,
+  // so `placeFloat` keeps Save and Cancel inside the window.
+  if (refs) input.addEventListener('input', popPlace);
   field.append(list);
 }
 

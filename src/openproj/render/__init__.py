@@ -94,6 +94,7 @@ from .shell import (
     Links,
     _page,
     links_for,
+    opened,
     render_not_found,
     render_switched_off,
 )
@@ -237,6 +238,7 @@ __all__ = [
     "slide_html",
     "inlined_assets",
     "links_for",
+    "opened",
     "render_detail",
     "render_graph",
     "render_people",

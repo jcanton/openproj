@@ -1898,6 +1898,34 @@ article.record:not(.editing) .req { display: none; }
    and the gutter note. */
 .record.editing .teach:empty { display: none; }
 .record.editing .read { display: none; }
+/* A field of record references, folded (`refChips` in the shell): one line of
+   titles until it is pressed, then the chips and the box. jcanton, 2026-10-20: "I
+   prefer the way the popup card works: renders as plain text until you click on
+   the field for editing it." Its box is the one every field wears — it is in that
+   rule's selector list below, not a copy of it — so the line reads as a field
+   holding a value, and wraps onto as many lines as its titles need.
+
+   Which way the cascade resolves, since this file has lost that fight twice: the
+   box is hidden by `.record.editing .field.folded` at (0,4,0) over the (0,3,0)
+   that shows every `.field` while editing; the line's `[hidden]` is (0,4,0) over
+   its own (0,3,0); and outside editing the line is off at (0,1,0) and the chips
+   at (0,3,0) over the shell's (0,1,0) — in a record being read, `.read` holds the
+   same titles as links, and chips with a × beside them were the second copy
+   jcanton saw ("in preview mode they show up as text as well as chips"). */
+.refsays { display: none; }
+/* One record to a line, in a fact that lists them (`_link_lines`, and the folded
+   line's own lines in `refChips`), each cut by an ellipsis and whole on hover —
+   jcanton, 2026-10-20, "one line per blocker (with eclipsing) … instead of
+   comma-separated". `min-width: 0` on the cell is what lets the ellipsis happen
+   at all: a grid item's automatic minimum is its content, so a long title
+   would otherwise widen the column instead of being cut. */
+.refline { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+dd:has(> .read > .refline), dd:has(> .refsays) { min-width: 0; }
+.record.editing .refsays { display: block; margin: 0; text-align: left; cursor: text; }
+.record.editing .refsays:hover { border-color: var(--fg); }
+.record.editing .refsays[hidden] { display: none; }
+.record.editing .field.folded { display: none; }
+.record:not(.editing) .refs { display: none; }
 .record.editing dd .field[type=checkbox] { display: inline-block; }
 label { display: block; }
 /* Except in a fact list, where the label is one word in a line that also carries
@@ -1925,8 +1953,14 @@ dt > label { display: inline; }
    inert on Chrome and Safari, where the date field is still the input itself
    and this wrapper is a span that costs a tag. The `@supports` block in
    `_CALENDAR_STYLE` (`calendar.py`) is the only place it becomes a box, and it
-   asks the question in the same words the installer asks it in JavaScript. */
-input.field, select.field, textarea.field, .datewrap {
+   asks the question in the same words the installer asks it in JavaScript.
+
+   `.refsays` is in it for the same reason: the folded line of a field of record
+   references (`refChips`) is a button, and it wears the box every other field
+   wears so it reads as one of them. jcanton, 2026-10-20, of the first folded
+   version, which was bare text: "without the field box they seem like they are
+   not editable until you hover the mouse over them". */
+input.field, select.field, textarea.field, .datewrap, .refsays {
   width: 100%; box-sizing: border-box; font: inherit; padding: .25rem .4rem;
   border: 1px solid var(--line-strong); border-radius: 3px;
   background: var(--surface); color: inherit;

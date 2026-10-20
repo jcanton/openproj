@@ -112,9 +112,11 @@ _VIEW_SEGMENTS = (
 # the current view, and a control that says which one you are in is what the
 # three beside it already do.
 def _slidebar(record_id: str, links: Links, here: bool = False) -> Markup:
-    # Nothing when the plan has no deck: a slide is a page of one, and its address
-    # answers the switched-off page. Here and not at either caller, so the record
-    # page and the slide editor cannot disagree about it.
+    # Nothing when the plan does not list the deck: an unlisted view is one no page
+    # links to, though its address still answers. Here and not at either caller,
+    # so the record page and the slide editor cannot disagree about it — the slide
+    # editor is drawn with the deck's own links put back (`render.opened`), so on
+    # that page the control is always there to say which view this is.
     if not links.deck:
         return Markup("")
     return Markup(
@@ -3261,6 +3263,28 @@ def _links(ids: list[str], index: Index, links: Links = STATIC) -> Markup:
     )
 
 
+def _link_lines(ids: list[str], index: Index, links: Links = STATIC) -> Markup:
+    """Ids as titles, linked, one to a line — the lists of records a fact holds.
+
+    jcanton, 2026-10-20: "how about having one line per blocker (with eclipsing)
+    both in read as well as in edit mode … instead of comma-separated". A list of
+    titles run together with commas is a paragraph, and the question a reader
+    asks of Blocked by is which ones, one at a time. Each line is cut by an
+    ellipsis rather than wrapped, so a long title costs width and not a second
+    line, and its own `title` gives it back whole with the id. Escaped the way
+    `_links` is, through `Markup.format`, for the reason written there.
+    """
+    lines = []
+    for i in ids:
+        title = index.plan[i].title if i in index.plan else i
+        lines.append(
+            Markup('<span class="refline"><a href="{}{}" title="{}">{}</a></span>').format(
+                links.record, i, f"{title} — {i}" if title != i else i, title
+            )
+        )
+    return Markup("").join(lines)
+
+
 def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") -> list[dict]:
     """The rows of the facts list, each carrying both how it reads and how it edits.
 
@@ -3312,7 +3336,7 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
         teach_id = f"teach-{field['id']}" if teach else ""
         teach_data = ""
         if name == "depends_on":
-            display = _links(index.blocked_by[record.id], index, links) or empty
+            display = _link_lines(index.blocked_by[record.id], index, links) or empty
         elif name == "parent":
             # By title and linked, the way blockers already read. An id is what
             # the field stores; it is not what anybody is looking for when they
@@ -3322,7 +3346,7 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
             # Links, not the bare ids the two old pages' edit boxes held: the
             # question a reader asks of this row is "what did it become", and an
             # id is not an answer anybody can press.
-            display = _links(getattr(record, name), index, links) or empty
+            display = _link_lines(getattr(record, name), index, links) or empty
         elif name == "prs":
             display = Markup(", ").join(_pr_link(ref) for ref in record.prs) or empty
         elif name == "review_waived":
@@ -3623,7 +3647,7 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
             {
                 "label": "Blocks",
                 "for": "",
-                "display": _links(index.blocks[record.id], index, links) or empty,
+                "display": _link_lines(index.blocks[record.id], index, links) or empty,
                 "control": "",
                 "gates": (),
                 "derived": True,

@@ -195,19 +195,36 @@ assert _NAV_KEYS - {"records"} <= set(VIEWS), "a nav item that is not a view can
 
 
 def links_for(views: Sequence[str], base: Links) -> Links:
-    """`base` — `ROUTES` or `STATIC` — for a plan that has exactly these views.
+    """`base` — `ROUTES` or `STATIC` — for a plan that lists exactly these views.
 
-    The field of every view that is off is blanked, which is the convention
-    `new` and `deck` already had in the export: a template asks the field before
-    it draws the link, so a switched-off page is one nothing links to rather than
-    one every page links to and the router refuses. `nav` is Records and then the
-    views that have a slot, in the order the plan gave them.
+    The field of every view that is not listed is blanked, which is the
+    convention `new` and `deck` already had in the export: a template asks the
+    field before it draws the link, so an unlisted page is one nothing links to.
+    Unlisted is not off — the page still answers at its address
+    (`model.reachable`), and `opened` below is how it is drawn there. `nav` is
+    Records and then the views that have a slot, in the order the plan gave them.
 
     Once per index build, not per request: `views` is a fact about one commit.
     """
     off = {field: "" for view in VIEWS if view not in views for field in _FIELDS_OF[view]}
     nav = ("records", *(view for view in views if view in VIEWS and view in _NAV_KEYS))
     return base.model_copy(update={**off, "nav": nav})
+
+
+def opened(links: Links, base: Links, view: str) -> Links:
+    """`links` as drawn ON `view`'s own page: its own fields put back from `base`.
+
+    An unlisted view reached at its address has to work once it is there —
+    `/cycles` linking to each `/cycle/<n>`, the Timeline's controls submitting to
+    `/timeline` — and every one of those is the view's own field, which
+    `links_for` blanked so that the OTHER pages would not link to it. Only the
+    view's own: a deck reached by address whose Cycles are unlisted still draws no
+    way back to the cycle page, and the nav is untouched, so it shows what the plan
+    lists and nothing more (jcanton, 2026-10-20: "nothing extra").
+
+    A no-op for a listed view, whose fields were never blanked.
+    """
+    return links.model_copy(update={field: getattr(base, field) for field in _FIELDS_OF[view]})
 
 
 _SHELL = """<!doctype html>
@@ -1644,6 +1661,26 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
 .chip { display: inline-block; font-family: var(--font-mono); font-size: 11px;
         line-height: 1.45; text-transform: uppercase; letter-spacing: .04em;
         padding: .1rem .4rem; border-radius: 2px; white-space: nowrap; }
+/* The record references a box holds, by title, above the box that adds one
+   (`refChips`). Not `.chip`, which is the uppercase mono label a kind or a status
+   wears: these are titles somebody reads, at the page's own size. One line each,
+   a long title cut with an ellipsis and given back whole on hover — jcanton,
+   2026-10-20, having seen them wrap in the card: "I'd make the titles eclipse,
+   not wrap, and display in full when hovering over them", and the × on the left
+   so it stays put while the titles end in different places. `[hidden]` written
+   out, because the `display` above it would otherwise keep an empty row laid out. */
+.refs { display: flex; flex-wrap: wrap; gap: .25rem; margin: 0 0 .25rem; }
+.refs[hidden] { display: none; }
+.ref { display: inline-flex; align-items: center; max-width: 100%; box-sizing: border-box;
+       border: 1px solid var(--line-strong); border-radius: 3px; background: var(--surface);
+       padding: .05rem .45rem .05rem 0; font-size: 13px; line-height: 1.45; }
+/* `white-space` said outright rather than inherited: the card draws each fact
+   on one line already, and the record page does not. */
+.ref > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ref > button { flex: none; border: 0; background: none; margin: 0; padding: 0 .35rem;
+                font: inherit; line-height: 1; color: var(--muted); cursor: pointer; }
+.ref > button:hover { color: var(--danger); }
+.ref.on { outline: 2px solid var(--focus); outline-offset: 1px; }
 {#- Written by the loop rather than by hand: five statuses times four tokens is
     twenty values to keep in step, and the pair that drifts is the pair nobody
     reads until a chip turns white on white.
@@ -3416,6 +3453,258 @@ function announce(message) {
   where.textContent = message;
 }
 
+// --- record references, by their titles ------------------------------------
+//
+// jcanton, 2026-10-20: "when editing dependencies of a record (in the blocked-by
+// field) it shows record ids but not titles … when going in editing view I see
+// [task-c4d934, pitch-4a7250, pitch-bdb8d1] and it's not immediately obvious
+// which one that is." And of the right-click card's Edit: "same problem for the
+// same field". Adding one was already fine — the completion offers titles — so
+// the defect was the list you remove from.
+//
+// So every box that holds record ids draws them as titles: one chip per
+// reference, with × to take it away, above the box that still adds one. Here in
+// the shell and not beside either completion, because there are two and they
+// cannot share anything else: `attachSuggest` (`controls.py`) on the record
+// page, the create form and the table's cells, and `popComplete` (`pop.py`) on
+// the right-click card, which completes through a `<datalist>` because two of
+// its three host pages carry no `SUGGEST` at all. `known` is `{value, label}`
+// rows, the shape both already hold.
+//
+// **The box stays the box.** Every host reads and writes `input.value` — the
+// detail page's Reset, the table's commit on blur, the card's save — and the
+// table commits the moment its input loses focus. So the input keeps focus, keeps
+// every key and keeps its listeners, and `.value` is redefined ON THIS INPUT to
+// answer the whole list (chips, then whatever is still being typed) while the
+// text drawn inside it is only what is being typed. Writing `.value` from
+// anywhere redraws the chips, which is what keeps a Reset or a redraw honest
+// without every host having to know the chips exist. The × buttons are kept out
+// of the focus order and take no focus when pressed, because a button that took
+// it would blur the table's cell and commit a half-made edit.
+//
+// The keyboard path is Backspace: in an empty box it marks the last chip and a
+// second press removes it, so holding the key down to clear what you typed does
+// not run on into the references. ←/→ move the mark, Delete removes the marked
+// one, Escape lets go of it. Each is said through `announce`. × leaves the
+// keyboard where it was: jcanton, on the first version, "clicking x on one moves
+// to the add field … not ideal" — it focused the box, which opened its list.
+//
+// **`folds`** is the record page's and the create form's, where every field of a
+// record is on screen at once: "I prefer the way the popup card works: renders as
+// plain text until you click on the field for editing it. the /detail page shows
+// all the chips all the time and that's not great". Folded, the field is one line
+// of titles — a button, so the keyboard reaches it — and pressing it opens the
+// chips and the box; leaving the box folds it again, saying what it now holds.
+// The card and the table's cell open a field only when it is pressed already,
+// so they never fold.
+function refChips(input, known, multi, folds) {
+  const titles = new Map(known.map(one => [one.value, one.label]));
+  // Where the text drawn in the box lives: the browser's own `value` accessor,
+  // found on the prototype chain before it is shadowed below — or, under the node
+  // driver, whose elements carry `value` as a plain property, a variable.
+  const drawn = (() => {
+    for (let at = input; at; at = Object.getPrototypeOf(at)) {
+      const own = Object.getOwnPropertyDescriptor(at, 'value');
+      if (own && own.get) return {get: () => own.get.call(input), set: v => own.set.call(input, v)};
+      if (own) { let held = own.value || ''; return {get: () => held, set: v => { held = v; }}; }
+    }
+    let held = '';
+    return {get: () => held, set: v => { held = v; }};
+  })();
+  const split = text => String(text || '').split(',').map(one => one.trim()).filter(Boolean);
+  const said = id => titles.get(id) || id;
+  // What a reference says on hover, where its line cuts it: the whole title, and
+  // the id, which is what a commit message or a teammate in chat will quote.
+  const whole = id => (titles.has(id) ? `${titles.get(id)} — ${id}` : id);
+  let ids = [];
+  // The chip the keyboard has marked, or -1.
+  let on = -1;
+  const row = document.createElement('span');
+  row.className = 'refs';
+  row.setAttribute('role', 'list');
+  row.hidden = true;
+  if (input.parentNode) input.parentNode.insertBefore(row, input);
+  let opened = !folds;
+  const say = folds ? document.createElement('button') : null;
+  if (say) {
+    say.type = 'button';
+    say.className = 'refsays';
+    if (input.parentNode) input.parentNode.insertBefore(say, row);
+    say.addEventListener('click', unfold);
+    // The field's own label names a box that is not drawn while folded, and a
+    // press on it would focus nothing. It opens the field instead.
+    for (const label of input.labels || []) {
+      label.addEventListener('click', event => {
+        if (opened) return;
+        event.preventDefault();
+        unfold();
+      });
+    }
+    // Folded on the way out, after the browser has said where focus went: a press
+    // on a suggestion or a × keeps it in the box and must not fold anything.
+    input.addEventListener('blur', () => setTimeout(() => {
+      if (document.activeElement !== input) fold();
+    }, 0));
+  }
+  // What the folded line says it is, for a reader who cannot see the line: the
+  // field's own name first, then what is in it.
+  const named = () => {
+    const label = (input.labels || [])[0];
+    return label ? label.textContent.trim() : input.getAttribute('aria-label') || '';
+  };
+  // What the box under the chips is for, since it is empty most of the time it
+  // is on screen. A hint and not a name: the name is the field's label, which
+  // this leaves alone, and a box somebody already gave a hint keeps its own.
+  if (!input.getAttribute('placeholder'))
+    input.setAttribute('placeholder', multi ? 'Type to add…' : 'Type to change…');
+
+  function drawChips() {
+    row.innerHTML = '';
+    ids.forEach((id, i) => {
+      const chip = document.createElement('span');
+      chip.className = i === on ? 'ref on' : 'ref';
+      chip.setAttribute('role', 'listitem');
+      chip.title = whole(id);
+      const word = document.createElement('span');
+      word.textContent = said(id);
+      // First, on the left: a cut title ends at a different place on every chip,
+      // and a × after it moved with it.
+      const drop = document.createElement('button');
+      drop.type = 'button';
+      drop.textContent = '×';
+      drop.setAttribute('tabindex', '-1');
+      drop.setAttribute('aria-label', `Remove ${said(id)}`);
+      drop.addEventListener('mousedown', event => event.preventDefault());
+      drop.addEventListener('click', () => remove(i));
+      chip.append(drop, word);
+      row.append(chip);
+    });
+    row.hidden = !opened || !ids.length;
+    input.classList.toggle('folded', !opened);
+    if (say) {
+      // One title to a line, as the record being read draws the same field
+      // (`_link_lines` in `detail.py`), each cut to its line and whole on hover.
+      const typed = drawn.get().trim();
+      const lines = [...ids.map(id => [said(id), whole(id)]), ...(typed ? [[typed, typed]] : [])];
+      say.hidden = opened;
+      say.innerHTML = '';
+      for (const [text, whole] of lines) {
+        const line = document.createElement('span');
+        line.className = 'refline';
+        line.textContent = text;
+        line.title = whole;
+        say.append(line);
+      }
+      if (!lines.length) say.textContent = '—';
+      say.setAttribute('aria-label',
+        `${named()}: ${lines.map(([text]) => text).join(', ') || 'none'}, edit`);
+    }
+  }
+  function unfold() {
+    opened = true;
+    drawChips();
+    input.focus();
+  }
+  function fold() {
+    if (!opened) return;
+    opened = false;
+    on = -1;
+    drawChips();
+  }
+  // Every host listens for `input` to know the value moved. Marked, so the
+  // completion beside this does not open its list over a removal.
+  function changed() {
+    const event = new Event('input', {bubbles: true});
+    event.fromRefs = true;
+    input.dispatchEvent(event);
+  }
+  function hold(id) {
+    if (!multi) ids = [id];
+    else if (!ids.includes(id)) ids.push(id);
+  }
+  function remove(i) {
+    const gone = ids[i];
+    ids.splice(i, 1);
+    on = -1;
+    drawChips();
+    changed();
+    announce(`${said(gone)} removed`);
+  }
+  function mark(i) {
+    on = i;
+    drawChips();
+    if (on >= 0) announce(`${said(ids[on])} — Backspace removes it`);
+  }
+
+  Object.defineProperty(input, 'value', {
+    configurable: true,
+    get() {
+      const typed = drawn.get().trim();
+      if (!multi) return typed || ids[0] || '';
+      return [...ids, ...split(typed).filter(one => !ids.includes(one))].join(', ');
+    },
+    set(text) {
+      ids = multi ? [...new Set(split(text))] : split(text).slice(0, 1);
+      drawn.set('');
+      on = -1;
+      drawChips();
+    },
+  });
+  input.value = drawn.get();
+
+  // A comma ends a reference, and a whole id is one already — typed, pasted, or
+  // picked from the card's `<datalist>`, which writes the id into the box.
+  input.addEventListener('input', event => {
+    if (event.fromRefs) return;
+    const marked = on >= 0;
+    on = -1;
+    const parts = drawn.get().split(',');
+    const last = parts.pop().trim();
+    const done = multi ? parts.map(one => one.trim()).filter(Boolean) : [];
+    const whole = titles.has(last);
+    if (!done.length && !whole) { if (marked) drawChips(); return; }
+    done.forEach(hold);
+    if (whole) hold(last);
+    drawn.set(whole ? '' : last);
+    drawChips();
+  });
+  input.addEventListener('blur', () => { if (on >= 0) { on = -1; drawChips(); } });
+  input.addEventListener('keydown', event => {
+    if (!ids.length || drawn.get() !== '') return;
+    if (event.key === 'Backspace') {
+      event.preventDefault();
+      if (on >= 0) remove(on);
+      else mark(ids.length - 1);
+    } else if (event.key === 'Delete' && on >= 0) {
+      event.preventDefault();
+      remove(on);
+    } else if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      mark(on < 0 ? ids.length - 1 : Math.max(0, on - 1));
+    } else if (event.key === 'ArrowRight' && on >= 0) {
+      event.preventDefault();
+      mark(on + 1 < ids.length ? on + 1 : -1);
+    } else if (event.key === 'Escape' && on >= 0) {
+      // Consumed, so the table's cell and the card's field, which both answer
+      // Escape by giving the whole edit up, leave it alone.
+      event.preventDefault();
+      mark(-1);
+    }
+  });
+
+  return {
+    ids: () => ids.slice(),
+    typed: () => drawn.get(),
+    add(id) {
+      hold(id);
+      drawn.set('');
+      on = -1;
+      drawChips();
+      changed();
+    },
+  };
+}
+
 // One reading of a write's answer, for every page that writes.
 //
 // A 500 answers in `text/plain`, and `response.json()` on one rejects — which
@@ -4938,25 +5227,12 @@ def _page(
     )
 
 
-# What a switched-off page says it was, as the subject of its one sentence. Written
-# out rather than built from the nav's words, because English is not uniform across
-# them — "Cycles are", "The review deck is" — and a view with no nav slot has no word
-# there to build from. Held to `VIEWS` below, so a ninth view cannot arrive with no
-# sentence to answer its address with.
-_OFF_PHRASE = {
-    "table": "The Table is",
-    "graph": "The Graph is",
-    "timeline": "The Timeline is",
-    "cycles": "Cycles are",
-    "deck": "The review deck is",
-    "people": "The People page is",
-    "issues": "The Issues list is",
-    "notes": "The Notes list is",
-}
-# And the page's heading: the nav's word where it has one, since that is what the
-# reader was looking for.
-_OFF_HEADING = {**{key: label for key, label in _NAV if key in VIEWS}, "deck": "Review deck"}
-assert set(_OFF_PHRASE) == set(_OFF_HEADING) == set(VIEWS), "every view has its sentence"
+# The views whose address can answer "turned off": the lists of an optional kind,
+# which exist exactly when their kind does (`model.reachable`). Every other view
+# answers at its address in every plan, listed or not. Each has a nav word, which
+# is the page's heading, since that is what the reader was looking for.
+_CAN_BE_OFF = tuple(view for view in VIEWS if VIEW_NEEDS.get(view) in RUNG)
+assert all(view in _NAV_KEYS for view in _CAN_BE_OFF), "a list that can be off has a nav word"
 _OFF_STYLE = ".switched-off code { font-family: var(--font-mono); }\n"
 # Every key of an address that Records filters on: the bar's fields, which are
 # `FILTERS` in `_FILTER_JS` plus `predicate`, and the search box. What a
@@ -5002,11 +5278,9 @@ def render_not_found(index: Index, links: Links = STATIC, said: str = "", path: 
 def render_switched_off(
     index: Index,
     links: Links = STATIC,
-    view: str = "table",
+    view: str = "issues",
     off_kind: str = "",
     query: str = "",
-    record_id: str = "",
-    cycle: str = "",
 ) -> str:
     """What an address answers when the plan has switched its page off.
 
@@ -5016,20 +5290,17 @@ def render_switched_off(
     that silently landed on Records would be a page that changed under its reader
     with nothing saying why — empty looking like broken, which is finding F1.
 
-    `view` is the view that is off; `off_kind`, when given, is a kind that is off
-    instead, and its sentence is `kind_refusal`'s (`model.py`) with the setting
-    and the file marked up. **The setting named is the one that did it.** A view
-    that needs something the plan has not got (`VIEW_NEEDS`) is off because of
-    that, whatever `views` says: the Issues list of a plan whose `kinds` leaves
-    issues out is off with `views` never written, and a sentence sending that
-    reader to `views` sent them to a key they had not written and whose every
-    fix — `views: [issues]` — turned the other views off and left Issues off.
-    `_scope` on the Help page asks the same question the same way.
+    `view` is the list that is off — only the Issues and Notes lists can be,
+    because every other view answers at its address whether `views` lists it or
+    not (`model.reachable`); `off_kind`, when given, is a kind that is off
+    instead, at the create form. Either way **the setting named is `kinds`**,
+    because that is the one that did it: a sentence sending the reader of
+    `/issues` to `views` sent them to a key whose every fix — `views: [issues]`
+    — turned the other views out of the nav and left Issues off. `_scope` on the
+    Help page asks the same question the same way.
 
-    The way out is the record, for a slide view that is one record's view; the
-    cycle, for a deck that is one cycle's review, when Cycles are on; otherwise
-    Records with the filters the address carried; and Records bare when it
-    carried none. **Only the filters**, which are the keys Records reads —
+    The way out is Records with the filters the address carried, and Records
+    bare when it carried none. **Only the filters**, which are the keys Records reads —
     `_RECORDS_READS` — and not the query as it came: `/timeline?zoom=week` has no
     filter in it, and a link promising "the same filters" that landed on every
     record with Clear hidden said something that was not going to happen. And an
@@ -5041,47 +5312,23 @@ def render_switched_off(
     parameter but `index` has a default, because the namespace censuses draw
     every `render_*` from an index alone.
     """
-    need = VIEW_NEEDS.get(view, "")
+    kinds_from = index.switches_from.get("kinds", SWITCHES_FILE)
     if off_kind:
-        heading = f"New {off_kind}"
+        heading, need = f"New {off_kind}", ""
         said = Markup(
             "{} are turned off for this plan. <code>kinds</code> in <code>{}</code> "
             "decides which kinds of record it has."
-        ).format(
-            RUNG[off_kind].directory.capitalize(),
-            index.switches_from.get("kinds", SWITCHES_FILE),
-        )
-    elif need in RUNG and need not in index.kinds:
-        heading = _OFF_HEADING[view]
-        said = Markup(
-            "{} turned off for this plan, because {} are. <code>kinds</code> in "
-            "<code>{}</code> decides which kinds of record it has."
-        ).format(
-            _OFF_PHRASE[view],
-            RUNG[need].directory,
-            index.switches_from.get("kinds", SWITCHES_FILE),
-        )
+        ).format(RUNG[off_kind].directory.capitalize(), kinds_from)
     else:
-        heading = _OFF_HEADING[view]
-        # The deck, without Cycles: `views` is the key either way, and the
-        # sentence says which of its items the deck is missing.
-        because = (
-            Markup(", because {}").format(_OFF_PHRASE[need])
-            if need in VIEWS and need not in index.views
-            else ""
-        )
+        heading, need = dict(_NAV)[view], VIEW_NEEDS[view]
         said = Markup(
-            "{} turned off for this plan{}. <code>views</code> in <code>{}</code> "
-            "decides which views it has."
-        ).format(_OFF_PHRASE[view], because, index.switches_from.get("views", SWITCHES_FILE))
+            "The {} list is turned off for this plan, because {} are. <code>kinds</code> "
+            "in <code>{}</code> decides which kinds of record it has."
+        ).format(heading, RUNG[need].directory, kinds_from)
     kept = [(key, value) for key, value in parse_qsl(query) if key in _RECORDS_READS]
-    if kept and need in RUNG:
+    if kept and need:
         kept = [("kind", need), *((key, value) for key, value in kept if key != "kind")]
-    if record_id:
-        out = Markup('<a href="{}{}">Open the record</a>').format(links.record, record_id)
-    elif view == "deck" and cycle and links.cycle:
-        out = Markup('<a href="{}{}">Open cycle {}</a>').format(links.cycle, cycle, cycle)
-    elif kept:
+    if kept:
         out = Markup('<a href="{}?{}">Show the same filters on Records</a>').format(
             links.records, urlencode(kept)
         )

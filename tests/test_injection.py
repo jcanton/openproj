@@ -467,8 +467,9 @@ def test_every_html_get_route_is_in_the_census(tmp_path: Path):
 def test_every_page_route_is_gated_or_always_on(tmp_path: Path):
     """The gate table, held against `app.routes` the way the census above is.
 
-    Every HTML GET route is in exactly one of three places: `SWITCHED`, which a
-    plan's `views` turns off by path; `SWITCHED_BY_QUERY`, always on as a route
+    Every HTML GET route is in exactly one of three places: `SWITCHED`, the view
+    each gated route is, which a plan's `views` lists or leaves out of the nav and
+    `kinds` can turn off; `SWITCHED_BY_QUERY`, always on as a route
     and gated by what its query asks for; or `ALWAYS_ON`, which no setting
     reaches. A page route nobody decided about is a failure on the commit that
     adds it, rather than a page that stays on in every plan because nobody
@@ -525,14 +526,13 @@ def test_a_switched_off_address_hands_on_its_query_as_text(tmp_path: Path):
 
     from pages import elements
 
-    from openproj.model import VIEWS
-
-    views = ", ".join(view for view in VIEWS if view != "table")
+    # A plan without issues, because the Issues list is one of the two pages that
+    # can answer "turned off": every other view answers at its address listed or not.
     plan = corpus(BENIGN)
-    plan["config/defaults.yaml"] += f"views: [{views}]\n"
+    plan["config/defaults.yaml"] += "kinds: [note]\n"
     path = tmp_path / "reflected.git"
     pygit2.init_repository(str(path), bare=True, initial_head="main")
-    commit_directly(path, plan, "seed a plan without a Table")
+    commit_directly(path, plan, "seed a plan without issues")
     app = create_app(path, auth="dev", secret="a-signing-secret-for-tests")
     sent = {"query": b""}
 
@@ -545,12 +545,12 @@ def test_a_switched_off_address_hands_on_its_query_as_text(tmp_path: Path):
     with TestClient(literally) as client:
         for name, text in (("hostile", PAYLOAD), ("benign", BENIGN)):
             sent["query"] = f"q={text}".encode()
-            got = client.get("/table")
+            got = client.get("/issues")
             assert got.status_code == 404, f"{name}: {got.status_code}"
             drawn[name] = got.text
 
-    assert_clean(drawn["hostile"], "switched-off /table")
-    assert_same_shape(drawn["hostile"], drawn["benign"], "switched-off /table")
+    assert_clean(drawn["hostile"], "switched-off /issues")
+    assert_same_shape(drawn["hostile"], drawn["benign"], "switched-off /issues")
     way = [
         one.attrs.get("href")
         for one in elements(drawn["hostile"])
@@ -558,11 +558,11 @@ def test_a_switched_off_address_hands_on_its_query_as_text(tmp_path: Path):
     ]
     # The payload's bare `&` splits it, and what follows is a key Records does not
     # read, so it is not handed on; the half that is `q` goes with every quote and
-    # angle bracket it had.
+    # angle bracket it had, behind the list's own kind.
     asked = parse_qs(f"q={PAYLOAD}")
     assert set(asked) == {"q", " </script><img src"}, asked
     assert [(urlparse(href).path, parse_qs(urlparse(href).query)) for href in way] == [
-        ("/", {"q": asked["q"]})
+        ("/", {"kind": ["issue"], "q": asked["q"]})
     ], way
 
 
