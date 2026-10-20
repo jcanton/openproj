@@ -12,6 +12,65 @@ switchable; the scheduler, cycles as data, and the dependency graph are the rest
 never touched by a switch either — a switch removes a *page*, never a fact the schedule is computed
 from.
 
+## Unlisted is not off (2026-10-20)
+
+The first version of this made a view `views` left out **off**: gone from the nav, linked from
+nowhere, and its address a 404. jcanton, 2026-10-20: *"currently when deploying selected views, all
+other views are not available at all. can we change this so the derived-only views actually exist
+but are hidden in the nav etc? e.g. the url table/ people/ etc — while excluding notes/issues
+actually keeps them disabled and not reachable even with this mechanism because adding them would
+mean adding the record kinds too."*
+
+So a view is now one of three things, and `views` decides only between the first two:
+
+| a view that is | in the nav | linked from other pages | its address                    |
+| -------------- | ---------- | ----------------------- | ------------------------------ |
+| listed         | yes        | yes                     | the page                       |
+| unlisted       | no         | no                      | the page, with its own links   |
+| off            | no         | no                      | 404, naming `kinds`            |
+
+**Only a list of a kind that is off is off** (`model.reachable`). The Table, the Graph, the
+Timeline, Cycles, the deck and People are drawn from records every plan has, so each exists in
+every plan. The Issues and Notes lists exist exactly when their kind does: reaching `/notes` cannot
+add a record of a kind the plan turned off, so it answers wherever `note` is on, listed or not —
+which is icon4py, whose nav has no Notes and whose `/notes` now works — and `/issues` in a plan
+without `issue` is the switched-off page.
+
+Decided while grilled, the same day:
+
+- **Unlisted means reachable by address only** (*"URL only"*), not "out of the nav and linked from
+  everywhere else". Nothing on another page leads to it: no slide button without the deck, no
+  "Review deck" on a cycle page, no cycle number that is a link without Cycles, People's filter
+  links on Records rather than the Table. icon4py's listed pages look exactly as they did. The other
+  answer would have put the deck, which icon4py does not list, back on every record and cycle page.
+- **Once there, it works.** An unlisted page is drawn with its own `Links` fields put back
+  (`render.opened`, called by `web.own_links` and by the export), so `/cycles` still leads to each
+  `/cycle/<n>` and the Timeline's controls still submit to `/timeline`. Only its own: a deck reached
+  by address whose Cycles are unlisted draws no way back to the cycle page. The slide editor is the
+  deck's own page and is drawn the same way, so its Slide control still says which view it is.
+- **The nav on an unlisted page is the plan's, with nothing extra** and nothing marked — jcanton
+  chose that over adding the page to the nav while somebody stands on it.
+- **No hard-off for a derived view.** `views` is only "what the nav shows, in this order". Every page
+  reads the same public plan anyway, and People's roster is on each cycle page already.
+
+Decided within that, by the implementer:
+
+- **The back link still goes only to a listed view.** A record opened from an unlisted `/table`
+  reads "← all records". The back link is a link, and the browser's own Back still returns to the
+  Table.
+- **Help names the unlisted addresses** — *"…and each still answers at its address: `/table`,
+  `/people` and `/notes`."* An unlisted view is one no page links to, so an address written as text
+  is how somebody who wants it finds it; written as `<code>` and not as a link, for the same reason.
+- **The export writes every view that exists** and links only the listed ones, because the export is
+  the server written to disk and in an export a view's address is its file. A list whose kind is off
+  is not written, and a file an earlier run wrote for it is removed.
+- **`deck` still needs `cycles` to be listed**, and `views: [deck]` alone is still reported, now as
+  *"so nothing links to the deck"*. The dependency was about the deck being reached from a cycle
+  page; the rule stays and only its sentence changed.
+
+Everything below this section is the September design, kept for its reasons. Where it says a view
+is *off*, read *unlisted* — except for the Issues and Notes lists of a kind that is off.
+
 ## The two settings
 
 Both live in the plan's `config/defaults.yaml`, beside `repositories`, for the reason that one does:
@@ -152,6 +211,9 @@ One table maps each gated route to its switch:
 | `/cycles`, `/cycle/{n}`                                    | `cycles`              |
 | `/deck/{n}`, `/detail/{id}?view=slide`                     | `deck`                |
 | `/new?kind=X`                                              | `kinds`               |
+
+*Since 2026-10-20 only `/issues`, `/notes` and `/new?kind=X` can answer the 404 below, and only when
+the kind is off; `/detail/{id}?view=slide` is always on. See "Unlisted is not off".*
 
 A gated handler asks first. When its switch is off it answers **404** with `render_switched_off`:
 the ordinary shell and nav, and one sentence naming the key and the file — *"The Table is turned off

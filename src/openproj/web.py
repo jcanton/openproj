@@ -112,6 +112,7 @@ from .model import (
     patch_text,
     person_path,
     promoted_from,
+    reachable,
     read_config,
     readable,
     record_paths_in,
@@ -1817,17 +1818,20 @@ class Outbox:
                     await asyncio.sleep(0.01)
 
 
-# Which page route each of a plan's views switches off, by the route's own
-# template — the string FastAPI hands back as `request.scope["route"].path`, so
-# `switched_off` below finds the handler's row here, and no handler names its own
-# view. That is what makes the table the gate and not a list beside it: take a
-# row out and the page it named answers 200 again, whatever the plan says, and
-# `test_every_page_route_is_gated_or_always_on` is what fails.
+# Which view each page route IS, by the route's own template — the string FastAPI
+# hands back as `request.scope["route"].path`, so `switched_off` and `own_links`
+# below find the handler's row here, and no handler names its own view. That is
+# what makes the table the gate and not a list beside it, and
+# `test_every_page_route_is_gated_or_always_on` holds it against `app.routes`.
+#
+# Two things are asked of a row. Whether the page exists — only the Issues and
+# Notes lists can be missing, with their kind (`model.reachable`); every other
+# view answers at its address in every plan, listed in `views` or not. And how it
+# is drawn: an unlisted view reached by address is drawn with its own links put
+# back (`own_links`), so `/cycles` still leads to each `/cycle/<n>`.
 #
 # Cycles owns the per-cycle pages as well as the list, and the deck is the one
-# view with no nav slot. `/issues` and `/notes` are gated like the others even
-# though each is only Records with a filter on it: two behaviours for one
-# situation is one more thing to explain.
+# view with no nav slot.
 SWITCHED: dict[str, str] = {
     "/table": "table",
     "/graph": "graph",
@@ -1840,52 +1844,50 @@ SWITCHED: dict[str, str] = {
     "/deck/{number}": "deck",
 }
 # Page routes that are always on and gated by what their query says: the create
-# form by the kind it is asked for, a record's own page by its slide view. Their
-# handlers ask, after the question only they can answer first — whether the kind
-# is a word this tool has, whether the record exists — because "turned off" is
-# not what is wrong with a typo.
-SWITCHED_BY_QUERY: dict[str, str] = {"/new": "kind", "/detail/{record_id}": "view=slide"}
+# form by the kind it is asked for. Its handler asks after the question only it can
+# answer first — whether the kind is a word this tool has — because "turned off"
+# is not what is wrong with a typo.
+SWITCHED_BY_QUERY: dict[str, str] = {"/new": "kind"}
 # And the pages no setting reaches. Records is the landing and the only home of
 # the Create button, a record page is what every bar, node and cycle row links
-# to, and Help is in the footer of every page. Written out so that a page route
-# nobody decided about fails the census on the commit that adds it, rather than
-# being on by omission.
-ALWAYS_ON: frozenset[str] = frozenset({"/", "/detail", "/help"})
+# to, and Help is in the footer of every page. A record's slide view
+# (`/detail/<id>?view=slide`) went with the deck until the deck could no longer
+# be off; it answers in every plan, and only the button to it follows `views`.
+# Written out so that a page route nobody decided about fails the census on the
+# commit that adds it, rather than being on by omission.
+ALWAYS_ON: frozenset[str] = frozenset({"/", "/detail", "/detail/{record_id}", "/help"})
 
 
 def switched_off(request: Request, index: Index, links: render.Links) -> HTMLResponse | None:
-    """The page a switched-off address answers with, or None when it is on.
+    """The page a switched-off address answers with, or None when it exists.
 
-    A 404 with the ordinary shell and a sentence naming the setting, and not a
-    redirect: a bookmarked `/table` that silently landed on Records would be a
-    page that changed under its reader with nothing saying why. The address's
-    query goes with it, so `/table?owner=ann` is one click from the same rows on
-    Records. And a deck's number, so that `/deck/37` in a plan with Cycles and no
-    deck is one click from cycle 37 — only a number `CYCLE_PATTERN` accepts,
-    since this is asked before the handler checks it, and a link to
-    `/cycle/99999` would be a way out onto a 404 about which cycles exist.
+    Only the Issues and Notes lists can be switched off, and only with their kind
+    (`model.reachable`): a view `views` leaves out is unlisted, not off, and
+    answers at its address. A 404 with the ordinary shell and a sentence naming
+    the setting, and not a redirect: a bookmarked `/issues` that silently landed on
+    Records would be a page that changed under its reader with nothing saying why.
+    The address's filters go with it, so `/issues?owner=ann` is one click from the
+    same rows on Records.
 
-    Asked first by every handler in `SWITCHED`, ahead of the number check on
-    `/cycle/{number}` and `/deck/{number}`, so a switched-off address with a
-    whole number in it explains itself rather than answering "a cycle is
-    numbered 0 to 9999" about a page the plan does not have. Not one without:
-    `number` is typed `int`, so FastAPI answers `/cycle/abc` with its own 422
-    before any handler runs, on or off.
+    Asked first by every handler in `SWITCHED`, so the census holds every gated
+    route to one question even where the answer is always yes.
     """
     view = SWITCHED.get(request.scope["route"].path)
-    if view is None or view in index.views:
+    if view is None or reachable(view, index.kinds):
         return None
-    number = str(request.path_params.get("number", ""))
     return HTMLResponse(
-        render.render_switched_off(
-            index,
-            links,
-            view=view,
-            query=request.url.query,
-            cycle=str(int(number)) if CYCLE_PATTERN.match(number) else "",
-        ),
+        render.render_switched_off(index, links, view=view, query=request.url.query),
         status_code=404,
     )
+
+
+def own_links(request: Request, links: render.Links) -> render.Links:
+    """The links a gated page is drawn with: the plan's, with the page's own view
+    put back. A no-op for a view the plan lists; for one it does not, this is what
+    makes the page work once somebody has typed its address — see `render.opened`.
+    The other pages go on not linking to it, because they are drawn with `links`."""
+    view = SWITCHED.get(request.scope["route"].path)
+    return render.opened(links, render.ROUTES, view) if view else links
 
 
 def create_app(
@@ -2484,6 +2486,7 @@ def create_app(
         commit, index, links = plan_now()
         if (off := switched_off(request, index, links)) is not None:
             return off
+        links = own_links(request, links)
         # The map may be one commit ahead of `commit` if a write lands between
         # the two reads. The times are display; the rows are the index's; the
         # event stream's reload reconciles them a moment later.
@@ -2517,6 +2520,7 @@ def create_app(
         commit, index, links = plan_now()
         if (off := switched_off(request, index, links)) is not None:
             return off
+        links = own_links(request, links)
         return page(
             render.render_table(index, links, base_commit=commit, may_write=may_write(request))
         )
@@ -2530,6 +2534,7 @@ def create_app(
         commit, index, links = plan_now()
         if (off := switched_off(request, index, links)) is not None:
             return off
+        links = own_links(request, links)
         return page(
             render.render_graph(index, links, base_commit=commit, may_write=may_write(request))
         )
@@ -2550,6 +2555,7 @@ def create_app(
         _, index, links = plan_now()
         if (off := switched_off(request, index, links)) is not None:
             return off
+        links = own_links(request, links)
         window = (_as_date(from_), _as_date(to))
         return page(render.render_timeline(index, links, window, _as_zoom(zoom)))
 
@@ -2793,6 +2799,7 @@ def create_app(
         commit, index, links = plan_now()
         if (off := switched_off(request, index, links)) is not None:
             return off
+        links = own_links(request, links)
         return page(render.render_cycles(index, links, commit))
 
     @app.get("/cycle/{number}", response_class=HTMLResponse)
@@ -2808,16 +2815,11 @@ def create_app(
         from `CYCLE_PATTERN` — the read path and the write path disagreeing about
         which cycles exist, which is a dead end a person can only find by filling
         the form in first.
-
-        The switch is asked before the number, so that with Cycles off every
-        whole-numbered address under `/cycle/` says why it is not there, and none
-        of them says something about which numbers a cycle may have. A number
-        that is not whole never gets here, on or off: the `int` above is
-        FastAPI's 422 first.
         """
         commit, index, links = plan_now()
         if (off := switched_off(request, index, links)) is not None:
             return off
+        links = own_links(request, links)
         if not CYCLE_PATTERN.match(str(number)):
             raise HTTPException(404, "a cycle is numbered 0 to 9999")
         return page(render.render_cycle(index, number, links, commit))
@@ -2839,6 +2841,7 @@ def create_app(
         commit, index, links = plan_now()
         if (off := switched_off(request, index, links)) is not None:
             return off
+        links = own_links(request, links)
         if not CYCLE_PATTERN.match(str(number)):
             raise HTTPException(404, "a cycle is numbered 0 to 9999")
         return page(
@@ -2875,6 +2878,7 @@ def create_app(
         _, index, links = plan_now()
         if (off := switched_off(request, index, links)) is not None:
             return off
+        links = own_links(request, links)
         me = picker_for(request)
         return page(render.render_people(index, links, editable=bool(me), me=me))
 
@@ -2952,21 +2956,17 @@ def create_app(
         # is the record page, because a mistyped query should land somebody on
         # the page they asked for rather than on a 404 about a spelling.
         #
-        # A slide is one record's page in its cycle's deck, so it goes with the
-        # deck: off, the address answers the switched-off page, whose way out is
-        # the record it was a view of. After the 404 above, because a record that
-        # does not exist has no slide to be switched off.
-        if view == "slide" and "deck" not in index.views:
-            return HTMLResponse(
-                render.render_switched_off(index, links, view="deck", record_id=record_id),
-                status_code=404,
-            )
+        # A slide is one record's page in its cycle's deck. It answers whether or
+        # not the plan lists the deck: unlisted is not off (`model.reachable`), and
+        # what `views` decides is only whether the record page offers the button.
+        # Drawn as the deck's own page, with the deck's links put back, so the
+        # Slide control on it still says which view this is.
         if view == "slide":
             return page(
                 render.render_slide_editor(
                     index,
                     record_id,
-                    links,
+                    render.opened(links, render.ROUTES, "deck"),
                     base_commit=commit,
                     may_write=may_write(request),
                     editor=which_editor(request),

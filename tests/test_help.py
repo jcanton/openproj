@@ -213,10 +213,11 @@ def test_help_says_which_views_this_plan_has_only_when_it_has_fewer(
     seed_root: Path, tmp_path: Path, page: str
 ):
     """The guide describes every view and every kind openproj has, and is not
-    filtered per plan. So a plan that has switched some off opens its Help with one
-    sentence saying what it has, and where that was decided — and a plan that has
-    everything opens it with nothing, since "this plan has everything" is one more
-    line to read past.
+    filtered per plan. So a plan that lists fewer opens its Help with one sentence
+    saying what its nav has, where that was decided, and where each view it leaves
+    out still is — an unlisted view is one no page links to, so its address written
+    out here is how a reader finds it — and a plan that lists everything opens it
+    with nothing, since "this plan has everything" is one more line to read past.
 
     Through the real resolver, from a `defaults.yaml` saying it, so the file the
     sentence names is the one `read_config` read it from. The first row is
@@ -251,18 +252,23 @@ def test_help_says_which_views_this_plan_has_only_when_it_has_fewer(
             [one.text for one in inside if one.text in ("views", "kinds")],
         )
 
+    # icon4py: notes are a kind it keeps, so the Notes list is unlisted like the
+    # Table, and still at its address; issues are not a kind it has at all.
     assert scope("views: [cycles, graph, timeline]\nkinds: [note]\n") == (
         [
-            "This plan has Records, Cycles, Graph and Timeline. The guide below describes "
-            "every view openproj has; the others are turned off here by views in "
-            "config/defaults.yaml, and issues by kinds."
+            "This plan's nav has Records, Cycles, Graph and Timeline. The guide below "
+            "describes every view openproj has; views in config/defaults.yaml leaves the "
+            "others out of the nav, and each still answers at its address: /table, /people "
+            "and /notes. Issues are turned off by kinds."
         ],
         ["views", "kinds"],
     )
     assert scope("views: []\n") == (
         [
-            "This plan has Records. The guide below describes every view openproj has; "
-            "the others are turned off here by views in config/defaults.yaml."
+            "This plan's nav has Records. The guide below describes every view openproj "
+            "has; views in config/defaults.yaml leaves the others out of the nav, and each "
+            "still answers at its address: /table, /graph, /timeline, /cycles, /people, "
+            "/issues and /notes."
         ],
         ["views"],
     )
@@ -284,9 +290,10 @@ def test_help_says_which_views_this_plan_has_only_when_it_has_fewer(
     )
     assert scope("views: []\nkinds: []\n") == (
         [
-            "This plan has Records. The guide below describes every view openproj has; "
-            "the others are turned off here by views in config/defaults.yaml, and issues "
-            "and notes by kinds."
+            "This plan's nav has Records. The guide below describes every view openproj "
+            "has; views in config/defaults.yaml leaves the others out of the nav, and each "
+            "still answers at its address: /table, /graph, /timeline, /cycles and /people. "
+            "Issues and notes are turned off by kinds."
         ],
         ["views", "kinds"],
     )

@@ -7375,9 +7375,10 @@ def test_a_row_carries_the_end_date_so_the_table_can_tell_what_it_still_needs(
 # 15. A plan says which views and kinds it has
 #
 # `views` and `kinds` in `config/defaults.yaml` (design/views-and-kinds.md). What
-# is held here is the server's half: a view that is off answers its address with
-# the switched-off page, and nothing the server still draws leads to it; a kind
-# that is off is refused at every door that writes one. Every fixture is derived
+# is held here is the server's half: a view the plan does not list still answers
+# its address, and nothing else the server draws leads to it; a list of a kind
+# that is off answers the switched-off page; a kind that is off is refused at
+# every door that writes one. Every fixture is derived
 # — the views off `VIEWS`, the dependants off `VIEW_NEEDS`, the gated routes off
 # `web.SWITCHED` — so a ninth view is swept on the commit that adds it.
 # --------------------------------------------------------------------------- #
@@ -7411,13 +7412,19 @@ def _opened_at(template: str) -> str:
 
 
 def _off_with(view: str) -> set[str]:
-    """This view and every view that cannot be on without it: Cycles takes the
+    """This view and every view that cannot be listed without it: Cycles takes the
     deck with it. Off `VIEW_NEEDS`, so a second dependant is swept too."""
     return {view, *(other for other, need in VIEW_NEEDS.items() if need == view)}
 
 
-def _dead_ends(client: TestClient, url: str, page: str, views, kinds) -> list[str]:
-    """Every link and form on `page` that leads to a page this plan switched off.
+def _dead_ends(
+    client: TestClient, url: str, page: str, views, kinds, own: str | None = None
+) -> list[str]:
+    """Every link and form on `page` that leads to a view this plan does not list.
+
+    `own` is the view `page` IS, when it is one: an unlisted view reached by its
+    address links to itself — `/cycles` to each `/cycle/<n>` — and that is the
+    page working, not a link that gives the view away.
 
     Resolved the way a browser and then Starlette would, not as a substring: the
     href is joined to the address the page was served at, so a relative `?owner=`
@@ -7441,7 +7448,7 @@ def _dead_ends(client: TestClient, url: str, page: str, views, kinds) -> list[st
 
     from openproj.web import SWITCHED, SWITCHED_BY_QUERY
 
-    assert SWITCHED_BY_QUERY == {"/new": "kind", "/detail/{record_id}": "view=slide"}
+    assert SWITCHED_BY_QUERY == {"/new": "kind"}
     found = []
     for one in elements(page):
         target = one.attrs.get({"a": "href", "form": "action"}.get(one.tag, ""))
@@ -7467,14 +7474,16 @@ def _dead_ends(client: TestClient, url: str, page: str, views, kinds) -> list[st
             continue
         asked = parse_qs(where.query)
         switch = SWITCHED.get(route.path)
-        if switch is not None and switch not in views:
-            found.append(f"<{one.tag}> {target!r} on {url} reaches {route.path}: {switch} is off")
+        if switch is not None and switch not in views and switch != own:
+            found.append(
+                f"<{one.tag}> {target!r} on {url} reaches {route.path}: {switch} is unlisted"
+            )
         kind = asked.get("kind", ["task"])[0]
         if route.path == "/new" and kind in KIND_NAMES and kind not in kinds:
             found.append(f"<{one.tag}> {target!r} on {url} creates {_an(kind)}, which is off")
         slide = asked.get("view") == ["slide"]
-        if route.path == "/detail/{record_id}" and slide and "deck" not in views:
-            found.append(f"<{one.tag}> {target!r} on {url} opens a slide, and the deck is off")
+        if route.path == "/detail/{record_id}" and slide and "deck" not in views and own != "deck":
+            found.append(f"<{one.tag}> {target!r} on {url} opens a slide, and the deck is unlisted")
     return found
 
 
@@ -7484,45 +7493,56 @@ def _says(page: str, setting: str) -> bool:
 
 
 @pytest.mark.parametrize("view", VIEWS)
-def test_a_view_that_is_off_is_off_everywhere(tmp_path: Path, view: str):
-    """Each view off on its own, and swept.
+def test_an_unlisted_view_answers_at_its_address_and_nothing_else_links_to_it(
+    tmp_path: Path, view: str
+):
+    """Each view left out of `views` on its own, and swept.
 
-    Its own addresses answer 404 with the sentence naming `views`. Every page that
-    is still on answers 200, and nothing on any of them — the nav, a filter link, a
-    Review deck link, the slide button — leads to a page that is off. That last
-    half is the one that needs a DOM: a view that is off in the router and still
-    linked from a page is a dead end somebody clicks, and no status code says so.
+    jcanton, 2026-10-20: "the derived-only views actually exist but are hidden in
+    the nav". Its own addresses answer 200 — the slide view of a record too, when
+    the deck is the one left out — with the nav the plan lists and nothing more,
+    and nothing on the page leads anywhere unlisted but back into the view itself.
+    Every page that is listed answers 200 as well, and nothing on any of them — the
+    nav, a filter link, a Review deck link, the slide button — leads to the view
+    left out. That half is the one that needs a DOM: an unlisted view linked from
+    a page is no longer unlisted, and no status code says so.
+
+    Every kind is on here, so the Issues and Notes lists are swept like the
+    rest; with their kind off they are not unlisted but gone, which is
+    `test_a_kind_that_is_off_is_refused_at_every_door`.
     """
-    from pages import unusable_banner_says
+    from pages import nav_of, unusable_banner_says
 
+    from openproj.render.shell import _NAV
     from openproj.web import SWITCHED
 
     off = _off_with(view)
     views = tuple(one for one in VIEWS if one not in off)
     repo = _plan_saying(tmp_path, f"views: [{', '.join(views)}]\n")
     kinds = frozenset(KIND_NAMES)
+    listed_nav = [label for key, label in _NAV if key == "records" or key in views]
 
     with TestClient(create_app(repo, auth="dev", secret=SECRET)) as client:
         client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
 
-        refused = [_opened_at(template) for template, one in SWITCHED.items() if one in off]
-        if "deck" in off:
-            refused.append(f"/detail/{PITCH}?view=slide")
-        assert refused, f"{view} has no address to switch off"
-        # The switch is asked before the number: with the view off, a number no
-        # cycle can have is still this page, and not a 404 about which numbers
-        # a cycle may have, about a page the plan does not have at all.
-        refused += [
-            template.replace("{number}", "99999")
-            for template, one in SWITCHED.items()
-            if one in off and "{number}" in template
+        unlisted = [
+            (_opened_at(template), one) for template, one in SWITCHED.items() if one in off
         ]
-        for url in refused:
+        if "deck" in off:
+            unlisted.append((f"/detail/{PITCH}?view=slide", "deck"))
+        assert unlisted, f"{view} has no address to leave out"
+        for url, own in unlisted:
             got = client.get(url)
-            assert got.status_code == 404, f"{url}: {got.status_code}"
-            assert _says(got.text, "views"), f"{url} does not say which setting it was"
+            assert got.status_code == 200, f"{url}: {got.status_code}"
+            assert unusable_banner_says(got.text) == "", url
+            # The nav the plan lists, with nothing marked: jcanton chose "nothing
+            # extra" over adding the page to the nav while somebody stands on it.
+            nav = nav_of(got.text)
+            assert [label for label, _, _ in nav] == listed_nav, f"{url} draws {nav}"
+            assert not [label for label, _, marked in nav if marked], f"{url} marks {nav}"
+            assert _dead_ends(client, url, got.text, views, kinds, own=own) == [], url
 
-        still = [
+        listed = [
             "/",
             "/help",
             "/detail",
@@ -7531,7 +7551,7 @@ def test_a_view_that_is_off_is_off_everywhere(tmp_path: Path, view: str):
             *(_opened_at(template) for template, one in SWITCHED.items() if one in views),
             *([f"/detail/{PITCH}?view=slide"] if "deck" in views else []),
         ]
-        for url in still:
+        for url in listed:
             got = client.get(url)
             assert got.status_code == 200, f"{url}: {got.status_code}"
             # The setting was written right, so nothing is drawn around it: a
@@ -7546,13 +7566,13 @@ def test_a_view_that_is_off_is_off_everywhere(tmp_path: Path, view: str):
                 one
                 for one in elements(record)
                 if one.tag == "a" and "slide-view" in one.attrs.get("class", "").split()
-            ], "the record page offers a slide in a plan with no deck"
+            ], "the record page offers a slide in a plan that does not list the deck"
         if "deck" in off and "cycles" in views:
             # By its words as well as by where it leads: the sweep above would
             # see a guard dropped as a blanked link, and this says which one.
             cycle = elements(client.get("/cycle/37").text)
             assert not [one for one in cycle if one.tag == "a" and "deck" in one.text.lower()], (
-                "/cycle/37 offers a Review deck in a plan with no deck"
+                "/cycle/37 offers a Review deck in a plan that does not list the deck"
             )
 
 
@@ -7786,12 +7806,14 @@ def test_the_create_form_and_the_kind_chip_offer_only_kinds_that_are_on(
 
 
 def test_nothing_but_records_is_still_a_whole_app(tmp_path: Path):
-    """`views: []` and `kinds: []`: the least a plan can have, which is Records,
+    """`views: []` and `kinds: []`: the least a plan can list, which is Records,
     every record's page, the create form for the four planned kinds, and Help.
 
     Every one of those still draws, with a nav of one item and not a single link
-    to a page that is gone — the case where a guard missing anywhere shows, since
-    everything it could lead to is off at once.
+    to a view it does not list — the case where a guard missing anywhere shows,
+    since everything it could lead to is unlisted at once. Every unlisted view
+    still answers at its address, with that same nav of one; only the Issues and
+    Notes lists are gone, with their kinds.
     """
     from pages import nav_of
 
@@ -7808,20 +7830,25 @@ def test_nothing_but_records_is_still_a_whole_app(tmp_path: Path):
             assert [label for label, _, _ in nav_of(got.text)] == ["Records"], url
             assert _dead_ends(client, url, got.text, (), kinds) == [], url
 
-        for template in SWITCHED:
-            assert client.get(_opened_at(template)).status_code == 404, template
+        for template, view in SWITCHED.items():
+            got = client.get(_opened_at(template))
+            if VIEW_NEEDS.get(view) in OPTIONAL_KINDS:
+                assert got.status_code == 404, template
+                continue
+            assert got.status_code == 200, f"{template}: {got.status_code}"
+            assert [label for label, _, _ in nav_of(got.text)] == ["Records"], template
+            assert _dead_ends(client, template, got.text, (), kinds, own=view) == [], template
         for kind in OPTIONAL_KINDS:
             assert client.get(f"/new?kind={kind}").status_code == 404, kind
 
 
 def test_a_committed_views_setting_changes_the_next_page(client: TestClient, repo_path: Path):
     """A `defaults.yaml` committed while the server runs is the plan on the very
-    next request — the nav, and the gate behind it.
+    next request — the nav, on every page, the unlisted ones included.
 
     The links ride the per-commit memo beside the index, so this is the test that
     a cache of them could not be keyed on anything else: one built once, or keyed
-    on the day, would go on drawing the Table and answering `/table` until a
-    restart.
+    on the day, would go on drawing the Table in the nav until a restart.
     """
     from pages import nav_of
 
@@ -7837,29 +7864,28 @@ def test_a_committed_views_setting_changes_the_next_page(client: TestClient, rep
     )
 
     assert [label for label, _, _ in nav_of(client.get("/").text)] == ["Records", "Graph"]
-    assert client.get("/table").status_code == 404
+    table = client.get("/table")
+    assert table.status_code == 200, "an unlisted Table is still at its address"
+    assert [label for label, _, _ in nav_of(table.text)] == ["Records", "Graph"]
     assert client.get("/graph").status_code == 200
 
 
-def test_a_switched_off_address_hands_its_filters_to_records(tmp_path: Path):
-    """`/table?owner=ann` in a plan without a Table: the switched-off page, and one
-    link to Records carrying the same filters — Records reads every filter the
-    other views do, so it lands on the same rows. Without a filter the way out is
-    Records bare, and the answer is a page like any other: HTML, with the headers
-    every response here carries.
+def test_a_switched_off_list_hands_its_filters_to_records(tmp_path: Path):
+    """`/issues?owner=ann` in a plan without issues: the switched-off page, and one
+    link to Records carrying the same filters and the kind — Records reads every
+    filter the other views do, so it lands on the same rows. Without a filter the
+    way out is Records bare, and the answer is a page like any other: HTML, with
+    the headers every response here carries.
 
-    Only the filters: a timeline's window is not one, and `/issues?owner=ann` is
-    issues owned by ann, so its kind goes with it. And a deck, in a plan with
-    Cycles, goes to the cycle it was the review of — when that is a cycle.
+    Only the filters: a sort is not one. And only a list of a kind that is off:
+    every other view the plan does not list answers at its address instead, which
+    is held here for the one most often bookmarked with a filter on it.
     """
     from openproj.web import SWITCHED
 
-    views = [one for one in VIEWS if one not in ("table", "timeline", "issues", "deck")]
-    assert {"/table", "/timeline", "/issues"} <= set(SWITCHED)
-    repo = _plan_saying(tmp_path, f"views: [{', '.join(views)}]\n")
-    # The page's ways out, by what each says; the nav and the footer are every
-    # other page's too and are not what is asked here.
-    out = {"Show the same filters on Records", "Open the record", "Go to Records", "Open cycle 37"}
+    assert "/issues" in SWITCHED
+    repo = _plan_saying(tmp_path, "views: [graph]\nkinds: [note]\n")
+    out = {"Show the same filters on Records", "Go to Records"}
     with TestClient(create_app(repo, auth="dev", secret=SECRET)) as client:
 
         def ways_out(url: str) -> list[tuple[str, str]]:
@@ -7873,20 +7899,13 @@ def test_a_switched_off_address_hands_its_filters_to_records(tmp_path: Path):
                 if one.tag == "a" and one.text in out
             ]
 
-        assert ways_out("/table?owner=ann") == [("Show the same filters on Records", "/?owner=ann")]
-        assert ways_out("/table?owner=ann&status=ready") == [
-            ("Show the same filters on Records", "/?owner=ann&status=ready")
-        ]
-        assert ways_out("/table") == [("Go to Records", "/")]
-        assert ways_out("/table?sort=title&desc=1") == [("Go to Records", "/")]
-        assert ways_out("/timeline?from=2026-01-01&zoom=weeks") == [("Go to Records", "/")]
         assert ways_out("/issues?owner=ann&zoom=weeks") == [
             ("Show the same filters on Records", "/?kind=issue&owner=ann")
         ]
-        assert ways_out("/deck/37") == [("Open cycle 37", "/cycle/37")]
-        assert ways_out("/deck/037") == [("Open cycle 37", "/cycle/37")]
-        # Asked before the number is, so a number no cycle can have is Records.
-        assert ways_out("/deck/99999") == [("Go to Records", "/")]
+        assert ways_out("/issues") == [("Go to Records", "/")]
+        assert ways_out("/issues?sort=title&desc=1") == [("Go to Records", "/")]
+        assert client.get("/table?owner=ann").status_code == 200
+        assert client.get("/notes?owner=ann").status_code == 200
 
 
 def test_a_records_kind_changes_through_change_kind_and_nowhere_else(
