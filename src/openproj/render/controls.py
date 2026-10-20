@@ -2677,6 +2677,17 @@ function drawPopup(label) {
   bigger.type = 'button';
   bigger.id = 'draw-size';
   bigger.className = 'grow';
+  // What the last press of Save came to, said inside the popup. `#state` is
+  // where every sentence of `openDrawing`'s goes and where a screen reader
+  // hears it, and it is in the commit bar UNDER the overlay — invisible at full
+  // page and dimmed behind the backdrop at the smaller size. That cost nothing
+  // while a successful save closed the popup and uncovered it; with Save
+  // leaving the drawing open, the confirmation has to be where the person is
+  // looking. No `role` of its own: `#state` already announces the same
+  // sentence, and two live regions would say it twice.
+  const said = document.createElement('span');
+  said.id = 'draw-said';
+  said.className = 'said';
   const save = document.createElement('button');
   save.type = 'button';
   save.id = 'draw-save';
@@ -2694,7 +2705,7 @@ function drawPopup(label) {
   // bar is `justify-content: flex-end`, so a plain `order` would have moved all
   // three. Apart from the two that END the session, because this one only
   // changes how much room they have.
-  head.append(bigger, save, close);
+  head.append(bigger, said, save, close);
   // The question a close attempt over unsaved strokes raises, in place of
   // Save and Close rather than beside them — built once, here, so it exists
   // before there is ever anything to ask about. See `openDrawing`'s own
@@ -2721,7 +2732,7 @@ function drawPopup(label) {
   stage.className = 'drawstage';
   box.append(head, stage);
   overlay.append(box);
-  return {overlay, box, stage, head, bigger, save, close, ask, keep, discard};
+  return {overlay, box, stage, head, bigger, said, save, close, ask, keep, discard};
 }
 
 // One popup at a time. Nothing stops a second `openproj:draw` firing while the
@@ -2756,10 +2767,25 @@ async function openDrawing(surface, status, entry) {
   }
   DRAWING_OPEN = true;
   const button = document.getElementById('drawing');
-  const {overlay, box, stage, head, bigger, save, close, ask, keep, discard} = drawPopup(
+  const {overlay, box, stage, head, bigger, said, save, close, ask, keep, discard} = drawPopup(
     entry ? `Editing ${entry.id}` : 'A new drawing'
   );
   document.body.appendChild(overlay);
+  // Every sentence below, in the two places it has to be: `#state` for the
+  // page and the screen reader, and the popup's own bar for the eyes.
+  const say = text => {
+    status.textContent = text;
+    said.textContent = text;
+  };
+  // The keyboard back into the drawing, after a press on the popup's own
+  // chrome. The container and not `api.focusContainer()`, which is what this
+  // called until 2026-10-20 and which does not exist: `focusContainer` is a
+  // method of Excalidraw's internal `App`, and the object `excalidrawAPI` hands
+  // over carries no such key. Every call threw a TypeError that nothing saw,
+  // because the tests pressed these buttons with `.click()`, which never moves
+  // focus off the drawing in the first place. `.excalidraw-container` is the
+  // element `App.focusContainer` focuses — `tabIndex: 0`, Excalidraw's own.
+  const focusDrawing = () => stage.querySelector('.excalidraw-container')?.focus();
 
   // Which size the popup opens at, remembered the way the theme, the palette and
   // the table's widths are: somebody who wants the drawing editor big wants it
@@ -2789,17 +2815,20 @@ async function openDrawing(surface, status, entry) {
     // Excalidraw sizes its canvas from its container and watches it, so the
     // resize needs no telling — but the keyboard does: the press left focus on
     // this button, and the point of the press was to draw in the bigger box.
-    if (api) api.focusContainer();
+    focusDrawing();
   };
 
   let root = null, api = null, etag = null, closed = false, mounted = null;
+  // Whether the popup's bar is showing "saved" — the one sentence that a
+  // later stroke makes untrue. See `onChange` below.
+  let savedShown = false;
 
   // The raw close: unmounts and removes the overlay, no question asked. Every
   // caller below that already told the person what happened — a fetch that
-  // failed, a response that was refused, a save that just succeeded — calls
-  // THIS directly, because there is nothing of theirs left in the popup to
-  // lose. `closeAttempt`, further down, is the only path that asks first, and
-  // it is the one wired to Close and to Escape.
+  // failed, a drawing that would not read back — calls THIS directly, because
+  // there is nothing of theirs in the popup to lose. `closeAttempt`, further
+  // down, is the only path that asks first, and it is the one wired to Close
+  // and to Escape.
   function teardown() {
     if (closed) return;
     closed = true;
@@ -2857,6 +2886,7 @@ async function openDrawing(surface, status, entry) {
   // native `confirm()` would.
   const asking = state => {
     ask.hidden = !state;
+    said.hidden = state;
     save.hidden = state;
     close.hidden = state;
     if (state) keep.focus();
@@ -2864,7 +2894,7 @@ async function openDrawing(surface, status, entry) {
   // Backing out of the question hands the keyboard back to the drawing, not to
   // a button that has just been hidden — without this, `document.activeElement`
   // falls to `<body>` and the next Escape is nobody's.
-  keep.onclick = () => { asking(false); if (api) api.focusContainer(); };
+  keep.onclick = () => { asking(false); focusDrawing(); };
   discard.onclick = () => teardown();
 
   // The close a person actually presses: Close, or Escape with no question
@@ -2932,7 +2962,7 @@ async function openDrawing(surface, status, entry) {
   try {
     lib = await excalidraw(status);
   } catch (error) {
-    status.textContent = `the drawing editor could not be loaded — ${error.message}`;
+    say(`the drawing editor could not be loaded — ${error.message}`);
     teardown();
     return;
   }
@@ -2940,18 +2970,18 @@ async function openDrawing(surface, status, entry) {
 
   let initial = {elements: [], appState: {}, files: {}};
   if (entry) {
-    status.textContent = `opening ${entry.id}…`;
+    say(`opening ${entry.id}…`);
     let response;
     try {
       response = await fetch(`/${entry.path}`);
     } catch (error) {
-      status.textContent = `${entry.path} could not be opened — ${error.message}`;
+      say(`${entry.path} could not be opened — ${error.message}`);
       teardown();
       return;
     }
     if (closed) return;
     if (!response.ok) {
-      status.textContent = `${entry.path} could not be opened`;
+      say(`${entry.path} could not be opened`);
       teardown();
       return;
     }
@@ -2965,12 +2995,12 @@ async function openDrawing(surface, status, entry) {
     try {
       loaded = await lib.loadSceneOrLibraryFromBlob(blob, null, null);
     } catch (error) {
-      status.textContent = `${entry.path} does not read back as a drawing — ${error.message}`;
+      say(`${entry.path} does not read back as a drawing — ${error.message}`);
       teardown();
       return;
     }
     if (loaded.type !== lib.MIME_TYPES.excalidraw) {
-      status.textContent = `${entry.path} is a library file, not a drawing`;
+      say(`${entry.path} is a library file, not a drawing`);
       teardown();
       return;
     }
@@ -3030,8 +3060,20 @@ async function openDrawing(surface, status, entry) {
     // call, which was written first and measured doing nothing at all:
     // `root.render` is React 18's, so it returns before the tree commits and
     // `api` is still `null` on the next line. `document.activeElement` was
-    // `<body>` and `r` did not pick the rectangle.
+    // `<body>` and `r` did not pick the rectangle. (Nor would it have later:
+    // `api` has no `focusContainer` at all — see `focusDrawing`.)
     autoFocus: true,
+    // "saved" stops being true at the first real stroke after it, and a bar
+    // that goes on saying it is the bar lying. Gated on `isDirty` and not on
+    // `onChange` firing at all, which it does on pointer-move, selection and
+    // scroll too (see `isDirty`'s own comment). Skipped entirely unless the
+    // sentence is up, so a long session pays for the comparison once per
+    // save, not once per pointer-move.
+    onChange: () => {
+      if (!savedShown || !isDirty()) return;
+      savedShown = false;
+      said.textContent = '';
+    },
   }));
   // The baseline `isDirty` compares against: `initial.elements` is exactly
   // what Excalidraw was just told to mount — `[]` for a new drawing,
@@ -3040,10 +3082,28 @@ async function openDrawing(surface, status, entry) {
   // rather than "did the PERSON change anything".
   mounted = signature(initial.elements);
   save.disabled = false;
-  status.textContent = entry ? `editing ${entry.id}` : 'drawing a new picture';
+  say(entry ? `editing ${entry.id}` : 'drawing a new picture');
 
+  // One save in flight at a time. While a successful save closed the popup a
+  // second press had nothing to land on; now that the drawing stays open, a
+  // double click on a NEW drawing would POST twice — two files, two embeds
+  // spliced at the caret — before the first answer turned `entry` into the
+  // drawing it made.
   save.onclick = async () => {
+    save.disabled = true;
+    try {
+      await saveScene();
+    } finally {
+      save.disabled = false;
+    }
+  };
+
+  async function saveScene() {
     const elements = api.getSceneElements();
+    // Read now, before any `await`: Excalidraw mutates its elements in place,
+    // so a signature taken after the round trip would count strokes drawn
+    // DURING it as saved.
+    const saving = signature(elements);
     const files = api.getFiles();
     const blob = await lib.exportToBlob({
       elements, files, mimeType: 'image/png',
@@ -3063,12 +3123,12 @@ async function openDrawing(surface, status, entry) {
       // — so the advice names them first. A dropped photograph is downscaled to
       // 1440px on the way in and one of those fits with room to spare; three or
       // four in one drawing do not.
-      status.textContent = `that drawing is ${Math.ceil(blob.size / 1024)} KB; the limit `
+      say(`that drawing is ${Math.ceil(blob.size / 1024)} KB; the limit `
         + `is ${MAX_DRAWING_BYTES / 1024} KB — use fewer or smaller images, simplify it, `
-        + `or ask for the ceiling to be raised`;
+        + `or ask for the ceiling to be raised`);
       return;
     }
-    status.textContent = 'saving…';
+    say('saving…');
     // An upload is a commit like any other, so the shell's banner is told
     // before it starts and told its sha afterwards — both save paths commit,
     // a re-save of an existing drawing as much as a new one, and without this
@@ -3093,11 +3153,11 @@ async function openDrawing(surface, status, entry) {
         // open with the drawing still in it: a conflict dialog that also
         // throws away the work it refused would be the worse of the two
         // losses, and there is nothing else here that could show it again.
-        status.textContent = refusal(answer, 409);
+        say(refusal(answer, 409));
         return;
       }
       if (!response.ok) {
-        status.textContent = refusal(answer, response.status);
+        say(refusal(answer, response.status));
         return;
       }
       committed = answer.commit;
@@ -3110,29 +3170,39 @@ async function openDrawing(surface, status, entry) {
         // undo-safe boundary `attachUploads` writes an upload's path through.
         const {from, to} = surface.caret();
         surface.splice(from, to, `![](${answer.path})`);
-      } else {
-        etag = `"${answer.etag}"`;
+        // From here on this popup is editing an EXISTING drawing: the next
+        // Save is a PUT against the version just written, and splices nothing.
+        entry = {id: answer.id, path: answer.path};
+        overlay.setAttribute('aria-label', `Editing ${answer.id}`);
       }
-      status.textContent = `${answer.path} saved`;
-      // Said before `teardown`, and for both arms rather than only the re-save
-      // that needs it: a brand-new drawing has no picture on the page yet, so
-      // this finds nothing and costs a walk of `document.images`. One call at
-      // the one place the bytes change beats a condition that has to stay
-      // true.
+      etag = `"${answer.etag}"`;
+      // **Save saves; it does not close.** jcanton, 2026-10-20: "clicking
+      // 'save' on an excalidraw drawing closes the drawing and goes back to
+      // the record. can we only make it save instead?" A save mid-drawing is a
+      // checkpoint, and closing on it made every checkpoint cost a reopen
+      // through the menu. Close is still the one way out.
+      //
+      // What was saved is the new baseline for `isDirty`, so Close straight
+      // after a save asks nothing — there is nothing left to lose — and
+      // strokes drawn after it are unsaved again.
+      mounted = saving;
+      say(`${answer.path} saved`);
+      savedShown = true;
+      // For both arms rather than only the re-save that needs it: a brand-new
+      // drawing has no picture on the page yet, so this finds nothing and
+      // costs a walk of `document.images`. One call at the one place the bytes
+      // change beats a condition that has to stay true.
       refreshDrawing(answer.path);
-      // `teardown`, not `closeAttempt`: a save that just succeeded put every
-      // stroke on the server, so there is nothing left for `isDirty` to
-      // protect — asking here would be asking whether to discard work that
-      // is already safe. This is also draw-Save-then-Close's whole answer:
-      // Save already closes the popup on success, so there is no separate
-      // Close press left for a question to interrupt.
-      teardown();
+      // The press left the keyboard on Save; the person saving mid-drawing
+      // wants it back in the drawing, for the same reason the size toggle
+      // hands it back.
+      focusDrawing();
     } catch (error) {
-      status.textContent = `that drawing was not saved — ${error.message}`;
+      say(`that drawing was not saved — ${error.message}`);
     } finally {
       dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
     }
-  };
+  }
 }
 
 // Every picture on the page showing `path`, asked for again.

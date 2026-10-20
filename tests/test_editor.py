@@ -10198,6 +10198,30 @@ def _until(call, expression: str, seconds: float = 20) -> object:
     raise AssertionError(f"never became true within {seconds}s: {expression}")
 
 
+SAVED = (
+    "/^drawings\\/draw-[0-9a-f]{6}\\.png saved$/"
+    ".test(document.getElementById('draw-said').textContent)"
+)
+
+
+def _saved_and_closed(call, seconds: float = 20) -> None:
+    """Save, wait for the popup's own bar to say it landed, then Close. Save
+    leaves the drawing open since jcanton asked for it to on 2026-10-20, so the
+    tests that drove a save and waited for the popup to vanish now wait for the
+    sentence instead — and Close straight after a save must close outright,
+    with no unsaved-strokes question, or the save did not reset the baseline."""
+    _evaluated(call, "document.getElementById('draw-save').click()")
+    try:
+        _until(call, SAVED, seconds=seconds)
+    except AssertionError:
+        said = _evaluated(call, "document.getElementById('draw-said').textContent")
+        raise AssertionError(f"the save did not land: {said!r}") from None
+    _evaluated(call, "document.getElementById('draw-close').click()")
+    assert _until(call, "!document.querySelector('.drawpopup')"), (
+        "Close straight after a save did not close the popup"
+    )
+
+
 def _png_text_chunks(data: bytes) -> dict[bytes, bytes]:
     """Every `tEXt` chunk's key and value, read by walking the file's own
     chunk structure rather than trusted from a comment about what
@@ -10777,10 +10801,7 @@ def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
         original_body = _evaluated(call, "SURFACE.text()")
         assert "drawings/draw-" not in original_body, "the body already named a drawing"
 
-        _evaluated(call, "document.getElementById('draw-save').click()")
-        assert _until(call, "!document.querySelector('.drawpopup')"), (
-            "the popup did not close itself after a successful save"
-        )
+        _saved_and_closed(call)
         after_create = _evaluated(call, "SURFACE.text()")
         match = re.search(r"draw-[0-9a-f]{6}", after_create)
         assert match, f"no drawing id landed in the body: {after_create!r}"
@@ -10874,6 +10895,127 @@ def test_a_drawing_is_created_reopened_and_a_resave_touches_no_markdown(
         assert not [line for line in said if "Content Security Policy" in line], said
 
 
+def test_save_keeps_the_drawing_open_and_saving_again_rewrites_the_same_file(
+    live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
+    tmp_path: Path,
+):
+    """jcanton, 2026-10-20: "clicking 'save' on an excalidraw drawing closes the
+    drawing and goes back to the record. can we only make it save instead?"
+
+    Save is a checkpoint now, and staying open is the easy half. The four
+    things that come with it are what this walks, each of which the old
+    close-on-save made unreachable:
+
+    1. a double press on a NEW drawing posts once — two POSTs would be two
+       files and two embeds spliced at the caret;
+    2. "saved" is said inside the popup, where it can be seen, and not only in
+       `#state`, which is under the overlay;
+    3. a second save from the same popup rewrites the file the first one made —
+       a PUT, splicing nothing — rather than minting a second drawing;
+    4. "saved" goes away at the next stroke, the keyboard goes back into the
+       drawing, and Close straight after a save asks nothing, because what was
+       saved is the new baseline.
+    """
+    url = f"{live_server}/detail/{TASK}?both"
+    with _devtools(chrome(), url, tmp_path / "profile", DRAWING_WINDOW) as (call, said):
+        time.sleep(2)
+        _evaluated(call, "document.getElementById('drawing').click()")
+        _evaluated(call, "document.querySelector('.drawmenu button').click()")
+        _until(call, "!!document.querySelector('.drawpopup .excalidraw')")
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-rectangle\"]').click()")
+        _drag(call, *FIRST_SHAPE)
+        time.sleep(0.2)
+        original_body = _evaluated(call, "SURFACE.text()")
+
+        _evaluated(
+            call,
+            "document.getElementById('draw-save').click();"
+            "document.getElementById('draw-save').click();",
+        )
+        _until(call, SAVED)
+        stayed = _evaluated(
+            call,
+            """
+        (() => {
+          const line = document.getElementById('draw-said');
+          const box = line.getBoundingClientRect();
+          const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+          return {
+            open: !!document.querySelector('.drawpopup .excalidraw'),
+            seen: box.width > 0 && hit === line,
+            saveUsable: !document.getElementById('draw-save').disabled,
+            label: document.querySelector('.drawpopup').getAttribute('aria-label'),
+          };
+        })()
+        """,
+        )
+        body = _evaluated(call, "SURFACE.text()")
+        embeds = re.findall(r"drawings/(draw-[0-9a-f]{6})\.png", body)
+        assert len(embeds) == 1, f"one double-pressed Save spliced {len(embeds)} embeds: {body!r}"
+        drawing_id = embeds[0]
+        assert body == f"![](drawings/{drawing_id}.png){original_body}", body
+        assert stayed == {
+            "open": True,
+            "seen": True,
+            "saveUsable": True,
+            "label": f"Editing {drawing_id}",
+        }, stayed
+
+        _evaluated(call, "document.querySelector('[data-testid=\"toolbar-ellipse\"]').click()")
+        _drag(call, *SECOND_SHAPE)
+        assert _until(call, "document.getElementById('draw-said').textContent === ''"), (
+            "the popup went on saying 'saved' over a stroke that was not"
+        )
+
+        # Pressed for real this time, not with `.click()`: only a trusted press
+        # puts the keyboard on Save, and handing it back to the drawing is the
+        # point of saving mid-drawing. It is also what found `api.focusContainer`
+        # did not exist — every `.click()` left focus where it already was.
+        x, y = _evaluated(
+            call,
+            "(() => { const b = document.getElementById('draw-save').getBoundingClientRect();"
+            " return [b.left + b.width / 2, b.top + b.height / 2]; })()",
+        )
+        for kind, buttons in (("mousePressed", 1), ("mouseReleased", 0)):
+            call(
+                "Input.dispatchMouseEvent",
+                {
+                    "type": kind,
+                    "x": x,
+                    "y": y,
+                    "button": "left",
+                    "buttons": buttons,
+                    "clickCount": 1,
+                },
+            )
+        _until(call, SAVED)
+        assert _evaluated(
+            call, "!!(document.activeElement && document.activeElement.closest('.excalidraw'))"
+        ), "a save left the keyboard on Save rather than handing it back to the drawing"
+        assert _evaluated(call, "SURFACE.text()") == body, (
+            "the second save from the same popup touched the markdown — it minted a "
+            "new drawing instead of rewriting the one the first save made"
+        )
+        round_trip = _evaluated(
+            call,
+            f"""
+        (async () => {{
+          const blob = await (await fetch('/drawings/{drawing_id}.png')).blob();
+          const loaded = await EXCALIDRAW.loadSceneOrLibraryFromBlob(blob, null, null);
+          return loaded.data.elements.map(e => e.type);
+        }})()
+        """,
+        )
+        assert round_trip == ["rectangle", "ellipse"], round_trip
+
+        _evaluated(call, "document.getElementById('draw-close').click()")
+        assert _evaluated(call, "!document.querySelector('.drawpopup')"), (
+            "Close straight after a save asked about unsaved strokes — the save "
+            "did not become the baseline"
+        )
+        assert not [line for line in said if "Content Security Policy" in line], said
+
+
 def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(
     live_server: str,  # noqa: F811 — a fixture, shadowing its own import by design
     tmp_path: Path,
@@ -10898,8 +11040,7 @@ def test_a_stale_save_is_refused_and_the_popup_keeps_the_work(
         _evaluated(call, "document.querySelector('[data-testid=\"toolbar-rectangle\"]').click()")
         _drag(call, *FIRST_SHAPE)
         time.sleep(0.2)
-        _evaluated(call, "document.getElementById('draw-save').click()")
-        assert _until(call, "!document.querySelector('.drawpopup')")
+        _saved_and_closed(call)
 
         body = _evaluated(call, "SURFACE.text()")
         drawing_id = re.search(r"draw-[0-9a-f]{6}", body).group(0)
@@ -11005,10 +11146,7 @@ def test_closing_unsaved_strokes_asks_first_and_keep_drawing_preserves_them(
         )
         assert backed_out == {"popupThere": True, "asking": False, "saveHidden": False}, backed_out
 
-        _evaluated(call, "document.getElementById('draw-save').click()")
-        assert _until(call, "!document.querySelector('.drawpopup')"), (
-            "keep drawing left the popup unable to save cleanly afterward"
-        )
+        _saved_and_closed(call)
         body = _evaluated(call, "SURFACE.text()")
         match = re.search(r"draw-[0-9a-f]{6}", body)
         assert match, f"no drawing id landed in the body: {body!r}"
@@ -11378,19 +11516,9 @@ def test_a_dropped_image_is_resized_and_saved_into_the_drawing(
         )
 
         # And the round trip, through the seam a person presses.
-        _evaluated(call, "document.getElementById('draw-save').click()")
-        try:
-            _until(call, "!document.querySelector('.drawpopup')", seconds=30)
-        except AssertionError:
-            # The popup staying open IS the refusal on this page, and the
-            # sentence it refused with is in the commit bar — read out here
-            # rather than left for somebody to go and find after a bare "the
-            # popup did not close". `MAX_DRAWING_BYTES` is the one this would
-            # most likely be.
-            said_so = _evaluated(call, "document.getElementById('upload').textContent")
-            raise AssertionError(
-                f"the save of the dropped {kind} was refused: {said_so!r}"
-            ) from None
+        # A refusal is read out by the helper rather than left for somebody to
+        # go and find; `MAX_DRAWING_BYTES` is the one this would most likely be.
+        _saved_and_closed(call, seconds=30)
         body = _evaluated(call, "SURFACE.text()")
         match = re.search(r"draw-[0-9a-f]{6}", body)
         assert match, f"no drawing id landed in the body: {body[:120]!r}"
@@ -11454,8 +11582,7 @@ def test_resaving_a_drawing_refreshes_the_picture_beside_the_writing(
         _evaluated(call, "document.querySelector('[data-testid=\"toolbar-rectangle\"]').click()")
         _drag(call, *FIRST_SHAPE)
         time.sleep(0.2)
-        _evaluated(call, "document.getElementById('draw-save').click()")
-        _until(call, "!document.querySelector('.drawpopup')")
+        _saved_and_closed(call)
 
         # The preview has to have DRAWN the picture before anything can be said
         # about it changing — `complete` alone is true for an image that failed,
@@ -11472,8 +11599,7 @@ def test_resaving_a_drawing_refreshes_the_picture_beside_the_writing(
         _evaluated(call, "document.querySelector('[data-testid=\"toolbar-ellipse\"]').click()")
         _drag(call, *SECOND_SHAPE)
         time.sleep(0.2)
-        _evaluated(call, "document.getElementById('draw-save').click()")
-        _until(call, "!document.querySelector('.drawpopup')")
+        _saved_and_closed(call)
 
         # The body is untouched, which is the whole reason this bug existed: if
         # a re-save ever starts splicing, the preview refreshes for a different

@@ -1747,6 +1747,12 @@ article.record .toolrow .commitbar {
   justify-content: center; line-height: 0;
 }
 .drawhead .grow svg { display: block; width: 15px; height: 15px; }
+/* What the last Save came to, between the size toggle and Save — the toggle's
+   `margin-right: auto` puts it against Save rather than against the left edge.
+   `min-width: 0` so a long refusal wraps inside the bar instead of pushing Save
+   and Close off it. No `display` here, so the UA's `[hidden]` still wins while
+   the unsaved-strokes question has the bar. */
+.drawhead .said { min-width: 0; font-size: 13px; color: var(--muted); }
 .drawhead .drawask { display: flex; align-items: center; gap: .5rem; }
 .drawhead .drawask[hidden] { display: none; }
 .drawhead .drawask .asking { margin: 0; font-size: 13px; color: var(--danger); }

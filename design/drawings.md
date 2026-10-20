@@ -9,7 +9,8 @@ directory.
 A button above the editor opens a menu: **+ drawing**, and under it the drawings
 this body already embeds, listed by id in the order they appear. Press one and
 Excalidraw opens over the editor with that drawing in it. Save, and the file is
-rewritten in place; the body is not touched at all.
+rewritten in place; the body is not touched at all. Save keeps the drawing open — Close
+is the one way back to the record.
 
 An embed is ordinary image markdown:
 
@@ -352,10 +353,10 @@ existing drawing and closing it untouched, and drawing, saving, then closing.
 The first holds because the comparison's baseline is `initial.elements` — what
 was actually handed to Excalidraw to mount, not a second read taken back off
 it — so a fresh, untouched mount reads as identical to itself. The second
-holds structurally: a successful save calls the raw `teardown()` directly
-rather than the close-attempt path that asks, because there is nothing left
-in the popup for the person to lose once their strokes are already on the
-server. Escape is two levels, matching the delete flow's own
+holds because a successful save makes what it saved the new baseline, so Close
+straight after it compares the scene against itself. (Until 2026-10-20 it held
+structurally instead: a successful save called the raw `teardown()` and there
+was no Close left to press — see "Save is a checkpoint".) Escape is two levels, matching the delete flow's own
 (`detail.py:1959-1962`): with the question up it backs out of the question,
 and only with no question up does it close the popup — bound as one branch of
 the same `document`-level `keydown` listener the popup already had, rather
@@ -625,6 +626,37 @@ above fits, and the numbers pushing the other way are in "Ceilings to respect" �
 already zlib-compressed so git cannot delta it and every save is a full new blob, and on
 Cloud Run the filesystem is memory. `MAX_DRAWING_BYTES`' sentence now names images first,
 because images are the only thing that gets a drawing near it.
+
+## Save is a checkpoint
+
+jcanton, 2026-10-20: "clicking 'save' on an excalidraw drawing closes the drawing and goes
+back to the record. can we only make it save instead?" Closing on save made every
+checkpoint cost a reopen through the menu. Save no longer calls `teardown()`; four things
+that close-on-save had been hiding came with it.
+
+- **A new drawing becomes an existing one at its first save.** `entry` is set from the
+  POST's answer and the etag kept, so the next Save is a PUT against the version just
+  written and splices nothing. Without it a second Save would mint a second drawing and
+  splice a second embed.
+- **One save in flight.** Save is disabled from press to answer: a double click on a new
+  drawing would otherwise POST twice before the first answer arrived.
+- **The sentence is said inside the popup.** `#state` is in the commit bar under the
+  overlay — dimmed at the smaller size and covered at full page. That cost nothing while a
+  successful save uncovered it. `#draw-said`, between the size toggle and Save, carries the
+  same sentence for the eyes; `#state` stays the live region, so it is announced once. It
+  empties at the first real stroke after a save, through `onChange` gated on `isDirty`,
+  because a bar that still says "saved" over unsaved strokes is lying. The check runs only
+  while the sentence is up, so it costs one comparison per save, not one per pointer move.
+- **`api.focusContainer()` never existed.** The size toggle, Keep drawing and now Save
+  hand the keyboard back to the drawing. All three called `api.focusContainer()`, and the
+  object `excalidrawAPI` hands over has no such key — `focusContainer` is a method of
+  Excalidraw's internal `App`. Every call threw a TypeError that nobody saw: the tests
+  pressed those buttons with `.click()`, which never moves focus off the drawing in the
+  first place. Found when a save started calling it and the probe read "that drawing was
+  not saved — api.focusContainer is not a function". `focusDrawing` focuses
+  `.excalidraw-container` (`tabIndex: 0`, the element `App.focusContainer` focuses), and
+  `test_save_keeps_the_drawing_open_and_saving_again_rewrites_the_same_file` presses Save
+  with a trusted click so it can tell.
 
 ## A re-save has to say so
 
