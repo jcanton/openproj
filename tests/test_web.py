@@ -7535,11 +7535,14 @@ def test_an_unlisted_view_answers_at_its_address_and_nothing_else_links_to_it(
             got = client.get(url)
             assert got.status_code == 200, f"{url}: {got.status_code}"
             assert unusable_banner_says(got.text) == "", url
-            # The nav the plan lists, with nothing marked: jcanton chose "nothing
-            # extra" over adding the page to the nav while somebody stands on it.
+            # The nav the plan lists and nothing extra — jcanton chose that over
+            # adding the page to the nav while somebody stands on it. Nothing is
+            # marked but what the page already belongs to: the deck lights the
+            # Cycles it is of, listed or not, as it always has.
             nav = nav_of(got.text)
             assert [label for label, _, _ in nav] == listed_nav, f"{url} draws {nav}"
-            assert not [label for label, _, marked in nav if marked], f"{url} marks {nav}"
+            belongs = {"Cycles"} if own == "deck" else set()
+            assert {label for label, _, marked in nav if marked} <= belongs, f"{url} marks {nav}"
             assert _dead_ends(client, url, got.text, views, kinds, own=own) == [], url
 
         listed = [
