@@ -1901,8 +1901,9 @@ article.record:not(.editing) .req { display: none; }
 /* A field of record references, folded (`refChips` in the shell): one line of
    titles until it is pressed, then the chips and the box. jcanton, 2026-10-20: "I
    prefer the way the popup card works: renders as plain text until you click on
-   the field for editing it." So the line wears what the card's openable fields
-   wear on hover, and nothing else — it reads as the value, not as a button.
+   the field for editing it." Its box is the one every field wears — it is in that
+   rule's selector list below, not a copy of it — so the line reads as a field
+   holding a value, and wraps onto as many lines as its titles need.
 
    Which way the cascade resolves, since this file has lost that fight twice: the
    box is hidden by `.record.editing .field.folded` at (0,4,0) over the (0,3,0)
@@ -1912,12 +1913,8 @@ article.record:not(.editing) .req { display: none; }
    same titles as links, and chips with a × beside them were the second copy
    jcanton saw ("in preview mode they show up as text as well as chips"). */
 .refsays { display: none; }
-.record.editing .refsays {
-  display: block; width: 100%; margin: 0; padding: 0; border: 0; border-radius: 2px;
-  background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
-}
-.record.editing .refsays:hover { background: var(--surface-2);
-                                 box-shadow: 0 0 0 2px var(--surface-2); }
+.record.editing .refsays { display: block; margin: 0; text-align: left; cursor: text; }
+.record.editing .refsays:hover { border-color: var(--fg); }
 .record.editing .refsays[hidden] { display: none; }
 .record.editing .field.folded { display: none; }
 .record:not(.editing) .refs { display: none; }
@@ -1948,8 +1945,14 @@ dt > label { display: inline; }
    inert on Chrome and Safari, where the date field is still the input itself
    and this wrapper is a span that costs a tag. The `@supports` block in
    `_CALENDAR_STYLE` (`calendar.py`) is the only place it becomes a box, and it
-   asks the question in the same words the installer asks it in JavaScript. */
-input.field, select.field, textarea.field, .datewrap {
+   asks the question in the same words the installer asks it in JavaScript.
+
+   `.refsays` is in it for the same reason: the folded line of a field of record
+   references (`refChips`) is a button, and it wears the box every other field
+   wears so it reads as one of them. jcanton, 2026-10-20, of the first folded
+   version, which was bare text: "without the field box they seem like they are
+   not editable until you hover the mouse over them". */
+input.field, select.field, textarea.field, .datewrap, .refsays {
   width: 100%; box-sizing: border-box; font: inherit; padding: .25rem .4rem;
   border: 1px solid var(--line-strong); border-radius: 3px;
   background: var(--surface); color: inherit;
