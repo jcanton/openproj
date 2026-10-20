@@ -5473,7 +5473,12 @@ def test_a_reparent_leaves_no_derived_column_stale(client: TestClient, page: str
     # DOM does not gather a nested span's text into its parent's `textContent`
     # the way a browser does, so the year may or may not be in what comes back.
     assert got["start"].startswith(f"{day}.{month}"), got["start"]
-    assert year[:2] not in got["start"], "the century is still being drawn"
+    # Asked of what FOLLOWS the day and month, never of the whole cell: the
+    # start here is derived from today, and on the twentieth of any month the
+    # day itself is `20` — so `'20' not in '20.10'` failed on 2026-10-20 with
+    # nothing drawn wrong. A century, if one were drawn, can only be after it.
+    trailing = got["start"][len(f"{day}.{month}") :]
+    assert year[:2] not in trailing, "the century is still being drawn"
 
 
 def test_a_column_is_dragged_in_the_header_and_a_row_in_the_body(page: str):
