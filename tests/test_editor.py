@@ -9735,6 +9735,7 @@ _COMPLETING_A_PULL_REQUEST = r"""
   // A heading is a hash with nothing to search for.
   editor.insert('\n');
   const overHeading = await typing('##');
+  // And the rest is typed on that line, the heading taken back off it.
   editor.remove('left'); editor.remove('left');
 
   // Half the name and a hash: the repository, with the number left to type.
@@ -9798,11 +9799,11 @@ def test_the_second_editor_completes_a_pull_request_in_the_body(
     assert got["overProse"] is None, f"prose opened a popup: {got['overProse']}"
     assert got["overHeading"] is None, f"a heading opened a popup: {got['overHeading']}"
     assert got["onRepo"] == ["griddle/griddle#"], got["onRepo"]
-    assert got["tookRepo"]["took"] and got["tookRepo"]["line"] == "See griddle/griddle#", (
+    assert got["tookRepo"]["took"] and got["tookRepo"]["line"] == "griddle/griddle#", (
         got["tookRepo"]
     )
     assert got["numbered"] == ["griddle/griddle#1877"], got["numbered"]
-    assert got["tookRef"] == {"took": True, "line": "See griddle/griddle#1877", "list": None}, (
+    assert got["tookRef"] == {"took": True, "line": "griddle/griddle#1877", "list": None}, (
         got["tookRef"]
     )
     assert got["other"] == ["kilnlab/kiln4py#1403"], got["other"]
@@ -9885,8 +9886,8 @@ def test_a_reference_is_completed_from_the_plans_repositories(naming_client: Tes
     }, f"something the corpus cites is offered: {answer['before']}"
     assert answer["open"] == 2, "asking twice folded the same list in twice"
     assert said[""] == [
-        "kilnlab/kiln4py#",
-        "griddle/griddle#",
+        "kilnlab/kiln4py# pull request or issue",
+        "griddle/griddle# pull request or issue",
         "kilnlab/kiln4py#1521 PR · Halo exchange",
         "griddle/griddle#1877 issue · Scan carry",
     ], said[""]
@@ -9894,7 +9895,10 @@ def test_a_reference_is_completed_from_the_plans_repositories(naming_client: Tes
     # A number nothing is known about is written all the same: merged work is
     # cited as often as open work, and it is never in the open list.
     assert said["kiln 15"] == ["kilnlab/kiln4py#15", "kilnlab/kiln4py#1521 PR · Halo exchange"]
-    assert said["griddle"] == ["griddle/griddle#", "griddle/griddle#1877 issue · Scan carry"]
+    assert said["griddle"] == [
+        "griddle/griddle# pull request or issue",
+        "griddle/griddle#1877 issue · Scan carry",
+    ]
     assert said["carry"] == ["griddle/griddle#1877 issue · Scan carry"]
     numbered = ["kilnlab/kiln4py#1877", "griddle/griddle#1877 issue · Scan carry"]
     assert said["#1877"] == numbered and said["1877"] == numbered, said
