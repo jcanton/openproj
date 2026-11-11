@@ -65,7 +65,7 @@ from test_store import commit_directly
 
 from openproj.auth import User, sign_session
 from openproj.model import KIND_NAMES, OPTIONAL_KINDS, VIEW_NEEDS, VIEWS, _an
-from openproj.web import create_app
+from openproj.web import STATE_LOOKUPS, STATE_RESERVE, create_app
 
 ORG = "kilnlab"
 SECRET = "a-real-signing-secret-for-tests"
@@ -6615,6 +6615,156 @@ def test_the_open_pull_requests_are_not_offered_to_a_signed_out_visitor(tmp_path
     )
     with TestClient(app) as client:
         assert client.get("/api/prs").status_code == 403
+    assert asked == [], "a signed-out visitor made this server call GitHub"
+
+
+def _plan_citing(tmp_path: Path, cited: dict[str, list[str]]) -> Path:
+    """The corpus with these references in `prs:`, and `kilnlab/kiln4py` named."""
+    path = tmp_path / "states.git"
+    pygit2.init_repository(str(path), bare=True, initial_head="main")
+    seeded = dict(SEED)
+    seeded["config/defaults.yaml"] += "repositories: [kilnlab/kiln4py]\n"
+    for name, text in seeded.items():
+        record = next((rid for rid in cited if name.endswith(f"/{rid}.md")), None)
+        if record is None:
+            continue
+        lines = [line for line in text.split("\n") if not line.startswith("prs:")]
+        at = next(i for i, line in enumerate(lines) if line.startswith("status:"))
+        lines.insert(at + 1, f"prs: {json.dumps(cited[record])}")
+        seeded[name] = "\n".join(lines)
+    commit_directly(path, seeded, "seed the corpus")
+    return path
+
+
+def _github_with_states(states: dict[int, dict], asked: list[str], left: int = 50):
+    """A GitHub whose open list is empty and which answers `/issues/N` from a dict."""
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.path)
+        if request.url.path.endswith("/issues"):
+            return httpx.Response(200, json=[])
+        number = int(request.url.path.rsplit("/", 1)[1])
+        return httpx.Response(
+            200,
+            json={"number": number, **states[number]},
+            headers={"x-ratelimit-remaining": str(left)},
+        )
+
+    return httpx.MockTransport(answer)
+
+
+_MERGED = {"state": "closed", "closed_at": "2026-11-03T09:00:00Z",
+           "pull_request": {"merged_at": "2026-11-03T09:00:00Z"}}
+_UNMERGED = {"state": "closed", "closed_at": "2026-10-20T09:00:00Z",
+             "pull_request": {"merged_at": None}}
+
+
+def test_a_record_whose_pull_requests_landed_is_offered_done_and_nothing_is_written(
+    tmp_path: Path,
+):
+    """jcanton, 2026-11-11: done once its pull requests are merged, shelved once
+    they are all closed unmerged, and "go with the suggested version" — so the
+    route says which records disagree with GitHub and writes nothing.
+
+    One landed and one dropped is landed: a pull request closed and replaced by
+    one that merged is the ordinary case. A record already done is not offered
+    anything, nor is one with a pull request still open, and a reference to a
+    repository the plan does not name is never looked up at all.
+    """
+    asked: list[str] = []
+    repo = _plan_citing(
+        tmp_path,
+        {
+            TASK: ["kilnlab/kiln4py#1", "kilnlab/kiln4py#2"],
+            OTHER: ["kilnlab/kiln4py#3"],
+            DONE: ["kilnlab/kiln4py#4"],
+            PITCH: ["kilnlab/kiln4py#4", "kilnlab/kiln4py#5"],
+            "proj-a10000": ["acme/elsewhere#9"],
+        },
+    )
+    states = {1: _MERGED, 2: _UNMERGED, 3: _UNMERGED, 4: _MERGED, 5: {"state": "open"}}
+    app = create_app(
+        repo, auth="dev", secret=SECRET, github_transport=_github_with_states(states, asked)
+    )
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        before = head(client)
+        first = client.get("/api/pr-states")
+        assert first.status_code == 200, first.text
+        assert first.json() == {
+            "records": {
+                TASK: {"verdict": "landed", "count": 2, "at": "2026-11-03"},
+                OTHER: {"verdict": "dropped", "count": 1, "at": "2026-10-20"},
+            },
+            "pending": False,
+        }
+        looked_up = sorted(path for path in asked if not path.endswith("/issues"))
+        again = client.get("/api/pr-states")
+        assert again.json() == first.json()
+        assert head(client) == before, "asking where the pull requests stand wrote to the plan"
+    assert looked_up == [f"/repos/kilnlab/kiln4py/issues/{n}" for n in (1, 2, 3, 4, 5)], asked
+    assert not any("acme" in path for path in asked), "an unnamed repository was asked about"
+    assert sorted(p for p in asked if not p.endswith("/issues")) == looked_up, (
+        "a closed reference was looked up a second time instead of being cached"
+    )
+
+
+def test_the_pull_request_states_spend_a_budget_and_say_what_is_left(tmp_path: Path):
+    """Sixty calls an hour is what a deployment gets for a repository the App is
+    not installed on. So a request looks up at most a few references, none once
+    GitHub says the reserve is reached, and reports `pending` for the rest —
+    which the next page that asks resolves."""
+    asked: list[str] = []
+    repo = _plan_citing(tmp_path, {TASK: [f"kilnlab/kiln4py#{n}" for n in range(1, 13)]})
+    states = {n: _MERGED for n in range(1, 13)}
+    app = create_app(
+        repo, auth="dev", secret=SECRET, github_transport=_github_with_states(states, asked)
+    )
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        first = client.get("/api/pr-states").json()
+        spent = len([p for p in asked if not p.endswith("/issues")])
+        second = client.get("/api/pr-states").json()
+    assert first == {"records": {}, "pending": True}, first
+    assert spent == STATE_LOOKUPS, f"one request looked up {spent} references"
+    assert second["pending"] is False and TASK in second["records"], second
+
+    asked.clear()
+    (tmp_path / "starved").mkdir()
+    cited = {TASK: ["kilnlab/kiln4py#1", "kilnlab/kiln4py#2"]}
+    starved = _plan_citing(tmp_path / "starved", cited)
+    app = create_app(
+        starved,
+        auth="dev",
+        secret=SECRET,
+        github_transport=_github_with_states(
+            {1: _MERGED, 2: _MERGED}, asked, left=STATE_RESERVE - 1
+        ),
+    )
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        assert client.get("/api/pr-states").json() == {"records": {}, "pending": True}
+    assert len([p for p in asked if not p.endswith("/issues")]) == 1, (
+        f"it went on spending under the reserve: {asked}"
+    )
+
+
+def test_where_the_pull_requests_stand_is_not_told_to_a_signed_out_visitor(tmp_path: Path):
+    """The same reason `/api/prs` gives: a route that spends rate-limit calls for
+    anybody who asks can be made to spend them all."""
+    asked: list[str] = []
+    repo = _plan_citing(tmp_path, {TASK: ["kilnlab/kiln4py#1"]})
+    app = create_app(
+        repo,
+        auth="github",
+        org=ORG,
+        secret=SECRET,
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+        github_transport=_github_with_states({1: _MERGED}, asked),
+    )
+    with TestClient(app) as client:
+        assert client.get("/api/pr-states").status_code == 403
     assert asked == [], "a signed-out visitor made this server call GitHub"
 
 

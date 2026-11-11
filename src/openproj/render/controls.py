@@ -3547,6 +3547,68 @@ function referencesFor(said) {
   return all;
 }
 
+// --- where the cited pull requests stand ------------------------------------
+//
+// jcanton, 2026-11-11: a record whose pull requests have all merged is done, and
+// one whose pull requests were all closed unmerged is shelved — offered, never
+// written. `/api/pr-states` lists only the records whose status disagrees with
+// GitHub; the table draws a mark beside the status, and the record page a line
+// with a button that fills Status (and End date) for Save. See the route for why
+// it is not automatic.
+//
+// Asked once per page, after it has drawn, and only where there is a server and
+// somebody signed in who could act on it: the route is writers-only, and a
+// rendered file has nobody to ask.
+let PR_STATES = {};
+
+function askPullRequestStates(then) {
+  if (!SUGGEST.live) return;
+  fetch('/api/pr-states', {headers: {accept: 'application/json'}})
+    .then(answer => (answer.ok ? answer.json() : null))
+    .then(said => {
+      if (!said) return;
+      PR_STATES = said.records || {};
+      then(PR_STATES);
+    })
+    // A mark that is not drawn is the page as it was yesterday, and nothing to
+    // report: the question was the page's own and nobody asked it.
+    .catch(() => {});
+}
+
+// What the mark and the line say, in one place so the two pages agree.
+function prStateSentence(state) {
+  const one = state.count === 1;
+  const day = state.at ? longDate(state.at) : '';
+  const when = !day ? '' : one ? ` on ${day}` : `, the last on ${day}`;
+  const each = one ? 'Its PR' : `All ${state.count} of its PRs`;
+  return state.verdict === 'landed'
+    ? `${each} ${one ? '' : 'have '}landed${when}. Is it done?`
+    : `${each} ${one ? 'was' : 'were'} closed without landing${when}. Is it shelved?`;
+}
+
+// GitHub's mark (Octicons' `mark-github`, MIT), filled for landed and struck
+// through for dropped. Struck as well as coloured: green against red is the one
+// pair a dichromat cannot tell apart, which is the argument the status ladder is
+// built on.
+const GITHUB_MARK = 'M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17'
+  + '-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 '
+  + '0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27'
+  + '-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12'
+  + '-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21'
+  + '-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13'
+  + '.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 '
+  + '0 8c0-4.42 3.58-8 8-8Z';
+
+function prStateMark(state) {
+  if (!state) return '';
+  const said = esc(prStateSentence(state));
+  const strike = state.verdict === 'dropped'
+    ? '<path class="ghgap" d="M0 16 16 0"/><path class="ghstrike" d="M0 16 16 0"/>' : '';
+  return `<span class="ghmark gh-${esc(state.verdict)}" role="img" aria-label="${said}"`
+    + ` title="${said}"><svg viewBox="0 0 16 16" aria-hidden="true">`
+    + `<path d="${GITHUB_MARK}"/>${strike}</svg></span>`;
+}
+
 // Type-to-filter, not a picker beside the field. A datalist only completes a whole
 // value, so on a comma-separated field it stops helping after the first name — and
 // a separate "add" control is a second place to look for one job.

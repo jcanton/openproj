@@ -1738,6 +1738,18 @@ select.pick.st-{{ s }} { background: var(--st-{{ s }}-soft); color: var(--st-{{ 
 .sev-mark { font-family: var(--font-mono); font-size: 11px; cursor: help; }
 .sev-mark-blocker { color: var(--sev-blocker); }
 .sev-mark-warn { color: var(--sev-warn); }
+/* GitHub's mark where the pull requests a record lists disagree with its status:
+   `--ok` for all landed, `--danger` for all closed unmerged, and struck through
+   as well for the second, so the two differ in shape and not only in hue. One
+   em, so it sits on the line of the chip or the sentence beside it. */
+.ghmark { display: inline-block; width: 1em; height: 1em; margin-left: 4px;
+          vertical-align: -0.15em; cursor: help; }
+.ghmark svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.ghmark path { fill: currentColor; }
+.ghmark .ghgap { fill: none; stroke: var(--bg); stroke-width: 4.5; stroke-linecap: round; }
+.ghmark .ghstrike { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.gh-landed { color: var(--ok); }
+.gh-dropped { color: var(--danger); }
 /* Every interactive thing, and :focus-visible rather than :focus so a mouse
    click does not leave a ring behind it. :where() keeps the specificity at zero,
    so a page stylesheet loaded after this one still wins on colour. */

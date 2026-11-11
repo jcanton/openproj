@@ -3198,6 +3198,43 @@ if (!CREATING) {
     showEditing(true);
   }
 }
+
+// GitHub disagrees with this record's status — see `askPullRequestStates`. The
+// line goes under Status, where the answer would be written, and it says what
+// GitHub said and asks; the button only fills the form, so the change is one
+// more unsaved edit on the bar like any other and Save is still the person's.
+// Done fills End date with the day the last one landed, because a done record
+// needs one and that is the day it was true — and only if End date is empty,
+// because a date somebody wrote is theirs.
+function offerStatusFromGitHub(states) {
+  const form = document.getElementById('edit');
+  const state = form && states[form.dataset.id];
+  const word = state && (state.verdict === 'landed' ? 'done' : 'shelved');
+  const stop = word && form.querySelector(`input[type="radio"][value="${word}"]`);
+  if (!stop) return;
+  const line = document.createElement('p');
+  line.className = 'hint prstate';
+  line.innerHTML = prStateMark(state);
+  line.append(' ' + prStateSentence(state) + ' ');
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = word === 'done' ? 'Mark done' : 'Mark shelved';
+  button.addEventListener('click', () => {
+    if (!document.querySelector('article.record').classList.contains('editing')) flipEditing();
+    stop.click();
+    const end = form.querySelector('[name="end_date"]');
+    if (word === 'done' && end && !end.value && state.at) {
+      end.value = state.at;
+      end.dispatchEvent(new Event('input', {bubbles: true}));
+      end.dispatchEvent(new Event('change', {bubbles: true}));
+    }
+    line.remove();
+    announce(`Status is ${word === 'done' ? 'done' : 'shelved'} — not saved yet.`);
+  });
+  line.append(button);
+  stop.closest('dd').append(line);
+}
+askPullRequestStates(offerStatusFromGitHub);
 </script>{% endif %}
 {% if editable %}{{ views }}{% endif %}
 {% if editable %}<script>{{ yjs }}</script>

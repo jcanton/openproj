@@ -16,7 +16,7 @@ import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from openproj.github import GitHubApp, app_jwt, open_references
+from openproj.github import GitHubApp, app_jwt, open_references, reference_state
 
 
 @pytest.fixture(scope="module")
@@ -286,3 +286,41 @@ def test_a_token_the_code_repository_refuses_falls_back_to_asking_anonymously(
     assert server_error == ["Bearer installation-token"], (
         f"a 500 was retried anonymously: {server_error}"
     )
+
+
+def test_a_reference_is_read_as_landed_dropped_or_open():
+    """Landed is a merged pull request or an issue closed as completed; dropped is
+    one closed any other way. `/issues/N` answers both kinds, and a pull request
+    is the one carrying a `pull_request` key — with `merged_at` inside it, which
+    is the only thing that tells merged from closed."""
+
+    answers = {
+        1: {"state": "closed", "closed_at": "2026-11-03T09:00:00Z",
+            "pull_request": {"merged_at": "2026-11-02T18:00:00Z"}},
+        2: {"state": "closed", "closed_at": "2026-10-20T09:00:00Z",
+            "pull_request": {"merged_at": None}},
+        3: {"state": "closed", "closed_at": "2026-10-01T09:00:00Z", "state_reason": "completed"},
+        4: {"state": "closed", "closed_at": "2026-10-02T09:00:00Z", "state_reason": "not_planned"},
+        5: {"state": "open", "pull_request": {"merged_at": None}},
+    }
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        number = int(request.url.path.rsplit("/", 1)[1])
+        assert request.url.path == f"/repos/kilnlab/kiln4py/issues/{number}"
+        return httpx.Response(
+            200, json={"number": number, **answers[number]},
+            headers={"x-ratelimit-remaining": "41"},
+        )
+
+    seen = {
+        number: reference_state("kilnlab/kiln4py", number, transport=httpx.MockTransport(answer))
+        for number in answers
+    }
+
+    assert seen == {
+        1: ({"state": "landed", "at": "2026-11-02"}, 41),
+        2: ({"state": "dropped", "at": "2026-10-20"}, 41),
+        3: ({"state": "landed", "at": "2026-10-01"}, 41),
+        4: ({"state": "dropped", "at": "2026-10-02"}, 41),
+        5: ({"state": "open", "at": None}, 41),
+    }

@@ -265,6 +265,28 @@ def open_references(
     `web.py`'s route, which answers with what the corpus already cites, because a
     completion that is briefly narrower is a completion and a 502 is not.
     """
+    response = _ask(f"/repos/{repository}/issues", _OPEN_QUERY, app, transport)
+    return [
+        {
+            "number": int(one["number"]),
+            "title": str(one.get("title") or ""),
+            "pull": "pull_request" in one,
+        }
+        for one in response.json()
+    ]
+
+
+def _ask(
+    path: str,
+    params: dict[str, object] | None,
+    app: GitHubApp | None,
+    transport: httpx.BaseTransport | None,
+) -> httpx.Response:
+    """One GET against the API, as the App where it can and anonymously where not.
+
+    Raises for any refusal that is left. See `open_references` for why a 401, 403
+    or 404 to the App's token is asked again without it, and why nothing else is.
+    """
     # An explicit one wins, then the App's — which already documents itself as
     # "an httpx transport a test can answer from without a socket". Two names for
     # one seam would be two ways for a test to think it had stubbed the network.
@@ -272,9 +294,7 @@ def open_references(
 
     def ask(headers: dict[str, str]) -> httpx.Response:
         with httpx.Client(transport=reach, timeout=10.0) as client:
-            return client.get(
-                f"{_API}/repos/{repository}/issues", headers=headers, params=_OPEN_QUERY
-            )
+            return client.get(f"{_API}{path}", headers=headers, params=params)
 
     anonymous = {
         "Accept": "application/vnd.github+json",
@@ -292,11 +312,38 @@ def open_references(
     if response is None:
         response = ask(anonymous)
     response.raise_for_status()
-    return [
-        {
-            "number": int(one["number"]),
-            "title": str(one.get("title") or ""),
-            "pull": "pull_request" in one,
-        }
-        for one in response.json()
-    ]
+    return response
+
+
+def reference_state(
+    repository: str,
+    number: int,
+    app: GitHubApp | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> tuple[dict[str, object], int | None]:
+    """Where one pull request or issue stands, and how many calls are left.
+
+    `{"state": "open" | "landed" | "dropped", "at": "YYYY-MM-DD" | None}`.
+    *Landed* is a merged pull request or an issue closed as completed; *dropped*
+    is one closed any other way — unmerged, not planned, a duplicate. `at` is the
+    day it landed or was dropped.
+
+    The second half is GitHub's `x-ratelimit-remaining`, because the caller
+    spends a budget of sixty an hour on these when the App cannot see the
+    repository, and the answer to "can I afford one more" is in the header of
+    the last one.
+    """
+    response = _ask(f"/repos/{repository}/issues/{number}", None, app, transport)
+    one = response.json()
+    left = response.headers.get("x-ratelimit-remaining")
+    if one.get("state") != "closed":
+        return {"state": "open", "at": None}, int(left) if left else None
+    pull = one.get("pull_request") or {}
+    merged = pull.get("merged_at")
+    if "pull_request" in one:
+        landed = bool(merged)
+    else:
+        landed = one.get("state_reason") in (None, "completed")
+    when = str(merged or one.get("closed_at") or "")[:10] or None
+    state = "landed" if landed else "dropped"
+    return {"state": state, "at": when}, int(left) if left else None
