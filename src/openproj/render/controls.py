@@ -3562,7 +3562,9 @@ function referencesFor(said) {
 let PR_STATES = {};
 
 function askPullRequestStates(then) {
-  if (!SUGGEST.live) return;
+  // And not on a plan that names no repositories, which has nothing to look up:
+  // the route would answer an empty map for a request every page load made.
+  if (!SUGGEST.live || !(SUGGEST.repos || []).length) return;
   fetch('/api/pr-states', {headers: {accept: 'application/json'}})
     .then(answer => (answer.ok ? answer.json() : null))
     .then(said => {

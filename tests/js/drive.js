@@ -35,6 +35,8 @@
 //                            under a green suite for exactly that reason.
 //          {health: [...]}   what `/api/health` answers, one body per ask in
 //                            order, the quiet day once the list runs out.
+//          {prStates: {...}} what `/api/pr-states` answers; nothing to offer
+//                            by default.
 //          {me: {...}}       what `/api/me` answers; a stranger on a GitHub
 //                            server, `{org: 'kilnlab'}`, by default.
 //          {storage: {...}}  localStorage starts holding these; "denied" makes
@@ -665,6 +667,19 @@ async function run(html, expression, options) {
     // re-ask) can only be proved by a page that meets a loud pile without the
     // test touching `showPile` or `readPile` — replacing `fetch` whole runs
     // too late for the read the page makes at load.
+    // And `/api/pr-states`, which the table and the record page ask once at load
+    // on a plan that names repositories: the third read of its kind, answered
+    // here for the reason the two above are — scripted, it took the reply a test
+    // wrote for its save. Nothing disagrees with GitHub unless the test says so.
+    if (String(url) === '/api/pr-states') {
+      const body = options.prStates || {records: {}, pending: false};
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(body),
+        text: () => Promise.resolve(JSON.stringify(body)),
+      });
+    }
     if (String(url) === '/api/health') {
       const body = healths.shift() || {ok: true, head: '', version: '', unpushed: 0,
                                        oldest_unpushed_age: null, parked: 0, detail: null};
