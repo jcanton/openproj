@@ -3459,27 +3459,156 @@ function widenPullRequests(redraw) {
     });
 }
 
-// Folded into the list rather than replacing it, and the ORDER is the argument:
-// a reference some record already cites is one this plan has a reason to mention
-// again, so it keeps its place at the front and only gains the title it never
-// had. Everything else is appended — the filter runs over the whole list and
-// slices eight, so an open pull request nobody has cited yet is one narrowing
-// keystroke away.
+// What `/api/prs` said is open, kept apart from `SUGGEST.prs`: that one is the
+// bare `owner/repo#` per repository, and the table's menu reads it as it is.
+const OPEN_REFS = [];
+
 function foldInPullRequests(live) {
-  const held = new Map(SUGGEST.prs.map(one => [one.value, one]));
-  for (const one of live) {
-    const repo = one.value.split('#')[0] + '#';
-    if (!held.has(repo)) {
-      const bare = {value: repo, label: 'any pull request'};
-      held.set(repo, bare);
-      SUGGEST.prs.unshift(bare);
-    }
-    const already = held.get(one.value);
-    // A cited reference has no label — the corpus knows the number and not what
-    // it is called — so this is the half the network was asked for.
-    if (already) already.label = already.label || one.label;
-    else { held.set(one.value, one); SUGGEST.prs.push(one); }
+  OPEN_REFS.push(...live);
+}
+
+// A link to a pull request or an issue on GitHub, as the reference `_pr_refs`
+// draws. A pasted URL and the `owner/repo#N` the list offered were two spellings
+// of one thing, and only one of them was what the list would complete to.
+// `/pull/` and `/issues/` both, and whatever trails the number — `/files`, a
+// `#discussion_r…` — because a link is copied from wherever somebody was reading.
+const GITHUB_REF = new RegExp(
+  '^https?://(?:www\\.)?github\\.com/([\\w.-]+)/([\\w.-]+)/(?:pull|issues)/([0-9]+)'
+  + '(?:[/?#]\\S*)?$', 'i');
+
+function asReference(text) {
+  const link = GITHUB_REF.exec(String(text).trim());
+  return link ? `${link[1]}/${link[2]}#${link[3]}` : null;
+}
+
+// What a pull request or issue box offers for what has been typed in it.
+//
+// jcanton, 2026-11-11: "`icon4py PRnr`" — the half of the name somebody
+// remembers, and the number. So what was typed is cut into words at spaces,
+// slashes and hashes; a word of digits is the number, every other word has to
+// find the repository (or, for an open one, its title), and the repositories are
+// the plan's own `repositories:` and no others. A repository not listed is
+// typed in full, and then offered exactly as typed.
+//
+// **The number is written whether or not anything is known about it.** The
+// open list is the hundred most recently touched, and the pull request somebody
+// is citing is as likely merged as open; `icon4py 1210` is `C2SM/icon4py#1210`
+// either way, with a title beside it when the server had one.
+//
+// **Nothing typed that cannot be searched for opens anything.** `#` and `##` are
+// headings in the body, and a lone `#1` is prose: fewer than three digits with
+// no name beside them offer nothing, because Enter would take the first row.
+function referencesFor(said) {
+  const repos = SUGGEST.repos || [];
+  const title = new Map(OPEN_REFS.map(one => [one.value, one.label]));
+  const known = value => ({value, label: title.get(value) || ''});
+  const text = String(said).trim();
+  const pasted = asReference(text);
+  if (pasted) return [known(pasted)];
+  if (!text) {
+    return [...repos.map(r => ({value: r + '#', label: 'pull request or issue'})), ...OPEN_REFS];
   }
+  const words = text.toLowerCase().split(/[\s/#,]+/).filter(Boolean);
+  const number = words.filter(w => /^[0-9]+$/.test(w)).pop() || '';
+  const names = words.filter(w => !/^[0-9]+$/.test(w)).map(sought);
+  if (names.some(n => !n)) return [];
+  if (!names.length && number.length < 3) return [];
+  // The worst of the words' ranks, so a repository every word found as a
+  // substring sorts above one that one word found only as a subsequence.
+  const rank = hay => names.reduce((worst, n) => {
+    const r = found(n, hay);
+    return r && worst ? Math.max(worst, r) : 0;
+  }, 1);
+  const named = repos
+    .map(r => ({r, rank: rank(plain(r))}))
+    .filter(m => m.rank)
+    .sort((a, b) => a.rank - b.rank)
+    .map(m => m.r);
+  const offered = number
+    ? named.map(r => known(`${r}#${number}`))
+    // Not the half reference the box already holds: choosing one reopens the
+    // list on it, and offering it again first would make Enter a no-op.
+    : named.filter(r => (r + '#').toLowerCase() !== text.toLowerCase())
+      .map(r => ({value: r + '#', label: 'pull request or issue'}));
+  const open = OPEN_REFS
+    .map(one => {
+      const [repo, n] = one.value.split('#');
+      if (number && !n.startsWith(number)) return null;
+      return {one, rank: rank(plain(repo) + ' ' + plain(one.label))};
+    })
+    .filter(m => m && m.rank)
+    .sort((a, b) => a.rank - b.rank)
+    .map(m => m.one)
+    .filter(one => !offered.some(o => o.value === one.value));
+  const all = [...offered, ...open];
+  // Written in full for a repository the plan does not list: offered as it is,
+  // so Enter takes it rather than nothing.
+  if (!all.length && /^[\w.-]+\/[\w.-]+#[0-9]+$/.test(text)) return [known(text)];
+  return all;
+}
+
+// --- where the cited pull requests stand ------------------------------------
+//
+// jcanton, 2026-11-11: a record whose pull requests have all merged is done, and
+// one whose pull requests were all closed unmerged is shelved — offered, never
+// written. `/api/pr-states` lists only the records whose status disagrees with
+// GitHub; the table draws a mark beside the status, and the record page a line
+// with a button that fills Status (and End date) for Save. See the route for why
+// it is not automatic.
+//
+// Asked once per page, after it has drawn, and only where there is a server and
+// somebody signed in who could act on it: the route is writers-only, and a
+// rendered file has nobody to ask.
+let PR_STATES = {};
+
+function askPullRequestStates(then) {
+  // And not on a plan that names no repositories, which has nothing to look up:
+  // the route would answer an empty map for a request every page load made.
+  if (!SUGGEST.live || !(SUGGEST.repos || []).length) return;
+  fetch('/api/pr-states', {headers: {accept: 'application/json'}})
+    .then(answer => (answer.ok ? answer.json() : null))
+    .then(said => {
+      if (!said) return;
+      PR_STATES = said.records || {};
+      then(PR_STATES);
+    })
+    // A mark that is not drawn is the page as it was yesterday, and nothing to
+    // report: the question was the page's own and nobody asked it.
+    .catch(() => {});
+}
+
+// What the mark and the line say, in one place so the two pages agree.
+function prStateSentence(state) {
+  const one = state.count === 1;
+  const day = state.at ? longDate(state.at) : '';
+  const when = !day ? '' : one ? ` on ${day}` : `, the last on ${day}`;
+  const each = one ? 'Its PR' : `All ${state.count} of its PRs`;
+  return state.verdict === 'landed'
+    ? `${each} ${one ? '' : 'have '}landed${when}. Is it done?`
+    : `${each} ${one ? 'was' : 'were'} closed without landing${when}. Is it shelved?`;
+}
+
+// GitHub's mark (Octicons' `mark-github`, MIT), filled for landed and struck
+// through for dropped. Struck as well as coloured: green against red is the one
+// pair a dichromat cannot tell apart, which is the argument the status ladder is
+// built on.
+const GITHUB_MARK = 'M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17'
+  + '-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 '
+  + '0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27'
+  + '-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12'
+  + '-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21'
+  + '-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13'
+  + '.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 '
+  + '0 8c0-4.42 3.58-8 8-8Z';
+
+function prStateMark(state) {
+  if (!state) return '';
+  const said = esc(prStateSentence(state));
+  const strike = state.verdict === 'dropped'
+    ? '<path class="ghgap" d="M0 16 16 0"/><path class="ghstrike" d="M0 16 16 0"/>' : '';
+  return `<span class="ghmark gh-${esc(state.verdict)}" role="img" aria-label="${said}"`
+    + ` title="${said}"><svg viewBox="0 0 16 16" aria-hidden="true">`
+    + `<path d="${GITHUB_MARK}"/>${strike}</svg></span>`;
 }
 
 // Type-to-filter, not a picker beside the field. A datalist only completes a whole
@@ -3653,9 +3782,14 @@ function attachSuggest(input) {
     // cached at attach time would be the shorter, older list.
     const said = typed();
     const needle = sought(said);
-    const matches = source
-      .map(item => ({item, rank: found(needle, plain(item.value) + ' ' + plain(item.label))}))
-      .filter(m => !said || m.rank)
+    const ranked = input.dataset.suggest === 'prs'
+      // Its own search, for the reasons over `referencesFor`; ranked already,
+      // so every row it gives is rank 1 to the sort below and keeps its place.
+      ? referencesFor(said).map(item => ({item, rank: 1}))
+      : source
+        .map(item => ({item, rank: found(needle, plain(item.value) + ' ' + plain(item.label))}))
+        .filter(m => !said || m.rank);
+    const matches = ranked
       .filter(m => !multi || !taken().includes(m.item.value))
       // Eight are shown, so the cap already throws matches away and the eighth
       // used to be decided by the id. A substring before a subsequence — the one
@@ -3703,6 +3837,19 @@ function attachSuggest(input) {
     open();
   });
   input.addEventListener('blur', () => setTimeout(close, 150));
+  // A link pasted and never chosen from the list is still the reference it names,
+  // so the file holds one spelling. On `change`, which fires before the blur that
+  // a form or a table cell saves on, and without an `input` event of its own,
+  // which would reopen the list on a box being left.
+  if (input.dataset.suggest === 'prs') {
+    input.addEventListener('change', () => {
+      const tidied = input.value.split(',').map(one => {
+        const ref = asReference(one);
+        return ref ? (one.match(/^\s*/)[0] + ref) : one;
+      }).join(',');
+      if (tidied !== input.value) input.value = tidied;
+    });
+  }
   list.addEventListener('mousedown', event => {
     const item = event.target.closest('li');
     if (item) { event.preventDefault(); choose(item.dataset.value); }
@@ -3830,10 +3977,11 @@ function bodyToken(text, at) {
   const ref = openRef(text, at);
   if (ref) {
     return {
-      // Not a snapshot: `foldInPullRequests` grows this array in place, so a
-      // popup that opened before the answer landed reads the wider list on the
-      // next keystroke without being handed it.
-      source: SUGGEST.prs || [],
+      // Searched by `referencesFor`, which reads the plan's repositories and
+      // `OPEN_REFS` as they are at that keystroke — so a popup that opened before
+      // the server's answer landed reads the wider list on the next one.
+      search: referencesFor,
+      source: SUGGEST.repos || [],
       // The one shape whose vocabulary the server can widen.
       live: true,
       from: ref.from,
@@ -3923,9 +4071,11 @@ function attachBodyCompletion(surface) {
     // into the document on the way to typing a footnote.
     const said = token.typed.trim();
     const needle = sought(said);
-    matches = token.source
-      .map(item => ({item, rank: found(needle, plain(item.value) + ' ' + plain(item.label))}))
-      .filter(m => !said || m.rank)
+    matches = (token.search
+      ? token.search(said).map(item => ({item, rank: 1}))
+      : token.source
+        .map(item => ({item, rank: found(needle, plain(item.value) + ' ' + plain(item.label))}))
+        .filter(m => !said || m.rank))
       // Eight, so the cap throws matches away: substring before subsequence,
       // and the source's own order inside each tier. The same sort the field
       // combobox does, because a reader who has learned one of these lists has
@@ -4239,13 +4389,6 @@ def _control_html(
     return _fragment(_CONTROL, f=field, priorities=PRIORITIES, describedby=describedby)
 
 
-def _pr_sort(ref: str) -> tuple[str, int]:
-    """Newest first within a repository. A PR number is a number, and sorting the
-    references as text puts #999 above #1400."""
-    repo, _, number = ref.partition("#")
-    return repo, int(number) if number.isdigit() else 0
-
-
 def _suggestions(index: Index, linkable: bool = False, live: bool = False) -> dict:
     """What already exists, offered rather than remembered.
 
@@ -4283,18 +4426,21 @@ def _suggestions(index: Index, linkable: bool = False, live: bool = False) -> di
     # {value, label}: the value is what gets written to the file, the label is the
     # human hint beside it. An id typed from memory is a dangling reference the
     # validator rejects after the save; offered, it cannot be mistyped at all.
-    # Two kinds of entry for one field. A whole reference completes a PR already
-    # cited somewhere in the plan; a bare `org/repo#` completes the half nobody
-    # remembers — which org, and whether it is kiln4py or kiln4pygen — and leaves
-    # the number to be typed. Everything here comes from the corpus, so it costs
-    # no network and cannot be stale in a way the plan is not already stale.
-    refs = {ref for record in index.records.values() for ref in record.prs}
-    repos = {ref.split("#")[0] + "#" for ref in refs if "#" in ref}
+    # The repositories the PLAN names, and nothing read out of the corpus. This
+    # offered every reference some record already cited, and a repository for
+    # each — jcanton, 2026-11-11, on why that was the wrong list: a pull request
+    # cited by one record almost always belongs to that record and not the next,
+    # and anything somebody had pasted into `prs:` came back as a suggestion,
+    # which on icon4py's plan was a page of the knowledge base. A repository not
+    # in `config/defaults.yaml` is typed in full; `referencesFor` in the page is
+    # what turns `icon4py 1403` into `C2SM/icon4py#1403` for one that is.
+    #
+    # `prs` is the bare `owner/repo#` of each, for the table's menu, which
+    # completes through a native datalist and a prefix and has nothing to run a
+    # search with. The field and the body read `repos` and the live list.
     return {
-        "prs": (
-            [{"value": r, "label": "any pull request"} for r in sorted(repos)]
-            + [{"value": r, "label": ""} for r in sorted(refs, key=_pr_sort, reverse=True)]
-        ),
+        "prs": [{"value": f"{r}#", "label": "pull request or issue"} for r in index.repositories],
+        "repos": list(index.repositories),
         "people": [{"value": p, "label": ""} for p in sorted(people)],
         # Named `records`, filled from the PLAN, deliberately: these complete
         # `parent` and `depends_on`, and offering an issue or a note there
@@ -4529,6 +4675,7 @@ def _combobox_html(index: Index | None, linkable: bool = False, live: bool = Fal
             "records": [],
             "tags": [],
             "prs": [],
+            "repos": [],
             "cycles": [],
             "linkable": [],
             "live": False,

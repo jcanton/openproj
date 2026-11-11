@@ -687,7 +687,8 @@ function shown(row, key) {
   // The title is the way into the shaping doc; the id is the way to cite it.
   // A cell can be a link and still be editable. Making everything editable first
   // is what silently turned the PR column into plain text.
-  if (key === 'title') return `<a href="{{ links.record }}${esc(row.id)}">${esc(row.title)}</a>`;
+  if (key === 'title')
+    return prMarkOf(row.id) + `<a href="{{ links.record }}${esc(row.id)}">${esc(row.title)}</a>`;
   if (key === 'prs') return clamped((value || []).map(prLink), 'pull request', 'pull requests');
   // No kind chip here. `pitch-0c0001` already says pitch, in a prefix the model
   // guarantees agrees with the kind, so the chip was restating the first word of
@@ -1072,6 +1073,18 @@ function cell(row, key, place) {
     `${rungs ? ` data-rungs="${esc(rungs)}"` : ''}` +
     `${reachable ? ' tabindex="-1"' : ''}` +
     ` class="${classes}"${tip ? ` title="${esc(tip)}"` : ''}>${body}</td>`;
+}
+
+// Whether GitHub disagrees with this row's status — see `askPullRequestStates`.
+// In FRONT of the title, and not beside the status chip it is about or the id:
+// both of those columns are sized to what they held before the answer arrived,
+// and each clipped the mark to an ellipsis. A title is cut at its end, so a mark
+// at its start is the one place a late arrival is always drawn — and the title
+// is frozen, so it is on screen however far the table is scrolled. Asked
+// through `typeof` because that script ships only to somebody who can write, and
+// a reader's table has neither the function nor the answer.
+function prMarkOf(id) {
+  return typeof PR_STATES === 'undefined' ? '' : prStateMark(PR_STATES[id]);
 }
 
 // `#1223`, not `kilnlab/kiln4py#1223`. Every reference in a plan is to the repository
@@ -4397,6 +4410,9 @@ for (const th of document.querySelectorAll('th[data-sort]')) {
 regroup(DATA.problems);
 summarise();
 draw();
+// And then, once the rows are on screen, whether GitHub disagrees with any of
+// them — a mark arriving a moment later is better than a table that waits.
+if (typeof askPullRequestStates === 'function') askPullRequestStates(() => draw());
 // After the first draw, because there is nothing to measure before the rows
 // exist. Stored widths win: they were set by hand, on purpose.
 // One name for "make the table the width of the room it is in", so the load, the
@@ -4814,6 +4830,10 @@ th .grip:hover::before, th .grip.dragging::before { background: var(--accent); w
    ellipsise, so without this the title runs under the column beside it. */
 #rows tbody td[data-col="title"] > a { display: block; overflow: hidden;
                                        text-overflow: ellipsis; }
+/* GitHub's mark in front of a title, floated so the block link above sits beside
+   it and still ellipsises: inline, it is a line of its own over the title, and
+   every row that has one is two rows tall. */
+#rows tbody td[data-col="title"] > .ghmark { float: left; margin: .2em 6px 0 0; }
 /* EVERY cell, title included — jcanton, 2026-08-21: "I'd replace the newlines
    with ... and disappearing words (on all cells), titles included". A title is a
    sentence and used to wrap for that reason; the row it wraps in is three rows

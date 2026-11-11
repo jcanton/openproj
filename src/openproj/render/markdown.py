@@ -292,8 +292,11 @@ def _math_double(
 
 
 _MD = (
-    MarkdownIt("commonmark", {"html": False, "highlight": _highlighted})
-    .enable(["table", "strikethrough"])
+    MarkdownIt("commonmark", {"html": False, "highlight": _highlighted, "linkify": True})
+    # `linkify`, so a URL pasted bare into a body is a link and not a line of
+    # text somebody has to copy into the address bar — which is how pitches
+    # migrated from HackMD were written, and how GitHub draws them.
+    .enable(["table", "strikethrough", "linkify"])
     .use(tasklists_plugin)
     # `![The driver](assets/0123….png){width=60%}` — jcanton, 2026-08-25, asking
     # for figures that can be sized and stood side by side, on a slide and in a
@@ -751,6 +754,12 @@ def _heading_ids(state: StateCore) -> None:
         found.append({"level": level, "id": identifier, "text": text})
 
 
+# Only a URL that spells its scheme. linkify-it's default also guesses at bare
+# domains, and in a plan about Python code `model.py` is a domain in Paraguay: it
+# was drawn as a link to `http://model.py`. `www.…` is the casualty, and is one
+# `https://` away from working. Email is off for the same reason — a guess about
+# what a person meant is a link nobody asked for.
+_MD.linkify.set({"fuzzy_link": False, "fuzzy_email": False})
 _MD.core.ruler.push("openproj_source_lines", _source_lines)
 _MD.core.ruler.push("openproj_pr_refs", _pr_refs)
 _MD.core.ruler.push("openproj_heading_ids", _heading_ids)

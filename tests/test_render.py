@@ -2443,38 +2443,28 @@ def test_an_unknown_status_still_reaches_the_index(seed_index: Index):
     assert [g["status"] for g in groups] == ["done", "wip"]
 
 
-def test_a_pr_reference_completes_in_two_halves(demo_rendered: tuple[Path, Index]):
-    """`kilnlab/kiln4py#` and whole references, from what the plan already cites.
+def test_a_pr_reference_completes_from_the_plans_repositories_alone(seed_index: Index):
+    """The repositories `config/defaults.yaml` names, each as the `owner/repo#`
+    half nobody remembers, and nothing the corpus cites.
 
-    Nobody remembers whether it is kiln4py or kiln4pygen, or which org owns it,
-    and that half of the reference is the same on almost every row — so it is
-    offered on its own, with the number left to type.
+    It used to offer every reference some record cited, and a repository for
+    each. jcanton, 2026-11-11: a pull request one record cites belongs to that
+    record far more often than to the next, and whatever somebody had put in
+    `prs:` came back as a suggestion — on icon4py's plan, a knowledge base page.
     """
     from openproj.render import _suggestions
 
-    _, index = demo_rendered
-    offered = _suggestions(index)["prs"]
-    values = [item["value"] for item in offered]
-    cited = {ref for e in index.plan.values() for ref in e.prs}
+    cited = {ref for record in seed_index.records.values() for ref in record.prs}
+    assert cited, "this test cannot show a citation left out: the corpus cites none"
 
-    assert "kilnlab/kiln4py#" in values
-    assert cited <= set(values)
-    assert values.index("kilnlab/kiln4py#") < min(values.index(c) for c in cited)
+    bare = _suggestions(seed_index)
+    named = _suggestions(
+        seed_index.model_copy(update={"repositories": ["kilnlab/kiln4py", "griddle/griddle"]})
+    )
 
-
-def test_pull_requests_are_offered_newest_first(demo_rendered: tuple[Path, Index]):
-    """Sorted as text, #999 sits above #1400 — so the oldest work is what the
-    list shows first and the newest is what falls off the end of it."""
-    from openproj.render import _suggestions
-
-    _, index = demo_rendered
-    numbers = [
-        int(item["value"].split("#")[1])
-        for item in _suggestions(index)["prs"]
-        if item["value"].split("#")[1]
-    ]
-
-    assert numbers == sorted(numbers, reverse=True)
+    assert (bare["prs"], bare["repos"]) == ([], [])
+    assert named["repos"] == ["kilnlab/kiln4py", "griddle/griddle"]
+    assert [item["value"] for item in named["prs"]] == ["kilnlab/kiln4py#", "griddle/griddle#"]
 
 
 def test_choosing_a_repository_does_not_end_the_entry(seed_index: Index):
@@ -3516,6 +3506,25 @@ def test_the_preview_shows_the_same_two_syntaxes_the_page_will(seed_index: Index
 
     assert [e.attrs.get("class") for e in drawn if e.tag == "ul"] == ["contains-task-list"]
     assert ("s", "Dropped") in [(e.tag, e.text) for e in drawn]
+
+
+
+def test_a_url_pasted_bare_is_a_link_and_a_filename_is_not():
+    """jcanton, 2026-11-11: a pitch reading "ICON has a https://easy.gems…" drew
+    the address as text to be copied into a browser by hand. The second half is
+    the reason `fuzzy_link` is off: linkify-it's default reads `model.py` as a
+    domain in Paraguay, which in a plan about Python code is half the filenames."""
+    drawn = elements(
+        preview_html(
+            "See https://example.org/bubble.html, model.py, www.example.org, a@b.org,"
+            " `https://example.org/code` and acme/repo#12."
+        )
+    )
+
+    assert [(e.attrs["href"], e.text) for e in drawn if e.tag == "a"] == [
+        ("https://example.org/bubble.html", "https://example.org/bubble.html"),
+        ("https://github.com/acme/repo/pull/12", "acme/repo#12"),
+    ]
 
 
 _MATHS = """A step of $\\Delta t$ and a wave.

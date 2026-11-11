@@ -90,6 +90,7 @@ from .model import (
     MAX_SLIDE_BYTES,
     PEOPLE_DIR,
     RUNG,
+    STATUS_ORDER,
     Config,
     Cycle,
     Person,
@@ -182,6 +183,19 @@ _WHOLE_PLAN = (
 # WARNING and above on stderr, which is what Cloud Run collects, and a deployment
 # that does configure logging can route `openproj.web` without this file knowing.
 _LOG = logging.getLogger(__name__)
+
+# A whole reference, `owner/repo#N`, which is what `/api/pr-states` looks up.
+# Anything else somebody put in `prs:` — a link, a branch, a note — is not a
+# pull request to ask GitHub about.
+_REF = re.compile(r"[\w.-]+/[\w.-]+#[0-9]+")
+# The budget `/api/pr-states` spends, against sixty calls an hour. At most this
+# many lookups per request; none while GitHub says fewer than the reserve are
+# left, which is the completion's; an open reference re-asked at this age, and
+# a landed or dropped one at this.
+STATE_LOOKUPS = 8
+STATE_RESERVE = 20
+STATE_OPEN_TTL = 15 * 60
+STATE_CLOSED_TTL = 6 * 60 * 60
 
 
 def _refusal(error: Exception) -> HTTPException:
@@ -3087,7 +3101,11 @@ def create_app(
         return JSONResponse({"html": str(render._body_html(record, render.ROUTES))})
 
     # What GitHub last said about each repository the plan names:
-    # `owner/repo -> (good until, entries, whether the last attempt failed)`.
+    # `owner/repo -> (when it was asked, entries, whether the last attempt failed)`.
+    # When it was asked rather than when it expires, because two routes read it
+    # at two ages: the completion wants it five minutes fresh, the PR marks
+    # fifteen, and one expiry would make the slower reader pay the faster one's
+    # calls.
     #
     # On the closure and not at module scope because the repositories are this
     # plan's and the token is this app's — a module-level cache is one every test
@@ -3096,8 +3114,11 @@ def create_app(
     pulls: dict[str, tuple[float, list[dict[str, object]], bool]] = {}
     pulls_lock = threading.Lock()
 
-    def _live_pull_requests(repositories: list[str]) -> tuple[list[dict], bool]:
-        """Every open pull request in these repositories, and whether it is stale.
+    def _live_pull_requests(
+        repositories: list[str], ttl: float | None = None
+    ) -> tuple[list[dict], bool]:
+        """Every open pull request and issue in these repositories, and whether it
+        is stale.
 
         `{value, label}` — the shape the combobox already reads, so the page
         merges this with what the corpus cites and needs no second code path.
@@ -3116,7 +3137,7 @@ def create_app(
         pull request that was open five minutes ago is almost certainly still
         open.
 
-        The exceptions are named rather than caught wholesale: `open_pull_requests`
+        The exceptions are named rather than caught wholesale: `open_references`
         documents itself as raising for a refusal, and around that the failures
         are httpx's transport errors and a body that is not the JSON this reads.
         Anything outside the tuple reaches the route and 500s it, which is the
@@ -3125,7 +3146,7 @@ def create_app(
         """
         import json as _json
 
-        from .github import PULLS_TTL_SECONDS, open_pull_requests
+        from .github import PULLS_TTL_SECONDS, open_references
 
         # `github_transport` is `create_app`'s one test seam for this: an httpx
         # transport a test answers from without a socket, the same shape and the
@@ -3134,14 +3155,15 @@ def create_app(
 
         app_for = credentials if hasattr(credentials, "api_headers") else None
         now = time.monotonic()
+        fresh_for = PULLS_TTL_SECONDS if ttl is None else ttl
         offered: list[dict] = []
         stale = False
         with pulls_lock:
             for repository in repositories:
-                until, entries, failed = pulls.get(repository, (0.0, [], False))
-                if now >= until:
+                asked, entries, failed = pulls.get(repository, (-math.inf, [], False))
+                if now >= asked + fresh_for:
                     try:
-                        entries = open_pull_requests(repository, app_for, github_transport)
+                        entries = open_references(repository, app_for, github_transport)
                         failed = False
                     except (httpx.HTTPError, _json.JSONDecodeError, KeyError, ValueError):
                         # WARNING and not an exception: the operator wants to know
@@ -3150,17 +3172,23 @@ def create_app(
                         # has been renamed.
                         _LOG.warning("could not read open pull requests for %s", repository)
                         failed = True
-                    pulls[repository] = (now + PULLS_TTL_SECONDS, entries, failed)
+                    pulls[repository] = (now, entries, failed)
                 stale = stale or failed
+                # Which of the two leads the label, because `#1403` reads the same
+                # for either and the reader choosing between them is asking which.
                 offered += [
-                    {"value": f"{repository}#{one['number']}", "label": str(one["title"])}
+                    {
+                        "value": f"{repository}#{one['number']}",
+                        "label": f"{'PR' if one['pull'] else 'issue'} · {one['title']}",
+                    }
                     for one in entries
                 ]
         return offered, stale
 
     @app.get("/api/prs")
     def prs(request: Request) -> JSONResponse:
-        """Open pull requests in the repositories the PLAN names, `{value,label}`.
+        """Open pull requests and issues in the repositories the PLAN names,
+        `{value,label}`.
 
         The completion in a shaping document and in the `prs:` field has always
         offered what the corpus already cites, which answers "which of the ones
@@ -3192,6 +3220,134 @@ def create_app(
         _, index = index_now()
         offered, stale = _live_pull_requests(index.repositories)
         return JSONResponse({"prs": offered, "stale": stale})
+
+    # Where each cited pull request or issue stands: `owner/repo#N -> (good until,
+    # {"state", "at"})`. A landed or dropped one is kept for hours, because it
+    # almost never changes back; an open one is asked about again at the
+    # repository's open list, which answers every open one for a single call.
+    states: dict[str, tuple[float, dict[str, object]]] = {}
+    states_lock = threading.Lock()
+
+    def _reference_states(index: Index) -> tuple[dict[str, dict[str, object]], bool]:
+        """What GitHub says about every reference the plan cites, within a budget.
+
+        **Sixty an hour is the budget this is written against**, which is what a
+        deployment gets for a public repository the App is not installed on —
+        and it should not be: installing it there hands this server push access
+        to that repository's code. So:
+
+        * A cited reference that is in its repository's open list is open, for
+          no call of its own. The list is the one the completion already asks
+          for, read here at fifteen minutes rather than five.
+        * Anything else is asked about once, `/issues/N`, and a closed answer is
+          kept for six hours. Only an open one outside the hundred most recently
+          touched is asked about again, at the open list's age.
+        * At most `STATE_LOOKUPS` of those per request, and none once GitHub
+          says fewer than `STATE_RESERVE` calls are left, so the first page
+          after a cold start does not spend the hour the completion needs. What
+          is not resolved yet is reported as `pending` and asked about by the
+          next page that wants it.
+
+        Only the repositories the plan names. A reference to anywhere else is
+        not looked up at all, for the reason `/api/prs` takes no input.
+        """
+        from .github import reference_state
+
+        app_for = credentials if hasattr(credentials, "api_headers") else None
+        wanted = sorted(
+            {
+                ref
+                for record in index.plan.values()
+                for ref in record.prs
+                if _REF.fullmatch(ref) and ref.split("#")[0] in index.repositories
+            }
+        )
+        open_now = {
+            one["value"] for one in _live_pull_requests(index.repositories, STATE_OPEN_TTL)[0]
+        }
+        now = time.monotonic()
+        known: dict[str, dict[str, object]] = {}
+        pending = False
+        spent = 0
+        left: int | None = None
+        with states_lock:
+            for ref in wanted:
+                if ref in open_now:
+                    known[ref] = {"state": "open", "at": None}
+                    continue
+                until, said = states.get(ref, (-math.inf, {}))
+                if now < until:
+                    known[ref] = said
+                    continue
+                if spent >= STATE_LOOKUPS or (left is not None and left < STATE_RESERVE):
+                    pending = True
+                    continue
+                repository, number = ref.split("#")
+                spent += 1
+                try:
+                    said, left = reference_state(
+                        repository, int(number), app_for, github_transport
+                    )
+                except (httpx.HTTPError, json.JSONDecodeError, KeyError, ValueError):
+                    _LOG.warning("could not read the state of %s", ref)
+                    pending = True
+                    continue
+                ttl = STATE_OPEN_TTL if said["state"] == "open" else STATE_CLOSED_TTL
+                states[ref] = (now + ttl, said)
+                known[ref] = said
+        return known, pending
+
+    @app.get("/api/pr-states")
+    def pr_states(request: Request) -> JSONResponse:
+        """Which records' pull requests have all landed, or all been dropped.
+
+        jcanton, 2026-11-11: mark a record done once its pull requests are
+        merged, shelved once they are all closed unmerged — and, asked whether
+        that should be automatic, "go with the suggested version". So this
+        writes nothing. It says which records disagree with what GitHub says,
+        and the page offers the change for a person to make: the table draws a
+        mark, the record page a button that fills Status and End date for Save.
+
+        Automatic was turned down for three reasons. It would make the server a
+        second writer of frontmatter, which `AGENTS.md` keeps to `derived/` so
+        that people and a bot never fight over one file. A pull request closed
+        unmerged is far more often replaced than abandoned. And `done` asks for
+        an `end_date`, which an automatic write would have to make up.
+
+        `{"records": {id: {"verdict": "landed" | "dropped", "count", "at"}},
+        "pending"}`, and only for a record whose status says otherwise: one with
+        no references, or with any still open, or with any not yet known, is
+        left out. "Landed" wins over "dropped" — a pull request closed and
+        replaced by one that merged is the ordinary case, and the work landed.
+
+        Takes no input, and is for signed-in writers, for the reasons `/api/prs`
+        gives.
+        """
+        if not may_write(request):
+            raise HTTPException(403, "sign in to read where the pull requests stand")
+        _, index = index_now()
+        known, pending = _reference_states(index)
+        verdicts: dict[str, dict[str, object]] = {}
+        for record_id, record in index.plan.items():
+            if record.status not in STATUS_ORDER or record.status in ("done", "shelved"):
+                continue
+            refs = [
+                ref
+                for ref in record.prs
+                if _REF.fullmatch(ref) and ref.split("#")[0] in index.repositories
+            ]
+            said = [known.get(ref) for ref in refs]
+            if not refs or any(one is None or one["state"] == "open" for one in said):
+                continue
+            landed = [one for one in said if one and one["state"] == "landed"]
+            closing = landed or said
+            dates = sorted(str(one["at"]) for one in closing if one and one["at"])
+            verdicts[record_id] = {
+                "verdict": "landed" if landed else "dropped",
+                "count": len(refs),
+                "at": dates[-1] if dates else None,
+            }
+        return JSONResponse({"records": verdicts, "pending": pending})
 
     # Two paths, one answer, because `/healthz` is not ours on Cloud Run.
     #

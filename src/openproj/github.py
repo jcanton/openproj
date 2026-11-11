@@ -79,9 +79,11 @@ def app_jwt(app_id: str, private_key_pem: str, now: float | None = None) -> str:
 
 # What one call asks for, and it is one call. A completion offers eight rows and
 # filters as somebody types, so the hundred most recently updated open pull
-# requests is already a wider net than it needs — and following `Link` headers is
-# a request count nobody predicted against a rate limit somebody else shares.
-_PULLS_QUERY = {"state": "open", "per_page": 100, "sort": "updated", "direction": "desc"}
+# requests and issues is already a wider net than it needs — and following `Link`
+# headers is a request count nobody predicted against a rate limit somebody else
+# shares. A number that fell outside it is still offered: the page writes
+# `owner/repo#<what was typed>` whether or not it knows a title for it.
+_OPEN_QUERY = {"state": "open", "per_page": 100, "sort": "updated", "direction": "desc"}
 # Long enough that a burst of typing is one call and short enough that a pull
 # request opened during a betting table turns up in it — jcanton, 2026-08-25: "we
 # can even reduce the call frequency to every 5 minutes".
@@ -160,7 +162,7 @@ class GitHubApp:
     def api_headers(self) -> dict[str, str]:
         """The headers an authenticated call to the API sends, token included.
 
-        Public because `open_pull_requests` below is not a method: it works with
+        Public because `open_references` below is not a method: it works with
         no App at all, and reaching into `_headers` from outside the class would
         be a second site deciding what an API call looks like — which is exactly
         what `_headers` exists to stop.
@@ -224,17 +226,25 @@ class GitHubApp:
         return pygit2.RemoteCallbacks(credentials=pygit2.UserPass("x-access-token", self.token()))
 
 
-def open_pull_requests(
+def open_references(
     repository: str,
     app: GitHubApp | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> list[dict[str, object]]:
-    """Every open pull request in one repository, most recently updated first.
+    """The open pull requests and issues in one repository, most recently updated
+    first.
 
-    `[{"number": 1403, "title": "..."}]` and nothing else off the answer: the
-    completion needs the number nobody can remember and the title that finds it,
-    and every other field GitHub sends is bytes on a page and something to keep
-    in step.
+    `[{"number": 1403, "title": "...", "pull": True}]` and nothing else off the
+    answer: the completion needs the number nobody can remember, the title that
+    finds it, and which of the two it is. Every other field GitHub sends is bytes
+    on a page and something to keep in step.
+
+    **The issues endpoint, because it answers both in one call.** GitHub counts a
+    pull request as an issue and marks it with a `pull_request` key; `/pulls`
+    answers the pull requests alone, so asking for both that way is twice the
+    calls against an anonymous limit of sixty an hour. jcanton, 2026-11-11, asking
+    for "PRs and issues" to complete alike — `owner/repo#N` is the one spelling
+    GitHub resolves for either.
 
     **Authenticated when it can be, anonymous when it cannot, and the fallback is
     not a nicety.** The App's installation is `repository_selection: selected` on
@@ -255,6 +265,28 @@ def open_pull_requests(
     `web.py`'s route, which answers with what the corpus already cites, because a
     completion that is briefly narrower is a completion and a 502 is not.
     """
+    response = _ask(f"/repos/{repository}/issues", _OPEN_QUERY, app, transport)
+    return [
+        {
+            "number": int(one["number"]),
+            "title": str(one.get("title") or ""),
+            "pull": "pull_request" in one,
+        }
+        for one in response.json()
+    ]
+
+
+def _ask(
+    path: str,
+    params: dict[str, object] | None,
+    app: GitHubApp | None,
+    transport: httpx.BaseTransport | None,
+) -> httpx.Response:
+    """One GET against the API, as the App where it can and anonymously where not.
+
+    Raises for any refusal that is left. See `open_references` for why a 401, 403
+    or 404 to the App's token is asked again without it, and why nothing else is.
+    """
     # An explicit one wins, then the App's — which already documents itself as
     # "an httpx transport a test can answer from without a socket". Two names for
     # one seam would be two ways for a test to think it had stubbed the network.
@@ -262,9 +294,7 @@ def open_pull_requests(
 
     def ask(headers: dict[str, str]) -> httpx.Response:
         with httpx.Client(transport=reach, timeout=10.0) as client:
-            return client.get(
-                f"{_API}/repos/{repository}/pulls", headers=headers, params=_PULLS_QUERY
-            )
+            return client.get(f"{_API}{path}", headers=headers, params=params)
 
     anonymous = {
         "Accept": "application/vnd.github+json",
@@ -282,7 +312,38 @@ def open_pull_requests(
     if response is None:
         response = ask(anonymous)
     response.raise_for_status()
-    return [
-        {"number": int(one["number"]), "title": str(one.get("title") or "")}
-        for one in response.json()
-    ]
+    return response
+
+
+def reference_state(
+    repository: str,
+    number: int,
+    app: GitHubApp | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> tuple[dict[str, object], int | None]:
+    """Where one pull request or issue stands, and how many calls are left.
+
+    `{"state": "open" | "landed" | "dropped", "at": "YYYY-MM-DD" | None}`.
+    *Landed* is a merged pull request or an issue closed as completed; *dropped*
+    is one closed any other way — unmerged, not planned, a duplicate. `at` is the
+    day it landed or was dropped.
+
+    The second half is GitHub's `x-ratelimit-remaining`, because the caller
+    spends a budget of sixty an hour on these when the App cannot see the
+    repository, and the answer to "can I afford one more" is in the header of
+    the last one.
+    """
+    response = _ask(f"/repos/{repository}/issues/{number}", None, app, transport)
+    one = response.json()
+    left = response.headers.get("x-ratelimit-remaining")
+    if one.get("state") != "closed":
+        return {"state": "open", "at": None}, int(left) if left else None
+    pull = one.get("pull_request") or {}
+    merged = pull.get("merged_at")
+    if "pull_request" in one:
+        landed = bool(merged)
+    else:
+        landed = one.get("state_reason") in (None, "completed")
+    when = str(merged or one.get("closed_at") or "")[:10] or None
+    state = "landed" if landed else "dropped"
+    return {"state": state, "at": when}, int(left) if left else None

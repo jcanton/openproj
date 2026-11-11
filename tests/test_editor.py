@@ -9723,175 +9723,152 @@ _COMPLETING_A_PULL_REQUEST = r"""
   const key = code => !!editor.keyBinding.onCommandKey(
     {preventDefault() {}, stopPropagation() {}}, 0, code);
   const line = () => SURFACE.text().split('\n').pop();
+  const typing = async text => { editor.insert(text);
+    await new Promise(r => setTimeout(r, 250)); return shown(); };
+  const taking = async () => { const took = key(13);
+    await new Promise(r => setTimeout(r, 250)); return {took, line: line(), list: shown()}; };
 
   editor.focus();
   editor.navigateFileEnd();
   // A word with no slash and no hash in it: prose, and nothing to complete.
-  editor.insert('\nSee griddle');
-  await new Promise(r => setTimeout(r, 250));
-  const overProse = shown();
+  const overProse = await typing('\nSee griddle');
+  // A heading is a hash with nothing to search for.
+  editor.insert('\n');
+  const overHeading = await typing('##');
+  // And the rest is typed on that line, the heading taken back off it.
+  editor.remove('left'); editor.remove('left');
 
-  // The repository, half typed. Both what is in it: the bare `org/repo#`, which
-  // is the half nobody remembers, and the reference already cited in the plan.
-  for (let i = 0; i < 7; i++) editor.remove('left');
-  editor.insert('griddle/');
-  await new Promise(r => setTimeout(r, 250));
-  const onRepo = shown();
+  // Half the name and a hash: the repository, with the number left to type.
+  const onRepo = await typing('griddle#');
+  const tookRepo = await taking();
+  const numbered = await typing('1877');
+  const tookRef = await taking();
 
-  // Taking the bare one leaves the number to be typed, so the popup stays.
-  const tookRepo = key(13);
-  await new Promise(r => setTimeout(r, 250));
-  const afterRepo = {line: line(), list: shown()};
+  // The half of a name and a number, which is the whole ask.
+  const other = await typing(' and kiln4py#1403');
+  const tookOther = await taking();
 
-  editor.insert('1877');
-  await new Promise(r => setTimeout(r, 250));
-  const narrowed = shown();
-  const tookRef = key(13);
-  await new Promise(r => setTimeout(r, 250));
-  const afterRef = {line: line(), list: shown()};
-
-  // And the other repository, reached from the half of the name that is not the
-  // organisation — the list matches on the whole reference.
-  editor.insert(' and kiln4py#');
-  await new Promise(r => setTimeout(r, 250));
-  const other = shown();
-  return {overProse, onRepo, tookRepo, afterRepo, narrowed, tookRef, afterRef, other};
+  // A link pasted from the browser is the reference it names.
+  const pasted = await typing(' and https://github.com/griddle/griddle/pull/12/files');
+  const tookPasted = await taking();
+  return {overProse, overHeading, onRepo, tookRepo, numbered, tookRef, other, tookOther,
+          pasted, tookPasted};
 """
 
 
-def test_the_second_editor_completes_a_pull_request_in_the_body(client: TestClient, tmp_path: Path):
-    """jcanton, 2026-08-25, asked whether the autofill reaches pull requests from
-    the two repositories this plan is about — "ideally both in the PRs field as
-    well as in the body".
+@pytest.fixture
+def naming_client(tmp_path: Path):
+    """The corpus, with the two repositories this plan says its work happens in."""
+    path = tmp_path / "named.git"
+    pygit2.init_repository(str(path), bare=True, initial_head="main")
+    seeded = dict(SEED)
+    seeded["config/defaults.yaml"] += "repositories: [kilnlab/kiln4py, griddle/griddle]\n"
+    commit_directly(path, seeded, "seed the corpus")
+    with TestClient(create_app(path, auth="dev", secret=SECRET)) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        yield client
 
-    The field has completed them since `_suggestions` was written. The body
-    completed nothing, although `_pr_refs` has rendered `org/repo#123` in prose
-    as a link for just as long: the notation was readable and unwritable.
 
-    **What it offers is what the plan already cites**, and that is the whole
-    answer to "does it work for kiln4py and griddle". There is no live lookup —
-    every page here is inlined and reaches no network, which is the rule
-    `static/VENDOR.md` exists for — so a repository is offered once some record
-    names a pull request in it, and the bare `org/repo#` for each of those comes
-    with it. The two references below are put in through the write path rather
-    than by editing a fixture, because the write path is what a person uses.
+def test_the_second_editor_completes_a_pull_request_in_the_body(
+    naming_client: TestClient, tmp_path: Path
+):
+    """jcanton, 2026-11-11: "`icon4py PRnr`" — half the name of a repository the
+    plan lists, and a number, is a whole reference.
 
-    `overProse` is the assertion this feature could most easily be wrong in the
-    annoying direction: a trigger that fired on any word would put a popup over
-    everybody's writing, and nothing but somebody complaining would say so.
+    The body completes the shape `_pr_refs` renders. What it offers comes from the
+    plan's `repositories:` and nothing the corpus cites: a reference one record
+    names belongs to that record far more often than to the next one. The page is
+    a file here, so `/api/prs` answers nothing and every row below is written from
+    what was typed — which is the point of the number half: a merged pull request
+    is never in the open list and is cited just as often.
+
+    `overProse` and `overHeading` are the two this could most easily get wrong in
+    the annoying direction — a popup over somebody's writing, with Enter taking
+    the first row on the way to a new line.
     """
-    for record, refs in (
-        (OTHER, ["kilnlab/kiln4py#1403"]),
-        (DONE, ["griddle/griddle#1877", "kilnlab/kiln4py#1521"]),
-    ):
-        written = client.patch(
-            f"/api/record/{record}",
-            json={
-                "base_commit": head(client),
-                "fields": {"prs": refs},
-                "body": None,
-            },
-        )
-        assert written.status_code == 200, written.text
-
     got = measured_in(
         chrome(),
-        client.get(f"/detail/{TASK}?editor=ace").text,
+        naming_client.get(f"/detail/{TASK}?editor=ace").text,
         tmp_path / "prs.html",
         1400,
         _COMPLETING_A_PULL_REQUEST,
         query="?editor=ace",
-        patience=6800,
+        patience=8000,
     )
 
-    assert got["overProse"] is None, (
-        f"a word with no slash and no hash in it opened a popup: {got['overProse']}"
+    assert got["overProse"] is None, f"prose opened a popup: {got['overProse']}"
+    assert got["overHeading"] is None, f"a heading opened a popup: {got['overHeading']}"
+    assert got["onRepo"] == ["griddle/griddle#"], got["onRepo"]
+    assert got["tookRepo"]["took"] and got["tookRepo"]["line"] == "griddle/griddle#", (
+        got["tookRepo"]
     )
-    assert got["onRepo"] == ["griddle/griddle#", "griddle/griddle#1877"], got["onRepo"]
-    assert got["tookRepo"] and got["afterRepo"]["line"] == "See griddle/griddle#", (
-        f"taking the bare repository wrote something else: {got['afterRepo']}"
+    assert got["numbered"] == ["griddle/griddle#1877"], got["numbered"]
+    assert got["tookRef"] == {"took": True, "line": "griddle/griddle#1877", "list": None}, (
+        got["tookRef"]
     )
-    assert got["afterRepo"]["list"], (
-        "the popup closed on half a reference, so the number it left to be typed "
-        "has to be remembered rather than chosen"
+    assert got["other"] == ["kilnlab/kiln4py#1403"], got["other"]
+    assert got["tookOther"]["line"].endswith(" and kilnlab/kiln4py#1403"), got["tookOther"]
+    assert got["pasted"] == ["griddle/griddle#12"], got["pasted"]
+    assert got["tookPasted"]["line"].endswith(" and griddle/griddle#12"), (
+        f"the link was not replaced by the reference it names: {got['tookPasted']}"
     )
-    assert got["narrowed"] == ["griddle/griddle#1877"], got["narrowed"]
-    assert got["tookRef"] and got["afterRef"] == {
-        "line": "See griddle/griddle#1877",
-        "list": None,
-    }, got["afterRef"]
-    # The bare `org/repo#` leads, because `kiln4py#` is a substring of it too —
-    # and it is the entry that is worth the most when the number is the part
-    # nobody has memorised.
-    assert got["other"] == [
-        "kilnlab/kiln4py#",
-        "kilnlab/kiln4py#1521",
-        "kilnlab/kiln4py#1403",
-    ], f"the other repository's references are not offered: {got['other']}"
 
 
-_WIDENING = """
+_REFERENCES = """
 (async () => {
-  const values = () => SUGGEST.prs.map(one => one.value);
-  const before = values();
+  const before = {prs: SUGGEST.prs.map(one => one.value), repos: SUGGEST.repos};
   widenPullRequests();
   // The fetch and its three `.then`s are microtasks; the shim's clock is not
   // involved, so draining the queue is what waiting means here.
   for (let i = 0; i < 30; i++) await Promise.resolve();
-  const after = values();
-  // And asking again asks nothing: one page, one call.
   widenPullRequests();
   for (let i = 0; i < 30; i++) await Promise.resolve();
-  return {before, after, again: values(),
-          labels: Object.fromEntries(SUGGEST.prs.map(one => [one.value, one.label])),
-          live: SUGGEST.live};
+  const asked = q => referencesFor(q)
+    .map(one => (one.label ? one.value + ' ' + one.label : one.value));
+  const queries = ['', 'kiln4py 1521', 'kiln 15', 'griddle', 'carry', '#1877', '1877', '#1', '#',
+    'https://github.com/kilnlab/kiln4py/pull/77/files', 'https://github.com/acme/widgets/issues/3',
+    'acme/widgets#3', 'acme/widgets', 'kilnlab/kiln4py#'];
+  return {before, live: SUGGEST.live, open: OPEN_REFS.length,
+          said: Object.fromEntries(queries.map(q => [q, asked(q)]))};
 })()
 """
 
 
-def test_the_page_widens_its_pull_requests_with_what_is_open_now(client: TestClient):
-    """jcanton, 2026-08-25: "would it be possible to have a page connect to the
-    network to get the actual list of PRs from the repos?"
+def test_a_reference_is_completed_from_the_plans_repositories(naming_client: TestClient):
+    """jcanton, 2026-11-11, on a box that worked "in a middle-ground kind of way
+    that is not intuitive": it offered references other records already cite,
+    a pasted URL did not match the `C2SM/icon4py#` it suggested, and a knowledge
+    base page somebody had put in `prs:` came back as a suggestion.
 
-    The page still connects to nothing but this server — `/api/prs` is
-    same-origin and the server is what talks to GitHub. What this asserts is the
-    fold: the list the corpus gave the page grows, in place, so a popup opened
-    before the answer landed reads the wider list on the next keystroke without
-    being handed it.
-
-    **Order is the argument.** A reference some record already cites is one this
-    plan has a reason to mention again, so it keeps its place and only gains the
-    title it never had; everything else is appended, and the filter runs over the
-    whole list. And a bare `owner/repo#` is put at the front for a repository the
-    corpus has never cited, because that is the half nobody has memorised.
-
-    One call per page: the second ask returns without touching the network, which
-    the single scripted reply is what proves — a second fetch would find none.
+    So the vocabulary is the plan's `repositories:`, a word of digits is the
+    number, every other word has to find the repository or an open title, and a
+    GitHub link is the reference it names. A repository not listed is offered
+    only when it is typed in full. `/api/prs` widens it with titles, once per
+    page — the single scripted reply is what proves the second ask asks nothing.
     """
     from test_injection import run_js
 
-    cited = client.patch(
+    cited = naming_client.patch(
         f"/api/record/{TASK}",
         json={
-            "base_commit": head(client),
-            "fields": {"prs": ["kilnlab/kiln4py#1403"]},
+            "base_commit": head(naming_client),
+            "fields": {"prs": ["kilnlab/kiln4py#1403", "https://example.org/a/page"]},
             "body": None,
         },
     )
     assert cited.status_code == 200, cited.text
 
     got = run_js(
-        client.get(f"/detail/{TASK}{PLAIN}").text,
-        _WIDENING,
+        naming_client.get(f"/detail/{TASK}{PLAIN}").text,
+        _REFERENCES,
         page=True,
         replies=[
             {
                 "status": 200,
                 "json": {
                     "prs": [
-                        {"value": "kilnlab/kiln4py#1403", "label": "The one already cited"},
-                        {"value": "kilnlab/kiln4py#1521", "label": "Open and never mentioned"},
-                        {"value": "griddle/griddle#1877", "label": "In a repository nobody cited"},
+                        {"value": "kilnlab/kiln4py#1521", "label": "PR · Halo exchange"},
+                        {"value": "griddle/griddle#1877", "label": "issue · Scan carry"},
                     ],
                     "stale": False,
                 },
@@ -9900,24 +9877,43 @@ def test_the_page_widens_its_pull_requests_with_what_is_open_now(client: TestCli
     )
     assert not got["errors"], got["errors"]
     answer = got["value"]
+    said = answer["said"]
 
     assert answer["live"] is True, "the served page does not know it has a server"
-    assert "kilnlab/kiln4py#1403" in answer["before"], "the corpus's own list is missing"
-    assert "kilnlab/kiln4py#1521" not in answer["before"], (
-        "this test cannot show a widening: the corpus already had the open one"
+    assert answer["before"] == {
+        "prs": ["kilnlab/kiln4py#", "griddle/griddle#"],
+        "repos": ["kilnlab/kiln4py", "griddle/griddle"],
+    }, f"something the corpus cites is offered: {answer['before']}"
+    assert answer["open"] == 2, "asking twice folded the same list in twice"
+    assert said[""] == [
+        "kilnlab/kiln4py# pull request or issue",
+        "griddle/griddle# pull request or issue",
+        "kilnlab/kiln4py#1521 PR · Halo exchange",
+        "griddle/griddle#1877 issue · Scan carry",
+    ], said[""]
+    assert said["kiln4py 1521"] == ["kilnlab/kiln4py#1521 PR · Halo exchange"]
+    # A number nothing is known about is written all the same: merged work is
+    # cited as often as open work, and it is never in the open list.
+    assert said["kiln 15"] == ["kilnlab/kiln4py#15", "kilnlab/kiln4py#1521 PR · Halo exchange"]
+    assert said["griddle"] == [
+        "griddle/griddle# pull request or issue",
+        "griddle/griddle#1877 issue · Scan carry",
+    ]
+    assert said["carry"] == ["griddle/griddle#1877 issue · Scan carry"]
+    numbered = ["kilnlab/kiln4py#1877", "griddle/griddle#1877 issue · Scan carry"]
+    assert said["#1877"] == numbered and said["1877"] == numbered, said
+    # Too little to search for: a lone `#1` is prose, and `#` a heading.
+    assert said["#1"] == said["#"] == []
+    assert said["https://github.com/kilnlab/kiln4py/pull/77/files"] == ["kilnlab/kiln4py#77"]
+    assert said["https://github.com/acme/widgets/issues/3"] == ["acme/widgets#3"]
+    assert said["acme/widgets#3"] == ["acme/widgets#3"], (
+        "a repository not listed, typed in full, is refused"
     )
-    for value in ("kilnlab/kiln4py#1403", "kilnlab/kiln4py#1521", "griddle/griddle#1877"):
-        assert value in answer["after"], f"{value} is not offered: {answer['after']}"
-    # The cited one keeps its place at the front and gains the title it never had.
-    assert answer["after"].index("kilnlab/kiln4py#1403") < answer["after"].index(
-        "kilnlab/kiln4py#1521"
-    ), answer["after"]
-    assert answer["labels"]["kilnlab/kiln4py#1403"] == "The one already cited"
-    # And the repository nobody cited is offered bare, so the number can be typed.
-    assert "griddle/griddle#" in answer["after"], answer["after"]
-    assert answer["labels"]["griddle/griddle#"] == "any pull request"
-    assert answer["again"] == answer["after"], (
-        "asking twice asked GitHub twice, or folded the same list in again"
+    assert said["acme/widgets"] == [], (
+        "a repository not listed is offered before it is typed in full"
+    )
+    assert said["kilnlab/kiln4py#"] == ["kilnlab/kiln4py#1521 PR · Halo exchange"], (
+        "the half reference already in the box is offered again, so Enter does nothing"
     )
 
 
