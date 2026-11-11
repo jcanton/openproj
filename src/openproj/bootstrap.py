@@ -173,9 +173,9 @@ nominal_availability: 1.0
 # Of each cycle's window, how much is cool-down rather than build. An overrun is
 # measured against the end of build.
 cooldown_weeks: 2.0
-# The repositories this plan's work happens in, as owner/repo, so the editor can
-# offer their open pull requests. Empty means it offers only what the plan
-# already cites and asks nothing of the network.
+# The repositories this plan's work happens in, as owner/repo. The PRs field and
+# the body complete `icon4py 1403` to `C2SM/icon4py#1403` for these, and offer
+# their open pull requests and issues. A repository not listed is typed in full.
 repositories: []
 # Which views this plan's nav shows, in order after Records. A view left out is not linked from
 # anywhere and still answers at its address. Records, every record page and Help (in the footer)

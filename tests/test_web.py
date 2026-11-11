@@ -6495,7 +6495,7 @@ def _github_answering(pulls: dict[str, list[dict]], asked: list[str]):
     def answer(request: httpx.Request) -> httpx.Response:
         asked.append(request.url.path)
         for repository, open_now in pulls.items():
-            if request.url.path == f"/repos/{repository}/pulls":
+            if request.url.path == f"/repos/{repository}/issues":
                 return httpx.Response(200, json=open_now)
         return httpx.Response(404, json={"message": "Not Found"})
 
@@ -6534,7 +6534,9 @@ def test_the_open_pull_requests_come_from_the_plan_and_are_cached(tmp_path: Path
         secret=SECRET,
         github_transport=_github_answering(
             {
-                "kilnlab/kiln4py": [{"number": 1403, "title": "Halo exchange drops a rank"}],
+                "kilnlab/kiln4py": [
+                    {"number": 1403, "title": "Halo exchange drops a rank", "pull_request": {}}
+                ],
                 "griddle/griddle": [{"number": 1877, "title": "Scan carry"}],
             },
             asked,
@@ -6546,8 +6548,8 @@ def test_the_open_pull_requests_come_from_the_plan_and_are_cached(tmp_path: Path
         assert first.status_code == 200, first.text
         assert first.json() == {
             "prs": [
-                {"value": "kilnlab/kiln4py#1403", "label": "Halo exchange drops a rank"},
-                {"value": "griddle/griddle#1877", "label": "Scan carry"},
+                {"value": "kilnlab/kiln4py#1403", "label": "PR · Halo exchange drops a rank"},
+                {"value": "griddle/griddle#1877", "label": "issue · Scan carry"},
             ],
             "stale": False,
         }
@@ -6559,7 +6561,7 @@ def test_the_open_pull_requests_come_from_the_plan_and_are_cached(tmp_path: Path
         assert elsewhere.json() == first.json(), (
             "a query string reached the repositories this server will fetch"
         )
-    assert asked == ["/repos/kilnlab/kiln4py/pulls", "/repos/griddle/griddle/pulls"], (
+    assert asked == ["/repos/kilnlab/kiln4py/issues", "/repos/griddle/griddle/issues"], (
         f"three requests cost {len(asked)} calls to GitHub: {asked}"
     )
 

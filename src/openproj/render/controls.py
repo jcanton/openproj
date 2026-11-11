@@ -3459,27 +3459,92 @@ function widenPullRequests(redraw) {
     });
 }
 
-// Folded into the list rather than replacing it, and the ORDER is the argument:
-// a reference some record already cites is one this plan has a reason to mention
-// again, so it keeps its place at the front and only gains the title it never
-// had. Everything else is appended — the filter runs over the whole list and
-// slices eight, so an open pull request nobody has cited yet is one narrowing
-// keystroke away.
+// What `/api/prs` said is open, kept apart from `SUGGEST.prs`: that one is the
+// bare `owner/repo#` per repository, and the table's menu reads it as it is.
+const OPEN_REFS = [];
+
 function foldInPullRequests(live) {
-  const held = new Map(SUGGEST.prs.map(one => [one.value, one]));
-  for (const one of live) {
-    const repo = one.value.split('#')[0] + '#';
-    if (!held.has(repo)) {
-      const bare = {value: repo, label: 'any pull request'};
-      held.set(repo, bare);
-      SUGGEST.prs.unshift(bare);
-    }
-    const already = held.get(one.value);
-    // A cited reference has no label — the corpus knows the number and not what
-    // it is called — so this is the half the network was asked for.
-    if (already) already.label = already.label || one.label;
-    else { held.set(one.value, one); SUGGEST.prs.push(one); }
+  OPEN_REFS.push(...live);
+}
+
+// A link to a pull request or an issue on GitHub, as the reference `_pr_refs`
+// draws. A pasted URL and the `owner/repo#N` the list offered were two spellings
+// of one thing, and only one of them was what the list would complete to.
+// `/pull/` and `/issues/` both, and whatever trails the number — `/files`, a
+// `#discussion_r…` — because a link is copied from wherever somebody was reading.
+const GITHUB_REF = new RegExp(
+  '^https?://(?:www\\.)?github\\.com/([\\w.-]+)/([\\w.-]+)/(?:pull|issues)/([0-9]+)'
+  + '(?:[/?#]\\S*)?$', 'i');
+
+function asReference(text) {
+  const link = GITHUB_REF.exec(String(text).trim());
+  return link ? `${link[1]}/${link[2]}#${link[3]}` : null;
+}
+
+// What a pull request or issue box offers for what has been typed in it.
+//
+// jcanton, 2026-11-11: "`icon4py PRnr`" — the half of the name somebody
+// remembers, and the number. So what was typed is cut into words at spaces,
+// slashes and hashes; a word of digits is the number, every other word has to
+// find the repository (or, for an open one, its title), and the repositories are
+// the plan's own `repositories:` and no others. A repository not listed is
+// typed in full, and then offered exactly as typed.
+//
+// **The number is written whether or not anything is known about it.** The
+// open list is the hundred most recently touched, and the pull request somebody
+// is citing is as likely merged as open; `icon4py 1210` is `C2SM/icon4py#1210`
+// either way, with a title beside it when the server had one.
+//
+// **Nothing typed that cannot be searched for opens anything.** `#` and `##` are
+// headings in the body, and a lone `#1` is prose: fewer than three digits with
+// no name beside them offer nothing, because Enter would take the first row.
+function referencesFor(said) {
+  const repos = SUGGEST.repos || [];
+  const title = new Map(OPEN_REFS.map(one => [one.value, one.label]));
+  const known = value => ({value, label: title.get(value) || ''});
+  const text = String(said).trim();
+  const pasted = asReference(text);
+  if (pasted) return [known(pasted)];
+  if (!text) {
+    return [...repos.map(r => ({value: r + '#', label: 'pull request or issue'})), ...OPEN_REFS];
   }
+  const words = text.toLowerCase().split(/[\s/#,]+/).filter(Boolean);
+  const number = words.filter(w => /^[0-9]+$/.test(w)).pop() || '';
+  const names = words.filter(w => !/^[0-9]+$/.test(w)).map(sought);
+  if (names.some(n => !n)) return [];
+  if (!names.length && number.length < 3) return [];
+  // The worst of the words' ranks, so a repository every word found as a
+  // substring sorts above one that one word found only as a subsequence.
+  const rank = hay => names.reduce((worst, n) => {
+    const r = found(n, hay);
+    return r && worst ? Math.max(worst, r) : 0;
+  }, 1);
+  const named = repos
+    .map(r => ({r, rank: rank(plain(r))}))
+    .filter(m => m.rank)
+    .sort((a, b) => a.rank - b.rank)
+    .map(m => m.r);
+  const offered = number
+    ? named.map(r => known(`${r}#${number}`))
+    // Not the half reference the box already holds: choosing one reopens the
+    // list on it, and offering it again first would make Enter a no-op.
+    : named.filter(r => (r + '#').toLowerCase() !== text.toLowerCase())
+      .map(r => ({value: r + '#', label: 'pull request or issue'}));
+  const open = OPEN_REFS
+    .map(one => {
+      const [repo, n] = one.value.split('#');
+      if (number && !n.startsWith(number)) return null;
+      return {one, rank: rank(plain(repo) + ' ' + plain(one.label))};
+    })
+    .filter(m => m && m.rank)
+    .sort((a, b) => a.rank - b.rank)
+    .map(m => m.one)
+    .filter(one => !offered.some(o => o.value === one.value));
+  const all = [...offered, ...open];
+  // Written in full for a repository the plan does not list: offered as it is,
+  // so Enter takes it rather than nothing.
+  if (!all.length && /^[\w.-]+\/[\w.-]+#[0-9]+$/.test(text)) return [known(text)];
+  return all;
 }
 
 // Type-to-filter, not a picker beside the field. A datalist only completes a whole
@@ -3653,9 +3718,14 @@ function attachSuggest(input) {
     // cached at attach time would be the shorter, older list.
     const said = typed();
     const needle = sought(said);
-    const matches = source
-      .map(item => ({item, rank: found(needle, plain(item.value) + ' ' + plain(item.label))}))
-      .filter(m => !said || m.rank)
+    const ranked = input.dataset.suggest === 'prs'
+      // Its own search, for the reasons over `referencesFor`; ranked already,
+      // so every row it gives is rank 1 to the sort below and keeps its place.
+      ? referencesFor(said).map(item => ({item, rank: 1}))
+      : source
+        .map(item => ({item, rank: found(needle, plain(item.value) + ' ' + plain(item.label))}))
+        .filter(m => !said || m.rank);
+    const matches = ranked
       .filter(m => !multi || !taken().includes(m.item.value))
       // Eight are shown, so the cap already throws matches away and the eighth
       // used to be decided by the id. A substring before a subsequence — the one
@@ -3703,6 +3773,19 @@ function attachSuggest(input) {
     open();
   });
   input.addEventListener('blur', () => setTimeout(close, 150));
+  // A link pasted and never chosen from the list is still the reference it names,
+  // so the file holds one spelling. On `change`, which fires before the blur that
+  // a form or a table cell saves on, and without an `input` event of its own,
+  // which would reopen the list on a box being left.
+  if (input.dataset.suggest === 'prs') {
+    input.addEventListener('change', () => {
+      const tidied = input.value.split(',').map(one => {
+        const ref = asReference(one);
+        return ref ? (one.match(/^\s*/)[0] + ref) : one;
+      }).join(',');
+      if (tidied !== input.value) input.value = tidied;
+    });
+  }
   list.addEventListener('mousedown', event => {
     const item = event.target.closest('li');
     if (item) { event.preventDefault(); choose(item.dataset.value); }
@@ -3830,10 +3913,11 @@ function bodyToken(text, at) {
   const ref = openRef(text, at);
   if (ref) {
     return {
-      // Not a snapshot: `foldInPullRequests` grows this array in place, so a
-      // popup that opened before the answer landed reads the wider list on the
-      // next keystroke without being handed it.
-      source: SUGGEST.prs || [],
+      // Searched by `referencesFor`, which reads the plan's repositories and
+      // `OPEN_REFS` as they are at that keystroke — so a popup that opened before
+      // the server's answer landed reads the wider list on the next one.
+      search: referencesFor,
+      source: SUGGEST.repos || [],
       // The one shape whose vocabulary the server can widen.
       live: true,
       from: ref.from,
@@ -3923,9 +4007,11 @@ function attachBodyCompletion(surface) {
     // into the document on the way to typing a footnote.
     const said = token.typed.trim();
     const needle = sought(said);
-    matches = token.source
-      .map(item => ({item, rank: found(needle, plain(item.value) + ' ' + plain(item.label))}))
-      .filter(m => !said || m.rank)
+    matches = (token.search
+      ? token.search(said).map(item => ({item, rank: 1}))
+      : token.source
+        .map(item => ({item, rank: found(needle, plain(item.value) + ' ' + plain(item.label))}))
+        .filter(m => !said || m.rank))
       // Eight, so the cap throws matches away: substring before subsequence,
       // and the source's own order inside each tier. The same sort the field
       // combobox does, because a reader who has learned one of these lists has
@@ -4239,13 +4325,6 @@ def _control_html(
     return _fragment(_CONTROL, f=field, priorities=PRIORITIES, describedby=describedby)
 
 
-def _pr_sort(ref: str) -> tuple[str, int]:
-    """Newest first within a repository. A PR number is a number, and sorting the
-    references as text puts #999 above #1400."""
-    repo, _, number = ref.partition("#")
-    return repo, int(number) if number.isdigit() else 0
-
-
 def _suggestions(index: Index, linkable: bool = False, live: bool = False) -> dict:
     """What already exists, offered rather than remembered.
 
@@ -4283,18 +4362,21 @@ def _suggestions(index: Index, linkable: bool = False, live: bool = False) -> di
     # {value, label}: the value is what gets written to the file, the label is the
     # human hint beside it. An id typed from memory is a dangling reference the
     # validator rejects after the save; offered, it cannot be mistyped at all.
-    # Two kinds of entry for one field. A whole reference completes a PR already
-    # cited somewhere in the plan; a bare `org/repo#` completes the half nobody
-    # remembers — which org, and whether it is kiln4py or kiln4pygen — and leaves
-    # the number to be typed. Everything here comes from the corpus, so it costs
-    # no network and cannot be stale in a way the plan is not already stale.
-    refs = {ref for record in index.records.values() for ref in record.prs}
-    repos = {ref.split("#")[0] + "#" for ref in refs if "#" in ref}
+    # The repositories the PLAN names, and nothing read out of the corpus. This
+    # offered every reference some record already cited, and a repository for
+    # each — jcanton, 2026-11-11, on why that was the wrong list: a pull request
+    # cited by one record almost always belongs to that record and not the next,
+    # and anything somebody had pasted into `prs:` came back as a suggestion,
+    # which on icon4py's plan was a page of the knowledge base. A repository not
+    # in `config/defaults.yaml` is typed in full; `referencesFor` in the page is
+    # what turns `icon4py 1403` into `C2SM/icon4py#1403` for one that is.
+    #
+    # `prs` is the bare `owner/repo#` of each, for the table's menu, which
+    # completes through a native datalist and a prefix and has nothing to run a
+    # search with. The field and the body read `repos` and the live list.
     return {
-        "prs": (
-            [{"value": r, "label": "any pull request"} for r in sorted(repos)]
-            + [{"value": r, "label": ""} for r in sorted(refs, key=_pr_sort, reverse=True)]
-        ),
+        "prs": [{"value": f"{r}#", "label": "pull request or issue"} for r in index.repositories],
+        "repos": list(index.repositories),
         "people": [{"value": p, "label": ""} for p in sorted(people)],
         # Named `records`, filled from the PLAN, deliberately: these complete
         # `parent` and `depends_on`, and offering an issue or a note there
@@ -4529,6 +4611,7 @@ def _combobox_html(index: Index | None, linkable: bool = False, live: bool = Fal
             "records": [],
             "tags": [],
             "prs": [],
+            "repos": [],
             "cycles": [],
             "linkable": [],
             "live": False,

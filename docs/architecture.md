@@ -124,7 +124,7 @@ src/openproj/pusher.py     the deferred push: a commit lands locally, then goes 
 src/openproj/coedit.py     the co-editing rooms — one Y.Text per record, in memory
 src/openproj/web.py        the server: routes, auth, the write endpoints
 src/openproj/auth.py       sign-in: the OAuth dance, the session, who may write
-src/openproj/github.py     what the server asks GitHub — the App token, open PRs
+src/openproj/github.py     what the server asks GitHub — the App token, open PRs and issues
 src/openproj/vendor.py     static/ and docs/ on disk, read once and inlined
 src/openproj/bootstrap.py  openproj init — the config files with nothing invented, one commit
 src/openproj/cli.py        init / check / new / render / serve / schedule / demo

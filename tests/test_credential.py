@@ -16,7 +16,7 @@ import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from openproj.github import GitHubApp, app_jwt, open_pull_requests
+from openproj.github import GitHubApp, app_jwt, open_references
 
 
 @pytest.fixture(scope="module")
@@ -193,15 +193,26 @@ def test_the_startup_refusal_says_which_variable_is_unset(tmp_path: Path, monkey
 
 
 def _pulls(number: int, title: str) -> dict:
-    return {"number": number, "title": title, "state": "open", "user": {"login": "x"}}
+    """A pull request as `/issues` answers one: an issue with a `pull_request` key."""
+    return {
+        "number": number,
+        "title": title,
+        "state": "open",
+        "user": {"login": "x"},
+        "pull_request": {"url": "https://api.github.com/x"},
+    }
 
 
 def test_the_open_pull_requests_are_read_down_to_what_a_completion_needs():
-    """A number and a title, and nothing else off the answer.
+    """A number, a title and which of the two it is, and nothing else.
 
     GitHub sends forty fields about a pull request. The completion needs the
     number nobody remembers and the title that finds it; every other one is bytes
     on a page and a field to keep in step with an API somebody else versions.
+
+    Off `/issues`, which answers pull requests and issues in one call and marks
+    the pull requests with a `pull_request` key — `/pulls` would be a second call
+    per repository for the issues, against an anonymous limit of sixty an hour.
 
     One page of a hundred, most recently updated first, and no `Link` following —
     a popup offers eight rows and filters as somebody types, so a loop over a
@@ -212,20 +223,21 @@ def test_the_open_pull_requests_are_read_down_to_what_a_completion_needs():
 
     def answer(request: httpx.Request) -> httpx.Response:
         asked.append(request)
-        return httpx.Response(200, json=[_pulls(1403, "Halo exchange"), _pulls(9, "Two")])
+        issue = {"number": 9, "title": "Two", "state": "open"}
+        return httpx.Response(200, json=[_pulls(1403, "Halo exchange"), issue])
 
-    got = open_pull_requests("kilnlab/kiln4py", transport=httpx.MockTransport(answer))
+    got = open_references("kilnlab/kiln4py", transport=httpx.MockTransport(answer))
 
     assert got == [
-        {"number": 1403, "title": "Halo exchange"},
-        {"number": 9, "title": "Two"},
+        {"number": 1403, "title": "Halo exchange", "pull": True},
+        {"number": 9, "title": "Two", "pull": False},
     ]
     assert len(asked) == 1, "one page, one call"
     query = dict(asked[0].url.params)
     assert query == {"state": "open", "per_page": "100", "sort": "updated", "direction": "desc"}, (
         query
     )
-    assert asked[0].url.path == "/repos/kilnlab/kiln4py/pulls"
+    assert asked[0].url.path == "/repos/kilnlab/kiln4py/issues"
     assert "authorization" not in asked[0].headers, "asked as somebody with no App"
 
 
@@ -254,8 +266,8 @@ def test_a_token_the_code_repository_refuses_falls_back_to_asking_anonymously(
         return httpx.Response(200, json=[_pulls(1403, "Halo exchange")])
 
     app = GitHubApp("1", "2", pem, transport=httpx.MockTransport(refuse_then_answer))
-    assert open_pull_requests("kilnlab/kiln4py", app) == [
-        {"number": 1403, "title": "Halo exchange"}
+    assert open_references("kilnlab/kiln4py", app) == [
+        {"number": 1403, "title": "Halo exchange", "pull": True}
     ]
     assert seen == ["Bearer installation-token", None], seen
 
@@ -270,7 +282,7 @@ def test_a_token_the_code_repository_refuses_falls_back_to_asking_anonymously(
 
     app.transport = httpx.MockTransport(broken)
     with pytest.raises(httpx.HTTPStatusError):
-        open_pull_requests("kilnlab/kiln4py", app)
+        open_references("kilnlab/kiln4py", app)
     assert server_error == ["Bearer installation-token"], (
         f"a 500 was retried anonymously: {server_error}"
     )

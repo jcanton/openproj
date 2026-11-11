@@ -4417,7 +4417,10 @@ def test_every_field_that_completes_on_the_record_page_completes_in_the_card(
     whole value of the box, so on `ann,` the options have to be `ann, bo` and not
     `bo` — otherwise picking one would delete the name already typed.
     """
-    got = _at_a_form(index, tmp_path / "completing.html", _COMPLETING)
+    # A plan that names its repositories, because that is all `prs` offers: the
+    # bare `owner/repo#` of each, and nothing the corpus cites.
+    named = index.model_copy(update={"repositories": ["kilnlab/kiln4py"]})
+    got = _at_a_form(named, tmp_path / "completing.html", _COMPLETING)
 
     assert not got.get("error"), got
     # Every field this record has that the detail page completes. Taken off the

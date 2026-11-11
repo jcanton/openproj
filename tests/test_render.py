@@ -2443,38 +2443,28 @@ def test_an_unknown_status_still_reaches_the_index(seed_index: Index):
     assert [g["status"] for g in groups] == ["done", "wip"]
 
 
-def test_a_pr_reference_completes_in_two_halves(demo_rendered: tuple[Path, Index]):
-    """`kilnlab/kiln4py#` and whole references, from what the plan already cites.
+def test_a_pr_reference_completes_from_the_plans_repositories_alone(seed_index: Index):
+    """The repositories `config/defaults.yaml` names, each as the `owner/repo#`
+    half nobody remembers, and nothing the corpus cites.
 
-    Nobody remembers whether it is kiln4py or kiln4pygen, or which org owns it,
-    and that half of the reference is the same on almost every row — so it is
-    offered on its own, with the number left to type.
+    It used to offer every reference some record cited, and a repository for
+    each. jcanton, 2026-11-11: a pull request one record cites belongs to that
+    record far more often than to the next, and whatever somebody had put in
+    `prs:` came back as a suggestion — on icon4py's plan, a knowledge base page.
     """
     from openproj.render import _suggestions
 
-    _, index = demo_rendered
-    offered = _suggestions(index)["prs"]
-    values = [item["value"] for item in offered]
-    cited = {ref for e in index.plan.values() for ref in e.prs}
+    cited = {ref for record in seed_index.records.values() for ref in record.prs}
+    assert cited, "this test cannot show a citation left out: the corpus cites none"
 
-    assert "kilnlab/kiln4py#" in values
-    assert cited <= set(values)
-    assert values.index("kilnlab/kiln4py#") < min(values.index(c) for c in cited)
+    bare = _suggestions(seed_index)
+    named = _suggestions(
+        seed_index.model_copy(update={"repositories": ["kilnlab/kiln4py", "griddle/griddle"]})
+    )
 
-
-def test_pull_requests_are_offered_newest_first(demo_rendered: tuple[Path, Index]):
-    """Sorted as text, #999 sits above #1400 — so the oldest work is what the
-    list shows first and the newest is what falls off the end of it."""
-    from openproj.render import _suggestions
-
-    _, index = demo_rendered
-    numbers = [
-        int(item["value"].split("#")[1])
-        for item in _suggestions(index)["prs"]
-        if item["value"].split("#")[1]
-    ]
-
-    assert numbers == sorted(numbers, reverse=True)
+    assert (bare["prs"], bare["repos"]) == ([], [])
+    assert named["repos"] == ["kilnlab/kiln4py", "griddle/griddle"]
+    assert [item["value"] for item in named["prs"]] == ["kilnlab/kiln4py#", "griddle/griddle#"]
 
 
 def test_choosing_a_repository_does_not_end_the_entry(seed_index: Index):

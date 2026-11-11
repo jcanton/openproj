@@ -776,12 +776,11 @@ class Config(BaseModel):
     # a roster yet is a tracker nobody finishes setting up.
     known_people: list[str] = []
     # The repositories this plan's work happens in, as `owner/repo`, from
-    # config/defaults.yaml. Empty is the ordinary state and means one thing only:
-    # the pull-request completion offers what the corpus already cites and asks
-    # nothing of the network. Named here rather than in this tool's source
-    # because they are a fact about the PLAN — jcanton, 2026-08-25, asking
-    # whether kiln4py's and griddle's open pull requests could be offered — and
-    # openproj is not one team's tool alone.
+    # config/defaults.yaml. The pull-request completion offers these and nothing
+    # else, and empty means it offers nothing and asks nothing of the network.
+    # Named here rather than in this tool's source because they are a fact about
+    # the PLAN — jcanton, 2026-08-25, asking whether kiln4py's and griddle's open
+    # pull requests could be offered — and openproj is not one team's tool alone.
     repositories: list[str] = []
     # Keyed by cycle number. Loaded from `cycles/*.md`, not from a config file.
     plans: dict[int, Cycle] = {}

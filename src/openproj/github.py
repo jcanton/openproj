@@ -79,9 +79,11 @@ def app_jwt(app_id: str, private_key_pem: str, now: float | None = None) -> str:
 
 # What one call asks for, and it is one call. A completion offers eight rows and
 # filters as somebody types, so the hundred most recently updated open pull
-# requests is already a wider net than it needs — and following `Link` headers is
-# a request count nobody predicted against a rate limit somebody else shares.
-_PULLS_QUERY = {"state": "open", "per_page": 100, "sort": "updated", "direction": "desc"}
+# requests and issues is already a wider net than it needs — and following `Link`
+# headers is a request count nobody predicted against a rate limit somebody else
+# shares. A number that fell outside it is still offered: the page writes
+# `owner/repo#<what was typed>` whether or not it knows a title for it.
+_OPEN_QUERY = {"state": "open", "per_page": 100, "sort": "updated", "direction": "desc"}
 # Long enough that a burst of typing is one call and short enough that a pull
 # request opened during a betting table turns up in it — jcanton, 2026-08-25: "we
 # can even reduce the call frequency to every 5 minutes".
@@ -160,7 +162,7 @@ class GitHubApp:
     def api_headers(self) -> dict[str, str]:
         """The headers an authenticated call to the API sends, token included.
 
-        Public because `open_pull_requests` below is not a method: it works with
+        Public because `open_references` below is not a method: it works with
         no App at all, and reaching into `_headers` from outside the class would
         be a second site deciding what an API call looks like — which is exactly
         what `_headers` exists to stop.
@@ -224,17 +226,25 @@ class GitHubApp:
         return pygit2.RemoteCallbacks(credentials=pygit2.UserPass("x-access-token", self.token()))
 
 
-def open_pull_requests(
+def open_references(
     repository: str,
     app: GitHubApp | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> list[dict[str, object]]:
-    """Every open pull request in one repository, most recently updated first.
+    """The open pull requests and issues in one repository, most recently updated
+    first.
 
-    `[{"number": 1403, "title": "..."}]` and nothing else off the answer: the
-    completion needs the number nobody can remember and the title that finds it,
-    and every other field GitHub sends is bytes on a page and something to keep
-    in step.
+    `[{"number": 1403, "title": "...", "pull": True}]` and nothing else off the
+    answer: the completion needs the number nobody can remember, the title that
+    finds it, and which of the two it is. Every other field GitHub sends is bytes
+    on a page and something to keep in step.
+
+    **The issues endpoint, because it answers both in one call.** GitHub counts a
+    pull request as an issue and marks it with a `pull_request` key; `/pulls`
+    answers the pull requests alone, so asking for both that way is twice the
+    calls against an anonymous limit of sixty an hour. jcanton, 2026-11-11, asking
+    for "PRs and issues" to complete alike — `owner/repo#N` is the one spelling
+    GitHub resolves for either.
 
     **Authenticated when it can be, anonymous when it cannot, and the fallback is
     not a nicety.** The App's installation is `repository_selection: selected` on
@@ -263,7 +273,7 @@ def open_pull_requests(
     def ask(headers: dict[str, str]) -> httpx.Response:
         with httpx.Client(transport=reach, timeout=10.0) as client:
             return client.get(
-                f"{_API}/repos/{repository}/pulls", headers=headers, params=_PULLS_QUERY
+                f"{_API}/repos/{repository}/issues", headers=headers, params=_OPEN_QUERY
             )
 
     anonymous = {
@@ -283,6 +293,10 @@ def open_pull_requests(
         response = ask(anonymous)
     response.raise_for_status()
     return [
-        {"number": int(one["number"]), "title": str(one.get("title") or "")}
+        {
+            "number": int(one["number"]),
+            "title": str(one.get("title") or ""),
+            "pull": "pull_request" in one,
+        }
         for one in response.json()
     ]

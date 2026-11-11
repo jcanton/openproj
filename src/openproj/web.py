@@ -3097,7 +3097,8 @@ def create_app(
     pulls_lock = threading.Lock()
 
     def _live_pull_requests(repositories: list[str]) -> tuple[list[dict], bool]:
-        """Every open pull request in these repositories, and whether it is stale.
+        """Every open pull request and issue in these repositories, and whether it
+        is stale.
 
         `{value, label}` — the shape the combobox already reads, so the page
         merges this with what the corpus cites and needs no second code path.
@@ -3116,7 +3117,7 @@ def create_app(
         pull request that was open five minutes ago is almost certainly still
         open.
 
-        The exceptions are named rather than caught wholesale: `open_pull_requests`
+        The exceptions are named rather than caught wholesale: `open_references`
         documents itself as raising for a refusal, and around that the failures
         are httpx's transport errors and a body that is not the JSON this reads.
         Anything outside the tuple reaches the route and 500s it, which is the
@@ -3125,7 +3126,7 @@ def create_app(
         """
         import json as _json
 
-        from .github import PULLS_TTL_SECONDS, open_pull_requests
+        from .github import PULLS_TTL_SECONDS, open_references
 
         # `github_transport` is `create_app`'s one test seam for this: an httpx
         # transport a test answers from without a socket, the same shape and the
@@ -3141,7 +3142,7 @@ def create_app(
                 until, entries, failed = pulls.get(repository, (0.0, [], False))
                 if now >= until:
                     try:
-                        entries = open_pull_requests(repository, app_for, github_transport)
+                        entries = open_references(repository, app_for, github_transport)
                         failed = False
                     except (httpx.HTTPError, _json.JSONDecodeError, KeyError, ValueError):
                         # WARNING and not an exception: the operator wants to know
@@ -3152,15 +3153,21 @@ def create_app(
                         failed = True
                     pulls[repository] = (now + PULLS_TTL_SECONDS, entries, failed)
                 stale = stale or failed
+                # Which of the two leads the label, because `#1403` reads the same
+                # for either and the reader choosing between them is asking which.
                 offered += [
-                    {"value": f"{repository}#{one['number']}", "label": str(one["title"])}
+                    {
+                        "value": f"{repository}#{one['number']}",
+                        "label": f"{'PR' if one['pull'] else 'issue'} · {one['title']}",
+                    }
                     for one in entries
                 ]
         return offered, stale
 
     @app.get("/api/prs")
     def prs(request: Request) -> JSONResponse:
-        """Open pull requests in the repositories the PLAN names, `{value,label}`.
+        """Open pull requests and issues in the repositories the PLAN names,
+        `{value,label}`.
 
         The completion in a shaping document and in the `prs:` field has always
         offered what the corpus already cites, which answers "which of the ones
