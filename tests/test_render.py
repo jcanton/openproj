@@ -3518,6 +3518,25 @@ def test_the_preview_shows_the_same_two_syntaxes_the_page_will(seed_index: Index
     assert ("s", "Dropped") in [(e.tag, e.text) for e in drawn]
 
 
+
+def test_a_url_pasted_bare_is_a_link_and_a_filename_is_not():
+    """jcanton, 2026-11-11: a pitch reading "ICON has a https://easy.gems…" drew
+    the address as text to be copied into a browser by hand. The second half is
+    the reason `fuzzy_link` is off: linkify-it's default reads `model.py` as a
+    domain in Paraguay, which in a plan about Python code is half the filenames."""
+    drawn = elements(
+        preview_html(
+            "See https://example.org/bubble.html, model.py, www.example.org, a@b.org,"
+            " `https://example.org/code` and acme/repo#12."
+        )
+    )
+
+    assert [(e.attrs["href"], e.text) for e in drawn if e.tag == "a"] == [
+        ("https://example.org/bubble.html", "https://example.org/bubble.html"),
+        ("https://github.com/acme/repo/pull/12", "acme/repo#12"),
+    ]
+
+
 _MATHS = """A step of $\\Delta t$ and a wave.
 
 $$\\frac{\\partial u}{\\partial t} = \\nu \\nabla^2 u$$
